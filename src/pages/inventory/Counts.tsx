@@ -6,6 +6,7 @@ import { rpc } from '../../lib/supabase';
 import { N, fmtDay, signed, when } from '../../lib/format';
 import { qtyLabel } from '../../lib/domain';
 import { REASONS, type CountSession } from '../../lib/types';
+import { acct, usePostingMap } from '../../lib/accounts';
 import { Icon } from '../../components/Icon';
 import { Alert, Annot, Chip, Drawer, Field, Label, Modal, ModalHead, SkeletonRows, XButton } from '../../components/ui';
 
@@ -115,6 +116,7 @@ function CountDrawer({ session: s, onClose }: { session: CountSession; onClose: 
   const [reasons, setReasons] = useState<Record<string, { reason: string; note: string }>>({});
   const [confirmReject, setConfirmReject] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const map = usePostingMap().data;
   if (!inv) return null;
   const items = new Map(inv.items.map((i) => [i.id, i]));
   const locName = inv.locations.find((l) => l.id === s.location_id)?.name || '';
@@ -214,7 +216,7 @@ function CountDrawer({ session: s, onClose }: { session: CountSession; onClose: 
             <div className="ink3" style={{ marginTop: 12, fontSize: 13, lineHeight: 1.5 }}>
               {s.status === 'approved'
                 ? `Approved ${when(s.approved_at)} by ${inv.members.find((m) => m.id === s.approved_by)?.display_name || 'the owner'}. Each variance posted as its own journal.`
-                : `Approving posts one adjustment journal per variance (Dr 5200 Inventory shrinkage / Cr 1310 Inventory), each carrying the counter, the reason and you as approver. Rejecting reopens the session on ${counter?.display_name.split(' ')[0] || 'the counter'}'s phone for a recount.`}
+                : `Approving posts one adjustment journal per variance, each carrying the counter, the reason and you as approver. Breakage, expiry, theft and other losses go to ${acct(map, 'stock_loss').code} ${acct(map, 'stock_loss').name}; miscounts, unrecorded sales and stock found go to ${acct(map, 'stock_variance').code} ${acct(map, 'stock_variance').name}, against ${acct(map, 'inventory').code} ${acct(map, 'inventory').name}. Rejecting reopens the session on ${counter?.display_name.split(' ')[0] || 'the counter'}'s phone for a recount.`}
             </div>
             {err && <Alert kind="red" icon="alert" style={{ marginTop: 12 }}>{err}</Alert>}
           </>

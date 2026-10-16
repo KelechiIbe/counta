@@ -7,6 +7,7 @@ import { must, rpc, supabase, SUPABASE_URL } from '../lib/supabase';
 import { aiStatus } from '../lib/martina';
 import { Icon } from '../components/Icon';
 import { Alert, Field, Label } from '../components/ui';
+import { ChartDrawer, PostingRules } from '../components/ChartOfAccounts';
 
 function Section({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
   return (
@@ -29,6 +30,7 @@ export default function Settings() {
   const [f, setF] = useState<Record<string, any>>({});
   const [pw, setPw] = useState('');
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [chart, setChart] = useState(false);
   useEffect(() => {
     if (!inv) return;
     const o = inv.org;
@@ -80,6 +82,9 @@ export default function Settings() {
         </div>
         {owner && <div><button className="btn btn-primary" onClick={saveOrg} disabled={busy}>Save settings</button></div>}
       </Section>
+      <Section title="Chart of accounts" sub={owner ? 'TaxStreem standard chart. Change where an entry lands; stock value moves with it.' : 'TaxStreem standard chart. Only the owner can change the rules.'}>
+        <PostingRules owner={!!owner} onOpenChart={() => setChart(true)} />
+      </Section>
       <Section title="AI reading" sub="Invoice OCR, voice entry and Martina's open answers run on Gemini with your own key.">
         {status.isLoading ? <div className="skel" style={{ height: 40 }} /> : status.data?.configured ? (
           <Alert kind="green" icon="check">Switched on · model {status.data.model}. Invoices, handwritten sheets and voice notes are read automatically.</Alert>
@@ -114,6 +119,7 @@ export default function Settings() {
         </Field>
         <div><button className="btn btn-secondary" onClick={signOut}><Icon name="logout" size={16} />Sign out</button></div>
       </Section>
+      {chart && <ChartDrawer onClose={() => setChart(false)} />}
     </div>
   );
 }

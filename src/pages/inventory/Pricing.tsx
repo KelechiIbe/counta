@@ -7,6 +7,7 @@ import { must, rpc, supabase } from '../../lib/supabase';
 import { N, N2, P, fmtDay, when } from '../../lib/format';
 import { marginColor, suAbbr } from '../../lib/domain';
 import type { Proposal } from '../../lib/types';
+import { acct, usePostingMap } from '../../lib/accounts';
 import { Icon } from '../../components/Icon';
 import { Alert, Annot, Empty, Label, SkeletonRows } from '../../components/ui';
 
@@ -143,6 +144,7 @@ function LandedCost({ receiptId, setReceiptId }: { receiptId: string | null; set
   const sel = receiptId || posted[0]?.id || null;
   const receipt = useReceipt(sel);
   const { run, busy } = useAction();
+  const map = usePostingMap().data;
   const [charges, setCharges] = useState<Record<string, string>>({});
   const [other, setOther] = useState({ label: '', amount: '' });
   const [payee, setPayee] = useState('');
@@ -192,7 +194,7 @@ function LandedCost({ receiptId, setReceiptId }: { receiptId: string | null; set
           {posted.map((r) => <option key={r.id} value={r.id}>{r.ref} · {r.vendor_name} · {N(r.gross)} · {fmtDay(r.posted_at || r.created_at, false)}</option>)}
         </select>
       </div>
-      <div className="ink3" style={{ fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>Shipment charges like duty, clearing, haulage and agent fees are spread across the receipt by line value. Stock still on hand absorbs its share into weighted average cost; any share on stock already sold goes to cost of sales.</div>
+      <div className="ink3" style={{ fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>Shipment charges like duty, clearing, haulage and agent fees are spread across the receipt by line value. Duty and levies post to {acct(map, 'landed_duty').code} {acct(map, 'landed_duty').name}, the rest to {acct(map, 'landed_freight').code} {acct(map, 'landed_freight').name}. Stock still on hand absorbs its share into weighted average cost and moves into {acct(map, 'inventory').code}; any share on stock already sold stays in cost of sales.</div>
       {sel && (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 10, marginTop: 14 }}>

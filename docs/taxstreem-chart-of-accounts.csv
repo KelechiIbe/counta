@@ -1,0 +1,394 @@
+code,name,category,normal_balance,parent_code,is_group,is_system
+1000,ASSETS,Assets,debit,,true,false
+1010,Cash & Cash Equivalents,Assets,debit,1000,true,false
+1011,Petty Cash / Cash in Hand,Assets,debit,1010,false,false
+1012,Cash at Bank - NGN Current Accounts,Assets,debit,1010,false,false
+1013,Cash at Bank - Domiciliary Accounts (FCY),Assets,debit,1010,false,false
+1014,Mobile Money & Payment Wallets,Assets,debit,1010,false,false
+1015,Short-Term Deposits (< 90 days),Assets,debit,1010,false,false
+1016,Marketable Securities (Cash Equivalents),Assets,debit,1010,false,false
+1019,Other Cash Equivalents,Assets,debit,1010,false,false
+1100,Trade & Other Receivables,Assets,debit,1000,true,false
+1101,Trade Receivables - Local,Assets,debit,1100,false,false
+1102,Trade Receivables - Export/Foreign,Assets,debit,1100,false,false
+1103,Allowance for Expected Credit Losses,Assets,credit,1100,false,false
+1104,Staff Advances & Receivables,Assets,debit,1100,false,false
+1105,Directors' Current Accounts (Receivable),Assets,debit,1100,false,false
+1106,Advances to Vendors / Suppliers,Assets,debit,1100,false,false
+1107,Accrued Income,Assets,debit,1100,false,false
+1108,Intercompany / Related-Party Receivables,Assets,debit,1100,false,false
+1109,Interbank Placements & Advances,Assets,debit,1100,false,false
+1110,Other Receivables,Assets,debit,1100,false,false
+1200,Inventories,Assets,debit,1000,true,false
+1201,Inventory - Raw Materials,Assets,debit,1200,false,false
+1202,Inventory - Work in Progress,Assets,debit,1200,false,false
+1203,Inventory - Finished Goods,Assets,debit,1200,false,false
+1204,Goods in Transit,Assets,debit,1200,false,false
+1205,"Consumables, Spares & Small Tools",Assets,debit,1200,false,false
+1206,"Chemicals, Materials & Supplies",Assets,debit,1200,false,false
+1207,Allowance for Inventory Obsolescence,Assets,credit,1200,false,false
+1300,Prepayments & Other Current Assets,Assets,debit,1000,true,false
+1301,Prepaid Rent,Assets,debit,1300,false,false
+1302,Prepaid Insurance,Assets,debit,1300,false,false
+1303,Other Prepaid Expenses,Assets,debit,1300,false,false
+1304,Short-Term Investments,Assets,debit,1300,false,false
+1305,Current Portion of Long-Term Loans Receivable,Assets,debit,1300,false,false
+1306,Assets Classified as Held for Sale,Assets,debit,1300,false,false
+1307,Contract Assets - Current,Assets,debit,1300,false,false
+1308,Other Current Assets,Assets,debit,1300,false,false
+1400,Tax Assets (Current),Assets,debit,1000,true,false
+1401,Withholding Tax Receivable (WHT Credit Notes),Assets,debit,1400,false,false
+1402,VAT Input (Recoverable),Assets,debit,1400,false,false
+1403,Income Tax Advance Payments / Instalments,Assets,debit,1400,false,false
+1404,Other Tax Recoverables,Assets,debit,1400,false,false
+1500,"Property, Plant & Equipment (Cost)",Assets,debit,1000,true,false
+1501,PPE - Freehold Land,Assets,debit,1500,false,false
+1502,PPE - Non-Industrial Building,Assets,debit,1500,false,false
+1503,PPE - Industrial Building,Assets,debit,1500,false,false
+1504,PPE - Plants,Assets,debit,1500,false,false
+1505,"PPE - Ships, Boats & Yachts",Assets,debit,1500,false,false
+1506,PPE - Heavy Equipment,Assets,debit,1500,false,false
+1507,PPE - Aircraft Engine & Fuselage,Assets,debit,1500,false,false
+1508,PPE - Aircraft & Vessel Furnishing,Assets,debit,1500,false,false
+1509,PPE - Communications & Electricity Towers & Cables,Assets,debit,1500,false,false
+1510,PPE - Trains & Tracks,Assets,debit,1500,false,false
+1511,PPE - Motor Vehicles,Assets,debit,1500,false,false
+1512,"PPE - Motor Vehicles (Bus, Truck & Mass Transit)",Assets,debit,1500,false,false
+1513,PPE - Tools & Equipment,Assets,debit,1500,false,false
+1514,PPE - Office Equipment,Assets,debit,1500,false,false
+1515,PPE - Medical Equipment,Assets,debit,1500,false,false
+1516,PPE - Household Equipment,Assets,debit,1500,false,false
+1517,PPE - Computer Hardware,Assets,debit,1500,false,false
+1518,PPE - Office Fixtures,Assets,debit,1500,false,false
+1519,PPE - Furniture & Fittings,Assets,debit,1500,false,false
+1520,PPE - Assets Under Construction,Assets,debit,1500,false,false
+1521,PPE - Capital Work in Progress,Assets,debit,1500,false,false
+1522,PPE - Agricultural Plantations (Bearer Plants),Assets,debit,1500,false,false
+1523,"PPE - Biological Assets (Poultry, Fisheries, Livestock)",Assets,debit,1500,false,false
+1524,PPE - Petroleum Development Costs,Assets,debit,1500,false,false
+1525,PPE - Distribution Network Assets,Assets,debit,1500,false,false
+1526,PPE - Leasehold Improvements,Assets,debit,1500,false,false
+1527,"PPE - Other Property, Plant & Equipment",Assets,debit,1500,false,false
+1550,Accumulated Depreciation - PPE,Assets,credit,1000,true,false
+1551,Acc. Depreciation - Non-Industrial Building,Assets,credit,1550,false,false
+1552,Acc. Depreciation - Industrial Building,Assets,credit,1550,false,false
+1553,Acc. Depreciation - Plants,Assets,credit,1550,false,false
+1554,"Acc. Depreciation - Ships, Boats & Yachts",Assets,credit,1550,false,false
+1555,Acc. Depreciation - Heavy Equipment,Assets,credit,1550,false,false
+1556,Acc. Depreciation - Aircraft Engine & Fuselage,Assets,credit,1550,false,false
+1557,Acc. Depreciation - Aircraft & Vessel Furnishing,Assets,credit,1550,false,false
+1558,Acc. Depreciation - Communications & Electricity Towers & Cables,Assets,credit,1550,false,false
+1559,Acc. Depreciation - Trains & Tracks,Assets,credit,1550,false,false
+1560,Acc. Depreciation - Motor Vehicles,Assets,credit,1550,false,false
+1561,"Acc. Depreciation - Motor Vehicles (Bus, Truck & Mass Transit)",Assets,credit,1550,false,false
+1562,Acc. Depreciation - Tools & Equipment,Assets,credit,1550,false,false
+1563,Acc. Depreciation - Office Equipment,Assets,credit,1550,false,false
+1564,Acc. Depreciation - Medical Equipment,Assets,credit,1550,false,false
+1565,Acc. Depreciation - Household Equipment,Assets,credit,1550,false,false
+1566,Acc. Depreciation - Computer Hardware,Assets,credit,1550,false,false
+1567,Acc. Depreciation - Office Fixtures,Assets,credit,1550,false,false
+1568,Acc. Depreciation - Furniture & Fittings,Assets,credit,1550,false,false
+1569,Acc. Depreciation - Agricultural Plantations (Bearer Plants),Assets,credit,1550,false,false
+1570,"Acc. Depreciation - Biological Assets (Poultry, Fisheries, Livestock)",Assets,credit,1550,false,false
+1571,Acc. Depreciation - Petroleum Development Costs,Assets,credit,1550,false,false
+1572,Acc. Depreciation - Distribution Network Assets,Assets,credit,1550,false,false
+1573,Acc. Depreciation - Leasehold Improvements,Assets,credit,1550,false,false
+1574,"Acc. Depreciation - Other Property, Plant & Equipment",Assets,credit,1550,false,false
+1600,Intangible Assets,Assets,debit,1000,true,false
+1601,Goodwill,Assets,debit,1600,false,false
+1602,Patents,Assets,debit,1600,false,false
+1603,Trademarks,Assets,debit,1600,false,false
+1604,Brands,Assets,debit,1600,false,false
+1605,Customer Relationships,Assets,debit,1600,false,false
+1606,Copyrights,Assets,debit,1600,false,false
+1607,Computer Software & Development Costs,Assets,debit,1600,false,false
+1608,Concession & Service Rights,Assets,debit,1600,false,false
+1609,Accumulated Amortisation - Intangibles,Assets,credit,1600,false,false
+1610,Other Intangible Assets,Assets,debit,1600,false,false
+1650,Right-of-Use Assets (IFRS 16),Assets,debit,1000,true,false
+1651,ROU Asset - Buildings & Premises,Assets,debit,1650,false,false
+1652,ROU Asset - Motor Vehicles,Assets,debit,1650,false,false
+1653,ROU Asset - Plant & Equipment,Assets,debit,1650,false,false
+1654,Accumulated Depreciation - ROU Assets,Assets,credit,1650,false,false
+1700,Investments,Assets,debit,1000,true,false
+1701,Investment in Subsidiaries,Assets,debit,1700,false,false
+1702,Investment in Associates & Joint Ventures,Assets,debit,1700,false,false
+1703,Investment Securities - FVTPL,Assets,debit,1700,false,false
+1704,Investment Securities - FVOCI,Assets,debit,1700,false,false
+1705,Investment Securities - Amortised Cost,Assets,debit,1700,false,false
+1706,Investment Properties,Assets,debit,1700,false,false
+1707,Net Investment in Finance Leases,Assets,debit,1700,false,false
+1708,Staff Loans - Long Term,Assets,debit,1700,false,false
+1709,Digital Assets,Assets,debit,1700,false,false
+1710,Investment in Commodities,Assets,debit,1700,false,false
+1711,Other Investments,Assets,debit,1700,false,false
+1800,Other Non-Current Assets,Assets,debit,1000,true,false
+1801,Leasehold Land,Assets,debit,1800,false,false
+1802,Leasehold Buildings,Assets,debit,1800,false,false
+1803,Deferred Tax Assets,Assets,debit,1800,false,false
+1804,Contract Assets - Non-Current,Assets,debit,1800,false,false
+1805,Derivative Financial Assets,Assets,debit,1800,false,false
+1806,Long-Term Loans & Receivables,Assets,debit,1800,false,false
+1807,Defined Benefit Plan Assets,Assets,debit,1800,false,false
+1808,Other Financial Assets,Assets,debit,1800,false,false
+1809,Other Non-Current Assets,Assets,debit,1800,false,false
+2000,LIABILITIES,Liabilities,credit,,true,false
+2100,Trade & Other Payables,Liabilities,credit,2000,true,false
+2101,Trade Payables - Local,Liabilities,credit,2100,false,false
+2102,Trade Payables - Foreign,Liabilities,credit,2100,false,false
+2103,Accrued Expenses,Liabilities,credit,2100,false,false
+2104,Other Payables,Liabilities,credit,2100,false,false
+2105,Intercompany / Related-Party Payables,Liabilities,credit,2100,false,false
+2106,Directors' Current Accounts (Payable),Liabilities,credit,2100,false,false
+2107,Contract Liabilities / Advances from Customers,Liabilities,credit,2100,false,false
+2108,Dividend Payable,Liabilities,credit,2100,false,false
+2109,Refund Liabilities,Liabilities,credit,2100,false,false
+2110,Deferred Income - Current,Liabilities,credit,2100,false,false
+2200,Statutory & Tax Liabilities,Liabilities,credit,2000,true,false
+2201,Output VAT Payable,Liabilities,credit,2200,false,false
+2202,Withholding Tax Payable (Agent),Liabilities,credit,2200,false,false
+2203,PAYE Payable,Liabilities,credit,2200,false,false
+2204,Pension Contributions Payable,Liabilities,credit,2200,false,false
+2205,NHF Payable,Liabilities,credit,2200,false,false
+2206,NSITF Payable,Liabilities,credit,2200,false,false
+2207,ITF Payable,Liabilities,credit,2200,false,false
+2208,Current Income Tax Payable (CIT),Liabilities,credit,2200,false,false
+2209,Development Levy Payable,Liabilities,credit,2200,false,false
+2210,Other Statutory Levies Payable,Liabilities,credit,2200,false,false
+2300,Borrowings - Current,Liabilities,credit,2000,true,false
+2301,Bank Overdrafts,Liabilities,credit,2300,false,false
+2302,Short-Term Loans,Liabilities,credit,2300,false,false
+2303,Current Portion of Long-Term Borrowings,Liabilities,credit,2300,false,false
+2304,Lease Liabilities - Current,Liabilities,credit,2300,false,false
+2305,Interest Payable,Liabilities,credit,2300,false,false
+2306,Commercial Papers & Other Short-Term Debt,Liabilities,credit,2300,false,false
+2400,Provisions - Current,Liabilities,credit,2000,true,false
+2401,Provision for Warranties,Liabilities,credit,2400,false,false
+2402,Provision for Bonuses & Employee Benefits,Liabilities,credit,2400,false,false
+2403,Other Provisions - Current,Liabilities,credit,2400,false,false
+2500,Borrowings - Non-Current,Liabilities,credit,2000,true,false
+2501,Long-Term Bank Loans,Liabilities,credit,2500,false,false
+2502,Shareholder & Related-Party Loans,Liabilities,credit,2500,false,false
+2503,Bonds & Debt Securities Issued,Liabilities,credit,2500,false,false
+2504,Lease Liabilities - Non-Current,Liabilities,credit,2500,false,false
+2505,Deposits from Customers,Liabilities,credit,2500,false,false
+2600,Other Non-Current Liabilities,Liabilities,credit,2000,true,false
+2601,Deferred Tax Liabilities,Liabilities,credit,2600,false,false
+2602,Deferred Revenue - Non-Current,Liabilities,credit,2600,false,false
+2603,Retirement Benefit Obligations,Liabilities,credit,2600,false,false
+2604,Decommissioning & Restoration Provisions,Liabilities,credit,2600,false,false
+2605,Long-Term Provisions & Contingencies,Liabilities,credit,2600,false,false
+2606,Derivative Financial Liabilities,Liabilities,credit,2600,false,false
+2607,Stock Warrant Obligations,Liabilities,credit,2600,false,false
+2608,Other Non-Current Liabilities,Liabilities,credit,2600,false,false
+3000,EQUITY,Equity,credit,,true,false
+3001,Issued Share Capital - Ordinary,Equity,credit,3000,false,false
+3002,Issued Share Capital - Preference,Equity,credit,3000,false,false
+3003,Share Premium,Equity,credit,3000,false,false
+3004,Deposit for Shares,Equity,credit,3000,false,false
+3005,Retained Earnings,Equity,credit,3000,false,false
+3006,Revaluation Reserve,Equity,credit,3000,false,false
+3007,Statutory Reserve,Equity,credit,3000,false,false
+3008,Foreign Currency Translation Reserve,Equity,credit,3000,false,false
+3009,Cash Flow Hedge Reserve,Equity,credit,3000,false,false
+3010,FVOCI Reserve,Equity,credit,3000,false,false
+3011,Share-Based Payment Reserve,Equity,credit,3000,false,false
+3012,Capital Reserve,Equity,credit,3000,false,false
+3013,Contingency Reserve,Equity,credit,3000,false,false
+3014,Reserve for Bonus Issue,Equity,credit,3000,false,false
+3015,Other Reserves,Equity,credit,3000,false,false
+3016,Non-Controlling Interests,Equity,credit,3000,false,false
+3017,Treasury Shares,Equity,debit,3000,false,false
+3999,Opening Balance Equity (System),Equity,credit,3000,false,true
+4000,INCOME,Income,credit,,true,false
+4100,Operating Revenue,Income,credit,4000,true,false
+4101,Revenue - Manufacturing,Income,credit,4100,false,false
+4102,"Revenue - Agriculture, Forestry & Fishing",Income,credit,4100,false,false
+4103,Revenue - Mining & Quarrying,Income,credit,4100,false,false
+4104,Revenue - Electricity,Income,credit,4100,false,false
+4105,"Revenue - Water Supply, Sewerage & Waste Management",Income,credit,4100,false,false
+4106,Revenue - Construction,Income,credit,4100,false,false
+4107,Revenue - Wholesale & Retail Trade,Income,credit,4100,false,false
+4108,Revenue - Transportation & Haulage,Income,credit,4100,false,false
+4109,Revenue - Accommodation & Food Service Activities,Income,credit,4100,false,false
+4110,Revenue - Communication & Information,Income,credit,4100,false,false
+4111,Revenue - Banks & Other Financial Activities,Income,credit,4100,false,false
+4112,Revenue - Insurance Activities,Income,credit,4100,false,false
+4113,Revenue - Real Estate Activities,Income,credit,4100,false,false
+4114,"Revenue - Professional, Scientific & Technical Activities",Income,credit,4100,false,false
+4115,Revenue - Administrative & Support Activities,Income,credit,4100,false,false
+4116,Revenue - Education,Income,credit,4100,false,false
+4117,Revenue - Oil & Gas,Income,credit,4100,false,false
+4118,"Revenue - NGOs, NFPOs & Religious Institutions",Income,credit,4100,false,false
+4119,"Revenue - Art, Entertainment & Recreation",Income,credit,4100,false,false
+4120,Revenue - Digital & Virtual Assets,Income,credit,4100,false,false
+4121,Revenue - Other Sectors,Income,credit,4100,false,false
+4131,Sales Returns & Allowances,Income,debit,4100,false,false
+4132,Discounts Allowed,Income,debit,4100,false,false
+4500,Other Income,Income,credit,4000,true,false
+4501,Commission Income,Income,credit,4500,false,false
+4502,Interest Income,Income,credit,4500,false,false
+4503,Finance Lease Income,Income,credit,4500,false,false
+4504,Rental Income,Income,credit,4500,false,false
+4505,Dividend Income (Franked Investment Income),Income,credit,4500,false,false
+4506,Gain on Disposal of Investments / Subsidiaries,Income,credit,4500,false,false
+4507,Write-Back of Provisions,Income,credit,4500,false,false
+4508,Gain on Disposal of PPE,Income,credit,4500,false,false
+4509,"Non-Taxable Revenue, Grants & Donations Received",Income,credit,4500,false,false
+4510,Realised Foreign Exchange Gains,Income,credit,4500,false,false
+4511,Unrealised Foreign Exchange Gains,Income,credit,4500,false,false
+4512,Bad Debts Recovered,Income,credit,4500,false,false
+4513,Other Investment Income,Income,credit,4500,false,false
+4514,Insurance Claims Received,Income,credit,4500,false,false
+4515,Fair Value Gains (P&L),Income,credit,4500,false,false
+4516,Sundry Income,Income,credit,4500,false,false
+5000,COST OF SALES / DIRECT COSTS,Cost of Sales,debit,,true,false
+5100,Purchases,Cost of Sales,debit,5000,true,false
+5101,Purchases - Local,Cost of Sales,debit,5100,false,false
+5102,Purchases - Imports,Cost of Sales,debit,5100,false,false
+5103,Purchase Returns (Returns Outwards),Cost of Sales,credit,5100,false,false
+5104,Carriage Inwards & Clearing,Cost of Sales,debit,5100,false,false
+5105,Import Duties & Landing Costs,Cost of Sales,debit,5100,false,false
+5200,Other Direct Costs,Cost of Sales,debit,5000,true,false
+5201,Direct Wages,Cost of Sales,debit,5200,false,false
+5202,Direct Materials & Expenses,Cost of Sales,debit,5200,false,false
+5203,Subcontractor & Direct Service Costs,Cost of Sales,debit,5200,false,false
+5204,Depreciation - Production Assets,Cost of Sales,debit,5200,false,false
+5205,Amortisation - Direct Intangibles,Cost of Sales,debit,5200,false,false
+5206,Mining Costs,Cost of Sales,debit,5200,false,false
+5207,Direct Construction Costs,Cost of Sales,debit,5200,false,false
+5208,Storage & Handling Costs,Cost of Sales,debit,5200,false,false
+5209,Other Direct Costs,Cost of Sales,debit,5200,false,false
+5300,Factory Overheads,Cost of Sales,debit,5000,true,false
+5301,Factory Rent,Cost of Sales,debit,5300,false,false
+5302,Factory Rates,Cost of Sales,debit,5300,false,false
+5303,Fuel & Power - Factory,Cost of Sales,debit,5300,false,false
+5304,Indirect Wages,Cost of Sales,debit,5300,false,false
+5305,Factory Repairs & Maintenance,Cost of Sales,debit,5300,false,false
+5306,Other Factory Overheads,Cost of Sales,debit,5300,false,false
+5400,Inventory Movement (System),Cost of Sales,debit,5000,false,true
+5401,Change in Inventories (Periodic),Cost of Sales,debit,5000,false,false
+6000,OPERATING & ADMINISTRATIVE EXPENSES,Expenses,debit,,true,false
+6100,Personnel Costs,Expenses,debit,6000,true,false
+6101,Salaries & Wages,Expenses,debit,6100,false,false
+6102,Staff Allowances,Expenses,debit,6100,false,false
+6103,Employee Benefit Expenses,Expenses,debit,6100,false,false
+6104,Pension Contributions - Employer,Expenses,debit,6100,false,false
+6105,Staff Gratuity,Expenses,debit,6100,false,false
+6106,Medical Expenses - Staff,Expenses,debit,6100,false,false
+6107,Training & Development,Expenses,debit,6100,false,false
+6108,Staff Welfare,Expenses,debit,6100,false,false
+6109,Directors' Emoluments,Expenses,debit,6100,false,false
+6110,Directors' Expenses,Expenses,debit,6100,false,false
+6111,Staff Loans Written Off,Expenses,debit,6100,false,false
+6112,Outsourced Services & Contract Staff,Expenses,debit,6100,false,false
+6113,Recruitment Costs,Expenses,debit,6100,false,false
+6114,Other Staff Costs,Expenses,debit,6100,false,false
+6200,"Occupancy, Office & Utilities",Expenses,debit,6000,true,false
+6201,Rent - Office & Premises,Expenses,debit,6200,false,false
+6202,Rates & Tenement Charges,Expenses,debit,6200,false,false
+6203,Service Charge,Expenses,debit,6200,false,false
+6204,Utilities - Water & Sewage,Expenses,debit,6200,false,false
+6205,Electricity & Power,Expenses,debit,6200,false,false
+6206,Diesel (AGO),Expenses,debit,6200,false,false
+6207,Petrol (PMS),Expenses,debit,6200,false,false
+6208,Generator Running & Maintenance,Expenses,debit,6200,false,false
+6209,Repairs & Maintenance,Expenses,debit,6200,false,false
+6210,Cleaning & Janitorial Services,Expenses,debit,6200,false,false
+6211,Security Expenses,Expenses,debit,6200,false,false
+6212,Stationery & Printing,Expenses,debit,6200,false,false
+6213,Postage & Courier,Expenses,debit,6200,false,false
+6214,Newspapers & Periodicals,Expenses,debit,6200,false,false
+6215,Insurance - General Business,Expenses,debit,6200,false,false
+6216,Office Consumables,Expenses,debit,6200,false,false
+6300,Technology & Communication,Expenses,debit,6000,true,false
+6301,Telephone & Communication,Expenses,debit,6300,false,false
+6302,Internet & Data,Expenses,debit,6300,false,false
+6303,Software Subscriptions & Maintenance,Expenses,debit,6300,false,false
+6304,Website Design & Maintenance,Expenses,debit,6300,false,false
+6305,IT Support & Hardware Maintenance,Expenses,debit,6300,false,false
+6400,Marketing & Business Development,Expenses,debit,6000,true,false
+6401,Advertising & Promotion,Expenses,debit,6400,false,false
+6402,Corporate Promotion,Expenses,debit,6400,false,false
+6403,Public Relations,Expenses,debit,6400,false,false
+6404,Publication Costs,Expenses,debit,6400,false,false
+6405,Trade Fairs & Exhibitions,Expenses,debit,6400,false,false
+6406,Sponsorships,Expenses,debit,6400,false,false
+6407,Selling & Distribution Expenses,Expenses,debit,6400,false,false
+6408,Corporate Social Responsibility,Expenses,debit,6400,false,false
+6409,Entertainment - Business,Expenses,debit,6400,false,false
+6410,Gifts & Souvenirs,Expenses,debit,6400,false,false
+6500,"Professional, Regulatory & Statutory",Expenses,debit,6000,true,false
+6501,Audit Fees,Expenses,debit,6500,false,false
+6502,Accountancy & Bookkeeping Fees,Expenses,debit,6500,false,false
+6503,Legal Fees,Expenses,debit,6500,false,false
+6504,Consultancy Fees,Expenses,debit,6500,false,false
+6505,Management & Technical Fees,Expenses,debit,6500,false,false
+6506,Secretarial & CAC Filing Fees,Expenses,debit,6500,false,false
+6507,Other Professional Fees,Expenses,debit,6500,false,false
+6508,Government & Regulatory Costs,Expenses,debit,6500,false,false
+6509,Licences & Permits,Expenses,debit,6500,false,false
+6510,Subscriptions & Dues,Expenses,debit,6500,false,false
+6511,AMCON Levy,Expenses,debit,6500,false,false
+6512,Other Statutory Charges & Levies,Expenses,debit,6500,false,false
+6513,Fines,Expenses,debit,6500,false,false
+6514,Penalties,Expenses,debit,6500,false,false
+6515,Royalties,Expenses,debit,6500,false,false
+6600,Travel & Transport,Expenses,debit,6000,true,false
+6601,Local Transport & Logistics,Expenses,debit,6600,false,false
+6602,Travel - Local,Expenses,debit,6600,false,false
+6603,Travel - International,Expenses,debit,6600,false,false
+6604,Hotel & Accommodation,Expenses,debit,6600,false,false
+6605,Vehicle Running Costs,Expenses,debit,6600,false,false
+6606,Freight & Transport Expenses,Expenses,debit,6600,false,false
+6607,Head Office Costs,Expenses,debit,6600,false,false
+6700,Finance Charges & FX (Operating),Expenses,debit,6000,true,false
+6701,Bank Charges,Expenses,debit,6700,false,false
+6702,Interest Expense,Expenses,debit,6700,false,false
+6703,Realised Foreign Exchange Losses,Expenses,debit,6700,false,false
+6704,Unrealised Foreign Exchange Losses,Expenses,debit,6700,false,false
+6800,"Impairments, Write-Offs & Disposals",Expenses,debit,6000,true,false
+6801,Bad Debts Written Off,Expenses,debit,6800,false,false
+6802,Impairment of Receivables (ECL Charge),Expenses,debit,6800,false,false
+6803,Impairment of Other Assets,Expenses,debit,6800,false,false
+6804,Loss on Disposal of PPE,Expenses,debit,6800,false,false
+6805,Inventory Write-Downs,Expenses,debit,6800,false,false
+6900,"Depreciation, Amortisation & Other",Expenses,debit,6000,true,false
+6901,Depreciation - PPE (Admin),Expenses,debit,6900,false,false
+6902,Depreciation - Right-of-Use Assets,Expenses,debit,6900,false,false
+6903,Amortisation - Intangible Assets,Expenses,debit,6900,false,false
+6904,Donations,Expenses,debit,6900,false,false
+6905,Research Costs,Expenses,debit,6900,false,false
+6906,"Health, Safety & Environment",Expenses,debit,6900,false,false
+6907,General / Sundry Expenses,Expenses,debit,6900,false,false
+7000,FINANCE COSTS & TAXATION,Finance Costs & Taxation,debit,,true,false
+7100,Finance Costs (Excluding Interest),Finance Costs & Taxation,debit,7000,true,false
+7101,Loan Arrangement & Facility Fees,Finance Costs & Taxation,debit,7100,false,false
+7102,Letter of Credit & Trade Finance Charges,Finance Costs & Taxation,debit,7100,false,false
+7103,Interest on Lease Liabilities,Finance Costs & Taxation,debit,7100,false,false
+7104,Unwinding of Discount on Provisions,Finance Costs & Taxation,debit,7100,false,false
+7105,Other Finance Costs,Finance Costs & Taxation,debit,7100,false,false
+7500,Taxation,Finance Costs & Taxation,debit,7000,true,false
+7501,Current Income Tax Expense (CIT),Finance Costs & Taxation,debit,7500,false,false
+7502,Development Levy Expense,Finance Costs & Taxation,debit,7500,false,false
+7503,Deferred Tax Expense / (Credit),Finance Costs & Taxation,debit,7500,false,false
+7504,Prior-Year Under/(Over) Provision,Finance Costs & Taxation,debit,7500,false,false
+7505,Minimum ETR Top-Up Tax,Finance Costs & Taxation,debit,7500,false,false
+8000,OTHER COMPREHENSIVE INCOME,Other Comprehensive Income,credit,,true,false
+8001,Revaluation Gains / (Losses) - PPE,Other Comprehensive Income,credit,8000,false,false
+8002,Remeasurement of Defined Benefit Plans,Other Comprehensive Income,credit,8000,false,false
+8003,Foreign Currency Translation Differences,Other Comprehensive Income,credit,8000,false,false
+8004,Cash Flow Hedge Gains / (Losses),Other Comprehensive Income,credit,8000,false,false
+8005,FVOCI Fair Value Changes,Other Comprehensive Income,credit,8000,false,false
+8006,Gains / (Losses) on Derivative Contracts (OCI),Other Comprehensive Income,credit,8000,false,false
+8007,"Unrealised FX Gain (OCI, per NRS line)",Other Comprehensive Income,credit,8000,false,false
+8008,Income Tax on OCI Items,Other Comprehensive Income,credit,8000,false,false
+8009,Other Comprehensive Income - Others,Other Comprehensive Income,credit,8000,false,false
+9000,SYSTEM & CONTROL ACCOUNTS,System & Control,debit,,true,false
+9001,Uncategorised Transactions (AI Suspense),System & Control,debit,9000,false,true
+9002,Bank Clearing / In-Transit,System & Control,debit,9000,false,true
+9003,Payroll Clearing,System & Control,credit,9000,false,true
+9004,Intercompany Clearing,System & Control,debit,9000,false,true
+9005,Goods Received Not Invoiced (GRNI),System & Control,credit,9000,false,true
+9006,Rounding Differences,System & Control,debit,9000,false,true
+9007,Migration / Opening Balance Offset,System & Control,debit,9000,false,true
