@@ -4,6 +4,7 @@ import { Icon } from '../../components/Icon';
 import { rpc } from '../../lib/supabase';
 import { useInventory, useSession } from '../../state/session';
 import { useAction } from '../../lib/queries';
+import { acct, usePostingMap } from '../../lib/accounts';
 
 type FieldKey = 'name' | 'sku' | 'price' | 'cost' | 'qty' | 'pack_size' | 'barcode' | 'category' | 'selling_unit' | 'purchase_unit' | 'vat_treatment' | 'reorder_floor' | 'note';
 const FIELDS: { key: FieldKey; label: string; syn: string[] }[] = [
@@ -36,6 +37,7 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
   const { data: inv } = useInventory();
   const { orgId } = useSession();
   const { run } = useAction();
+  const posting = usePostingMap().data;
   const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
   const [file, setFile] = useState<string>('');
   const [rows, setRows] = useState<string[][]>([]);
@@ -163,7 +165,7 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '60px 0', textAlign: 'center' }}>
             <Spinner />
             <div style={{ fontSize: 15, fontWeight: 600 }}>{step === 1 ? `Reading ${file}` : `Creating ${rows.length || manual.filter((m) => m.name).length} items and opening balances…`}</div>
-            <div className="muted" style={{ fontSize: 13 }}>{step === 1 ? 'Matching headers to your item master' : 'Opening stock posts to Atlas · Dr 1310 Inventory / Cr 3100 Opening balance'}</div>
+            <div className="muted" style={{ fontSize: 13 }}>{step === 1 ? 'Matching headers to your item master' : `Opening stock posts to Atlas · Dr ${acct(posting, 'inventory').code} ${acct(posting, 'inventory').name} / Cr ${acct(posting, 'opening_equity').code} ${acct(posting, 'opening_equity').name}`}</div>
           </div>
         )}
         {step === 2 && (

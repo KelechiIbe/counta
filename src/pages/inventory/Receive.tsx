@@ -14,6 +14,7 @@ import {
 import { Icon } from '../../components/Icon';
 import { Alert, Chip, Empty, Label, Modal, SkeletonRows, Spinner, XButton } from '../../components/ui';
 import JournalDrawer from '../../components/JournalDrawer';
+import { acct, accountName, useAccounts, useItemAccounts, usePostingMap } from '../../lib/accounts';
 
 const STATUS: Record<string, string> = { reading: 'Reading', needs_review: 'Needs review', posted: 'Posted', discarded: 'Discarded' };
 const SRC: Record<string, string> = { pdf: 'Typed · PDF', photo_typed: 'Typed · photo', photo_handwritten: 'Handwritten · OCR', manual: 'Manual' };
@@ -184,6 +185,16 @@ export function ReceiveFlow({ mode, receiptId, po, itemId, onClose, onAnother, o
 
   const items = inv?.items || [];
   const t = totals(inv, lines, header.vendor_vat_registered);
+  const postingMap = usePostingMap();
+  const itemAccounts = useItemAccounts();
+  const accounts = useAccounts();
+  const map = postingMap.data;
+  const invDefault = acct(map, 'inventory').code;
+  const stockByAcct: Record<string, number> = {};
+  for (const l of lines) {
+    const code = (l.item_id && itemAccounts.data?.[l.item_id]) || invDefault;
+    stockByAcct[code] = Math.round(((stockByAcct[code] || 0) + Math.round(Number(l.qty || 0) * Number(l.unit_cost || 0) * 100) / 100) * 100) / 100;
+  }
   const doubt = lines.filter((l) => !l.confirmed).length;
   const vendors = inv?.vendors || [];
   const locName = inv?.locations.find((l) => l.id === header.location_id)?.name || 'the branch';
@@ -337,15 +348,20 @@ export function ReceiveFlow({ mode, receiptId, po, itemId, onClose, onAnother, o
               <Label>Journal preview · one confirmed action</Label>
               <div className="card" style={{ borderRadius: 12, marginTop: 10, overflow: 'hidden' }}>
                 <div className="tr head shade th" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '8px 14px' }}><span>Acct</span><span>Account</span><span className="right">Debit</span><span className="right">Credit</span></div>
-                <JRow code="1310" name="Inventory – stock on hand" dr={t.net} />
-                {header.vendor_vat_registered && t.vat > 0 && <JRow code="1420" name="Input VAT receivable · 7.5%" dr={t.vat} />}
-                <JRow code="2010" name={`Accounts payable – ${header.vendor_id ? vendors.find((v) => v.id === header.vendor_id)?.name : header.vendor_name || 'vendor'}`} cr={t.gross} />
+                <JRow code={acct(map, 'purchases').code} name={acct(map, 'purchases').name} dr={t.net} />
+                {header.vendor_vat_registered && t.vat > 0 && <JRow code={acct(map, 'input_vat').code} name={`${acct(map, 'input_vat').name} · 7.5%`} dr={t.vat} />}
+                <JRow code={acct(map, 'payables').code} name={`${acct(map, 'payables').name} · ${header.vendor_id ? vendors.find((v) => v.id === header.vendor_id)?.name : header.vendor_name || 'vendor'}`} cr={t.gross} />
+                {Object.entries(stockByAcct).sort(([a], [b]) => a.localeCompare(b)).map(([code, amt]) => (
+                  <JRow key={code} code={code} name={`${code === invDefault ? acct(map, 'inventory').name : accountName(accounts.data, code)} · ${locName}`} dr={amt} />
+                ))}
+                <JRow code={acct(map, 'inventory_movement').code} name={acct(map, 'inventory_movement').name} cr={t.net} />
               </div>
               <div className="muted" style={{ marginTop: 10, fontSize: 12, lineHeight: 1.45 }}>
                 {header.vendor_vat_registered
                   ? `Input VAT flows into this month's VAT position. ${t.vatBase < t.net ? 'Zero-rated and exempt lines are excluded from the 7.5% by their item master treatment.' : 'Every line on this invoice is standard-rated.'}`
                   : 'Vendor is not VAT-registered, so no input VAT is claimable on this receipt.'}
                 {receipt.document_path ? ' The source image stays attached to the journal as audit evidence.' : ''}
+                {` Accounts follow the TaxStreem chart. Purchases and the stock movement both sit in cost of sales, so the profit and loss shows what you bought less what is still on the shelf.`}
               </div>
             </div>
             <div className="stack" style={{ gap: 12 }}>

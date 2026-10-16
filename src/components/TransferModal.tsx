@@ -5,11 +5,13 @@ import { rpc } from '../lib/supabase';
 import { useInventory, useSession } from '../state/session';
 import { useAction } from '../lib/queries';
 import { qtyLabel } from '../lib/domain';
+import { acct, usePostingMap } from '../lib/accounts';
 
 export default function TransferModal({ itemId, onClose }: { itemId?: string; onClose: () => void }) {
   const { data: inv } = useInventory();
   const { orgId } = useSession();
   const { run, busy } = useAction();
+  const map = usePostingMap().data;
   const locs = inv?.locations || [];
   const [item, setItem] = useState(itemId || inv?.items[0]?.id || '');
   const [from, setFrom] = useState(locs[0]?.id || '');
@@ -56,7 +58,7 @@ export default function TransferModal({ itemId, onClose }: { itemId?: string; on
           <input className="input" type="number" inputMode="numeric" value={qty} onChange={(e) => { setQty(e.target.value); setErr(''); }} placeholder="0" />
         </Field>
         {err && <Alert kind="red" icon="alert">{err}</Alert>}
-        <div className="hint">Posts Cr 1310 at origin / Dr 1315 Goods in transit. The receiving branch confirms on their phone, which moves it into their stock.</div>
+        <div className="hint">Posts Dr {acct(map, 'goods_in_transit').code} {acct(map, 'goods_in_transit').name} and Cr {acct(map, 'inventory').code} {acct(map, 'inventory').name} at {fromName || 'the origin'}. The receiving branch confirms on their phone, which moves it into their stock.</div>
       </div>
       <div className="modal-ft">
         <button className="btn btn-secondary" onClick={onClose}>Cancel</button>

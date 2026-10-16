@@ -10,6 +10,7 @@ import { Icon } from '../../components/Icon';
 import { Chip, Drawer, Pills, Stat, Thumb, XButton, Alert, Empty, SkeletonRows } from '../../components/ui';
 import ItemForm from './ItemForm';
 import TransferModal from '../../components/TransferModal';
+import { ItemAccountCard } from '../../components/ChartOfAccounts';
 import { printLabel, qrSvg } from '../../lib/labels';
 import { supabase, rpc } from '../../lib/supabase';
 
@@ -198,6 +199,7 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
                   <button className="btn btn-secondary btn-sm" style={{ marginTop: 10, color: '#111827' }} onClick={() => printLabel(it, inv.org.name).catch((e) => toast(e.message, 'err'))}><Icon name="printer" size={16} />Print label</button>
                 </div>
               </div>
+              {costs && <ItemAccountCard itemId={it.id} itemName={it.name} />}
               <button className="card row" onClick={() => fileRef.current?.click()} style={{ padding: 14, borderRadius: 12, gap: 12, borderStyle: 'dashed', borderColor: '#D1D5DB', cursor: 'pointer', textAlign: 'left', background: '#fff' }}>
                 <Icon name="image" size={20} color="#6B7280" />
                 <div style={{ fontSize: 13, color: '#4B5563', lineHeight: 1.45 }}>{it.photo_path ? 'Replace the product photo.' : 'Product photo. Drop an image or take one on the phone — a picture of the carton settles disagreements faster than a SKU.'}</div>
