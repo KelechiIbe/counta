@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { can, useInventory } from '../state/session';
 import { useCashVsStock, useCounts, useFx, usePOs, useProposals, useReceipts, useTransfers } from '../lib/queries';
 import { buildItems, cashVsStock, fxTrend, reorderSuggestions, type CashStory, type Suggestion } from '../lib/domain';
-import { daysBetween } from '../lib/format';
+import { daysBetween, plural } from '../lib/format';
 
 export function useSuggestions(): { suggestions: Suggestion[]; ready: boolean } {
   const { data: inv } = useInventory();
@@ -46,7 +46,7 @@ export function useNeedsAction(): { rows: ActionRow[]; total: number; badges: { 
       badges.reorder = suggestions.length;
       const below = suggestions.filter((s) => s.onHand <= s.floor);
       const next = suggestions.find((s) => s.onHand > s.floor);
-      const parts = [below[0] && `${name(below[0].item.name)} is below floor`, next && `${name(next.item.name)} crosses it in ~${Math.max(1, Math.round((next.onHand - next.floor) / next.vel))} days`].filter(Boolean);
+      const parts = [below[0] && `${name(below[0].item.name)} is below floor`, next && `${name(next.item.name)} crosses it in ~${plural(Math.max(1, Math.round((next.onHand - next.floor) / next.vel)), 'day')}`].filter(Boolean);
       rows.push({ key: 'reorder', t: `${suggestions.length} reorder suggestion${suggestions.length === 1 ? '' : 's'}`, d: parts.join(' · ') || 'Stock is approaching its floor', cta: 'Review', to: '/inventory/reorder', icon: 'package', color: '#0072F5', bg: '#F0F7FF' });
     }
     const open = (proposals.data || []).filter((p) => p.status === 'open');

@@ -6,15 +6,16 @@ import AppShell from './shell/AppShell';
 import { AuthPage, UpdatePasswordPage } from './pages/auth/Auth';
 import Onboarding from './pages/Onboarding';
 import Overview from './pages/inventory/Overview';
-import Items from './pages/inventory/Items';
-import Receive from './pages/inventory/Receive';
-import Counts from './pages/inventory/Counts';
-import Reorder from './pages/inventory/Reorder';
-import Pricing from './pages/inventory/Pricing';
-import Insights from './pages/inventory/Insights';
-import Locations from './pages/inventory/Locations';
-import Assistant from './pages/Assistant';
-import Settings from './pages/Settings';
+
+const Items = lazy(() => import('./pages/inventory/Items'));
+const Receive = lazy(() => import('./pages/inventory/Receive'));
+const Counts = lazy(() => import('./pages/inventory/Counts'));
+const Reorder = lazy(() => import('./pages/inventory/Reorder'));
+const Pricing = lazy(() => import('./pages/inventory/Pricing'));
+const Insights = lazy(() => import('./pages/inventory/Insights'));
+const Locations = lazy(() => import('./pages/inventory/Locations'));
+const Assistant = lazy(() => import('./pages/Assistant'));
+const Settings = lazy(() => import('./pages/Settings'));
 
 const MobileApp = lazy(() => import('./mobile/MobileApp'));
 
