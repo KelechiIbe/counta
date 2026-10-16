@@ -35,20 +35,49 @@ const NOT_CONFIGURED = { ok: false, reason: 'not_configured', error: 'AI reading
 
 type Part = { text: string } | { inlineData: { mimeType: string; data: string } };
 
-async function gemini(system: string, parts: Part[], schema: unknown, temperature = 0.1): Promise<{ data: any; model: string }> {
+// Models that just failed are skipped for two minutes, and each attempt gives up after 50 seconds,
+// so a busy model costs one slow call rather than every call.
+const resting = new Map<string, number>();
+// thinking: 'low' keeps simple structured jobs (matching columns, reading stock lines) quick. A model that
+// does not accept the setting is retried once without it.
+const noThinking = new Set<string>();
+async function gemini(system: string, parts: Part[], schema: unknown, temperature = 0.1, opts: { thinking?: 'low' } = {}): Promise<{ data: any; model: string }> {
   let lastErr = '';
-  for (const model of [MODEL, ...FALLBACK_MODELS.filter((m) => m !== MODEL)]) {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts }],
-        generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature },
-      }),
-    });
-    if (res.status === 404 || res.status === 400 && (await res.clone().text()).includes('not found')) { lastErr = `${model} unavailable`; continue; }
-    if (res.status === 429 || res.status >= 500) { lastErr = `${model} busy (${res.status})`; continue; }
+  const all = [MODEL, ...FALLBACK_MODELS.filter((m) => m !== MODEL)];
+  const ready = all.filter((m) => (resting.get(m) || 0) < Date.now());
+  for (const model of ready.length ? ready : all) {
+    let res: Response | null = null;
+    for (const think of opts.thinking && !noThinking.has(model) ? [true, false] : [false]) {
+      try {
+        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: system }] },
+            contents: [{ role: 'user', parts }],
+            generationConfig: {
+              responseMimeType: 'application/json', responseSchema: schema, temperature,
+              ...(think ? { thinkingConfig: { thinkingLevel: opts.thinking } } : {}),
+            },
+          }),
+          signal: AbortSignal.timeout(50_000),
+        });
+      } catch (e) {
+        lastErr = `${model} did not answer (${(e as Error).name})`; resting.set(model, Date.now() + 120_000); res = null; break;
+      }
+      if (think && res.status === 400 && /thinking/i.test(await res.clone().text())) { noThinking.add(model); continue; }
+      break;
+    }
+    if (!res) continue;
+    if (res.status === 404 || res.status === 400 && (await res.clone().text()).includes('not found')) { lastErr = `${model} unavailable`; resting.set(model, Date.now() + 3600_000); continue; }
+    if (res.status === 429 || res.status >= 500) {
+      const why = await res.text();
+      console.warn('gemini', model, res.status, why.slice(0, 400));
+      lastErr = res.status === 429 && /quota|exhaust/i.test(why)
+        ? 'The Gemini key has used up its quota. Turn on billing for it in Google AI Studio, or try again once the quota resets.'
+        : `${model} busy (${res.status})`;
+      resting.set(model, Date.now() + 120_000); continue;
+    }
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const body = await res.json();
     const text = body?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || '';
@@ -271,6 +300,102 @@ LOCATIONS: ${JSON.stringify(body.locations || [])}`,
   }
 }
 
+// ---------------------------------------------------------------- spreadsheet import
+// Matches the columns of whatever sheet a business uploads to Counta's item fields. The app sends the
+// header row, a few sample rows, the field catalogue for the business's industry and the branch names.
+async function mapColumns(body: any) {
+  if (!GEMINI_KEY) return json(NOT_CONFIGURED);
+  const headers: string[] = (body.headers || []).slice(0, 80).map((h: unknown) => String(h ?? '').slice(0, 80));
+  if (!headers.length) return json({ ok: false, error: 'No columns to match.' }, 400);
+  const samples: string[][] = (body.samples || []).slice(0, 8).map((r: unknown[]) => (r || []).slice(0, 80).map((c) => String(c ?? '').slice(0, 80)));
+  const fields = (body.fields || []).slice(0, 120);
+  const schema = {
+    type: 'OBJECT',
+    properties: {
+      columns: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            index: S.int,
+            field: { type: 'STRING', description: 'A field key from FIELDS, or "note" to keep the value on the item as a note, or "ignore"' },
+            location: { type: 'STRING', nullable: true, description: 'For qty / qty_pu columns that belong to one branch: that branch name exactly as in BRANCHES' },
+            confidence: S.int,
+          },
+          required: ['index', 'field', 'confidence'],
+        },
+      },
+      quantities_in: { type: 'STRING', enum: ['selling', 'purchase'], description: 'Are plain quantity columns counted in selling units (pieces, packs) or purchase units (cartons, bags)?' },
+      costs_per: { type: 'STRING', enum: ['selling', 'purchase'] },
+      prices_per: { type: 'STRING', enum: ['selling', 'purchase'] },
+      summary: { type: 'STRING', description: 'One plain sentence on what the sheet holds and anything the user should check' },
+    },
+    required: ['columns', 'quantities_in', 'costs_per', 'prices_per', 'summary'],
+  };
+  try {
+    const { data, model } = await gemini(`You match spreadsheet columns from Nigerian businesses to an inventory system's fields.
+Headers are often abbreviated or informal: "Desc" or "Description" is usually the product name, "Ctn" is carton, "Qty" quantity, "CP" cost price, "SP" selling price, "W/S" wholesale, "Exp" expiry, "S/N" a row number (ignore it), "Pcs" pieces.
+Use the sample values, not just the header: a column of 8-14 digit numbers is a barcode; values like "24 x 50cl" or "ctn of 12" are pack sizes; money with commas or ₦ is a price or cost; dates in the future near an item are expiry dates.
+Fields ending in _pu are per purchase unit (carton, bag, case). Choose qty_pu, cost_pu or price_pu when the header or values say carton/bag/case, otherwise qty, cost, price.
+A column whose header names a branch (from BRANCHES) and holds quantities is stock at that branch: field qty or qty_pu with location set.
+Each field may be used once, except qty and qty_pu which may repeat for different branches. Keep columns you cannot place as "note"; use "ignore" only for row numbers, blank or computed total columns.
+FIELDS: ${JSON.stringify(fields)}
+BRANCHES: ${JSON.stringify(body.locations || [])}
+INDUSTRY: ${String(body.industry || 'retail')}`,
+      [{ text: 'HEADERS (index: name):\n' + headers.map((h, i) => `${i}: ${h}`).join('\n') + '\n\nSAMPLE ROWS:\n' + samples.map((r) => JSON.stringify(r)).join('\n') }],
+      schema, 0.1, { thinking: 'low' });
+    return json({ ok: true, ...data, model });
+  } catch (e) {
+    return json({ ok: false, reason: 'error', error: (e as Error).message });
+  }
+}
+
+// For sheets with no usable columns (one free-text description per row, or a pasted list), Martina reads
+// each line into item fields. Up to 120 lines per call.
+async function extractRows(body: any) {
+  if (!GEMINI_KEY) return json(NOT_CONFIGURED);
+  const lines: { row: number; text: string }[] = (body.lines || []).slice(0, 120).map((l: any) => ({ row: Number(l.row) || 0, text: String(l.text || '').slice(0, 400) }));
+  if (!lines.length) return json({ ok: false, error: 'No lines to read.' }, 400);
+  const attrKeys: string[] = (body.attribute_keys || []).slice(0, 40).map(String);
+  const schema = {
+    type: 'OBJECT',
+    properties: {
+      items: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            row: S.int, name: S.str, brand: S.nstr, category: S.nstr, item_type: S.nstr,
+            purchase_unit: S.nstr, pack_size: { type: 'INTEGER', nullable: true }, selling_unit: S.nstr,
+            qty: { type: 'NUMBER', nullable: true, description: 'Quantity on hand in SELLING units' },
+            cost: { type: 'NUMBER', nullable: true, description: 'Cost per SELLING unit in naira' },
+            price: { type: 'NUMBER', nullable: true, description: 'Selling price per SELLING unit in naira' },
+            barcode: S.nstr, sku: S.nstr, expiry_date: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' }, batch_no: S.nstr,
+            attributes: { type: 'ARRAY', items: { type: 'OBJECT', properties: { key: S.str, value: S.str }, required: ['key', 'value'] } },
+          },
+          required: ['row', 'name'],
+        },
+      },
+    },
+    required: ['items'],
+  };
+  try {
+    const { data, model } = await gemini(`You turn lines from a Nigerian shop's stock list into inventory items.
+Lines look like "Indomie chicken 70g x40 - 12 ctns @ 9,600" (12 cartons of 40 packs, ₦9,600 per carton, so qty 480 packs and cost 240 per pack) or "Dangote sugar 1kg 20 bags".
+Always convert quantities, costs and prices to SELLING units using the pack size. Keep the product name clean (brand, product, size) without quantities or prices.
+Use item_type only when obvious: raw_material, packaging, consumable, spare_part, chemical, finished_good or merchandise.
+attributes may only use these keys: ${JSON.stringify(attrKeys)}. Return one item per input line, with its row number. Skip lines that are headings or totals.
+INDUSTRY: ${String(body.industry || 'retail')}`,
+      [{ text: lines.map((l) => `${l.row}: ${l.text}`).join('\n') }], schema, 0.1, { thinking: 'low' });
+    const items = (data.items || []).map((it: any) => ({
+      ...it, attributes: Object.fromEntries((it.attributes || []).filter((a: any) => attrKeys.includes(a.key)).map((a: any) => [a.key, a.value])),
+    }));
+    return json({ ok: true, items, model });
+  } catch (e) {
+    return json({ ok: false, reason: 'error', error: (e as Error).message });
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
@@ -292,6 +417,8 @@ Deno.serve(async (req) => {
       case 'ask': return await ask(body);
       case 'chat': return await chat(body);
       case 'voice': return await voice(body);
+      case 'map_columns': return await mapColumns(body);
+      case 'extract_rows': return await extractRows(body);
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }
   } catch (e) {

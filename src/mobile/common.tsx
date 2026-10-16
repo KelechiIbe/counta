@@ -50,7 +50,7 @@ export function SaleSheet({ item, onDone, onCancel, voice }: {
   const su = Number(qty) * (kind === 'purchase' ? item.pack_size : 1);
   const onHand = Number(item.qty?.[where] || 0);
   const value = su * Number(item.price);
-  const err = !(Number(qty) > 0) ? 'Enter a quantity above zero.' : null;
+  const err = !(Number(item.price) > 0) ? 'This item has no selling price, so it cannot be sold. The owner can add one from the item.' : !(Number(qty) > 0) ? 'Enter a quantity above zero.' : null;
   async function save() {
     if (err || !inv || !orgId) return;
     setBusy(true);
@@ -76,6 +76,7 @@ export function SaleSheet({ item, onDone, onCancel, voice }: {
         )}
       </div>
       <div className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span className="muted">{num(su)} {pluralUnit(item.selling_unit, su)}</span><b>{N(value)}</b></div>
+      {!(Number(item.price) > 0) && <div className="alert alert-yellow" style={{ fontSize: 12 }}>{err}</div>}
       <div className="row" style={{ gap: 8 }}>
         <button className="m-btn secondary" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>
         <button className="m-btn" style={{ flex: 1 }} disabled={!!err || busy} onClick={save}>Record sale</button>

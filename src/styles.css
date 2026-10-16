@@ -236,6 +236,13 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
   .print-area { position: absolute; left: 0; top: 0; }
 }
 
+.mini-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.mini-table th { position: sticky; top: 0; background: #FAFAFA; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; z-index: 1; }
+.mini-table td { padding: 8px 10px; border-bottom: 1px solid #F3F4F6; vertical-align: top; }
+.mini-table .right, .mini-table th.right { text-align: right; }
+.mini-table tfoot td { font-weight: 700; background: #FAFAFA; border-top: 1px solid var(--line); position: sticky; bottom: 0; }
+.report-table td { white-space: nowrap; }
+.report-table tr.sub td { background: #FAFAFA; font-style: italic; color: var(--muted); }
 .install-banner { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-color: #CFE3FF; background: #FAFCFF; }
 .install-banner .x-btn { margin-top: -2px; }
 .content > .install-banner { max-width: 1280px; margin: 0 auto 16px; }

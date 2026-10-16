@@ -32,7 +32,8 @@ export default defineConfig({
       workbox: {
         navigateFallback: '/index.html',
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
-        globIgnores: ['**/push-sw.js'],
+        // Export libraries load only when someone downloads a file, so phones do not install them up front.
+        globIgnores: ['**/push-sw.js', '**/exceljs*.js', '**/xlsx-*.js', '**/pdf-vendor-*.js'],
         importScripts: ['push-sw.js'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         runtimeCaching: [
@@ -40,6 +41,11 @@ export default defineConfig({
             urlPattern: ({ url }) => url.origin === 'https://fonts.googleapis.com' || url.origin === 'https://fonts.gstatic.com',
             handler: 'StaleWhileRevalidate',
             options: { cacheName: 'fonts' }
+          },
+          {
+            urlPattern: ({ url }) => /\/assets\/(exceljs|xlsx-|pdf-vendor-)/.test(url.pathname),
+            handler: 'CacheFirst',
+            options: { cacheName: 'export-libs', expiration: { maxEntries: 12 } }
           },
           {
             // The barcode reader for iPhones (no built-in BarcodeDetector). Cached on first scan.
@@ -51,5 +57,16 @@ export default defineConfig({
       }
     })
   ],
-  build: { chunkSizeWarningLimit: 1600 }
+  build: {
+    chunkSizeWarningLimit: 1600,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('vite/preload-helper') || id.includes('commonjsHelpers')) return 'runtime';
+          if (/node_modules\/(jspdf|jspdf-autotable|canvg|html2canvas|dompurify|rgbcolor|stackblur-canvas|svg-pathdata)\//.test(id)) return 'pdf-vendor';
+          return undefined;
+        }
+      }
+    }
+  }
 });

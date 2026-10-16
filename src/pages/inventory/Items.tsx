@@ -9,6 +9,9 @@ import { moveQty, moveRef, typeLabel, typeTone } from '../../lib/ledger';
 import { Icon } from '../../components/Icon';
 import { Chip, Drawer, Pills, Stat, Thumb, XButton, Alert, Empty, SkeletonRows } from '../../components/ui';
 import ItemForm from './ItemForm';
+import ImportPanel from './ImportPanel';
+import { ALL_FIELDS, ITEM_TYPES, fieldsFor, formatAttr, industryOf, typeLabel as kindLabel, typeSells } from '../../lib/industries';
+import { downloadBlob, itemsXlsx, safeName } from '../../lib/exporters';
 import TransferModal from '../../components/TransferModal';
 import { ItemAccountCard } from '../../components/ChartOfAccounts';
 import { printLabel, qrSvg } from '../../lib/labels';
@@ -24,6 +27,9 @@ export default function Items() {
   const [filter, setFilter] = useState<'all' | Status | 'review'>((location.state as any)?.filter || 'all');
   const [sel, setSel] = useState<string | null>((location.state as any)?.item || null);
   const [add, setAdd] = useState(false);
+  const [upload, setUpload] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const toast = useToast();
   const items = useMemo(() => (inv ? buildItems(inv, loc) : []), [inv, loc]);
   if (!inv) return null;
   const costs = inv.can_see_costs;
@@ -46,6 +52,12 @@ export default function Items() {
         </div>
         <Pills value={filter} onChange={setFilter} options={chips} />
         <div style={{ flex: 1 }} />
+        <button className="btn btn-secondary" disabled={exporting} title="Every item and field, in the import template layout" onClick={async () => {
+          setExporting(true);
+          try { downloadBlob(await itemsXlsx(inv), `${safeName(inv.org.name)} – item list.xlsx`); } catch (e: any) { toast(e.message || 'Export failed', 'err'); }
+          setExporting(false);
+        }}><Icon name="download" size={16} />{exporting ? 'Exporting…' : 'Export'}</button>
+        {can(inv, 'edit_prices') && <button className="btn btn-secondary" onClick={() => setUpload(true)}><Icon name="upload" size={16} />Upload</button>}
         {can(inv, 'edit_prices') && <button className="btn btn-primary" onClick={() => setAdd(true)}><Icon name="plus" size={16} color="#fff" />Add item</button>}
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
@@ -59,13 +71,13 @@ export default function Items() {
                 <Thumb name={i.name} path={i.photo_path} />
                 <div style={{ minWidth: 0 }}>
                   <div className="ellipsis" style={{ fontWeight: 600 }}>{i.name}</div>
-                  <div style={{ fontSize: 11, color: '#9CA3AF' }}>{i.barcode || 'No barcode · QR generated'}{i.needs_review ? ' · needs a check' : ''}</div>
+                  <div style={{ fontSize: 11, color: '#9CA3AF' }}>{[i.brand, !typeSells(i.item_type) ? kindLabel(i.item_type) : null, i.barcode || 'No barcode · QR generated'].filter(Boolean).join(' · ')}{i.needs_review ? ' · needs a check' : ''}</div>
                 </div>
               </div>
               <span className="ink3 hide-sm">{i.category}</span>
               <span data-label="On hand">{qtyLabel(i, i.q)}</span>
               <span className="right ink3 num hide-sm">{costs ? N(i.wac) : '—'}</span>
-              <span className="right num" data-label="Price" style={{ fontWeight: 500 }}>{N(i.price)}</span>
+              <span className="right num" data-label="Price" style={{ fontWeight: 500 }}>{Number(i.price) > 0 ? N(i.price) : <span className="faint">Not sold</span>}</span>
               <span className={'right num' + (costs ? '' : ' hide-sm')} data-label="Margin" style={{ fontWeight: 600, color: costs ? marginColor(i.margin, Number(inv.org.margin_threshold)) : '#9CA3AF' }}>{costs ? P(i.margin) : '—'}</span>
               <span className="right num hide-sm">{costs ? K(i.value) : '—'}</span>
               <span className="m-end"><Chip label={i.status} /></span>
@@ -77,6 +89,7 @@ export default function Items() {
       </div>
       {selected && <ItemDrawer item={selected} onClose={() => setSel(null)} />}
       {add && <ItemForm onClose={() => setAdd(false)} onSaved={(id) => setSel(id)} />}
+      {upload && <ImportPanel onClose={() => setUpload(false)} />}
     </div>
   );
 }
@@ -87,7 +100,7 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
   const nav = useNavigate();
   const toast = useToast();
   const { run } = useAction();
-  const [tab, setTab] = useState<'stock' | 'units' | 'batches' | 'moves'>('stock');
+  const [tab, setTab] = useState<'stock' | 'details' | 'units' | 'batches' | 'moves'>('stock');
   const [edit, setEdit] = useState(false);
   const [transfer, setTransfer] = useState(false);
   const [qr, setQr] = useState<string>('');
@@ -125,7 +138,7 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
           <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
           <div className="grow">
             <div className="row wrap"><div className="drawer-title">{it.name}</div><Chip label={it.status} /></div>
-            <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>{it.category} · {vat} · {vendor?.name || 'No preferred vendor'}</div>
+            <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>{[it.brand, it.category, !typeSells(it.item_type) ? kindLabel(it.item_type) : null, vat, vendor?.name || 'No preferred vendor'].filter(Boolean).join(' · ')}</div>
           </div>
           {can(inv, 'edit_prices') && <button className="btn btn-secondary btn-xs" onClick={() => setEdit(true)}><Icon name="pencil" size={14} />Edit</button>}
           <XButton onClick={onClose} />
@@ -133,11 +146,11 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
         <div className="m-2 drawer-pad-x" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, padding: '16px 24px 0' }}>
           <Stat label="On hand" value={qtyLabel(it, it.qAll)} />
           <Stat label="Days cover" value={it.cover != null ? Math.round(it.qAll / Math.max(it.vel, 0.0001)) : '—'} />
-          <Stat label={`Price / ${su}`} value={N(it.price)} />
+          <Stat label={`Price / ${su}`} value={Number(it.price) > 0 ? N(it.price) : 'Not sold'} />
           <Stat label="Margin" value={costs ? P(it.margin) : '—'} color={costs ? marginColor(it.margin, Number(inv.org.margin_threshold)) : '#9CA3AF'} />
         </div>
         <div className="row drawer-pad-x" style={{ gap: 4, padding: '16px 24px 0', borderBottom: '1px solid #E6E6E6', overflowX: 'auto', flexWrap: 'nowrap' }} role="tablist">
-          {([['stock', 'Stock'], ['units', 'Units & labels'], ['batches', 'Batches'], ['moves', 'Movements']] as const).map(([id, label]) => (
+          {([['stock', 'Stock'], ['details', 'Details'], ['units', 'Units & labels'], ['batches', 'Batches'], ['moves', 'Movements']] as const).map(([id, label]) => (
             <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
               style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: 13, fontWeight: 600, color: tab === id ? '#0072F5' : '#6B7280', borderBottom: '2px solid ' + (tab === id ? '#0072F5' : 'transparent'), cursor: 'pointer', marginBottom: -1 }}>{label}</button>
           ))}
@@ -176,6 +189,7 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
               </div>
             </div>
           )}
+          {tab === 'details' && <ItemDetails it={it} />}
           {tab === 'units' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div className="card" style={{ padding: 14, borderRadius: 12 }}>
@@ -246,5 +260,38 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
       {edit && <ItemForm item={it} onClose={() => setEdit(false)} />}
       {transfer && <TransferModal itemId={it.id} onClose={() => setTransfer(false)} />}
     </>
+  );
+}
+
+
+function ItemDetails({ it }: { it: ItemView }) {
+  const { data: inv } = useInventory();
+  if (!inv) return null;
+  const ind = industryOf(inv.org.industry);
+  const indKeys = new Set(fieldsFor(inv.org.industry).map((f) => f.key));
+  const attrs = it.attributes || {};
+  const rows: [string, string][] = [
+    ['Kind of item', kindLabel(it.item_type)],
+    ['Inventory account', it.inventory_account || ITEM_TYPES.find((t) => t.id === (it.item_type || 'merchandise'))?.account || '1203'],
+    ['Brand', it.brand || ''], ['Catalogue ID / SKU', it.sku || ''], ['Barcode', it.barcode || ''], ['NAFDAC number', it.nafdac_no || ''],
+  ];
+  const own = fieldsFor(inv.org.industry).map((f) => [f.label, formatAttr(f, attrs[f.key])] as [string, string]);
+  const other = Object.keys(attrs).filter((k) => !indKeys.has(k)).map((k) => [ALL_FIELDS.find((f) => f.key === k)?.label || k, formatAttr(ALL_FIELDS.find((f) => f.key === k), attrs[k])] as [string, string]);
+  const block = (title: string, list: [string, string][]) => list.some(([, v]) => v) && (
+    <div className="card" style={{ padding: 14, borderRadius: 12 }}>
+      <div className="mini-label" style={{ marginBottom: 8 }}>{title}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px,40%) 1fr', rowGap: 6, columnGap: 12, fontSize: 13 }}>
+        {list.filter(([, v]) => v).map(([k, v]) => [<span key={k + 'k'} className="muted">{k}</span>, <span key={k + 'v'} style={{ wordBreak: 'break-word' }}>{v}</span>])}
+      </div>
+    </div>
+  );
+  return (
+    <div className="stack" style={{ gap: 12 }}>
+      {block('Item', rows)}
+      {block(`${ind.label} details`, own)}
+      {block('Other details', other)}
+      {it.description && <div className="card" style={{ padding: 14, borderRadius: 12, fontSize: 13, lineHeight: 1.5 }}><div className="mini-label" style={{ marginBottom: 6 }}>Description</div>{it.description}</div>}
+      {!own.some(([, v]) => v) && !other.length && <div className="hint">No {ind.label.toLowerCase()} details yet. Use Edit to add them, or upload a sheet with those columns.</div>}
+    </div>
   );
 }

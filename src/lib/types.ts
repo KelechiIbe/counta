@@ -13,7 +13,7 @@ export const PERMS: { key: Perm; label: string }[] = [
 export interface Org {
   id: string; name: string; email: string | null; phone: string | null; timezone: string; vat_registered: boolean;
   margin_threshold: number; safety_days: number; cover_days: number; cash_available: number | null;
-  voice_trust_threshold: number; is_sample: boolean; created_at: string;
+  voice_trust_threshold: number; is_sample: boolean; created_at: string; industry?: string;
 }
 export interface Location { id: string; org_id: string; name: string; code: string; address: string | null; is_main: boolean; }
 export interface Vendor {
@@ -35,6 +35,7 @@ export interface Item {
   vat_treatment: 'standard' | 'zero' | 'exempt'; nafdac_no: string | null; purchase_unit: string; pack_size: number; selling_unit: string;
   informal_unit: boolean; track_batches: boolean; reorder_floor: number; preferred_vendor_id: string | null; alt_vendor_id: string | null;
   price: number; import_priced: boolean; notes: Record<string, string>; needs_review: boolean; created_at: string;
+  item_type?: string; brand?: string | null; description?: string | null; attributes?: Record<string, string | number | boolean>; inventory_account?: string | null;
   wac: number | null; last_cost: number | null; replacement_cost: number | null; replacement_source: string | null;
   qty: Record<string, number>; sold_30: number; sold_prev30: number; revenue_30: number; cogs_30: number | null;
   last_sale_at: string | null; first_at: string | null; last_move_at: string | null; snoozed_until: string | null;

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { rpc } from '../lib/supabase';
+import { must, rpc, supabase } from '../lib/supabase';
+import { INDUSTRIES } from '../lib/industries';
 import { useSession, useToast } from '../state/session';
 import { Alert, Field, Spinner } from '../components/ui';
 import { Icon } from '../components/Icon';
@@ -14,6 +15,7 @@ export default function Onboarding() {
   const [you, setYou] = useState<string>(meta.full_name || '');
   const [phone, setPhone] = useState('');
   const [vat, setVat] = useState(true);
+  const [industry, setIndustry] = useState('retail');
   const [branches, setBranches] = useState([{ name: 'Main store', address: '' }]);
   const [busy, setBusy] = useState<'create' | 'sample' | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -28,6 +30,7 @@ export default function Onboarding() {
         p_name: name.trim(), p_email: session?.user?.email, p_phone: phone, p_display_name: you,
         p_locations: branches.filter((b) => b.name.trim()), p_vat_registered: vat,
       });
+      if (industry !== 'retail') await must(supabase.from('orgs').update({ industry }).eq('id', id).select('id').single());
       await refreshMemberships(); setOrgId(id);
       toast(name.trim() + ' is set up');
       nav('/inventory', { replace: true });
@@ -56,6 +59,11 @@ export default function Onboarding() {
         </div>
         <div className="card card-pad" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <Field label="Business name" req><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Kelandellen Company Limited" /></Field>
+          <Field label="What kind of business is it?" hint="Sets the item fields, units and import template. You can change it later in Settings.">
+            <select className="input" value={industry} onChange={(e) => setIndustry(e.target.value)}>
+              {INDUSTRIES.map((i) => <option key={i.id} value={i.id}>{i.label} · {i.blurb}</option>)}
+            </select>
+          </Field>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
             <Field label="Your name"><input className="input" value={you} onChange={(e) => setYou(e.target.value)} /></Field>
             <Field label="Business phone"><input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+234" /></Field>
