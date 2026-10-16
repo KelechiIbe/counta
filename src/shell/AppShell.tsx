@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { Suspense, createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { can, useInventory, useSession } from '../state/session';
 import { Icon } from '../components/Icon';
@@ -175,7 +175,7 @@ export default function AppShell() {
             ) : error && !inv ? (
               <div className="empty">Could not load this business. {(error as Error).message}</div>
             ) : (
-              <Outlet />
+              <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: 320 }}><Spinner /></div>}><Outlet /></Suspense>
             )}
           </div>
         </main>
