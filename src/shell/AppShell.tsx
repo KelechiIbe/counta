@@ -14,7 +14,7 @@ export const useLoc = () => useContext(LocCtx);
 
 const TITLES: Record<string, string> = {
   '/inventory': 'Inventory', '/inventory/items': 'Items', '/inventory/receive': 'Receive stock', '/inventory/counts': 'Stock counts',
-  '/inventory/reorder': 'Reorder', '/inventory/pricing': 'Pricing', '/inventory/insights': 'Insights', '/inventory/locations': 'Locations & staff',
+  '/inventory/reorder': 'Reorder', '/inventory/pricing': 'Pricing', '/inventory/insights': 'Insights', '/inventory/locations': 'Locations & staff', '/inventory/reports': 'Reports',
   '/assistant': 'AI Assistant', '/settings': 'Settings',
 };
 const PICKER = new Set(['/inventory', '/inventory/items', '/inventory/insights']);
@@ -41,7 +41,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const subs: [string, string, number][] = [
     ['/inventory', 'Overview', 0], ['/inventory/items', 'Items', 0], ['/inventory/receive', 'Receive stock', badges.receive],
     ['/inventory/counts', 'Stock counts', badges.counts], ['/inventory/reorder', 'Reorder', badges.reorder], ['/inventory/pricing', 'Pricing', badges.pricing],
-    ['/inventory/insights', 'Insights', 0], ['/inventory/locations', 'Locations & staff', badges.locations],
+    ['/inventory/insights', 'Insights', 0], ['/inventory/reports', 'Reports', 0], ['/inventory/locations', 'Locations & staff', badges.locations],
   ];
   return (
     <aside className={'sidebar' + (open ? ' open' : '')} aria-label="Main navigation">

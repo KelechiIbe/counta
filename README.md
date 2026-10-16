@@ -4,7 +4,9 @@ Counta is the inventory module for TaxStreem. Inventory runs as a sub-ledger of 
 
 ## What is in here
 
-The desktop app covers eight screens. **Overview** carries the Martina prompt bar, the KPI snapshot, a single needs-action queue and the movement ledger. **Items** lists every product with units shown in purchase and selling terms, an item drawer (stock, units and labels, batches, movements) and spreadsheet import. **Receive stock** reads typed and handwritten invoices with Gemini, asks the user to confirm any line under 85% confidence beside a crop of the photo, previews the journal against the TaxStreem chart of accounts and posts it. **Stock counts** lets the owner schedule blind counts and approve or reject variances with reasons. **Reorder** shows suggestions sized by velocity, lead time, safety days and seasonality, explainable vendor scores, FX timing advice and draft purchase orders that go out on the vendor's channel. **Pricing** handles price proposals (cost increase, below replacement cost, margin under threshold), landed cost allocation and the price change audit trail. **Insights** compares cash against stock, suggests dead stock markdowns and runs the FEFO batch table with quarantine. **Locations & staff** holds branch cards, transfers through goods in transit, the permission matrix, voice review and the activity log.
+The desktop app covers nine screens. **Overview** carries the Martina prompt bar, the KPI snapshot, a single needs-action queue and the movement ledger. **Items** lists every product with units shown in purchase and selling terms, an item drawer (stock, details, units and labels, batches, movements), Excel export, and upload from our template or any sheet the business already keeps. **Receive stock** reads typed and handwritten invoices with Gemini, asks the user to confirm any line under 85% confidence beside a crop of the photo, previews the journal against the TaxStreem chart of accounts and posts it. **Stock counts** lets the owner schedule blind counts and approve or reject variances with reasons. **Reorder** shows suggestions sized by velocity, lead time, safety days and seasonality, explainable vendor scores, FX timing advice and draft purchase orders that go out on the vendor's channel. **Pricing** handles price proposals (cost increase, below replacement cost, margin under threshold), landed cost allocation and the price change audit trail. **Insights** compares cash against stock, suggests dead stock markdowns and runs the FEFO batch table with quarantine. **Reports** has 22 stock, ledger, purchase, sales and control reports that download as Excel, CSV or PDF, plus a month-end pack in one workbook. **Locations & staff** holds branch cards, transfers through goods in transit, the permission matrix, voice review and the activity log.
+
+The item form and the import template follow the kind of business: a pharmacy records generic name, strength and dosage form with batches on; a fashion store records size, colour and fabric; an auto parts dealer records OEM part number and fitment; a manufacturer records raw materials, packaging and spares that are not for sale and sit in their own inventory accounts. Thirteen trades are set up. `docs/reports-and-import.md` covers the fields, how an uploaded sheet is read and matched, what the import posts, and every report.
 
 Every desktop screen also fits a phone. Tables turn into cards under 760px, modals become bottom sheets, fields stay at 16px so iPhones do not zoom, and the layout respects the notch and home bar. On a phone, `/` opens the phone app; a person can switch to the full app from Today and Counta remembers the choice on that device.
 
@@ -20,14 +22,15 @@ React 18, TypeScript, Vite, React Router and TanStack Query on the front end, sh
 
 ```
 src/
-  pages/inventory/   Overview, Items, Receive, Counts, Reorder, Pricing, Insights, Locations
+  pages/inventory/   Overview, Items, Receive, Counts, Reorder, Pricing, Insights, Reports, Locations
   pages/             Assistant (Martina), Settings, Onboarding, auth
   mobile/            phone app, offline queue (IndexedDB), scan, sell, receive, count, chat
-  lib/               domain rules, receiving, ledger formatting, chart of accounts, Martina, Supabase client
-docs/                TaxStreem chart of accounts (CSV) and the posting reference
+  lib/               domain rules, receiving, ledger formatting, chart of accounts, Martina, Supabase client,
+                     industries (item fields per trade), sheet (reading and matching uploads), reports, exporters
+docs/                TaxStreem chart of accounts (CSV), the posting reference, voice and push, reports and import
 supabase/
   migrations/        schema, RLS, posting functions, sample business, storage, cron, hardening, TaxStreem chart
-  functions/ai       Gemini: read_invoice, ask, chat, voice
+  functions/ai       Gemini: read_invoice, ask, chat, voice, map_columns and extract_rows for uploads
   functions/fx       daily USD/NGN rate for FX timing advice
   functions/voice    ElevenLabs outbound calls: vendor orders and staff reminders
   functions/push     Web Push delivery for the notifications table
@@ -36,7 +39,7 @@ public/push-sw.js    push and notification-click handlers, imported into the Wor
 
 ## Accounting model
 
-Counta posts into the TaxStreem chart of accounts, the same 393 accounts as Accounting > Chart of accounts in the TaxStreem web app (`docs/taxstreem-chart-of-accounts.csv`). No posting function names an account code. Each asks for a posting role and `private.acct()` resolves it from the business's own rule in `posting_rules`, falling back to the TaxStreem default in `posting_roles`. An item can sit in its own inventory account through `items.inventory_account`.
+Counta posts into the TaxStreem chart of accounts, the same 393 accounts as Accounting > Chart of accounts in the TaxStreem web app (`docs/taxstreem-chart-of-accounts.csv`). No posting function names an account code. Each asks for a posting role and `private.acct()` resolves it from the business's own rule in `posting_rules`, falling back to the TaxStreem default in `posting_roles`. An item can sit in its own inventory account through `items.inventory_account`. Its kind sets that account: raw materials and packaging go to 1201, work in progress to 1202, consumables and spares to 1205, chemicals to 1206, and goods for sale stay on the stock-on-hand role.
 
 | Role | Default account |
 | --- | --- |
@@ -48,7 +51,7 @@ Counta posts into the TaxStreem chart of accounts, the same 393 accounts as Acco
 | Stock in and out | 5400 Inventory Movement (System) |
 | Count differences (miscount, unrecorded sale, stock found) | 5400 Inventory Movement (System) |
 | Stock lost or written off (breakage, expiry, theft, quarantine) | 6805 Inventory Write-Downs |
-| Opening stock | 3999 Opening Balance Equity (System) |
+| Opening stock (including stock brought in by an upload) | 3999 Opening Balance Equity (System) |
 | Import duty | 5105 Import Duties & Landing Costs |
 | Clearing and haulage | 5104 Carriage Inwards & Clearing |
 

@@ -10,6 +10,7 @@ import { Alert, Field, Label } from '../components/ui';
 import { ChartDrawer, PostingRules } from '../components/ChartOfAccounts';
 import { CallList } from '../components/Calls';
 import { TOPICS, useVoiceCalls, useVoiceStatus, type VoiceCall } from '../lib/voice';
+import { INDUSTRIES, industryOf } from '../lib/industries';
 import { disablePush, enablePush, usePwaState } from '../lib/pwa';
 
 function Section({ id, title, sub, children }: { id?: string; title: string; sub?: string; children: ReactNode }) {
@@ -109,7 +110,7 @@ export default function Settings() {
   useEffect(() => {
     if (!inv) return;
     const o = inv.org;
-    setF({ name: o.name, email: o.email || '', phone: o.phone || '', vat_registered: o.vat_registered, margin_threshold: String(o.margin_threshold), safety_days: String(o.safety_days),
+    setF({ name: o.name, industry: o.industry || 'retail', email: o.email || '', phone: o.phone || '', vat_registered: o.vat_registered, margin_threshold: String(o.margin_threshold), safety_days: String(o.safety_days),
       cover_days: String(o.cover_days), cash_available: o.cash_available == null ? '' : String(o.cash_available), voice_trust_threshold: String(o.voice_trust_threshold) });
   }, [inv?.org]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -127,7 +128,7 @@ export default function Settings() {
     if (!(mt >= 0 && mt < 100)) { toast('Margin threshold must be between 0 and 99%.', 'err'); return; }
     if (!(sd >= 0) || !(cd >= 1) || !(vt >= 0)) { toast('Days must be whole numbers; cover needs at least 1 day.', 'err'); return; }
     await run(() => must(supabase.from('orgs').update({
-      name: f.name.trim(), email: f.email.trim() || null, phone: f.phone.trim() || null, vat_registered: !!f.vat_registered, margin_threshold: mt, safety_days: sd, cover_days: cd,
+      name: f.name.trim(), industry: f.industry || 'retail', email: f.email.trim() || null, phone: f.phone.trim() || null, vat_registered: !!f.vat_registered, margin_threshold: mt, safety_days: sd, cover_days: cd,
       cash_available: f.cash_available === '' ? null : Math.max(0, Number(f.cash_available)), voice_trust_threshold: vt,
     }).eq('id', inv!.org.id).select().single()), { ok: 'Settings saved', invalidate: ['inv'] });
     refreshMemberships().catch(() => {});
@@ -150,6 +151,11 @@ export default function Settings() {
           <Field label="Email"><input className="input" disabled={!owner} value={f.email || ''} onChange={(e) => set('email', e.target.value)} /></Field>
           <Field label="Phone"><input className="input" disabled={!owner} value={f.phone || ''} onChange={(e) => set('phone', e.target.value)} /></Field>
         </div>
+        <Field label="Kind of business" hint={`Sets the item fields, units and import template. ${industryOf(f.industry).blurb}.`}>
+          <select className="input" disabled={!owner} value={f.industry || 'retail'} onChange={(e) => set('industry', e.target.value)} style={{ maxWidth: 420 }}>
+            {INDUSTRIES.map((i) => <option key={i.id} value={i.id}>{i.label}</option>)}
+          </select>
+        </Field>
         <label className="check"><input type="checkbox" disabled={!owner} checked={!!f.vat_registered} onChange={(e) => set('vat_registered', e.target.checked)} />VAT-registered business (claims input VAT on purchases)</label>
       </Section>
       <Section title="Stock rules" sub="These drive reorder suggestions, price proposals and voice review.">
