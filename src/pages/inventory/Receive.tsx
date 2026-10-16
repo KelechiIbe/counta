@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { useReceipts } from '../../lib/queries';
@@ -35,10 +35,15 @@ export default function Receive() {
   const location = useLocation();
   const nav = useNavigate();
   const st = (location.state || {}) as { open?: string; manualItem?: string; po?: string };
+  const [params, setParams] = useSearchParams();
   const receipts = useReceipts();
   const [flow, setFlow] = useState<{ mode: Source; receiptId?: string; po?: string; itemId?: string } | null>(null);
   const [journal, setJournal] = useState<string | null>(null);
 
+  useEffect(() => {
+    const q = params.get('open');
+    if (q) { setFlow({ mode: 'manual', receiptId: q }); setParams({}, { replace: true }); }
+  }, [params.get('open')]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (st.open) setFlow({ mode: 'manual', receiptId: st.open });
     else if (st.po) setFlow({ mode: 'manual', po: st.po });
@@ -63,7 +68,7 @@ export default function Receive() {
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-hd"><Label>Recent receipts</Label><span className="faint" style={{ fontSize: 12 }}>Needs review rows reopen the flow · posted rows open their journal</span></div>
         <div className="tbl">
-          <div className="tr head th" style={{ gridTemplateColumns: COLS, minWidth: 960 }}>
+          <div className="tr head th rsp" style={{ gridTemplateColumns: COLS, minWidth: 960 }}>
             <span>Ref</span><span>Date</span><span>Vendor</span><span>Source</span><span>Lines</span><span className="right">Total</span><span className="right">Input VAT</span><span>Status</span>
           </div>
           {receipts.isLoading && <SkeletonRows n={4} />}
@@ -72,15 +77,15 @@ export default function Receive() {
             const click = open ? () => allowed && setFlow({ mode: r.source === 'photo_handwritten' ? 'hand' : r.source === 'manual' ? 'manual' : 'typed', receiptId: r.id })
               : () => inv.can_see_costs && setJournal(r.ref);
             return (
-              <div key={r.id} className="tr click" onClick={click} style={{ gridTemplateColumns: COLS, minWidth: 960 }}>
+              <div key={r.id} className="tr click rsp" onClick={click} style={{ gridTemplateColumns: COLS, minWidth: 960 }}>
                 <span style={{ fontWeight: 600, color: '#0072F5' }}>{r.ref}</span>
                 <span className="muted">{fmtDay(r.invoice_date || r.created_at)}</span>
-                <span style={{ fontWeight: 500 }} className="ellipsis">{r.vendor_name || 'Vendor not set'}</span>
-                <span className="ink3">{SRC[r.source]}</span>
-                <span className="ink3">{r.receipt_lines?.length ?? '—'}</span>
-                <span className="right num" style={{ fontWeight: 600 }}>{r.status === 'posted' ? N(r.gross) : '—'}</span>
-                <span className="right num ink3">{r.status === 'posted' && Number(r.input_vat) ? N(r.input_vat) : '—'}</span>
-                <span><Chip label={STATUS[r.status]} /></span>
+                <span style={{ fontWeight: 500 }} className="ellipsis m-main m-first">{r.vendor_name || 'Vendor not set'}</span>
+                <span className="ink3 hide-sm">{SRC[r.source]}</span>
+                <span className="ink3" data-label="Lines">{r.receipt_lines?.length ?? '—'}</span>
+                <span className={'right num' + (r.status === 'posted' ? '' : ' hide-sm')} style={{ fontWeight: 600 }}>{r.status === 'posted' ? N(r.gross) : '—'}</span>
+                <span className="right num ink3 hide-sm">{r.status === 'posted' && Number(r.input_vat) ? N(r.input_vat) : '—'}</span>
+                <span className="m-end"><Chip label={STATUS[r.status]} /></span>
               </div>
             );
           })}
@@ -282,7 +287,7 @@ export function ReceiveFlow({ mode, receiptId, po, itemId, onClose, onAnother, o
         </div>
         <XButton onClick={close} />
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', minHeight: 320 }}>
+      <div className="m-pad16" style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', minHeight: 320 }}>
         {step === 'capture' && <Capture mode={mode} header={header} setHeader={setHeader} onFile={onFile} err={err} />}
         {(step === 'reading') && (
           <Centered>
@@ -327,10 +332,10 @@ export function ReceiveFlow({ mode, receiptId, po, itemId, onClose, onAnother, o
               <button className="btn btn-secondary btn-sm" onClick={() => { dirty.current = true; setLines((ls) => [...ls, blankLine(ls.length + 1)]); }}><Icon name="plus" size={14} />Add line</button>
             </div>
             <div className="tbl">
-              <div className="th" style={{ display: 'grid', gridTemplateColumns: LINE_COLS, gap: 10, padding: '6px 14px', minWidth: 820 }}>
+              <div className="th hide-sm" style={{ display: 'grid', gridTemplateColumns: LINE_COLS, gap: 10, padding: '6px 14px', minWidth: 820 }}>
                 <span>Item</span><span>Qty</span><span>Unit</span><span>Unit cost</span><span className="right">Line total</span><span>Confidence</span><span />
               </div>
-              <div className="stack" style={{ gap: 8, minWidth: 820 }}>
+              <div className="stack m-minw0" style={{ gap: 8, minWidth: 820 }}>
                 {lines.map((l) => (
                   <LineRow key={l.id} l={l} items={items} item={lineItem(inv, l)} docUrl={docUrl} hand={receipt.source === 'photo_handwritten'}
                     canPrice={can(inv, 'edit_prices')} onPatch={(p, c) => patch(l.id, p, c)}
@@ -347,7 +352,7 @@ export function ReceiveFlow({ mode, receiptId, po, itemId, onClose, onAnother, o
             <div>
               <Label>Journal preview · one confirmed action</Label>
               <div className="card" style={{ borderRadius: 12, marginTop: 10, overflow: 'hidden' }}>
-                <div className="tr head shade th" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '8px 14px' }}><span>Acct</span><span>Account</span><span className="right">Debit</span><span className="right">Credit</span></div>
+                <div className="tr head shade th jr-grid" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '8px 14px' }}><span>Acct</span><span>Account</span><span className="right">Debit</span><span className="right">Credit</span></div>
                 <JRow code={acct(map, 'purchases').code} name={acct(map, 'purchases').name} dr={t.net} />
                 {header.vendor_vat_registered && t.vat > 0 && <JRow code={acct(map, 'input_vat').code} name={`${acct(map, 'input_vat').name} · 7.5%`} dr={t.vat} />}
                 <JRow code={acct(map, 'payables').code} name={`${acct(map, 'payables').name} · ${header.vendor_id ? vendors.find((v) => v.id === header.vendor_id)?.name : header.vendor_name || 'vendor'}`} cr={t.gross} />
@@ -435,7 +440,7 @@ function Tick({ children }: { children: ReactNode }) {
 }
 function JRow({ code, name, dr, cr }: { code: string; name: string; dr?: number; cr?: number }) {
   return (
-    <div className="tr" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '10px 14px' }}>
+    <div className="tr jr-grid" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '10px 14px' }}>
       <span className="mono ink3">{code}</span><span>{name}</span>
       <span className="right num" style={{ fontWeight: 600 }}>{dr != null ? N2(dr) : ''}</span>
       <span className="right num" style={{ fontWeight: 600 }}>{cr != null ? N2(cr) : ''}</span>
@@ -515,8 +520,8 @@ function LineRow({ l, items, item, docUrl, hand, canPrice, onPatch, onRemove }: 
   const suQty = item ? Number(l.qty) * (l.unit_kind === 'purchase' ? item.pack_size : 1) : null;
   return (
     <div style={{ border: '1px solid ' + (doubtful ? '#FDE68A' : '#E6E6E6'), background: doubtful ? '#FFFDF5' : '#fff', borderRadius: 12, padding: '10px 14px' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: LINE_COLS, gap: 10, alignItems: 'center', fontSize: 13 }}>
-        <div style={{ minWidth: 0 }}>
+      <div className="line-grid" style={{ display: 'grid', gridTemplateColumns: LINE_COLS, gap: 10, alignItems: 'center', fontSize: 13 }}>
+        <div className="m-full" style={{ minWidth: 0 }}>
           <select className="input input-sm" value={l.item_id || (nw ? '__new' : '')} aria-label="Item"
             onChange={(e) => {
               const v = e.target.value;
@@ -535,14 +540,17 @@ function LineRow({ l, items, item, docUrl, hand, canPrice, onPatch, onRemove }: 
             {l.raw_text ? `read: "${l.raw_text}"` : ''}{item && suQty != null && item.pack_size > 1 ? `${l.raw_text ? ' · ' : ''}${qtyLabel(item, suQty)}` : ''}
           </div>}
         </div>
-        <input className="input input-sm" type="number" inputMode="decimal" min={0} step="any" value={l.qty} aria-label="Quantity" onChange={(e) => onPatch({ qty: e.target.value as any })} />
+        <span className="show-sm faint" style={{ fontSize: 11, marginBottom: -6 }}>Quantity</span>
+        <span className="show-sm faint" style={{ fontSize: 11, marginBottom: -6 }}>Unit</span>
+        <span className="show-sm faint" style={{ fontSize: 11, marginBottom: -6 }}>Cost per unit</span>
+        <input className="input input-sm" type="number" inputMode="decimal" min={0} step="any" value={l.qty} aria-label="Quantity" placeholder="Qty" onChange={(e) => onPatch({ qty: e.target.value as any })} />
         {opts.length > 1 ? (
           <select className="input input-sm" value={l.unit_kind} aria-label="Unit" onChange={(e) => onPatch({ unit_kind: e.target.value as any, unit_label: opts.find((o) => o.kind === e.target.value)?.label || null })}>
             {opts.map((o) => <option key={o.kind} value={o.kind} title={o.hint}>{o.label}</option>)}
           </select>
         ) : <span className="ink3">{opts[0].label}</span>}
-        <input className="input input-sm" type="number" inputMode="decimal" min={0} step="any" value={l.unit_cost} aria-label="Unit cost" onChange={(e) => onPatch({ unit_cost: e.target.value as any })} />
-        <span className="right num" style={{ fontWeight: 600 }}>{N2(total)}</span>
+        <input className="input input-sm" type="number" inputMode="decimal" min={0} step="any" value={l.unit_cost} aria-label="Unit cost" placeholder="₦ each" onChange={(e) => onPatch({ unit_cost: e.target.value as any })} />
+        <span className="right num m-left" style={{ fontWeight: 600 }}>{N2(total)}</span>
         <span><span className="chip" style={{ background: confTone[0], color: confTone[1], fontWeight: 700 }}>{conf}%</span></span>
         <button className="x-btn" onClick={onRemove} aria-label="Remove line"><Icon name="x" size={14} color="#9CA3AF" /></button>
       </div>
@@ -577,8 +585,8 @@ function NewItemFields({ nw, canPrice, cost, onChange }: { nw: NonNullable<Draft
   return (
     <div style={{ marginTop: 8, background: '#F0F7FF', borderRadius: 10, padding: '10px 12px' }}>
       <div style={{ fontSize: 12, color: '#1E3A8A', marginBottom: 8 }}>New item will be created with this cost, pack size, VAT treatment and vendor.</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px,2fr) repeat(3,minmax(90px,1fr)) minmax(120px,1.2fr) minmax(130px,1.2fr)', gap: 8, alignItems: 'end' }}>
-        <div><label className="field-label" style={{ fontSize: 12 }}>Name</label><input className="input input-sm" value={nw.name} onChange={(e) => onChange({ name: e.target.value })} /></div>
+      <div className="m-2" style={{ display: 'grid', gridTemplateColumns: 'minmax(180px,2fr) repeat(3,minmax(90px,1fr)) minmax(120px,1.2fr) minmax(130px,1.2fr)', gap: 8, alignItems: 'end' }}>
+        <div className="m-full"><label className="field-label" style={{ fontSize: 12 }}>Name</label><input className="input input-sm" value={nw.name} onChange={(e) => onChange({ name: e.target.value })} /></div>
         <div><label className="field-label" style={{ fontSize: 12 }}>Buy by the</label>
           <select className="input input-sm" value={nw.purchase_unit || 'Carton'} onChange={(e) => onChange({ purchase_unit: e.target.value })}>{['Carton', 'Bag', 'Bale', 'Pack', 'Crate', 'Roll', 'Sack', 'Tray', 'Dozen'].map((u) => <option key={u}>{u}</option>)}</select></div>
         <div><label className="field-label" style={{ fontSize: 12 }}>Contains</label><input className={'input input-sm' + (packErr ? ' err' : '')} type="number" min={1} step={1} value={nw.pack_size ?? 1} onChange={(e) => onChange({ pack_size: e.target.value as any })} /></div>

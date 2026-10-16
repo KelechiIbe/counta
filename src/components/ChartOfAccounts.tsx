@@ -25,12 +25,12 @@ export function PostingRules({ owner, onOpenChart }: { owner: boolean; onOpenCha
         Counta posts into TaxStreem&apos;s chart of accounts. Each kind of stock entry lands in the account shown here, and the same rules apply on the phone app.
       </div>
       <div className="card" style={{ borderRadius: 12, overflow: 'hidden' }}>
-        <div className="tr head shade th" style={{ gridTemplateColumns: 'minmax(180px,1fr) minmax(220px,1.1fr)', padding: '8px 14px' }}><span>Entry</span><span>Account</span></div>
+        <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: 'minmax(180px,1fr) minmax(220px,1.1fr)', padding: '8px 14px' }}><span>Entry</span><span>Account</span></div>
         {map.isLoading && <div style={{ padding: 14 }}><SkeletonRows n={4} /></div>}
         {(map.data || []).map((r) => {
           const choices = choicesFor(accounts.data, r.allowed);
           return (
-            <div key={r.role} className="tr" style={{ gridTemplateColumns: 'minmax(180px,1fr) minmax(220px,1.1fr)', padding: '12px 14px', alignItems: 'start' }}>
+            <div key={r.role} className="tr m-stack" style={{ gridTemplateColumns: 'minmax(180px,1fr) minmax(220px,1.1fr)', padding: '12px 14px', alignItems: 'start' }}>
               <span><span className="ink" style={{ fontWeight: 600 }}>{r.label}</span><span className="faint" style={{ display: 'block', fontSize: 12, marginTop: 2, lineHeight: 1.45 }}>{r.description}</span></span>
               {owner && choices.length > 1 ? (
                 <select className="input input-sm" aria-label={r.label} value={pending?.role.role === r.role ? pending.code : r.account_code}
@@ -124,9 +124,9 @@ export function ChartDrawer({ onClose }: { onClose: () => void }) {
       <div className="drawer-body" style={{ paddingTop: 12 }}>
         {accounts.isLoading ? <SkeletonRows n={8} /> : !rows.length ? <Empty>No account matches “{q}”.</Empty> : (
           <div className="card" style={{ borderRadius: 12, overflow: 'hidden' }}>
-            <div className="tr head shade th" style={{ gridTemplateColumns: '90px 1fr 110px', padding: '8px 14px' }}><span>Account code</span><span>Account name</span><span>Normal balance</span></div>
+            <div className="tr head shade th coa-grid" style={{ gridTemplateColumns: '90px 1fr 110px', padding: '8px 14px' }}><span>Account code</span><span>Account name</span><span>Normal balance</span></div>
             {rows.map((a) => (
-              <div key={a.code} className="tr" style={{ gridTemplateColumns: '90px 1fr 110px', padding: '9px 14px', background: a.is_group && depth(a) === 0 ? '#FAFAFA' : undefined }}>
+              <div key={a.code} className="tr coa-grid" style={{ gridTemplateColumns: '90px 1fr 110px', padding: '9px 14px', background: a.is_group && depth(a) === 0 ? '#FAFAFA' : undefined }}>
                 <span className="mono ink3" style={{ fontWeight: a.is_group ? 700 : 400 }}>{a.code}</span>
                 <span style={{ paddingLeft: depth(a) * 14, fontWeight: a.is_group ? 600 : 400 }}>
                   {a.name}

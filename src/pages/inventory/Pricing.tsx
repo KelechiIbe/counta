@@ -73,14 +73,14 @@ export default function Pricing() {
           const sug = custom[p.id] ? Number(custom[p.id]) : Number(p.suggested_price);
           const keepM = m(sug, p.new_cost == null ? null : Number(p.new_cost));
           return (
-            <div key={p.id} className="card" style={{ padding: '18px 20px', display: 'grid', gridTemplateColumns: 'minmax(240px,1.4fr) minmax(320px,2fr) auto', gap: 20, alignItems: 'center', opacity: closed ? 0.75 : 1 }}>
+            <div key={p.id} className="card m-stack" style={{ padding: '18px 20px', display: 'grid', gridTemplateColumns: 'minmax(240px,1.4fr) minmax(320px,2fr) auto', gap: 20, alignItems: 'center', opacity: closed ? 0.75 : 1 }}>
               <div style={{ minWidth: 0 }}>
                 <span className={'chip ' + KIND[p.kind][1]}>{KIND[p.kind][0]}</span>
                 <div style={{ fontSize: 15, fontWeight: 600, marginTop: 8 }}>{p.item_name}</div>
                 <div className="ink3" style={{ fontSize: 13, lineHeight: 1.5, marginTop: 4 }}>{copy(p, threshold, costs)}</div>
                 <div className="faint" style={{ fontSize: 11, marginTop: 6 }}>Source · {p.source_ref || '—'} · {fmtDay(p.created_at, false)}</div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 4, background: '#FAFAFA', borderRadius: 12, padding: '12px 14px' }}>
+              <div className="m-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 4, rowGap: 12, background: '#FAFAFA', borderRadius: 12, padding: '12px 14px' }}>
                 <div><div className="mini-label">Old cost</div><div className="ink3" style={{ fontSize: 15, marginTop: 4 }}>{costs ? N2(p.old_cost) : '—'}</div></div>
                 <div><div className="mini-label">New cost</div><div style={{ fontSize: 15, fontWeight: 600, marginTop: 4 }}>{costs ? N2(p.new_cost) : '—'}</div></div>
                 <div><div className="mini-label">Price now</div><div className="ink3" style={{ fontSize: 15, marginTop: 4 }}>{N(p.old_price)}</div>{costs && <div style={{ fontSize: 11, marginTop: 2, color: marginColor(nowM, threshold) }}>{P(nowM)} margin</div>}</div>
@@ -93,7 +93,7 @@ export default function Pricing() {
                   {costs && <div style={{ fontSize: 11, marginTop: 2, color: marginColor(keepM, threshold) }}>{P(keepM)} margin</div>}
                 </div>
               </div>
-              <div className="stack" style={{ gap: 8, minWidth: 130 }}>
+              <div className="stack m-row m-wrap" style={{ gap: 8, minWidth: 130 }}>
                 {!closed && owner && (
                   <>
                     <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => decide(p, true)}>Apply {N(sug)}</button>
@@ -116,13 +116,13 @@ export default function Pricing() {
         <div className="card" style={{ overflow: 'hidden' }}>
           <div className="card-hd"><Label>Price changes · audit trail</Label><span className="faint" style={{ fontSize: 12 }}>Every change carries a reason and the person who made it</span></div>
           <div className="tbl">
-            <div className="tr head th" style={{ gridTemplateColumns: '150px minmax(200px,1.5fr) 180px minmax(160px,1fr) 150px', minWidth: 860 }}>
+            <div className="tr head th rsp" style={{ gridTemplateColumns: '150px minmax(200px,1.5fr) 180px minmax(160px,1fr) 150px', minWidth: 860 }}>
               <span>When</span><span>Item</span><span>Price</span><span>Reason</span><span>By</span>
             </div>
             {changes.isLoading && <SkeletonRows n={3} />}
             {(changes.data || []).map((c) => (
-              <div key={c.id} className="tr" style={{ gridTemplateColumns: '150px minmax(200px,1.5fr) 180px minmax(160px,1fr) 150px', minWidth: 860 }}>
-                <span className="muted">{when(c.created_at)}</span><span style={{ fontWeight: 500 }}>{name(c.item_id)}</span>
+              <div key={c.id} className="tr rsp" style={{ gridTemplateColumns: '150px minmax(200px,1.5fr) 180px minmax(160px,1fr) 150px', minWidth: 860 }}>
+                <span className="muted">{when(c.created_at)}</span><span style={{ fontWeight: 500 }} className="m-main m-first">{name(c.item_id)}</span>
                 <span className="num">{N(c.old_price)} → <b>{N(c.new_price)}</b></span><span className="ink3">{c.reason}</span><span className="ink3">{who(c.changed_by)}</span>
               </div>
             ))}
@@ -205,15 +205,15 @@ function LandedCost({ receiptId, setReceiptId }: { receiptId: string | null; set
             <div><label className="field-label" style={{ fontSize: 12 }}>Amount</label><input className="input input-sm" type="number" min={0} placeholder="₦0" value={other.amount} onChange={(e) => setOther((o) => ({ ...o, amount: e.target.value }))} /></div>
             <div><label className="field-label" style={{ fontSize: 12 }}>Pay to</label><input className="input input-sm" placeholder="Clearing agent" value={payee} onChange={(e) => setPayee(e.target.value)} /></div>
           </div>
-          <div className="th" style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'minmax(200px,1.5fr) 120px 80px 120px 130px 120px', gap: 12, padding: '0 4px' }}>
+          <div className="th hide-sm" style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'minmax(200px,1.5fr) 120px 80px 120px 130px 120px', gap: 12, padding: '0 4px' }}>
             <span>Line</span><span className="right">Invoice</span><span className="right">Share</span><span className="right">Allocated</span><span className="right">Landed</span><span className="right">Per unit</span>
           </div>
           {receipt.isLoading && <SkeletonRows n={2} />}
           {alloc.map((a) => (
-            <div key={a.item_id} style={{ display: 'grid', gridTemplateColumns: 'minmax(200px,1.5fr) 120px 80px 120px 130px 120px', gap: 12, fontSize: 13, padding: '10px 4px', borderTop: '1px solid #F3F4F6', alignItems: 'center' }}>
-              <span style={{ fontWeight: 500 }}>{a.name}</span><span className="right ink3 num">{N(a.value)}</span><span className="right ink3">{P(a.share * 100)}</span>
-              <span className="right num" style={{ color: '#A16207' }}>+{N(a.alloc)}</span><span className="right num" style={{ fontWeight: 600 }}>{N(a.landed)}</span>
-              <span className="right ink3 num">{a.su ? N2(a.landed / a.su) + '/' + suAbbr(a.unit) : '—'}</span>
+            <div key={a.item_id} className="alloc-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(200px,1.5fr) 120px 80px 120px 130px 120px', gap: 12, fontSize: 13, padding: '10px 4px', borderTop: '1px solid #F3F4F6', alignItems: 'center' }}>
+              <span style={{ fontWeight: 500 }}>{a.name}</span><span className="right ink3 num" data-label="Invoice">{N(a.value)}</span><span className="right ink3" data-label="Share">{P(a.share * 100)}</span>
+              <span className="right num" style={{ color: '#A16207' }} data-label="Allocated">+{N(a.alloc)}</span><span className="right num" style={{ fontWeight: 600 }} data-label="Landed">{N(a.landed)}</span>
+              <span className="right ink3 num" data-label="Per unit">{a.su ? N2(a.landed / a.su) + '/' + suAbbr(a.unit) : '—'}</span>
             </div>
           ))}
           <div className="row wrap" style={{ justifyContent: 'space-between', borderTop: '1px solid #E6E6E6', marginTop: 4, paddingTop: 12, gap: 10 }}>

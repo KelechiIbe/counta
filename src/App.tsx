@@ -1,6 +1,7 @@
-import { lazy, Suspense, type ReactNode } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useSession } from './state/session';
+import { refreshPushSubscription, store } from './lib/pwa';
 import { Spinner } from './components/ui';
 import AppShell from './shell/AppShell';
 import { AuthPage, UpdatePasswordPage } from './pages/auth/Auth';
@@ -32,13 +33,36 @@ function RequireAuth({ children, needOrg = true }: { children: ReactNode; needOr
   return <>{children}</>;
 }
 
+// Phones open the phone app unless the person chose the full app on this device.
 function Home() {
   const phone = typeof window !== 'undefined' && window.matchMedia('(max-width: 700px)').matches;
-  return <Navigate to={phone ? '/m' : '/inventory'} replace />;
+  const pref = store.get('counta-view');
+  return <Navigate to={pref === 'full' ? '/inventory' : pref === 'phone' || phone ? '/m' : '/inventory'} replace />;
+}
+
+// A tapped notification asks an open window to go to its page (see public/push-sw.js).
+function DeviceHooks() {
+  const nav = useNavigate();
+  const { session } = useSession();
+  const uid = session?.user.id;
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const onMsg = (e: MessageEvent) => {
+      if (e.data?.type !== 'counta:navigate' || typeof e.data.url !== 'string') return;
+      const u = new URL(e.data.url, window.location.origin);
+      if (u.origin === window.location.origin) nav(u.pathname + u.search + u.hash);
+    };
+    navigator.serviceWorker.addEventListener('message', onMsg);
+    return () => navigator.serviceWorker.removeEventListener('message', onMsg);
+  }, [nav]);
+  useEffect(() => { if (uid) refreshPushSubscription(); }, [uid]);
+  return null;
 }
 
 export default function App() {
   return (
+    <>
+    <DeviceHooks />
     <Routes>
       <Route path="/login" element={<AuthPage mode="login" />} />
       <Route path="/signup" element={<AuthPage mode="signup" />} />
@@ -61,5 +85,6 @@ export default function App() {
       <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   );
 }

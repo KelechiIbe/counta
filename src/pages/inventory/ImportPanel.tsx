@@ -134,7 +134,7 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
                   <div key={i} style={{ border: '1px solid #E6E6E6', borderRadius: 14, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     <div className="row" style={{ justifyContent: 'space-between' }}><div style={{ fontSize: 14, fontWeight: 600 }}>Product {i + 1}</div>{manual.length > 1 && <XButton size={16} onClick={() => setManual(manual.filter((_, j) => j !== i))} />}</div>
                     <Field label="Name" req><input className="input" value={m.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Golden Penny Spaghetti 500g" /></Field>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       <Field label="Catalogue ID"><input className="input" value={m.sku} onChange={(e) => set('sku', e.target.value)} /></Field>
                       <Field label="Selling price" req><input className="input" type="number" inputMode="decimal" value={m.price} onChange={(e) => set('price', e.target.value)} placeholder="₦" /></Field>
                     </div>
@@ -142,7 +142,7 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
                       <Icon name="chevD" size={14} color="#0072F5" style={{ transform: m.more ? 'rotate(180deg)' : undefined }} />Add more details (optional): units, pack size, cost, stock, VAT
                     </button>
                     {m.more && (
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+                      <div className="m-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
                         <Field label="Buy by the"><select className="input" value={m.purchase_unit} onChange={(e) => set('purchase_unit', e.target.value)}>{['Carton', 'Bag', 'Bale', 'Pack', 'Crate', 'Roll'].map((u) => <option key={u}>{u}</option>)}</select></Field>
                         <Field label="Contains"><input className="input" type="number" value={m.pack_size} onChange={(e) => set('pack_size', e.target.value)} placeholder="1" /></Field>
                         <Field label="Sell by the"><select className="input" value={m.selling_unit} onChange={(e) => set('selling_unit', e.target.value)}>{['piece', 'pack', 'sachet', 'tin', 'bottle', 'derica', 'mudu', 'paint bucket', 'kg'].map((u) => <option key={u}>{u}</option>)}</select></Field>
@@ -192,7 +192,7 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
             {Object.values(map).includes('pack_size') && (
               <div className="alert alert-blue">Pack sizes found: we will set <b>1 carton = {headers[Number(Object.entries(map).find(([, v]) => v === 'pack_size')?.[0])]}</b> selling units for each row. You can change conversions per item later.</div>
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+            <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
               <Field label="Opening stock at"><select className="input" value={loc} onChange={(e) => setLoc(e.target.value)}>{inv?.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
               <Field label="Quantities are in"><select className="input" value={qtyIn} onChange={(e) => setQtyIn(e.target.value as any)}><option value="selling">Selling units</option><option value="purchase">Cartons / bags</option></select></Field>
               <Field label="Costs are per"><select className="input" value={costIn} onChange={(e) => setCostIn(e.target.value as any)}><option value="selling">Selling unit</option><option value="purchase">Carton / bag</option></select></Field>

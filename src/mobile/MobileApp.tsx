@@ -6,6 +6,8 @@ import { buildItems, qtyLabel } from '../lib/domain';
 import { fmtTime, when } from '../lib/format';
 import { Icon } from '../components/Icon';
 import { Spinner, Thumb } from '../components/ui';
+import { InstallBanner } from '../components/InstallBanner';
+import { store } from '../lib/pwa';
 import { discard, enqueue, retry, useQueue, type Op } from './queue';
 import { BranchChip, MCtx, MTop, QueueBanner, useM } from './ctx';
 import ScanScreen from './Scan';
@@ -111,6 +113,7 @@ function Today() {
       <MTop title="Today" right={<BranchChip />} />
       <QueueBanner />
       <div className="m-pad stack" style={{ gap: 14, paddingBottom: 24 }}>
+        <InstallBanner phone />
         <div>
           <div style={{ fontSize: 20, fontWeight: 600, fontFamily: 'var(--font-brand)' }}>{hello}, {first}</div>
           <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>{inv.org.name}{branch ? ' · ' + branch : ''}</div>
@@ -165,6 +168,11 @@ function Today() {
           <div className="label">On this phone</div>
           {ops.length ? ops.map((o) => <OpRow key={o.id} op={o} who={o.author} />) : <div className="muted" style={{ fontSize: 13, padding: '8px 0' }}>Sales, counts and invoices you record here show up in this list, with their sync status.</div>}
         </div>
+        <button className="m-card row" style={{ cursor: 'pointer', font: 'inherit', textAlign: 'left' }} onClick={() => { store.set('counta-view', 'full'); nav('/inventory'); }}>
+          <Icon name="panel" size={18} color="#0072F5" />
+          <span className="grow"><span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>Open the full app</span><span className="faint" style={{ fontSize: 11 }}>Reports, approvals, reorders, pricing and settings, sized for this phone</span></span>
+          <Icon name="chevR" size={16} color="#9CA3AF" />
+        </button>
       </div>
     </>
   );

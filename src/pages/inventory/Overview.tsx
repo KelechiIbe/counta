@@ -149,14 +149,14 @@ export default function Overview() {
   return (
     <div className="container">
       <PromptBar />
-      <div className="card" style={{ padding: '20px 24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 20 }}>
+      <div className="card card-pad m-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 20 }}>
         <Kpi label="Stock value" value={costs ? K(value) : '—'} sub={`${items.length} items · weighted average cost`} color="#111827" />
         <Kpi label="Gross margin · 30d" value={costs ? P(gm) : '—'} sub="From actual sales and their cost" color="#15803D" />
         <Kpi label="Low stock" value={String(low.length)} sub={low.map((i) => i.name.split(' ')[0]).slice(0, 4).join(', ') || 'Nothing below floor'} color="#C2410C" />
         <Kpi label="Expiring ≤ 30d" value={plural(exp.length, 'batch', 'batches')} sub={costs ? K(expValue) + ' at risk' : 'Sell these first'} color="#A16207" />
         <Kpi label="Dead stock" value={costs ? K(dead.reduce((a, i) => a + (i.value || 0), 0)) : String(dead.length)} sub={plural(dead.length, 'item') + ' unmoved 90+ days'} color="#4B5563" />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 20, alignItems: 'start' }}>
+      <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 20, alignItems: 'start' }}>
         <div className="card card-pad" id="needs-action">
           <Label style={{ marginBottom: 12 }}>Needs action</Label>
           {!allRows.length && <div className="muted" style={{ fontSize: 14, padding: '12px 4px', borderTop: '1px solid #F3F4F6' }}>Nothing is waiting on you. New receipts, counts and price changes will show up here.</div>}
@@ -187,16 +187,16 @@ export default function Overview() {
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-hd"><Label>Movement ledger</Label><span style={{ fontSize: 12, color: '#9CA3AF' }}>Append-only · every row links to its journal and source image</span></div>
         <div className="tbl">
-          <div className="tr head th" style={{ gridTemplateColumns: '150px 110px minmax(200px,1.4fr) minmax(120px,.8fr) 120px minmax(220px,1.4fr) 140px', minWidth: 1000 }}>
+          <div className="tr head th rsp" style={{ gridTemplateColumns: '150px 110px minmax(200px,1.4fr) minmax(120px,.8fr) 120px minmax(220px,1.4fr) 140px', minWidth: 1000 }}>
             <span>When</span><span>Type</span><span>Item</span><span>Quantity</span><span className="right">Value</span><span>Reference</span><span>By</span>
           </div>
           {ledger.isLoading && <SkeletonRows n={5} />}
           {(ledger.data || []).map((m) => (
-            <div key={m.gid} className={'tr' + (costs && m.journal_ref ? ' click' : '')} onClick={() => costs && m.journal_ref && setJournal(m.journal_ref)}
+            <div key={m.gid} className={'tr rsp' + (costs && m.journal_ref ? ' click' : '')} onClick={() => costs && m.journal_ref && setJournal(m.journal_ref)}
               style={{ gridTemplateColumns: '150px 110px minmax(200px,1.4fr) minmax(120px,.8fr) 120px minmax(220px,1.4fr) 140px', minWidth: 1000 }}>
               <span className="muted">{when(m.recorded_at)}</span>
               <span><span className={'chip ' + typeTone(m.type)}>{typeLabel(m.type)}</span></span>
-              <span style={{ fontWeight: 500 }}>{moveItem(m)}</span>
+              <span className="m-main" style={{ fontWeight: 500 }}>{moveItem(m)}</span>
               <span style={{ color: '#242527' }}>{moveQty(m)}</span>
               <span className="right num" style={{ fontWeight: 600, color: Number(m.value) < 0 ? '#4B5563' : '#111827' }}>{m.value == null ? '—' : N(m.value)}</span>
               <span className="muted ellipsis" title={moveRef(m, inv.locations)}>{moveRef(m, inv.locations)}</span>

@@ -12,6 +12,7 @@ import {
 import type { PurchaseOrder, Vendor } from '../../lib/types';
 import { Icon } from '../../components/Icon';
 import { Alert, Annot, Chip, Empty, Field, Label, Modal, ModalHead, SkeletonRows } from '../../components/ui';
+import { RecentCalls, VendorCallModal } from '../../components/Calls';
 
 const scoreColor = (s: number) => (s >= 85 ? '#15803D' : s >= 70 ? '#0072F5' : '#A16207');
 const PO_STATUS: Record<string, string> = { draft: 'Draft', sent: 'Sent', received: 'Received', cancelled: 'Cancelled' };
@@ -56,7 +57,7 @@ export default function Reorder() {
           <div className="grow"><div style={{ fontSize: 13, fontWeight: 600 }}>FX timing</div><div className="ink3" style={{ fontSize: 13, lineHeight: 1.5, marginTop: 2 }}>{banner}</div></div>
         </div>
       )}
-      <div className="row" style={{ justifyContent: 'space-between' }}>
+      <div className="row m-wrap" style={{ justifyContent: 'space-between' }}>
         <Label>Suggested orders</Label>
         <span className="faint" style={{ fontSize: 12 }}>Reorder point = sales per day × (lead time + {inv.org.safety_days} safety days) × season</span>
       </div>
@@ -74,18 +75,18 @@ export default function Reorder() {
         <div className="card" style={{ overflow: 'hidden' }}>
           <div className="card-hd"><Label>Purchase orders</Label><span className="faint" style={{ fontSize: 12 }}>The delivery invoice closes each order through Receive stock</span></div>
           <div className="tbl">
-            <div className="tr head th" style={{ gridTemplateColumns: '100px minmax(220px,1.6fr) minmax(170px,1fr) 110px 120px 110px', minWidth: 860 }}>
+            <div className="tr head th rsp" style={{ gridTemplateColumns: '100px minmax(220px,1.6fr) minmax(170px,1fr) 110px 120px 110px', minWidth: 860 }}>
               <span>Ref</span><span>Items</span><span>Vendor</span><span>Date</span><span className="right">Total</span><span>Status</span>
             </div>
             {pos.isLoading && <SkeletonRows n={2} />}
             {openPOs.map((p) => (
-              <div key={p.id} className="tr click" onClick={() => setPoOpen(p.id)} style={{ gridTemplateColumns: '100px minmax(220px,1.6fr) minmax(170px,1fr) 110px 120px 110px', minWidth: 860 }}>
+              <div key={p.id} className="tr click rsp" onClick={() => setPoOpen(p.id)} style={{ gridTemplateColumns: '100px minmax(220px,1.6fr) minmax(170px,1fr) 110px 120px 110px', minWidth: 860 }}>
                 <span style={{ fontWeight: 600, color: '#0072F5' }}>{p.ref}</span>
-                <span className="ellipsis" style={{ fontWeight: 500 }}>{p.po_lines.map((l) => `${num(l.qty)} ${puAbbr(inv.items.find((i) => i.id === l.item_id)?.purchase_unit || '')} ${itemName(l.item_id)}`).join(', ')}</span>
+                <span className="ellipsis m-main m-first" style={{ fontWeight: 500 }}>{p.po_lines.map((l) => `${num(l.qty)} ${puAbbr(inv.items.find((i) => i.id === l.item_id)?.purchase_unit || '')} ${itemName(l.item_id)}`).join(', ')}</span>
                 <span className="ink3 ellipsis">{vendorName(p.vendor_id)}{p.sent_via ? ` · ${p.sent_via === 'whatsapp' ? 'WhatsApp' : p.sent_via}` : ''}</span>
                 <span className="muted">{fmtDay(p.sent_at || p.created_at)}</span>
-                <span className="right num" style={{ fontWeight: 600 }}>{costs ? N(p.total) : '—'}</span>
-                <span><Chip label={PO_STATUS[p.status]} /></span>
+                <span className={'right num' + (costs ? '' : ' hide-sm')} style={{ fontWeight: 600 }}>{costs ? N(p.total) : '—'}</span>
+                <span className="m-end"><Chip label={PO_STATUS[p.status]} /></span>
               </div>
             ))}
             {pos.data && !openPOs.length && <div className="muted" style={{ padding: 20, fontSize: 14 }}>No purchase orders yet. Approved drafts show up here.</div>}
@@ -93,24 +94,26 @@ export default function Reorder() {
         </div>
       )}
 
+      {approver && <RecentCalls />}
+
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-hd">
           <Label>Vendor scores · from invoice history</Label>
           {(approver || can(inv, 'receive_stock')) && <button className="btn btn-secondary btn-sm" onClick={() => setVendorEdit('new')}><Icon name="plus" size={14} />Add vendor</button>}
         </div>
         <div className="tbl">
-          <div className="tr head th" style={{ gridTemplateColumns: 'minmax(200px,1.3fr) 140px 90px 80px 100px 100px minmax(260px,2fr)', minWidth: 1020 }}>
+          <div className="tr head th rsp" style={{ gridTemplateColumns: 'minmax(200px,1.3fr) 140px 90px 80px 100px 100px minmax(260px,2fr)', minWidth: 1020 }}>
             <span>Vendor</span><span>Score</span><span>Lead time</span><span>Fill rate</span><span>Price stability</span><span>Credit</span><span>Why</span>
           </div>
           {ranked.map((v) => (
-            <div key={v.vendor.id} className="tr click" onClick={() => (approver || can(inv, 'receive_stock')) && setVendorEdit(v.vendor)} style={{ gridTemplateColumns: 'minmax(200px,1.3fr) 140px 90px 80px 100px 100px minmax(260px,2fr)', minWidth: 1020 }}>
-              <div><div style={{ fontWeight: 600 }}>{v.vendor.name}</div><div className="faint" style={{ fontSize: 11 }}>{[v.vendor.location, channelSentence(v.vendor), v.vendor.vat_registered ? 'VAT-registered' : null].filter(Boolean).join(' · ')}</div></div>
-              <div className="row"><div className="bar grow"><div style={{ width: v.total + '%', background: scoreColor(v.total) }} /></div><span style={{ fontWeight: 600, color: scoreColor(v.total), width: 24 }}>{v.total}</span></div>
-              <span className="ink3">{v.leadDays === 0 ? 'Same day' : plural(v.leadDays, 'day')}</span>
-              <span className="ink3">{Math.round(v.fillPct)}%</span>
-              <span className="ink3">{v.stabilityLabel}</span>
-              <span className="ink3">{v.vendor.credit_days ? `${v.vendor.credit_days} days` : 'None'}</span>
-              <span className="ink3" style={{ fontSize: 12, lineHeight: 1.45 }}>{v.why}</span>
+            <div key={v.vendor.id} onClick={() => (approver || can(inv, 'receive_stock')) && setVendorEdit(v.vendor)} className="tr click rsp" style={{ gridTemplateColumns: 'minmax(200px,1.3fr) 140px 90px 80px 100px 100px minmax(260px,2fr)', minWidth: 1020 }}>
+              <div className="m-main"><div style={{ fontWeight: 600 }}>{v.vendor.name}</div><div className="faint" style={{ fontSize: 11 }}>{[v.vendor.location, channelSentence(v.vendor), v.vendor.vat_registered ? 'VAT-registered' : null].filter(Boolean).join(' · ')}</div></div>
+              <div className="row m-main"><div className="bar grow"><div style={{ width: v.total + '%', background: scoreColor(v.total) }} /></div><span style={{ fontWeight: 600, color: scoreColor(v.total), width: 24 }}>{v.total}</span></div>
+              <span className="ink3" data-label="Lead">{v.leadDays === 0 ? 'Same day' : plural(v.leadDays, 'day')}</span>
+              <span className="ink3" data-label="Fill">{Math.round(v.fillPct)}%</span>
+              <span className="ink3" data-label="Prices">{v.stabilityLabel}</span>
+              <span className="ink3" data-label="Credit">{v.vendor.credit_days ? `${v.vendor.credit_days} days` : 'None'}</span>
+              <span className="ink3 m-main" style={{ fontSize: 12, lineHeight: 1.45 }}>{v.why}</span>
             </div>
           ))}
           {!ranked.length && <div className="muted" style={{ padding: 20, fontSize: 14 }}>No vendors yet. They are added as you receive invoices, or add one here.</div>}
@@ -129,7 +132,7 @@ function SuggestionCard({ s, score, alt, costs, approver, onDraft, onSnooze }: {
   const it = s.item;
   const cover = s.onHand <= s.floor ? 'Below floor' : `${Math.max(0, Math.round(s.cover))} day${Math.round(s.cover) === 1 ? '' : 's'} cover`;
   return (
-    <div className="card" style={{ padding: '18px 20px', display: 'grid', gridTemplateColumns: 'minmax(220px,1.3fr) minmax(240px,1.6fr) minmax(200px,1fr) auto', gap: 20, alignItems: 'center' }}>
+    <div className="card m-stack sug-card" style={{ padding: '18px 20px', display: 'grid', gridTemplateColumns: 'minmax(220px,1.3fr) minmax(240px,1.6fr) minmax(200px,1fr) auto', gap: 20, alignItems: 'center' }}>
       <div style={{ minWidth: 0 }}>
         <div className="row"><span className={'chip t-' + s.tone}>{cover}</span>{s.seasonLabel && <span className="chip t-blue">{s.seasonLabel}</span>}</div>
         <div style={{ fontSize: 15, fontWeight: 600, marginTop: 8 }}>{it.name}</div>
@@ -149,7 +152,7 @@ function SuggestionCard({ s, score, alt, costs, approver, onDraft, onSnooze }: {
           </>
         ) : <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>No preferred vendor yet</div>}
       </div>
-      <div className="stack" style={{ gap: 8 }}>
+      <div className="stack m-row" style={{ gap: 8 }}>
         {approver ? (
           <>
             <button className="btn btn-primary btn-sm" onClick={onDraft}>Draft PO</button>
@@ -181,7 +184,7 @@ function DraftPo({ itemId, sug, scores, onClose }: { itemId: string; sug?: Sugge
   const defaultCost = vendorCost(vendorId) ?? sug?.unitCostPU ?? (item ? Number(item.last_cost ?? item.wac ?? 0) * item.pack_size : 0);
   const [cost, setCost] = useState<string>('');
   useEffect(() => { setCost(defaultCost ? String(Math.round(defaultCost * 100) / 100) : ''); }, [vendorId, stats.data]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [sent, setSent] = useState<null | { ref: string; channel: string; phone: string | null; email: string | null; total: number; status: string }>(null);
+  const [sent, setSent] = useState<null | { id: string; ref: string; channel: string; phone: string | null; email: string | null; total: number; status: string }>(null);
   if (!inv || !item) return null;
   const costs = inv.can_see_costs;
   const q = Number(qty);
@@ -201,10 +204,11 @@ function DraftPo({ itemId, sug, scores, onClose }: { itemId: string; sug?: Sugge
     const r = await run(() => rpc<any>('save_po', {
       p_org: orgId, p_vendor: vendor.id, p_lines: [{ item_id: item!.id, qty: q, unit_cost: unitCost }], p_send: send, p_sent_via: vendor.channel, p_fx_note: fxNote,
     }), { ok: (r) => send ? `${r.ref} approved · send it to ${vendor.name}` : `${r.ref} saved as a draft`, invalidate: ['pos', 'inv'] });
-    if (r) { if (send) setSent({ ref: r.ref, channel: r.channel, phone: r.phone, email: r.email, total: Number(r.total), status: r.status }); else onClose(); }
+    if (r) { if (send) setSent({ id: r.id, ref: r.ref, channel: r.channel, phone: r.phone, email: r.email, total: Number(r.total), status: r.status }); else onClose(); }
   }
 
-  if (sent) return <SendPanel title={`${sent.ref} approved`} vendor={vendor!} message={msg.replace('Purchase order PO ', `Purchase order ${sent.ref} `)} onClose={onClose} />;
+  if (sent) return <SendPanel title={`${sent.ref} approved`} vendor={vendor!} message={msg.replace('Purchase order PO ', `Purchase order ${sent.ref} `)} onClose={onClose}
+    po={{ id: sent.id, ref: sent.ref, lines: [`${num(q)} ${puAbbr(item.purchase_unit)} ${item.name}${costs && unitCost ? ` at ${N(unitCost)} each` : ''}`] }} />;
 
   return (
     <Modal onClose={onClose} width={580}>
@@ -228,7 +232,7 @@ function DraftPo({ itemId, sug, scores, onClose }: { itemId: string; sug?: Sugge
           </select>
           {sc && <div className="ink3" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.45 }}>{sc.why}</div>}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <div className="m-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
           <Field label={`Quantity (${pluralUnit(item.purchase_unit.toLowerCase(), 2)})`} error={qtyErr}>
             <input className={'input' + (qtyErr ? ' err' : '')} type="number" min={1} step={1} value={qty} onChange={(e) => setQty(e.target.value)} />
           </Field>
@@ -238,7 +242,7 @@ function DraftPo({ itemId, sug, scores, onClose }: { itemId: string; sug?: Sugge
           <Field label="Total"><div style={{ padding: '10px 0', fontSize: 16, fontWeight: 600 }}>{costs ? N(total) : '—'}</div></Field>
         </div>
         <div className="muted" style={{ fontSize: 12, marginTop: -8 }}>{q >= 1 ? `${num(q * item.pack_size)} ${pluralUnit(item.selling_unit, q * item.pack_size)} · on hand ${qtyLabel(item, item.qAll)}` : ''}</div>
-        <div style={{ background: '#FAFAFA', borderRadius: 12, padding: '12px 14px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, fontSize: 13 }}>
+        <div className="m-2" style={{ background: '#FAFAFA', borderRadius: 12, padding: '12px 14px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, fontSize: 13 }}>
           <div><div className="muted" style={{ fontSize: 11 }}>Sends via</div><div style={{ fontWeight: 600, marginTop: 2 }}>{channelSentence(vendor)}</div></div>
           <div><div className="muted" style={{ fontSize: 11 }}>Lead time</div><div style={{ fontWeight: 600, marginTop: 2 }}>{vendor ? (vendor.lead_time_days === 0 ? 'Same day' : plural(vendor.lead_time_days, 'day')) : '—'}</div></div>
           <div><div className="muted" style={{ fontSize: 11 }}>Credit terms</div><div style={{ fontWeight: 600, marginTop: 2 }}>{vendor ? (vendor.credit_days ? `${vendor.credit_days} days` : 'Cash') : '—'}</div></div>
@@ -259,8 +263,10 @@ function DraftPo({ itemId, sug, scores, onClose }: { itemId: string; sug?: Sugge
   );
 }
 
-function SendPanel({ title, vendor, message, onClose }: { title: string; vendor: Vendor; message: string; onClose: () => void }) {
+function SendPanel({ title, vendor, message, onClose, po }: { title: string; vendor: Vendor; message: string; onClose: () => void; po?: { id: string; ref: string; lines: string[] } }) {
   const toast = useToast();
+  const [call, setCall] = useState(false);
+  if (call && po) return <VendorCallModal po={po} vendor={vendor} lines={po.lines} onClose={onClose} />;
   const mail = `mailto:${vendor.email || ''}?subject=${encodeURIComponent(title.replace(' approved', '') + ' purchase order')}&body=${encodeURIComponent(message)}`;
   return (
     <Modal onClose={onClose} width={520}>
@@ -269,7 +275,8 @@ function SendPanel({ title, vendor, message, onClose }: { title: string; vendor:
         <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 13, background: '#FAFAFA', borderRadius: 12, padding: 14, margin: 0, lineHeight: 1.5 }}>{message}</pre>
         {vendor.channel === 'whatsapp' && !vendor.phone && <div className="hint">No WhatsApp number saved for {vendor.name}. WhatsApp will ask you to pick the contact.</div>}
       </div>
-      <div className="modal-ft">
+      <div className="modal-ft m-wrap">
+        {po && vendor.phone && <button className="btn btn-secondary" onClick={() => setCall(true)}><Icon name="call" size={16} />Have Martina call</button>}
         <button className="btn btn-secondary" onClick={() => { navigator.clipboard?.writeText(message).then(() => toast('Message copied')).catch(() => toast('Copy failed', 'err')); }}><Icon name="copy" size={16} />Copy</button>
         {vendor.channel === 'email' ? <a className="btn btn-primary" href={mail} onClick={() => setTimeout(onClose, 300)}><Icon name="mail" size={16} color="#fff" />Open email</a>
           : <a className="btn btn-primary" href={waLink(vendor.phone, message)} target="_blank" rel="noreferrer" onClick={() => setTimeout(onClose, 300)}><Icon name="wa" size={16} color="#fff" />Open WhatsApp</a>}
@@ -284,6 +291,7 @@ function PoModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
   const { run, busy } = useAction();
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [send, setSend] = useState(false);
+  const [call, setCall] = useState(false);
   if (!inv) return null;
   const vendor = inv.vendors.find((v) => v.id === po.vendor_id) || null;
   const costs = inv.can_see_costs;
@@ -291,7 +299,9 @@ function PoModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
   const lines = po.po_lines.map((l) => ({ l, it: inv.items.find((i) => i.id === l.item_id) }));
   const message = poMessage({ org: inv.org.name, ref: po.ref, vendor: vendor?.name || 'there', branch: inv.locations.find((x) => x.id === po.location_id)?.name,
     lines: lines.map(({ l, it }) => ({ name: it?.name || 'Item', qty: Number(l.qty), unit: it?.purchase_unit || 'unit', unitCost: costs ? Number(l.unit_cost) : null })), total: costs ? Number(po.total) : null });
-  if (send && vendor) return <SendPanel title={po.ref} vendor={vendor} message={message} onClose={onClose} />;
+  const callLines = lines.map(({ l, it }) => `${num(l.qty)} ${puAbbr(it?.purchase_unit || '')} ${it?.name || 'item'}${costs && Number(l.unit_cost) ? ` at ${N(l.unit_cost)} each` : ''}`);
+  if (send && vendor) return <SendPanel title={po.ref} vendor={vendor} message={message} onClose={onClose} po={{ id: po.id, ref: po.ref, lines: callLines }} />;
+  if (call && vendor) return <VendorCallModal po={{ id: po.id, ref: po.ref }} vendor={vendor} lines={callLines} onClose={onClose} />;
   return (
     <Modal onClose={onClose} width={560}>
       <ModalHead title={`${po.ref} · ${vendor?.name || 'Vendor'}`} sub={`${PO_STATUS[po.status]}${po.sent_at ? ' ' + fmtDay(po.sent_at) : ''}${po.received_at ? ` · received ${fmtDay(po.received_at)}` : ''}`} onClose={onClose} extra={<Chip label={PO_STATUS[po.status]} />} />
@@ -308,7 +318,7 @@ function PoModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
         {po.status === 'sent' && <div className="hint">When the goods arrive, receive them against this order. The lines come pre-filled and the order closes on post.</div>}
       </div>
       {approver && (po.status === 'draft' || po.status === 'sent') && (
-        <div className="modal-ft">
+        <div className="modal-ft m-wrap">
           <button className="btn btn-danger" disabled={busy} onClick={async () => {
             if (!confirmCancel) { setConfirmCancel(true); return; }
             const r = await run(() => rpc('cancel_po', { p_po: po.id }), { ok: `${po.ref} cancelled`, invalidate: ['pos', 'inv'] });
@@ -318,6 +328,7 @@ function PoModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
             const r = await run(() => rpc('send_po', { p_po: po.id }), { ok: `${po.ref} approved`, invalidate: ['pos'] });
             if (r) setSend(true);
           }}><Icon name="send" size={16} color="#fff" />Approve &amp; send</button>}
+          {vendor?.phone && <button className="btn btn-secondary" onClick={() => setCall(true)}><Icon name="call" size={16} />Call vendor</button>}
           {po.status === 'sent' && <button className="btn btn-secondary" onClick={() => setSend(true)}>Message again</button>}
           {po.status === 'sent' && can(inv, 'receive_stock') && <button className="btn btn-primary" onClick={() => nav('/inventory/receive', { state: { po: po.id } })}>Receive delivery</button>}
         </div>
@@ -350,11 +361,11 @@ function VendorModal({ vendor, onClose }: { vendor: Vendor | null; onClose: () =
     <Modal onClose={onClose} width={520}>
       <ModalHead title={vendor ? vendor.name : 'Add vendor'} onClose={onClose} />
       <div className="modal-body">
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 12 }}>
+        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 12 }}>
           <Field label="Name" req><input className="input" value={f.name} onChange={(e) => set('name', e.target.value)} /></Field>
           <Field label="Where"><input className="input" value={f.location} onChange={(e) => set('location', e.target.value)} placeholder="e.g. Trade Fair, Lagos" /></Field>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
           <Field label="Orders go by"><select className="input" value={f.channel} onChange={(e) => set('channel', e.target.value)}><option value="whatsapp">WhatsApp</option><option value="email">Email</option><option value="phone">Phone</option></select></Field>
           <Field label="Phone"><input className="input" value={f.phone} onChange={(e) => set('phone', e.target.value)} placeholder="0803…" inputMode="tel" /></Field>
           <Field label="Email"><input className="input" value={f.email} onChange={(e) => set('email', e.target.value)} type="email" /></Field>

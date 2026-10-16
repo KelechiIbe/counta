@@ -32,20 +32,20 @@ export default function JournalDrawer({ journalRef, onClose }: { journalRef: str
         ) : !j ? <Empty>Journal not found.</Empty> : (
           <>
             <div className="card" style={{ overflow: 'hidden', borderRadius: 12 }}>
-              <div className="tr head shade th" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '8px 14px' }}><span>Acct</span><span>Account</span><span className="right">Debit</span><span className="right">Credit</span></div>
+              <div className="tr head shade th jr-grid" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '8px 14px' }}><span>Acct</span><span>Account</span><span className="right">Debit</span><span className="right">Credit</span></div>
               {lines.map((l, i) => (
-                <div key={i} className="tr" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '10px 14px' }}>
+                <div key={i} className="tr jr-grid" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '10px 14px' }}>
                   <span className="mono ink3">{l.code}</span>
                   <span><span className="ink">{l.name}</span>{(l.location || l.memo) && <span className="faint" style={{ display: 'block', fontSize: 11 }}>{[l.location, l.memo].filter(Boolean).join(' · ')}</span>}</span>
                   <span className="right num" style={{ fontWeight: 600 }}>{Number(l.debit) ? N2(l.debit) : ''}</span>
                   <span className="right num" style={{ fontWeight: 600 }}>{Number(l.credit) ? N2(l.credit) : ''}</span>
                 </div>
               ))}
-              <div className="tr" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '10px 14px', background: '#FAFAFA' }}>
+              <div className="tr jr-grid" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '10px 14px', background: '#FAFAFA' }}>
                 <span /><span className="muted">Totals</span><span className="right num" style={{ fontWeight: 700 }}>{N2(dr)}</span><span className="right num" style={{ fontWeight: 700 }}>{N2(cr)}</span>
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 13 }}>
+            <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 13 }}>
               <div className="card" style={{ padding: 12, borderRadius: 12 }}><div className="muted">Posted by</div><div style={{ fontWeight: 600, marginTop: 2 }}>{j.posted_by_name || 'System'}</div></div>
               <div className="card" style={{ padding: 12, borderRadius: 12 }}><div className="muted">Approved by</div><div style={{ fontWeight: 600, marginTop: 2 }}>{j.approved_by_name || '—'}</div></div>
             </div>

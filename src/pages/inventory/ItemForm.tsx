@@ -75,7 +75,7 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
         </div>
         <div style={{ border: '1px solid #E6E6E6', borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column', gap: 12, background: '#FAFAFA' }}>
           <div className="label" style={{ fontFamily: 'inherit', letterSpacing: '.06em' }}>Units · how you buy vs how you sell</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+          <div className="m-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
             <div><div style={{ fontSize: 12, color: '#4B5563', marginBottom: 6 }}>Buy by the</div>
               <select className="input" value={f.purchase_unit} onChange={(e) => set('purchase_unit', e.target.value)}>{PURCHASE_UNITS.map((u) => <option key={u}>{u}</option>)}</select></div>
             <div><div style={{ fontSize: 12, color: '#4B5563', marginBottom: 6 }}>Contains <span className="req">*</span></div>
