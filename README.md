@@ -6,6 +6,12 @@ Counta is the inventory module for TaxStreem. Inventory runs as a sub-ledger of 
 
 The desktop app covers eight screens. **Overview** carries the Martina prompt bar, the KPI snapshot, a single needs-action queue and the movement ledger. **Items** lists every product with units shown in purchase and selling terms, an item drawer (stock, units and labels, batches, movements) and spreadsheet import. **Receive stock** reads typed and handwritten invoices with Gemini, asks the user to confirm any line under 85% confidence beside a crop of the photo, previews the journal against the TaxStreem chart of accounts and posts it. **Stock counts** lets the owner schedule blind counts and approve or reject variances with reasons. **Reorder** shows suggestions sized by velocity, lead time, safety days and seasonality, explainable vendor scores, FX timing advice and draft purchase orders that go out on the vendor's channel. **Pricing** handles price proposals (cost increase, below replacement cost, margin under threshold), landed cost allocation and the price change audit trail. **Insights** compares cash against stock, suggests dead stock markdowns and runs the FEFO batch table with quarantine. **Locations & staff** holds branch cards, transfers through goods in transit, the permission matrix, voice review and the activity log.
 
+Every desktop screen also fits a phone. Tables turn into cards under 760px, modals become bottom sheets, fields stay at 16px so iPhones do not zoom, and the layout respects the notch and home bar. On a phone, `/` opens the phone app; a person can switch to the full app from Today and Counta remembers the choice on that device.
+
+Martina can also phone people through ElevenLabs voice agents. From a purchase order she calls the vendor, reads out the order, confirms quantities and a delivery date, and writes the outcome back to the order. From Locations & staff an owner or manager can have her ring a team member about a count to finish, counts to approve, invoices to confirm, a transfer to receive or price checks to decide. See `docs/voice-and-push.md`.
+
+Installed as an app, Counta sends push notifications when a count needs approval or comes back for a recount, an invoice needs checking, stock is on its way to a branch, a price check opens, or a phone call finishes. A banner asks to install (Chrome's install prompt on Android, Share then Add to Home Screen on iPhone) and then to turn on notifications.
+
 The phone app lives at `/m`. It has Today (queue, counts assigned to you, transfers arriving, items running low), barcode and QR scanning, voice sales in Pidgin, Yoruba, Hausa, Igbo or English, invoice photos, blind counts and a WhatsApp-style Martina chat. Sales, counts, transfer confirmations and invoice photos queue on the device when there is no data and post in order, with their original time and a client UUID so a retry never posts twice.
 
 ## Stack
@@ -23,6 +29,9 @@ supabase/
   migrations/        schema, RLS, posting functions, sample business, storage, cron, hardening, TaxStreem chart
   functions/ai       Gemini: read_invoice, ask, chat, voice
   functions/fx       daily USD/NGN rate for FX timing advice
+  functions/voice    ElevenLabs outbound calls: vendor orders and staff reminders
+  functions/push     Web Push delivery for the notifications table
+public/push-sw.js    push and notification-click handlers, imported into the Workbox service worker
 ```
 
 ## Accounting model
@@ -68,12 +77,20 @@ The Supabase URL and publishable key default to the TaxStreem Counta project, so
 
 ## Supabase setup
 
-Apply the files in `supabase/migrations` in order, then deploy both edge functions with JWT verification on. Edge function secrets:
+Apply the files in `supabase/migrations` in order, then deploy the edge functions. `ai` and `fx` verify the JWT; `voice` and `push` check the caller themselves (a signed-in user, or the database's hook secret) and are deployed with JWT verification off.
+
+Keys can be Edge Function secrets or rows in Supabase Vault with the same name. The functions read the environment first and fall back to Vault through `public.app_secret()`, which only the service role can call. Store a Vault key with `select vault.create_secret('<value>', '<NAME>');`.
 
 | Secret | Purpose |
 | --- | --- |
-| `GEMINI_API_KEY` | Required for invoice reading, voice entry and Martina's open answers. Without it the app still works; lines are typed by hand and Martina answers from rules. |
-| `GEMINI_MODEL` | Optional model override (default `gemini-3.8-flash`, falling back to `gemini-flash-latest`). |
+| `GEMINI_API_KEY` | Invoice reading, voice entry and Martina's open answers. Without it the app still works; lines are typed by hand and Martina answers from rules. |
+| `GEMINI_MODEL` | Optional model override (default `gemini-3.8-flash`, falling back through 3.6, 3.5 and `gemini-flash-latest` when a model is busy). |
+| `ELEVENLABS_API_KEY` | Phone calls. Needs access to Agents and phone numbers. |
+| `ELEVENLABS_PHONE_NUMBER_ID` | Optional. Which ElevenLabs number to ring from when the account has several. |
+| `ELEVENLABS_VOICE_ID` | Optional. Voice for both agents. |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Web Push keys. Generated by the `push` function on first use and saved to Vault. |
+| `VAPID_SUBJECT` | Optional contact URL or mailto for push services (defaults to the site URL). |
+| `PUSH_HOOK_SECRET` | Generated by the migration. The database sends it with each call to `push` and `voice`. |
 
 In Auth settings, set the Site URL and redirect URLs to the deployed domain. A nightly pg_cron job quarantines expired batches and refreshes price alerts.
 

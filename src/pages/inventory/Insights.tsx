@@ -63,7 +63,7 @@ function Variance() {
           {recorder && <button className="btn btn-primary btn-sm" onClick={() => setRecord(true)}><Icon name="plus" size={14} color="#fff" />Record takings</button>}
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(360px,1fr))', gap: 20, alignItems: 'start' }}>
+        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(360px,1fr))', gap: 20, alignItems: 'start' }}>
           <div style={{ border: '1px solid ' + t.border, background: t.bg, borderRadius: 16, padding: 20 }}>
             <div className="row"><Icon name={t.icon} size={18} color={t.fg} /><div style={{ fontSize: 13, fontWeight: 600, color: t.fg }}>{story.title}</div></div>
             <div style={{ fontFamily: 'var(--font-brand)', fontSize: 22, fontWeight: 600, lineHeight: 1.3, marginTop: 12, letterSpacing: '-.01em' }}>{story.headline}</div>
@@ -101,16 +101,16 @@ function Variance() {
         <div className="card" style={{ overflow: 'hidden' }}>
           <div className="card-hd"><Label>Daily detail · last 14 days</Label></div>
           <div className="tbl">
-            <div className="tr head th" style={{ gridTemplateColumns: '150px 120px repeat(5, minmax(100px,1fr))', minWidth: 860 }}>
+            <div className="tr head th rsp" style={{ gridTemplateColumns: '150px 120px repeat(5, minmax(100px,1fr))', minWidth: 860 }}>
               <span>Day</span><span>Branch</span><span className="right">Implied</span><span className="right">Cash</span><span className="right">POS</span><span className="right">Transfers</span><span className="right">Gap</span>
             </div>
             {days.map((d) => (
-              <div key={d.day + d.loc} className="tr" style={{ gridTemplateColumns: '150px 120px repeat(5, minmax(100px,1fr))', minWidth: 860 }}>
-                <span className="muted">{weekday(d.day).slice(0, 3)} {fmtDay(d.day, false)}</span>
+              <div key={d.day + d.loc} className="tr rsp" style={{ gridTemplateColumns: '150px 120px repeat(5, minmax(100px,1fr))', minWidth: 860 }}>
+                <span className="muted" style={{ fontWeight: 600 }}>{weekday(d.day).slice(0, 3)} {fmtDay(d.day, false)}</span>
                 <span className="ink3">{inv.locations.find((l) => l.id === d.loc)?.name}</span>
-                <span className="right num">{N(d.implied)}</span>
-                <span className="right num ink3">{d.rec ? N(d.rec.cash) : '—'}</span><span className="right num ink3">{d.rec ? N(d.rec.pos) : '—'}</span><span className="right num ink3">{d.rec ? N(d.rec.transfers) : '—'}</span>
-                <span className="right num" style={{ fontWeight: 600, color: !d.rec ? '#9CA3AF' : d.gap > 1000 ? '#DC2626' : d.gap < -1000 ? '#C2410C' : '#15803D' }}>{d.rec ? (Math.abs(d.gap) < 1 ? '—' : N(d.gap)) : 'not recorded'}</span>
+                <span className="right num m-main" data-label="Implied">{N(d.implied)}</span>
+                <span className="right num ink3" data-label="Cash">{d.rec ? N(d.rec.cash) : '—'}</span><span className="right num ink3" data-label="POS">{d.rec ? N(d.rec.pos) : '—'}</span><span className="right num ink3" data-label="Transfers">{d.rec ? N(d.rec.transfers) : '—'}</span>
+                <span className="right num" data-label="Gap" style={{ fontWeight: 600, color: !d.rec ? '#9CA3AF' : d.gap > 1000 ? '#DC2626' : d.gap < -1000 ? '#C2410C' : '#15803D' }}>{d.rec ? (Math.abs(d.gap) < 1 ? '—' : N(d.gap)) : 'not recorded'}</span>
               </div>
             ))}
           </div>
@@ -160,7 +160,7 @@ function TakingsModal({ onClose, implied }: { onClose: () => void; implied: { da
           <Field label="Branch"><select className="input" value={loc} onChange={(e) => setLoc(e.target.value)}>{inv?.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
           <Field label="Day"><input className="input" type="date" value={day} max={inv?.today} onChange={(e) => setDay(e.target.value)} /></Field>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <div className="m-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
           <Field label="Cash"><input className="input" type="number" min={0} inputMode="numeric" value={f.cash} onChange={(e) => setF({ ...f, cash: e.target.value })} placeholder="₦" /></Field>
           <Field label="POS"><input className="input" type="number" min={0} inputMode="numeric" value={f.pos} onChange={(e) => setF({ ...f, pos: e.target.value })} placeholder="₦" /></Field>
           <Field label="Transfers"><input className="input" type="number" min={0} inputMode="numeric" value={f.transfers} onChange={(e) => setF({ ...f, transfers: e.target.value })} placeholder="₦" /></Field>
@@ -192,13 +192,13 @@ function Dead() {
       {rows.map((d) => {
         const live = applied[d.item.id] || d.item.price <= d.mark;
         return (
-          <div key={d.item.id} className="card" style={{ padding: '18px 20px', display: 'grid', gridTemplateColumns: 'minmax(220px,1.3fr) repeat(4,minmax(110px,.7fr)) auto', gap: 16, alignItems: 'center' }}>
-            <div><div style={{ fontSize: 15, fontWeight: 600 }}>{d.item.name}</div><div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{qtyLabel(d.item, d.item.q)} · unmoved {d.days} days</div></div>
+          <div key={d.item.id} className="card m-2" style={{ padding: '18px 20px', display: 'grid', gridTemplateColumns: 'minmax(220px,1.3fr) repeat(4,minmax(110px,.7fr)) auto', gap: 16, alignItems: 'center' }}>
+            <div className="m-full"><div style={{ fontSize: 15, fontWeight: 600 }}>{d.item.name}</div><div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{qtyLabel(d.item, d.item.q)} · unmoved {d.days} days</div></div>
             <div><div className="mini-label">Carrying value</div><div style={{ fontSize: 16, fontWeight: 600, marginTop: 4 }}>{costs ? N(d.carrying) : '—'}</div></div>
             <div><div className="mini-label">Price → markdown</div><div style={{ fontSize: 14, marginTop: 4 }}>{N(d.item.price)} → <b style={{ color: '#0072F5' }}>{N(d.mark)}</b></div></div>
             <div><div className="mini-label">Margin after</div><div style={{ fontSize: 14, marginTop: 4 }}>{costs ? <>{P(d.mOld)} → <b style={{ color: '#C2410C' }}>{P(d.mNew)}</b></> : '—'}</div></div>
             <div><div className="mini-label">Clears in</div><div style={{ fontSize: 14, marginTop: 4 }}>~{plural(d.clearWeeks, 'week')}</div></div>
-            <div style={{ minWidth: 140, display: 'flex', justifyContent: 'flex-end' }}>
+            <div className="m-full m-left" style={{ minWidth: 140, display: 'flex', justifyContent: 'flex-end' }}>
               {live ? <span className="row" style={{ fontSize: 13, fontWeight: 600, color: '#15803D' }}><Icon name="check" size={16} color="#15803D" sw={2.5} />Markdown live</span>
                 : owner ? <button className="btn btn-primary btn-sm" disabled={busy} onClick={async () => {
                   const r = await run(() => rpc('change_price', { p_item: d.item.id, p_price: d.mark, p_reason: 'Dead stock markdown' }), { ok: `${d.item.name.split(' ').slice(0, 2).join(' ')} marked down to ${N(d.mark)}`, invalidate: ['inv', 'priceChanges'] });
@@ -231,20 +231,20 @@ function Expiry() {
     <div className="card" style={{ overflow: 'hidden' }}>
       <div className="card-hd"><Label>Batches · first-expiry-first-out</Label><span className="faint" style={{ fontSize: 12 }}>{plural(tracked, 'item')} tracked · expired batches leave sellable stock automatically overnight</span></div>
       <div className="tbl">
-        <div className="tr head th" style={{ gridTemplateColumns: COLS, minWidth: 1180 }}>
+        <div className="tr head th rsp" style={{ gridTemplateColumns: COLS, minWidth: 1180 }}>
           <span>Item</span><span>Batch</span><span>Expiry</span><span>Window</span><span>Quantity</span><span className="right">Value</span><span>Status</span><span>Rule</span><span />
         </div>
         {rows.map(({ b, it, w }) => (
-          <div key={b.id} className="tr" style={{ gridTemplateColumns: COLS, minWidth: 1180, opacity: b.quarantined ? 0.7 : 1 }}>
-            <div><div style={{ fontWeight: 600 }}>{it!.name}</div><div className="faint" style={{ fontSize: 11 }}>{[it!.nafdac_no ? 'NAFDAC ' + it!.nafdac_no : null, inv.locations.find((l) => l.id === b.location_id)?.name].filter(Boolean).join(' · ')}</div></div>
+          <div key={b.id} className="tr rsp" style={{ gridTemplateColumns: COLS, minWidth: 1180, opacity: b.quarantined ? 0.7 : 1 }}>
+            <div className="m-main"><div style={{ fontWeight: 600 }}>{it!.name}</div><div className="faint" style={{ fontSize: 11 }}>{[it!.nafdac_no ? 'NAFDAC ' + it!.nafdac_no : null, inv.locations.find((l) => l.id === b.location_id)?.name].filter(Boolean).join(' · ')}</div></div>
             <span className="mono ink3" style={{ fontSize: 12 }}>{b.batch_no}</span>
-            <span className="ink3">{fmtDay(b.expiry_date)}</span>
+            <span className="ink3" data-label="Expires">{fmtDay(b.expiry_date)}</span>
             <span style={{ fontWeight: 500 }}>{daysLabel(w.days)}</span>
             <span className="ink3">{qtyLabel(it!, Number(b.qty_remaining))}</span>
             <span className="right num">{costs && it!.wac != null ? K(Number(b.qty_remaining) * Number(it!.wac)) : '—'}</span>
             <span><Chip label={w.label} /></span>
-            <span className="muted" style={{ fontSize: 12 }}>{w.rule}</span>
-            <span style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <span className="muted m-main" style={{ fontSize: 12 }}>{w.rule}</span>
+            <span className="m-end" style={{ display: 'flex', justifyContent: 'flex-end' }}>
               {!b.quarantined && (w.label === 'Expired' || w.label === 'Expiring') && approver && (
                 <button className="btn btn-danger btn-xs" disabled={busy} onClick={() => run(() => rpc<string>('quarantine_batch', { p_batch: b.id }), { ok: (ref) => `Batch ${b.batch_no} quarantined${ref ? ' · ' + ref : ''}`, invalidate: ['inv', 'ledger', 'activity'] })}>Quarantine</button>
               )}

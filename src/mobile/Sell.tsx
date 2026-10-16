@@ -12,6 +12,7 @@ import { Spinner } from '../components/ui';
 import { BranchChip, MTop, QueueBanner, useM } from './ctx';
 import { Done, ItemSearch, SaleSheet } from './common';
 import { enqueue } from './queue';
+import { toWav } from '../lib/audio';
 
 type Heard = { transcript: string; movement: 'sale' | 'receipt' | 'unknown'; item_id: string | null; qty: number | null; unit_kind?: 'purchase' | 'selling'; location_name?: string | null; confidence: number; readback: string; problem?: string | null };
 
@@ -70,8 +71,9 @@ export default function SellScreen() {
     setStage('thinking');
     if (blob.size < 1200) { setErr('That was too short. Hold the button and say the full sentence.'); setStage('idle'); return; }
     try {
+      const audio = await toWav(blob);
       const r = await ai<Heard & { ok: boolean }>('voice', {
-        audio_base64: await toB64(blob), mime: blob.type,
+        audio_base64: await toB64(audio), mime: audio.type || 'audio/webm',
         items: inv!.items.map((i) => ({ id: i.id, name: i.name, purchase_unit: i.purchase_unit, pack_size: i.pack_size, selling_unit: i.selling_unit })),
         locations: inv!.locations.map((l) => l.name),
       });

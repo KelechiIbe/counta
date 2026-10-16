@@ -5,6 +5,8 @@ import { Icon } from '../components/Icon';
 import { Seg, Spinner } from '../components/ui';
 import { initials } from '../lib/format';
 import { useNeedsAction } from './needsAction';
+import { InstallBanner } from '../components/InstallBanner';
+import { store } from '../lib/pwa';
 
 // ---------- location picker state shared by Overview, Items and Insights ----------
 const LocCtx = createContext<{ loc: string; setLoc: (l: string) => void }>({ loc: 'ALL', setLoc: () => {} });
@@ -81,7 +83,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
         <NavLink to="/settings" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} onClick={onClose}>
           {({ isActive }) => (<><Icon name="settings" size={20} color={isActive ? '#111827' : '#6B7280'} /><span>Settings</span></>)}
         </NavLink>
-        <NavLink to="/m" className="nav-item" onClick={onClose}>
+        <NavLink to="/m" className="nav-item" onClick={() => { store.set('counta-view', 'phone'); onClose(); }}>
           <Icon name="phone" size={20} color="#6B7280" /><span>Phone app</span>
         </NavLink>
       </nav>
@@ -127,27 +129,31 @@ function Header({ onMenu }: { onMenu: () => void }) {
   const roleLabel = !inv ? '' : owner ? 'Owner view' : `${inv.me.role === 'manager' ? 'Manager' : inv.me.role === 'cashier' ? 'Cashier' : 'Staff'} view · ${inv.me.display_name.split(' ')[0]}`;
   return (
     <header className="header">
-      <div className="row" style={{ gap: 14, minWidth: 0, flex: '1 1 360px', flexWrap: 'wrap' }}>
+      <div className="row hdr-left" style={{ gap: 14, minWidth: 0, flex: '1 1 360px', flexWrap: 'wrap' }}>
         <button className="icon-btn hamburger" onClick={onMenu} aria-label="Open menu"><Icon name="menu" size={22} color="#4B5563" /></button>
         <h1 className="page-title">{title}</h1>
         {populated && PICKER.has(path) && inv && inv.locations.length > 1 && (
-          <Seg value={loc} onChange={setLoc} options={[{ id: 'ALL', label: 'All locations' }, ...inv.locations.map((l) => ({ id: l.id, label: l.name }))]} />
+          <div className="hdr-seg hide-sm"><Seg value={loc} onChange={setLoc} options={[{ id: 'ALL', label: 'All locations' }, ...inv.locations.map((l) => ({ id: l.id, label: l.name }))]} /></div>
         )}
       </div>
-      <div className="row" style={{ gap: 12, flex: 'none', marginLeft: 'auto' }}>
+      <div className="row hdr-right" style={{ gap: 12, flex: 'none', marginLeft: 'auto' }}>
         {inv && (
           <div className="role-pill hide-sm" style={{ background: owner ? '#F0F7FF' : '#FEFCE8', color: owner ? '#0072F5' : '#A16207' }} title="Your role decides which numbers and approvals you see">
             <Icon name="shield" size={14} />{roleLabel}
           </div>
         )}
-        <a className="btn btn-secondary" style={{ color: '#111827', fontSize: 15 }} href={SUPPORT_URL} target="_blank" rel="noreferrer">
-          <Icon name="chat" size={18} color="#0072F5" /><span className="hide-sm">Get Help</span>
+        <a className="btn btn-secondary hide-sm" style={{ color: '#111827', fontSize: 15 }} href={SUPPORT_URL} target="_blank" rel="noreferrer">
+          <Icon name="chat" size={18} color="#0072F5" /><span>Get Help</span>
         </a>
+        <a className="icon-btn show-sm" href={SUPPORT_URL} target="_blank" rel="noreferrer" aria-label="Get help"><Icon name="chat" size={21} color="#0072F5" /></a>
         <button className="icon-btn" onClick={() => nav('/inventory#needs-action')} aria-label={`${total} things need your attention`}>
           <Icon name="bell" size={22} color="#4B5563" />
           {total > 0 && <span className="dot-badge">{total}</span>}
         </button>
       </div>
+      {populated && PICKER.has(path) && inv && inv.locations.length > 1 && (
+        <div className="hdr-seg show-sm"><Seg value={loc} onChange={setLoc} options={[{ id: 'ALL', label: 'All locations' }, ...inv.locations.map((l) => ({ id: l.id, label: l.name }))]} /></div>
+      )}
     </header>
   );
 }
@@ -175,7 +181,10 @@ export default function AppShell() {
             ) : error && !inv ? (
               <div className="empty">Could not load this business. {(error as Error).message}</div>
             ) : (
-              <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: 320 }}><Spinner /></div>}><Outlet /></Suspense>
+              <>
+                <InstallBanner />
+                <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: 320 }}><Spinner /></div>}><Outlet /></Suspense>
+              </>
             )}
           </div>
         </main>

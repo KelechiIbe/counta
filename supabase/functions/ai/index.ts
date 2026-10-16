@@ -1,14 +1,28 @@
 // Counta AI: Gemini-backed invoice reading, Martina answers and voice capture.
-// Needs the GEMINI_API_KEY secret. GEMINI_MODEL is optional (defaults to gemini-3.8-flash).
+// Needs GEMINI_API_KEY, either as an Edge Function secret or in Supabase Vault (read through
+// public.app_secret). GEMINI_MODEL is optional (defaults to gemini-3.8-flash).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 
-const GEMINI_KEY = Deno.env.get('GEMINI_API_KEY') || '';
-const MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
-const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-3.6-flash'];
+let GEMINI_KEY = Deno.env.get('GEMINI_API_KEY') || '';
+let MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
+const FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest'];
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+// Vault fallback for keys that are not set as Edge Function secrets. Cached per instance.
+let vaultAt = 0;
+async function loadKeys(admin: SupabaseClient) {
+  if (GEMINI_KEY || Date.now() - vaultAt < 60_000) return;
+  vaultAt = Date.now();
+  const [{ data: key }, { data: model }] = await Promise.all([
+    admin.rpc('app_secret', { p_name: 'GEMINI_API_KEY' }),
+    admin.rpc('app_secret', { p_name: 'GEMINI_MODEL' }),
+  ]);
+  if (typeof key === 'string' && key) GEMINI_KEY = key.trim();
+  if (typeof model === 'string' && model && !Deno.env.get('GEMINI_MODEL')) MODEL = model.trim();
+}
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -34,6 +48,7 @@ async function gemini(system: string, parts: Part[], schema: unknown, temperatur
       }),
     });
     if (res.status === 404 || res.status === 400 && (await res.clone().text()).includes('not found')) { lastErr = `${model} unavailable`; continue; }
+    if (res.status === 429 || res.status >= 500) { lastErr = `${model} busy (${res.status})`; continue; }
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const body = await res.json();
     const text = body?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || '';
@@ -267,6 +282,7 @@ Deno.serve(async (req) => {
   let body: any;
   try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
   try {
+    await loadKeys(admin);
     switch (body.action) {
       case 'status': return json({ ok: true, configured: Boolean(GEMINI_KEY), model: MODEL });
       case 'read_invoice': {

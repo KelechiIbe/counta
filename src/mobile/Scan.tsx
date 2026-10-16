@@ -8,8 +8,7 @@ import { Icon } from '../components/Icon';
 import { Stat, Thumb } from '../components/ui';
 import { BranchChip, MTop, QueueBanner, useM } from './ctx';
 import { Done, ItemSearch, SaleSheet } from './common';
-
-declare global { interface Window { BarcodeDetector?: any } }
+import { makeDetector } from '../lib/barcode';
 
 export default function ScanScreen() {
   const { data: inv } = useInventory();
@@ -45,7 +44,7 @@ export default function ScanScreen() {
 function Camera({ onCode, paused }: { onCode: (c: string) => void; paused: boolean }) {
   const video = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<'idle' | 'on' | 'unsupported' | 'denied'>('idle');
-  const supported = typeof window !== 'undefined' && 'BarcodeDetector' in window;
+  const supported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
   useEffect(() => {
     if (!supported) { setState('unsupported'); return; }
     let stream: MediaStream | null = null; let timer = 0; let stop = false;
@@ -55,8 +54,8 @@ function Camera({ onCode, paused }: { onCode: (c: string) => void; paused: boole
         if (stop) { stream.getTracks().forEach((t) => t.stop()); return; }
         if (video.current) { video.current.srcObject = stream; await video.current.play().catch(() => {}); }
         setState('on');
-        const formats = await window.BarcodeDetector.getSupportedFormats?.().catch(() => null);
-        const det = new window.BarcodeDetector(formats ? { formats: formats.filter((f: string) => ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'qr_code', 'code_128', 'code_39'].includes(f)) } : undefined);
+        const det = await makeDetector();
+        if (!det) { setState('unsupported'); stream.getTracks().forEach((t) => t.stop()); return; }
         let last = '';
         const tick = async () => {
           if (stop) return;
@@ -78,7 +77,7 @@ function Camera({ onCode, paused }: { onCode: (c: string) => void; paused: boole
     return (
       <div style={{ background: '#111827', color: '#fff', padding: '28px 20px', textAlign: 'center', fontSize: 13, lineHeight: 1.5 }}>
         <Icon name="scan" size={28} color="#fff" />
-        <div style={{ marginTop: 8 }}>{state === 'denied' ? 'Camera access was blocked. Allow the camera for this site in your browser settings, or search below.' : 'This browser cannot read barcodes from the camera. Chrome on Android can; on other phones, search by name or type the code below.'}</div>
+        <div style={{ marginTop: 8 }}>{state === 'denied' ? 'Camera access was blocked. Allow the camera for this site in your browser settings, or search below.' : 'This phone cannot open the camera from the browser. Search by name or type the code below.'}</div>
       </div>
     );
   }

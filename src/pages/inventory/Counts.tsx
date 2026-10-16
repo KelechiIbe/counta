@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { can, useInventory, useSession } from '../../state/session';
 import { useAction, useCounts } from '../../lib/queries';
 import { rpc } from '../../lib/supabase';
@@ -19,9 +19,14 @@ export default function Counts() {
   const location = useLocation();
   const nav = useNavigate();
   const st = (location.state || {}) as { open?: string; newCount?: { location_id?: string; area?: string } };
-  const [active, setActive] = useState<string | null>(st.open || null);
+  const [params, setParams] = useSearchParams();
+  const [active, setActive] = useState<string | null>(st.open || params.get('open'));
   const [newCount, setNewCount] = useState<null | { location_id?: string; area?: string }>(st.newCount || null);
   useEffect(() => { if (st.open || st.newCount) nav(location.pathname, { replace: true, state: null }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const q = params.get('open');
+    if (q) { setActive(q); setParams({}, { replace: true }); }
+  }, [params.get('open')]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!inv) return null;
   const approver = can(inv, 'approve_adjustments');
   const rows = (counts.data || []).filter((c) => approver || c.assignee_id === inv.me.id);
@@ -38,7 +43,7 @@ export default function Counts() {
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-hd"><Label>Count sessions</Label></div>
         <div className="tbl">
-          <div className="tr head th" style={{ gridTemplateColumns: COLS, minWidth: 940 }}>
+          <div className="tr head th rsp" style={{ gridTemplateColumns: COLS, minWidth: 940 }}>
             <span>Session</span><span>Location</span><span>Area</span><span>Assigned to</span><span>Date</span><span>Items</span><span>Variances</span><span>Status</span>
           </div>
           {counts.isLoading && <SkeletonRows n={3} />}
@@ -46,15 +51,15 @@ export default function Counts() {
             const lines = c.count_lines || [];
             const vars = lines.filter((l) => l.counted != null && l.expected != null && Number(l.counted) !== Number(l.expected)).length;
             return (
-              <div key={c.id} className="tr click" onClick={() => setActive(c.id)} style={{ gridTemplateColumns: COLS, minWidth: 940 }}>
+              <div key={c.id} className="tr click rsp" onClick={() => setActive(c.id)} style={{ gridTemplateColumns: COLS, minWidth: 940 }}>
                 <span style={{ fontWeight: 600, color: '#0072F5' }}>{c.ref}</span>
                 <span className="ink3">{locName(c.location_id)}</span>
-                <span style={{ fontWeight: 500 }} className="ellipsis">{c.area}</span>
+                <span style={{ fontWeight: 500 }} className="ellipsis m-main m-first">{c.area}</span>
                 <span className="ink3 ellipsis">{who(c.assignee_id)}{c.assignee_id === inv.me.id ? ' (you)' : ''}</span>
                 <span className="muted">{fmtDay(c.submitted_at || c.created_at)}</span>
-                <span className="ink3">{lines.length || '—'}</span>
-                <span style={{ fontWeight: 600 }}>{c.status === 'open' ? '—' : approver ? vars : '—'}</span>
-                <span><Chip label={STATUS[c.status]} /></span>
+                <span className="ink3" data-label="Items">{lines.length || '—'}</span>
+                <span style={{ fontWeight: 600 }} className={c.status === 'open' || !approver ? 'hide-sm' : ''} data-label="Variances">{c.status === 'open' ? '—' : approver ? vars : '—'}</span>
+                <span className="m-end"><Chip label={STATUS[c.status]} /></span>
               </div>
             );
           })}
@@ -179,7 +184,7 @@ function CountDrawer({ session: s, onClose }: { session: CountSession; onClose: 
           <Alert kind="yellow" icon="clock">Submitted. The owner reviews differences and approves the adjustments.</Alert>
         ) : (
           <>
-            <div className="th" style={{ display: 'grid', gridTemplateColumns: 'minmax(130px,1.5fr) 68px 68px 52px 84px 140px', gap: 10, padding: '0 4px 8px' }}>
+            <div className="th hide-sm" style={{ display: 'grid', gridTemplateColumns: 'minmax(130px,1.5fr) 68px 68px 52px 84px 140px', gap: 10, padding: '0 4px 8px' }}>
               <span>Item</span><span className="right">Expected</span><span className="right">Counted</span><span className="right">Var</span><span className="right">Value</span><span>Reason</span>
             </div>
             {lines.map((l) => {
@@ -187,12 +192,12 @@ function CountDrawer({ session: s, onClose }: { session: CountSession; onClose: 
               const editable = !!l.v && s.status !== 'approved';
               return (
                 <div key={l.item_id} style={{ borderTop: '1px solid #F3F4F6', padding: '10px 4px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(130px,1.5fr) 68px 68px 52px 84px 140px', gap: 10, fontSize: 13, alignItems: 'center' }}>
+                  <div className="var-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(130px,1.5fr) 68px 68px 52px 84px 140px', gap: 10, fontSize: 13, alignItems: 'center' }}>
                     <span style={{ fontWeight: 600 }}>{l.it?.name || 'Item'}<span className="faint" style={{ display: 'block', fontSize: 11, fontWeight: 400 }}>{l.it?.selling_unit}</span></span>
-                    <span className="right muted num">{l.expected != null ? Number(l.expected).toLocaleString('en-NG') : '—'}</span>
-                    <span className="right num">{l.counted != null ? Number(l.counted).toLocaleString('en-NG') : '—'}</span>
-                    <span className="right num" style={{ fontWeight: 700, color }}>{l.v ? signed(l.v) : '0'}</span>
-                    <span className="right num" style={{ color }}>{l.value ? N(l.value) : '—'}</span>
+                    <span className="right muted num" data-label="Expected">{l.expected != null ? Number(l.expected).toLocaleString('en-NG') : '—'}</span>
+                    <span className="right num" data-label="Counted">{l.counted != null ? Number(l.counted).toLocaleString('en-NG') : '—'}</span>
+                    <span className="right num" style={{ fontWeight: 700, color }} data-label="Var">{l.v ? signed(l.v) : '0'}</span>
+                    <span className="right num" style={{ color }} data-label="Value">{l.value ? N(l.value) : '—'}</span>
                     <span>
                       {!l.v ? null : editable ? (
                         <select className="input input-sm" value={l.reason || ''} onChange={(e) => { setErr(null); setReasons((r) => ({ ...r, [l.item_id]: { reason: e.target.value, note: r[l.item_id]?.note ?? l.note ?? '' } })); }}>

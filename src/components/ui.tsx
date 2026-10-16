@@ -92,9 +92,9 @@ export function Alert({ kind, children, icon, style }: { kind: 'red' | 'amber' |
 
 export function Kpi({ label, value, sub, color }: { label: string; value: ReactNode; sub: ReactNode; color: string }) {
   return (
-    <div style={{ minWidth: 0, borderLeft: '1px solid #E6E6E6', paddingLeft: 20, marginLeft: -20 }}>
+    <div className="kpi" style={{ minWidth: 0, borderLeft: '1px solid #E6E6E6', paddingLeft: 20, marginLeft: -20 }}>
       <div className="label">{label}</div>
-      <div style={{ fontFamily: 'var(--font-brand)', fontSize: 30, fontWeight: 600, letterSpacing: '-.02em', color, marginTop: 8, lineHeight: 1.1 }}>{value}</div>
+      <div className="kpi-v" style={{ fontFamily: 'var(--font-brand)', fontSize: 30, fontWeight: 600, letterSpacing: '-.02em', color, marginTop: 8, lineHeight: 1.1 }}>{value}</div>
       <div style={{ fontSize: 12, color: '#6B7280', marginTop: 6, lineHeight: 1.4 }}>{sub}</div>
     </div>
   );

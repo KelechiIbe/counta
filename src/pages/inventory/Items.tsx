@@ -39,10 +39,10 @@ export default function Items() {
   return (
     <div className="container" style={{ gap: 16 }}>
       <div className="row wrap" style={{ gap: 10 }}>
-        <div className="row" style={{ border: '1px solid #E6E6E6', borderRadius: 10, padding: '9px 12px', flex: 1, minWidth: 220, maxWidth: 360 }}>
+        <div className="row" style={{ border: '1px solid #E6E6E6', borderRadius: 10, padding: '9px 12px', flex: '1 1 220px', minWidth: 0, maxWidth: 360 }}>
           <Icon name="search" size={16} color="#9CA3AF" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search products or categories" aria-label="Search items"
-            style={{ border: 'none', fontSize: 14, flex: 1, minWidth: 0, boxShadow: 'none', outline: 'none' }} />
+            className="bare-input" style={{ border: 'none', fontSize: 14, flex: 1, minWidth: 0, boxShadow: 'none', outline: 'none' }} />
         </div>
         <Pills value={filter} onChange={setFilter} options={chips} />
         <div style={{ flex: 1 }} />
@@ -50,26 +50,26 @@ export default function Items() {
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="tbl">
-          <div className="tr head shade th" style={{ gridTemplateColumns: COLS, minWidth: 1060 }}>
+          <div className="tr head shade th rsp" style={{ gridTemplateColumns: COLS, minWidth: 1060 }}>
             <span>Product</span><span>Category</span><span>On hand</span><span className="right">Avg cost</span><span className="right">Price</span><span className="right">Margin</span><span className="right">Value</span><span>Status</span><span />
           </div>
           {shown.map((i) => (
-            <div key={i.id} className="tr click blue" onClick={() => setSel(i.id)} style={{ gridTemplateColumns: COLS, minWidth: 1060, padding: '10px 20px' }}>
-              <div className="row" style={{ gap: 12, minWidth: 0 }}>
+            <div key={i.id} className="tr click blue rsp" onClick={() => setSel(i.id)} style={{ gridTemplateColumns: COLS, minWidth: 1060, padding: '10px 20px' }}>
+              <div className="row m-main" style={{ gap: 12, minWidth: 0 }}>
                 <Thumb name={i.name} path={i.photo_path} />
                 <div style={{ minWidth: 0 }}>
                   <div className="ellipsis" style={{ fontWeight: 600 }}>{i.name}</div>
                   <div style={{ fontSize: 11, color: '#9CA3AF' }}>{i.barcode || 'No barcode · QR generated'}{i.needs_review ? ' · needs a check' : ''}</div>
                 </div>
               </div>
-              <span className="ink3">{i.category}</span>
-              <span>{qtyLabel(i, i.q)}</span>
-              <span className="right ink3 num">{costs ? N(i.wac) : '—'}</span>
-              <span className="right num" style={{ fontWeight: 500 }}>{N(i.price)}</span>
-              <span className="right num" style={{ fontWeight: 600, color: costs ? marginColor(i.margin, Number(inv.org.margin_threshold)) : '#9CA3AF' }}>{costs ? P(i.margin) : '—'}</span>
-              <span className="right num">{costs ? K(i.value) : '—'}</span>
-              <span><Chip label={i.status} /></span>
-              <Icon name="chevR" size={16} color="#9CA3AF" />
+              <span className="ink3 hide-sm">{i.category}</span>
+              <span data-label="On hand">{qtyLabel(i, i.q)}</span>
+              <span className="right ink3 num hide-sm">{costs ? N(i.wac) : '—'}</span>
+              <span className="right num" data-label="Price" style={{ fontWeight: 500 }}>{N(i.price)}</span>
+              <span className={'right num' + (costs ? '' : ' hide-sm')} data-label="Margin" style={{ fontWeight: 600, color: costs ? marginColor(i.margin, Number(inv.org.margin_threshold)) : '#9CA3AF' }}>{costs ? P(i.margin) : '—'}</span>
+              <span className="right num hide-sm">{costs ? K(i.value) : '—'}</span>
+              <span className="m-end"><Chip label={i.status} /></span>
+              <span className="hide-sm"><Icon name="chevR" size={16} color="#9CA3AF" /></span>
             </div>
           ))}
           {!shown.length && <div style={{ padding: 40, textAlign: 'center', color: '#6B7280', fontSize: 14 }}>No items match this filter.</div>}
@@ -117,7 +117,7 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
   return (
     <>
       <Drawer onClose={onClose} width={560}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: '20px 24px 0' }}>
+        <div className="drawer-pad-x" style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: '20px 24px 0' }}>
           <button onClick={() => fileRef.current?.click()} title="Add a product photo" style={{ border: 0, padding: 0, background: 'none', cursor: 'pointer', position: 'relative' }}>
             <Thumb name={it.name} path={it.photo_path} size={64} radius={12} />
             {uploading && <span style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,.7)', borderRadius: 12 }}><span className="spinner spinner-sm" /></span>}
@@ -130,13 +130,13 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
           {can(inv, 'edit_prices') && <button className="btn btn-secondary btn-xs" onClick={() => setEdit(true)}><Icon name="pencil" size={14} />Edit</button>}
           <XButton onClick={onClose} />
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, padding: '16px 24px 0' }}>
+        <div className="m-2 drawer-pad-x" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, padding: '16px 24px 0' }}>
           <Stat label="On hand" value={qtyLabel(it, it.qAll)} />
           <Stat label="Days cover" value={it.cover != null ? Math.round(it.qAll / Math.max(it.vel, 0.0001)) : '—'} />
           <Stat label={`Price / ${su}`} value={N(it.price)} />
           <Stat label="Margin" value={costs ? P(it.margin) : '—'} color={costs ? marginColor(it.margin, Number(inv.org.margin_threshold)) : '#9CA3AF'} />
         </div>
-        <div className="row" style={{ gap: 4, padding: '16px 24px 0', borderBottom: '1px solid #E6E6E6' }} role="tablist">
+        <div className="row drawer-pad-x" style={{ gap: 4, padding: '16px 24px 0', borderBottom: '1px solid #E6E6E6', overflowX: 'auto', flexWrap: 'nowrap' }} role="tablist">
           {([['stock', 'Stock'], ['units', 'Units & labels'], ['batches', 'Batches'], ['moves', 'Movements']] as const).map(([id, label]) => (
             <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
               style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: 13, fontWeight: 600, color: tab === id ? '#0072F5' : '#6B7280', borderBottom: '2px solid ' + (tab === id ? '#0072F5' : 'transparent'), cursor: 'pointer', marginBottom: -1 }}>{label}</button>
@@ -213,7 +213,7 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
               {batches.map((b) => {
                 const w = batchWindow(b, inv.today);
                 return (
-                  <div key={b.id} className="card" style={{ padding: '12px 14px', borderRadius: 12, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 10, alignItems: 'center', fontSize: 13 }}>
+                  <div key={b.id} className="card m-2" style={{ padding: '12px 14px', borderRadius: 12, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 10, alignItems: 'center', fontSize: 13 }}>
                     <div><div className="mono" style={{ fontWeight: 600 }}>{b.batch_no}</div><div style={{ fontSize: 11, color: '#9CA3AF' }}>{inv.locations.find((l) => l.id === b.location_id)?.name}</div></div>
                     <div><div>{fmtDay(b.expiry_date)}</div><div style={{ fontSize: 11, color: '#9CA3AF' }}>{daysLabel(w.days)}</div></div>
                     <div><div>{Number(b.qty_remaining).toLocaleString('en-NG')} {su}</div><div style={{ fontSize: 11, color: '#9CA3AF' }}>Remaining</div></div>

@@ -13,6 +13,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
     "@tanstack/react-query": "^5.104.3",
+    "barcode-detector": "^3.2.2",
     "idb-keyval": "^6.3.0",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
