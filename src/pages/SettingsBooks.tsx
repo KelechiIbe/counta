@@ -100,7 +100,7 @@ export function MessagesSection() {
       <div className="row wrap" style={{ gap: 8 }}>
         <span className={'chip ' + (status.data?.email ? 't-green' : 't-grey')}>Email {status.data?.email ? 'on' : 'off'}</span>
         <span className={'chip ' + (status.data?.whatsapp ? 't-green' : 't-grey')}>WhatsApp {status.data?.whatsapp ? 'on' : 'off'}</span>
-        {status.data?.sender && <span className="chip t-grey">Sends from {inv.org.name} via Counta &lt;{status.data.sender}&gt;</span>}
+        {status.data?.sender && <span className="chip t-grey" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>Sends from {inv.org.name} via Counta &lt;{status.data.sender}&gt;</span>}
       </div>
       {status.data?.email_key && status.data.sender_set && !status.data.sender && <Alert kind="red" icon="alert">The sending address (RESEND_FROM) has no email address in it. It should be an address on the domain verified in Resend, such as billing@yourdomain.com.</Alert>}
       {status.data && (!status.data.email || !status.data.whatsapp) && <Alert kind="blue" icon="info">TaxStreem switches these on for everyone with its Resend and WhatsApp Business keys. Until then, messages wait and go out as soon as they are on.</Alert>}
