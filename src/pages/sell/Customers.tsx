@@ -10,6 +10,7 @@ import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows } fr
 import { ExportMenu, acc, useMeta } from '../../components/Books';
 import type { RCol } from '../../lib/reports';
 import { StatusChip, docUrl } from './common';
+import { COUNTRIES, NG_STATES, countryName, isExport } from '../../lib/countries';
 import { SaleDrawer } from './Sales';
 
 type Tab = 'all' | 'owing' | 'overdue' | 'credit';
@@ -57,7 +58,7 @@ export default function Customers() {
           </div>
           {customers.isLoading ? <SkeletonRows n={6} /> : !list.length ? <div style={{ padding: 20 }}><Empty>No customers here.</Empty></div> : list.map((c) => (
             <div key={c.id} className="tr click" onClick={() => setOpen(c)} style={{ gridTemplateColumns: 'minmax(180px,1.6fr) 140px 120px 130px 120px 110px', minWidth: 820 }}>
-              <span className="ellipsis"><b>{c.name}</b>{c.open_count ? <span className="faint" style={{ fontSize: 12 }}> · {c.open_count} open</span> : null}</span>
+              <span className="ellipsis"><b>{c.name}</b>{isExport(c.country) ? <span className="chip t-blue" style={{ marginLeft: 6, fontSize: 11 }} title="Sales to this customer are exports, zero-rated for VAT">Export · {countryName(c.country)}</span> : null}{c.open_count ? <span className="faint" style={{ fontSize: 12 }}> · {c.open_count} open</span> : null}</span>
               <span className="muted">{c.phone || '—'}</span>
               <span className="muted">{c.price_list_name || 'Retail'}</span>
               <span className="right num" style={{ color: Number(c.balance) > 0 ? '#C2410C' : Number(c.balance) < 0 ? '#15803D' : undefined }}>{Number(c.balance) ? (Number(c.balance) < 0 ? `${N2(-c.balance)} credit` : N2(c.balance)) : '—'}</span>
@@ -78,14 +79,16 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   const toast = useToast();
   const qc = useQueryClient();
   const [tab, setTab] = useState<'details' | 'statement' | 'documents'>(customer ? 'statement' : 'details');
-  const [f, setF] = useState({ name: '', phone: '', email: '', address: '', tin: '', kind: 'business', credit_limit: '', terms_days: '', price_list_id: '', whatsapp_opt_in: true });
+  const [f, setF] = useState({ name: '', phone: '', email: '', address: '', tin: '', kind: 'business', credit_limit: '', terms_days: '', price_list_id: '', whatsapp_opt_in: true,
+    city: '', state: '', country: 'NG', contact_person: '', cc_emails: '' });
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState<'pay' | 'refund' | null>(null);
   const [doc, setDoc] = useState<string | null>(null);
   const [range, setRange] = useState({ from: '', to: today() });
   useEffect(() => {
     if (customer) setF({ name: customer.name, phone: customer.phone || '', email: customer.email || '', address: customer.address || '', tin: customer.tin || '', kind: customer.kind || 'business',
-      credit_limit: String(Number(customer.credit_limit) || ''), terms_days: String(customer.terms_days || ''), price_list_id: customer.price_list_id || '', whatsapp_opt_in: customer.whatsapp_opt_in });
+      credit_limit: String(Number(customer.credit_limit) || ''), terms_days: String(customer.terms_days || ''), price_list_id: customer.price_list_id || '', whatsapp_opt_in: customer.whatsapp_opt_in,
+      city: customer.city || '', state: customer.state || '', country: customer.country || 'NG', contact_person: customer.contact_person || '', cc_emails: (customer.cc_emails || []).join(', ') });
   }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const statement = useQuery({ queryKey: ['statement', customer?.id, range.from, range.to], enabled: !!customer && tab === 'statement',
     queryFn: () => rpc<any>('customer_statement', { p_customer: customer!.id, p_from: range.from || null, p_to: range.to || null }) });
@@ -97,7 +100,8 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
     setBusy(true);
     try {
       await rpc('save_customer', { p_org: orgId, p_customer: { id: customer?.id || null, name: f.name, phone: f.phone || null, email: f.email || null, address: f.address || null, tin: f.tin || null,
-        kind: f.kind, price_list_id: f.price_list_id || null, whatsapp_opt_in: f.whatsapp_opt_in,
+        kind: f.kind, price_list_id: f.price_list_id || null, whatsapp_opt_in: f.whatsapp_opt_in, city: f.city || null, state: f.state || null, country: f.country || 'NG',
+        contact_person: f.contact_person || null, cc_emails: f.cc_emails.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean),
         ...(canCredit ? { credit_limit: money(f.credit_limit) ?? 0, terms_days: Number(f.terms_days) || 0 } : {}) } });
       toast('Customer saved'); await qc.invalidateQueries({ queryKey: ['customers'] }); if (!customer) onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
@@ -120,11 +124,22 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
               <Field label="Name" req><input className="input" value={f.name} onChange={(e) => set('name', e.target.value)} /></Field>
               <Field label="Kind"><select className="input" value={f.kind} onChange={(e) => set('kind', e.target.value)}><option value="business">Business</option><option value="individual">Individual</option></select></Field>
               <Field label="Phone (WhatsApp)"><input className="input" value={f.phone} onChange={(e) => set('phone', e.target.value)} inputMode="tel" /></Field>
-              <Field label="Email"><input className="input" value={f.email} onChange={(e) => set('email', e.target.value)} inputMode="email" /></Field>
-              <Field label="TIN" hint="Needed when they deduct WHT from your invoices."><input className="input" value={f.tin} onChange={(e) => set('tin', e.target.value)} /></Field>
+              <Field label="Email" hint="Invoices and statements go here."><input className="input" value={f.email} onChange={(e) => set('email', e.target.value)} inputMode="email" placeholder="accounts@customer.com" /></Field>
+              <Field label="Tax ID (TIN)" hint="Printed on your invoices to them. Needed when they deduct WHT."><input className="input" value={f.tin} onChange={(e) => set('tin', e.target.value)} /></Field>
+              <Field label="Contact person"><input className="input" value={f.contact_person} onChange={(e) => set('contact_person', e.target.value)} placeholder="Who you deal with there" /></Field>
+              <Field label="Copy emails to" hint="Up to 5 more addresses, separated by commas."><input className="input" value={f.cc_emails} onChange={(e) => set('cc_emails', e.target.value)} inputMode="email" placeholder="finance@customer.com" /></Field>
               <Field label="Price list"><select className="input" value={f.price_list_id} onChange={(e) => set('price_list_id', e.target.value)}><option value="">Retail</option>{priceLists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
             </div>
-            <Field label="Address"><textarea className="input" value={f.address} onChange={(e) => set('address', e.target.value)} style={{ minHeight: 60 }} /></Field>
+            <Field label="Street address"><textarea className="input" value={f.address} onChange={(e) => set('address', e.target.value)} style={{ minHeight: 56 }} placeholder="12 Adeola Odeku Street, Victoria Island" /></Field>
+            <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <Field label="City or town"><input className="input" value={f.city} onChange={(e) => set('city', e.target.value)} /></Field>
+              <Field label={f.country === 'NG' ? 'State' : 'State or region'}>
+                <input className="input" value={f.state} onChange={(e) => set('state', e.target.value)} list={f.country === 'NG' ? 'ng-states' : undefined} />
+                <datalist id="ng-states">{NG_STATES.map((x) => <option key={x} value={x} />)}</datalist>
+              </Field>
+              <Field label="Country"><select className="input" value={f.country} onChange={(e) => set('country', e.target.value)}>{COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</select></Field>
+            </div>
+            {isExport(f.country) && <Alert kind="blue" icon="info">This customer is in {countryName(f.country)}, so what you sell them is an export. Counta zero-rates the VAT on their invoices (VAT status 2), even for items that are normally VATable or exempt.</Alert>}
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="Credit limit" hint={canCredit ? '0 means a manager approves each credit sale.' : 'Set by a manager or the bookkeeper.'}><input className="input" inputMode="decimal" disabled={!canCredit} value={f.credit_limit} onChange={(e) => set('credit_limit', e.target.value)} /></Field>
               <Field label="Payment terms (days)"><input className="input" inputMode="numeric" disabled={!canCredit} value={f.terms_days} onChange={(e) => set('terms_days', e.target.value)} /></Field>

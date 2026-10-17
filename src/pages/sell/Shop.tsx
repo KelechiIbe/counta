@@ -1,13 +1,15 @@
 // The online shop: a catalogue link for WhatsApp, Instagram and TikTok that follows live stock, takes orders and payment
 // by transfer or link, and lands orders in Orders & deliveries.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useInventory, useSession, useToast } from '../../state/session';
-import { rpc } from '../../lib/supabase';
+import { photoUrl, rpc } from '../../lib/supabase';
 import { money } from '../../lib/api';
 import { qrSvg } from '../../lib/labels';
 import { Icon } from '../../components/Icon';
 import { Alert, Field } from '../../components/ui';
+import { ColorPicker, uploadBrandImage } from '../SettingsBranding';
+import { cleanHex } from '../../components/InvoiceDoc';
 
 export default function Shop() {
   const { data: inv } = useInventory();
@@ -18,12 +20,17 @@ export default function Shop() {
   const [f, setF] = useState<Record<string, any>>({});
   const [qr, setQr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [look, setLook] = useState<Record<string, any>>({});
+  const [uploading, setUploading] = useState(false);
+  const bannerRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!o) return;
     setF({ shop_slug: o.shop_slug || o.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40), shop_enabled: !!o.shop_enabled, shop_title: o.shop_title || o.name,
       shop_note: o.shop_note || '', shop_whatsapp: o.shop_whatsapp || o.phone || '', shop_location_id: o.shop_location_id || inv?.locations[0]?.id || '', shop_delivery_fee: String(o.shop_delivery_fee ?? ''),
       shop_pickup: o.shop_pickup !== false, shop_delivery: !!o.shop_delivery, shop_show_stock: !!o.shop_show_stock, shop_categories: (o as any).shop_categories || null,
       receipt_footer: o.receipt_footer || '', max_cashier_discount_pct: String(o.max_cashier_discount_pct ?? 0) });
+    setLook({ brand_color: cleanHex(o.brand_color), shop_banner_path: o.shop_banner_path || '', shop_tagline: o.shop_tagline || '', shop_min_order: String(Number(o.shop_min_order || 0) || ''),
+      shop_pay_on_delivery: o.shop_pay_on_delivery !== false, instagram: o.shop_socials?.instagram || '', facebook: o.shop_socials?.facebook || '', tiktok: o.shop_socials?.tiktok || '', x: o.shop_socials?.x || '' });
   }, [o?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const url = `${window.location.origin}/shop/${f.shop_slug || ''}`;
   useEffect(() => { if (f.shop_slug) qrSvg(url, 160).then(setQr).catch(() => {}); }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -37,6 +44,9 @@ export default function Shop() {
     try {
       await rpc('update_sales_settings', { p_org: orgId, p_patch: { ...f, shop_delivery_fee: money(f.shop_delivery_fee) || 0, max_cashier_discount_pct: Number(f.max_cashier_discount_pct) || 0,
         shop_location_id: f.shop_location_id || null } });
+      await rpc('update_branding', { p_org: orgId, p_patch: { brand_color: look.brand_color, shop_banner_path: look.shop_banner_path || '', shop_tagline: look.shop_tagline,
+        shop_min_order: money(look.shop_min_order) || 0, shop_pay_on_delivery: !!look.shop_pay_on_delivery,
+        shop_socials: { instagram: look.instagram, facebook: look.facebook, tiktok: look.tiktok, x: look.x } } });
       toast('Saved'); await qc.invalidateQueries({ queryKey: ['inv'] });
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
@@ -84,6 +94,41 @@ export default function Shop() {
             })}
           </div>
         </Field>
+      </div>
+      <div className="card card-pad stack" style={{ gap: 12 }}>
+        <div className="label">Look and checkout</div>
+        <Field label="Banner" hint="A wide picture across the top of the shop, about 1500 × 500. PNG, JPG or WebP under 3 MB.">
+          <div className="stack" style={{ gap: 8 }}>
+            <div style={{ width: '100%', maxWidth: 520, aspectRatio: '3 / 1', borderRadius: 12, overflow: 'hidden', background: look.brand_color || '#0072F5', display: 'grid', placeItems: 'center' }}>
+              {look.shop_banner_path ? <img src={photoUrl(look.shop_banner_path) || ''} alt="Shop banner" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                : <span style={{ color: '#fff', opacity: 0.85, fontSize: 13 }}>Your colour shows here until you add a banner</span>}
+            </div>
+            <div className="row">
+              <input ref={bannerRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={async (e) => {
+                const file = e.target.files?.[0]; e.target.value = '';
+                if (!file) return;
+                setUploading(true);
+                try { const path = await uploadBrandImage(orgId!, file, 'banner'); setLook((x) => ({ ...x, shop_banner_path: path })); toast('Banner uploaded. Save to use it.'); }
+                catch (err) { toast((err as Error).message, 'err'); }
+                setUploading(false);
+              }} />
+              <button className="btn btn-secondary btn-sm" disabled={!owner || uploading} onClick={() => bannerRef.current?.click()}><Icon name="upload" size={14} />{uploading ? 'Uploading…' : look.shop_banner_path ? 'Change banner' : 'Upload banner'}</button>
+              {look.shop_banner_path && owner && <button className="btn btn-ghost btn-sm" onClick={() => setLook((x) => ({ ...x, shop_banner_path: '' }))}>Remove</button>}
+            </div>
+          </div>
+        </Field>
+        <Field label="Colour" hint="Shared with your invoices and emails. The logo comes from Settings, Branding."><ColorPicker value={look.brand_color || '#0072F5'} disabled={!owner} onChange={(v) => setLook((x) => ({ ...x, brand_color: v }))} /></Field>
+        <Field label="Tagline"><input className="input" disabled={!owner} value={look.shop_tagline || ''} onChange={(e) => setLook((x) => ({ ...x, shop_tagline: e.target.value }))} placeholder="Fresh groceries delivered across Lekki and VI" maxLength={120} /></Field>
+        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
+          {([['instagram', 'Instagram'], ['facebook', 'Facebook'], ['tiktok', 'TikTok'], ['x', 'X']] as const).map(([k, l]) => (
+            <Field key={k} label={l}><input className="input" disabled={!owner} value={look[k] || ''} onChange={(e) => setLook((x) => ({ ...x, [k]: e.target.value }))} placeholder="handle" /></Field>
+          ))}
+        </div>
+        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'end' }}>
+          <Field label="Smallest order" hint="Leave empty for no minimum."><input className="input" disabled={!owner} inputMode="decimal" value={look.shop_min_order || ''} onChange={(e) => setLook((x) => ({ ...x, shop_min_order: e.target.value }))} /></Field>
+          <label className="check"><input type="checkbox" disabled={!owner} checked={!!look.shop_pay_on_delivery} onChange={(e) => setLook((x) => ({ ...x, shop_pay_on_delivery: e.target.checked }))} />Customers can pay on delivery or at pickup</label>
+        </div>
+        <div className="faint" style={{ fontSize: 12 }}>Checkout runs in four steps: cart, the customer's details, pickup or delivery, then payment. Each order lands in Orders & deliveries and the customer gets a page to pay and follow it.</div>
       </div>
       <div className="card card-pad stack" style={{ gap: 12 }}>
         <div className="label">Till</div>

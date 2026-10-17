@@ -15,7 +15,11 @@ export const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
 export const first = (name: unknown) => String(name || '').trim().split(/\s+/)[0] || 'there';
 
 export type Msg = { id: string; channel: 'email' | 'whatsapp'; to_address: string; template: string; subject?: string; params: Record<string, any>;
-  org: { name: string; email?: string; phone?: string } };
+  org: { name: string; email?: string; phone?: string; address?: string; tin?: string; website?: string; brand_color?: string; logo_path?: string;
+    logo_url?: string | null; reply_to_email?: string; invoice_footer?: string } };
+
+// The business's colour when it is a usable hex colour, Counta blue otherwise.
+export const brandColor = (c?: string) => (/^#[0-9a-f]{6}$/i.test(String(c || '')) ? String(c) : '#0072F5');
 
 // One place for what each message says, so email and WhatsApp agree.
 export function wording(m: Msg) {
@@ -75,19 +79,23 @@ export function wording(m: Msg) {
 export function emailHtml(m: Msg) {
   const w = wording(m), p = m.params || {};
   const biz = p.business || m.org?.name || '';
+  const color = brandColor(m.org?.brand_color);
   const body = w.lines.filter(Boolean).map((l) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.5;color:#1f2933">${esc(l)}</p>`).join('');
   const button = w.button && w.link
-    ? `<p style="margin:20px 0"><a href="${esc(w.link)}" style="background:#0b6e4f;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block">${esc(w.button)}</a></p>`
+    ? `<p style="margin:20px 0"><a href="${esc(w.link)}" style="background:${color};color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block">${esc(w.button)}</a></p>`
     : '';
   const contact = [p.business_phone, p.reply_to].filter(Boolean).map(esc).join(' · ');
+  const footer = [m.org?.address, m.org?.tin ? `TIN ${m.org.tin}` : '', m.org?.website].filter(Boolean).map((x) => esc(x)).join(' · ');
+  const logo = m.org?.logo_url ? `<img src="${esc(m.org.logo_url)}" alt="${esc(biz)}" style="max-height:48px;max-width:180px;display:block;margin:0 0 14px" />` : '';
   return `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">
-<table role="presentation" width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;padding:28px" cellpadding="0" cellspacing="0"><tr><td>
-<p style="margin:0 0 4px;font-size:13px;color:#52606d">${esc(biz)}</p>
+<table role="presentation" width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;padding:28px;border-top:4px solid ${color}" cellpadding="0" cellspacing="0"><tr><td>
+${logo}<p style="margin:0 0 4px;font-size:13px;color:#52606d">${esc(biz)}</p>
 <h1 style="margin:0 0 18px;font-size:20px;color:#102a43">${esc(w.heading)}</h1>
 <p style="margin:0 0 12px;font-size:15px;color:#1f2933">Hello ${esc(first(p.customer_name))},</p>
 ${body}${button}
 ${contact ? `<p style="margin:20px 0 0;font-size:13px;color:#52606d">Questions? ${contact}</p>` : ''}
+${footer ? `<p style="margin:14px 0 0;font-size:12px;color:#829ab1">${footer}</p>` : ''}
 </td></tr></table>
 <p style="font-size:12px;color:#829ab1;margin:14px 0 0">Sent for ${esc(biz)} by Counta</p>
 </td></tr></table></body></html>`;

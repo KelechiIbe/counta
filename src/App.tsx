@@ -37,6 +37,7 @@ const Vendors = lazy(() => import('./pages/purchases/Vendors'));
 const Inbox = lazy(() => import('./pages/accounting/Inbox'));
 const Banking = lazy(() => import('./pages/accounting/Banking'));
 const Statements = lazy(() => import('./pages/accounting/Statements'));
+const MoveBooks = lazy(() => import('./pages/accounting/MoveBooks'));
 const Ledgers = lazy(() => import('./pages/accounting/Ledgers'));
 const Cfo = lazy(() => import('./pages/accounting/Cfo'));
 const Journals = lazy(() => import('./pages/accounting/Journals'));
@@ -140,6 +141,7 @@ export default function App() {
         <Route path="/accounting/inbox" element={<Inbox />} />
         <Route path="/accounting/banking" element={<Banking />} />
         <Route path="/accounting/statements" element={<Statements />} />
+        <Route path="/accounting/migrate" element={<MoveBooks />} />
         <Route path="/accounting/ledgers" element={<Ledgers />} />
         <Route path="/accounting/cfo" element={<Cfo />} />
         <Route path="/accounting/journals" element={<Journals />} />

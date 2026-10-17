@@ -18,6 +18,7 @@
         "npm:@types/react@^18.3.12",
         "npm:@vitejs/plugin-react@^4.3.4",
         "npm:barcode-detector@^3.2.2",
+        "npm:docx@9.7.1",
         "npm:exceljs@^4.4.0",
         "npm:idb-keyval@^6.3.0",
         "npm:jspdf-autotable@^5.0.9",

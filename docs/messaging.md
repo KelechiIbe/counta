@@ -14,9 +14,17 @@ Counta sends invoices, receipts, orders, statements and payment reminders by ema
 | Secret | Value |
 | --- | --- |
 | `RESEND_API_KEY` | API key from the Resend dashboard |
-| `RESEND_FROM` | The sending address on a domain verified in Resend, for example `Counta <billing@counta.ng>` |
+| `RESEND_FROM` | An address on a domain verified in Resend: `billing@counta.ng` or `Counta <billing@counta.ng>` |
 
-Each email is sent from `"<Business name> via Counta" <address from RESEND_FROM>`, with the business's own email (or the reply-to address set in Settings) as Reply-To, so customers' replies reach the business. Resend's `Idempotency-Key` is `counta-<message id>`, so a retry never sends twice. The email has a plain-text part as well as HTML.
+Counta reads the email address out of `RESEND_FROM` whatever surrounds it (quotes, a display name, spaces) and sends each email from `<Business name> via Counta <that address>`, with the business's own email (or the reply-to address set in Settings) as Reply-To, so customers' replies reach the business. A customer's extra addresses (up to five) receive a copy. Resend's `Idempotency-Key` is `counta-<message id>`, so a retry never sends twice. The email has a plain-text part as well as HTML, and carries the business's logo, brand colour, address, TIN and website.
+
+Settings, Customer messages shows whether email is on and the address it sends from, and the reason the last message failed.
+
+### When emails do not arrive
+
+1. Settings, Customer messages: if it says the sending address has no email address in it, fix `RESEND_FROM`.
+2. The domain in `RESEND_FROM` must be verified in Resend (Domains). Resend refuses mail from any other domain, and from `onboarding@resend.dev` to anyone but the account owner.
+3. The failed message's reason is shown under Latest. Messages that failed for a passing reason are tried again on their own.
 
 ## WhatsApp
 

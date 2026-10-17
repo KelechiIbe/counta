@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useInventory, useSession, useToast } from '../state/session';
 import { Icon } from './Icon';
-import { Alert, Empty, SkeletonRows } from './ui';
+import { Alert, Empty, MenuButton, SkeletonRows, type MenuItem } from './ui';
 import { accountsCsv, accountsPdf, accountsXlsx, downloadBlob, safeName, type AccountsSheet, type ReportMeta, type StyledRow } from '../lib/exporters';
 import type { RCol } from '../lib/reports';
 import { lastMonthEnd, monthStart, today, useReport, yearStart } from '../lib/api';
@@ -72,39 +72,29 @@ export function useMeta() {
   });
 }
 
-export function ExportMenu({ sheets, name, disabled, cover }: { sheets: () => AccountsSheet[] | Promise<AccountsSheet[]>; name: string; disabled?: boolean; cover?: ReportMeta }) {
-  const [open, setOpen] = useState(false);
+export type ExportExtra = { key: string; label: string; hint?: string; run: () => Promise<void> };
+export function ExportMenu({ sheets, name, disabled, cover, extra, formats = ['xlsx', 'pdf', 'csv'], label = 'Export' }: {
+  sheets: () => AccountsSheet[] | Promise<AccountsSheet[]>; name: string; disabled?: boolean; cover?: ReportMeta;
+  extra?: ExportExtra[]; formats?: ('xlsx' | 'pdf' | 'csv')[]; label?: string;
+}) {
   const [busy, setBusy] = useState<string | null>(null);
   const toast = useToast();
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h);
-  }, [open]);
-  async function go(kind: 'xlsx' | 'pdf' | 'csv') {
-    setBusy(kind); setOpen(false);
-    try {
-      const s = await sheets();
-      const blob = kind === 'xlsx' ? await accountsXlsx(s, cover) : kind === 'pdf' ? await accountsPdf(s, cover) : accountsCsv(s[0].cols, s[0].rows);
-      downloadBlob(blob, `${safeName(name)}.${kind}`);
-    } catch (e) { toast((e as Error).message || 'Could not make the file.', 'err'); }
+  async function run(key: string, fn: () => Promise<void>) {
+    setBusy(key);
+    try { await fn(); } catch (e) { toast((e as Error).message || 'Could not make the file.', 'err'); }
     setBusy(null);
   }
-  return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button className="btn btn-secondary btn-sm" disabled={disabled || !!busy} onClick={() => setOpen(!open)} aria-expanded={open}>
-        <Icon name="download" size={14} />{busy ? 'Preparing…' : 'Export'}<Icon name="chevD" size={14} />
-      </button>
-      {open && (
-        <div className="card rise" style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 30, padding: 6, minWidth: 190, boxShadow: 'var(--shadow-drawer)' }}>
-          {([['xlsx', 'Excel workbook'], ['pdf', 'PDF'], ['csv', 'CSV']] as const).map(([k, l]) => (
-            <button key={k} className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => go(k)}>{l}</button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  const go = (kind: 'xlsx' | 'pdf' | 'csv') => run(kind, async () => {
+    const s = await sheets();
+    const blob = kind === 'xlsx' ? await accountsXlsx(s, cover) : kind === 'pdf' ? await accountsPdf(s, cover) : accountsCsv(s[0].cols, s[0].rows);
+    downloadBlob(blob, `${safeName(name)}.${kind}`);
+  });
+  const names = { xlsx: 'Excel workbook', pdf: 'PDF', csv: 'CSV' } as const;
+  const items: MenuItem[] = [
+    ...(extra || []).map((x) => ({ key: x.key, label: x.label, hint: x.hint, onClick: () => run(x.key, x.run) })),
+    ...formats.map((k) => ({ key: k, label: names[k], onClick: () => go(k) })),
+  ];
+  return <MenuButton label={label} icon="download" items={items} disabled={disabled} busy={busy ? 'Preparing…' : undefined} />;
 }
 
 // ---------------------------------------------------------------- table

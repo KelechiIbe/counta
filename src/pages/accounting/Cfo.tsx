@@ -99,7 +99,7 @@ export default function Cfo() {
         <Pills value={tab} onChange={setTab} options={[{ id: 'ratios', label: 'Ratios' }, { id: 'management_accounts', label: 'By month' }, { id: 'trends', label: 'Trends' },
           { id: 'budget_vs_actual', label: 'Budget' }, { id: 'cash_forecast', label: 'Cash forecast' }, { id: 'sales_analysis', label: 'Sales analysis' }]} />
         {tab === 'sales_analysis' && <select className="input input-sm" style={{ width: 'auto' }} value={by} onChange={(e) => setBy(e.target.value)} aria-label="Group by">
-          {areport('sales_analysis').by!.map((b) => <option key={b} value={b}>By {b}</option>)}</select>}
+          {areport('sales_analysis').by!.map((b) => <option key={b} value={b}>By {b.replace('_', ' ')}</option>)}</select>}
         {tab === 'budget_vs_actual' && can(inv, 'keep_books') && <button className="btn btn-secondary btn-sm" onClick={() => setBudget(true)}><Icon name="pencil" size={14} />Set the budget</button>}
       </div>
       <ReportPanel id={tab} period={period} options={tab === 'sales_analysis' ? { by } : {}} />

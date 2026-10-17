@@ -44,6 +44,17 @@ button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .org-card { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 10px; cursor: pointer; background: #fff; width: 100%; text-align: left; }
 .org-card:hover { background: var(--canvas); }
 .org-ini { width: 38px; height: 38px; border-radius: 9px; background: var(--row); color: var(--ink); display: grid; place-items: center; font-weight: 700; font-size: 12px; flex: none; }
+.sidebar { transition: width .18s ease-out; }
+.sidebar .nav-rail { display: grid; } .sidebar .nav-close { display: none; }
+.sidebar.rail { width: 72px; padding: 0 10px; overflow-x: hidden; }
+.sidebar.rail .sidebar-head { justify-content: center; padding: 0; }
+.sidebar.rail .sidebar-section { padding: 10px 0 4px; }
+.rail-item { justify-content: center; padding: 10px 0; position: relative; }
+.rail-dot { position: absolute; top: 7px; right: 12px; width: 8px; height: 8px; border-radius: 4px; background: var(--red); border: 2px solid #fff; }
+.sidebar.rail .org-card { justify-content: center; padding: 8px 0; border-color: transparent; }
+.nav-sub.fly { padding: 0 0 2px; }
+.nav-sub.fly a { padding: 8px 10px; }
+.popover { animation: tsRise .14s ease-out; }
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; background: #fff; }
 .header { min-height: 72px; flex: none; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 12px 28px; gap: 12px 16px; flex-wrap: wrap; }
 .page-title { margin: 0; font-family: var(--font-brand); font-weight: 600; font-size: 28px; letter-spacing: -.01em; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -87,6 +98,8 @@ button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .btn-dark { background: var(--ink); color: #fff; } .btn-dark:hover:not(:disabled) { background: #000; color: #fff; }
 .btn-ghost { background: transparent; color: var(--muted); border: 0; padding: 8px 10px; }
 .btn-ghost:hover { color: var(--ink); }
+.link { background: none; border: 0; padding: 0; color: var(--primary); font-weight: 500; cursor: pointer; text-align: left; }
+.link:hover { text-decoration: underline; }
 .btn-danger { background: #fff; color: var(--red); border-color: #FECACA; } .btn-danger:hover:not(:disabled) { background: var(--red-bg); }
 .btn-sm { border-radius: 10px; padding: 8px 14px; font-size: 13px; }
 .btn-xs { border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 600; }
@@ -157,6 +170,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 @media (max-width: 1080px) {
   .sidebar { position: fixed; z-index: 50; top: 0; bottom: 0; left: 0; transform: translateX(-100%); transition: transform .2s ease-out; box-shadow: var(--shadow-drawer); }
   .sidebar.open { transform: none; }
+  .sidebar .nav-rail { display: none; } .sidebar .nav-close { display: grid; }
   .hamburger { display: grid; }
   .header { padding: 12px 16px; }
   .content { padding: 16px 16px 40px; }
@@ -174,6 +188,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
   .icon-btn.show-sm, .hdr-seg.show-sm { display: grid !important; }
   .hdr-seg.show-sm { display: block !important; }
   .sec { grid-template-columns: 1fr !important; gap: 12px !important; }
+  .brand-grid { grid-template-columns: 1fr !important; }
   /* iOS zooms into any field under 16px; keep fields at 16px on phones */
   input:not([type=checkbox]):not([type=radio]):not([type=range]), select, textarea { font-size: 16px !important; }
   .header { min-height: 0; padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); gap: 8px; flex-wrap: wrap; }
@@ -267,3 +282,4 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 
 /* Headline figures on tiles: one line, shrinking a little on narrow screens rather than wrapping the minus sign away from the number. */
 .kpi-val { font-size: 22px; font-weight: 700; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+@media (max-width: 400px) { .hide-xs { display: none !important; } }

@@ -27,6 +27,11 @@ export interface Org {
   shop_location_id?: string | null; shop_delivery_fee?: number; shop_pickup?: boolean; shop_delivery?: boolean; shop_show_stock?: boolean;
   payment_rail?: string; payment_methods?: string[]; payout_approval_threshold?: number; reminders_enabled?: boolean; reminder_days?: number[];
   reply_to_email?: string | null; taxstreem_org_id?: string | null; wht_small_company?: boolean;
+  brand_color?: string; invoice_template?: 'classic' | 'modern' | 'minimal'; website?: string | null; invoice_footer?: string | null; invoice_show?: Record<string, boolean>;
+  shop_banner_path?: string | null; shop_tagline?: string | null; shop_socials?: Record<string, string>; shop_pay_on_delivery?: boolean; shop_min_order?: number;
+  directors?: { name: string; role?: string; frc_number?: string; appointed?: string; resigned?: string }[]; company_secretary?: string | null; auditors?: string | null;
+  audit_exempt?: boolean; bankers?: string | null; solicitors?: string | null; registered_office?: string | null; incorporation_date?: string | null;
+  share_info?: Record<string, any>; fs_narrative?: Record<string, any>;
 }
 export interface Location { id: string; org_id: string; name: string; code: string; address: string | null; is_main: boolean; }
 export interface Vendor {

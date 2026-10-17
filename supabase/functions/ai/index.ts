@@ -446,6 +446,63 @@ async function applyVat(admin: SupabaseClient, items: VatItem[]) {
   return { ok: true, checked: results.length, results };
 }
 
+// ---------------------------------------------------------------- moving the books: old chart to Counta's chart
+const MAP_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    results: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { id: S.str, code: { type: 'STRING', nullable: true, description: 'A Counta account code from the list, or null' },
+          confidence: { type: 'NUMBER', description: '0 to 1' }, reason: S.str },
+        required: ['id', 'code', 'confidence', 'reason'],
+      },
+    },
+  },
+  required: ['results'],
+};
+const MAP_SYSTEM = [
+  'You are a chartered accountant moving a Nigerian business from QuickBooks, Zoho Books, Xero or Sage into Counta.',
+  'For each account from the old trial balance, choose the one Counta account its balance belongs in, from the list given. Use only codes in the list.',
+  'Bank, cash and payment wallet accounts map to 1012 (naira bank), 1013 (foreign currency bank), 1011 (cash) or 1014 (wallet); Counta opens a bank account for each.',
+  'Accounts receivable control accounts map to 1101, accounts payable control accounts to 2101. Opening balance equity maps to 3999.',
+  'Respect the side of the balance: a credit balance on an asset-sounding account may be an overdraft or a liability.',
+  'Confidence is how sure you are that a careful accountant would choose the same account: 0.9 or more only when the name and type leave no doubt; below 0.8 when a person should check.',
+  'Reason: one short sentence in plain English.',
+].join(' ');
+async function mapAccounts(sb: SupabaseClient, body: any) {
+  if (!GEMINI_KEY) return json(NOT_CONFIGURED);
+  const { data: g, error } = await sb.rpc('get_books_migration', { p_org: String(body.org_id || '') });
+  if (error) return json({ ok: false, error: error.message });
+  const mig = g?.migration;
+  if (!mig || mig.status !== 'draft') return json({ ok: false, error: 'There is no migration in progress.' });
+  // Only what a person has not decided and the rules were not sure about.
+  const todo = (g.accounts || []).filter((a: any) => a.mapped_by !== 'person' && (a.confidence ?? 0) < 0.9).slice(0, 400);
+  if (!todo.length) return json({ ok: true, ai_updated: 0, ...g });
+  const { data: chart, error: e2 } = await sb.rpc('get_chart', { p_org: mig.org_id });
+  if (e2) return json({ ok: false, error: e2.message });
+  const list = ((chart?.accounts || []) as any[])
+    .filter((a) => a.active !== false && (!a.is_group || ['1011', '1012', '1013', '1014'].includes(a.code)) && a.statement !== 'system' || ['3999', '9002'].includes(a.code))
+    .map((a) => `${a.code} ${a.name} [${a.ifrs_line || a.category}]`).join(NL);
+  const rows = todo.map((a: any) => JSON.stringify({ id: a.id, code: a.source_code, name: a.source_name, type: a.source_type,
+    balance: Number(a.debit) - Number(a.credit), rule_guess: a.mapped_code, rule_confidence: a.confidence })).join(NL);
+  const prompt = `Source system: ${mig.source}. Cut-over date: ${mig.as_of}.${NL}${NL}Counta accounts (code name [statement line]):${NL}${list}${NL}${NL}`
+    + `Old accounts to place (balance is debit positive):${NL}${rows}`;
+  const results: any[] = [];
+  let model = '';
+  for (let i = 0; i < todo.length; i += 80) {
+    const chunkIds = new Set(todo.slice(i, i + 80).map((a: any) => a.id));
+    const chunkRows = rows.split(NL).filter((r: string) => chunkIds.has(JSON.parse(r).id)).join(NL);
+    const out = await gemini(MAP_SYSTEM, [{ text: prompt.replace(rows, () => chunkRows) }], MAP_SCHEMA, 0.1, { thinking: 'low' });
+    model = out.model;
+    results.push(...((out.data?.results || []) as any[]).filter((r) => chunkIds.has(r.id)));
+  }
+  const { data: res, error: e3 } = await sb.rpc('migration_ai_map', { p_migration: mig.id, p_maps: results, p_model: model });
+  if (e3) return json({ ok: false, error: e3.message });
+  return json({ ok: true, model, ...res });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
@@ -498,6 +555,7 @@ Deno.serve(async (req) => {
       case 'voice': return await voice(body);
       case 'map_columns': return await mapColumns(body);
       case 'extract_rows': return await extractRows(body);
+      case 'map_accounts': return await mapAccounts(sb, body);
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }
   } catch (e) {

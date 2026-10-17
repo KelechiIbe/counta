@@ -24,6 +24,8 @@ The token is a JWT signed with HS256 using `TAXSTREEM_SSO_SECRET` (the same valu
 | `name`, `phone` | no | Used when the person is new |
 | `org.id` | yes | TaxStreem business id. Counta links the business to it on first use |
 | `org.name`, `org.email`, `org.phone`, `org.tin`, `org.rc_number`, `org.vat_registered` | no | Used when the business is new |
+| `org.address`, `org.principal_activity`, `org.incorporation_date` (YYYY-MM-DD), `org.company_secretary` | no | Filled in on the business when Counta does not have them yet; they print on the financial statements |
+| `org.directors` | no | The directors collected at onboarding: `[{ "name", "role", "frc_number", "appointed" }]`. Sent on every sign-in; a non-empty list replaces the one Counta holds. The chair and the managing director (or the first two) sign the financial statements |
 | `role` | no | `owner`, `admin` (becomes manager), `manager`, `accountant`, `cashier`; anything else becomes staff. Default owner |
 | `rail` | no | Payment rail code for a partner integration (see [payment-rails.md](payment-rails.md)) |
 | `next` | no | Counta page to open after sign-in, such as `/sell/till`. Must start with a single `/` |
@@ -34,7 +36,8 @@ Example payload:
 {
   "iss": "taxstreem", "aud": ["counta"], "iat": 1792300000, "exp": 1792300300, "jti": "8f3c…",
   "sub": "usr_123", "email": "ada@brightpharm.ng", "email_verified": true, "name": "Ada Obi",
-  "org": { "id": "biz_900", "name": "Bright Pharmacy Ltd", "tin": "11223344-0001", "vat_registered": true },
+  "org": { "id": "biz_900", "name": "Bright Pharmacy Ltd", "tin": "11223344-0001", "vat_registered": true,
+           "directors": [{ "name": "Ada Obi", "role": "Managing Director", "frc_number": "FRC/2021/IODN/00000012345", "appointed": "2019-03-01" }] },
   "role": "owner", "next": "/sell/till"
 }
 ```

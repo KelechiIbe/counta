@@ -13,6 +13,7 @@ import { TOPICS, useVoiceCalls, useVoiceStatus, type VoiceCall } from '../lib/vo
 import { INDUSTRIES, industryOf } from '../lib/industries';
 import { disablePush, enablePush, usePwaState } from '../lib/pwa';
 import { BooksSection, MessagesSection, TaxStreemSection } from './SettingsBooks';
+import { BrandingSection } from './SettingsBranding';
 
 function Section({ id, title, sub, children }: { id?: string; title: string; sub?: string; children: ReactNode }) {
   return (
@@ -159,6 +160,7 @@ export default function Settings() {
         </Field>
         <label className="check"><input type="checkbox" disabled={!owner} checked={!!f.vat_registered} onChange={(e) => set('vat_registered', e.target.checked)} />VAT-registered business (claims input VAT on purchases)</label>
       </Section>
+      <BrandingSection />
       <Section title="Stock rules" sub="These drive reorder suggestions, price proposals and voice review.">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
           <Field label="Margin threshold (%)" hint="Prices under this margin get a proposal. Default 8%."><input className="input" type="number" min={0} max={99} disabled={!owner} value={f.margin_threshold || ''} onChange={(e) => set('margin_threshold', e.target.value)} /></Field>
