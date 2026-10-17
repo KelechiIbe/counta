@@ -3,10 +3,12 @@
 // public.app_secret). GEMINI_MODEL is optional (defaults to gemini-3.8-flash).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
+import { cleanVat, numens, VAT_SCHEMA, VAT_SYSTEM, type VatAnswer, type VatItem, vatPrompt } from './vat.ts';
 
 let GEMINI_KEY = Deno.env.get('GEMINI_API_KEY') || '';
 let MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
 const FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest'];
+const GEMINI_BASE = Deno.env.get('GEMINI_BASE_URL') || 'https://generativelanguage.googleapis.com/v1beta';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -49,7 +51,7 @@ async function gemini(system: string, parts: Part[], schema: unknown, temperatur
     let res: Response | null = null;
     for (const think of opts.thinking && !noThinking.has(model) ? [true, false] : [false]) {
       try {
-        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        res = await fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
           body: JSON.stringify({
@@ -396,12 +398,72 @@ INDUSTRY: ${String(body.industry || 'retail')}`,
   }
 }
 
+// ---------------------------------------------------------------- VAT treatment of items (Numens, Gemini until Numens is connected)
+async function svcSecret(admin: SupabaseClient, name: string) {
+  const env = Deno.env.get(name);
+  if (env) return env.trim();
+  const { data } = await admin.rpc('svc_secret', { p_name: name });
+  return typeof data === 'string' ? data.trim() : '';
+}
+
+async function classifyVat(admin: SupabaseClient, items: VatItem[]): Promise<{ answers: VatAnswer[]; error?: string }> {
+  if (!items.length) return { answers: [] };
+  const url = await svcSecret(admin, 'NUMENS_API_URL'), key = await svcSecret(admin, 'NUMENS_API_KEY');
+  let error: string | undefined;
+  if (url && key) {
+    try { return { answers: await numens(url, key, items) }; } catch (e) { error = (e as Error).message; console.warn('numens', error); }
+  }
+  if (!GEMINI_KEY) return { answers: [], error: error || 'No tax model is connected (NUMENS_API_URL/NUMENS_API_KEY or GEMINI_API_KEY).' };
+  const answers: VatAnswer[] = [];
+  for (let i = 0; i < items.length; i += 30) {
+    const chunk = items.slice(i, i + 30);
+    const { data, model } = await gemini(VAT_SYSTEM, [{ text: vatPrompt(chunk) }], VAT_SCHEMA, 0.1, { thinking: 'low' });
+    answers.push(...cleanVat(chunk, data?.results || [], 'gemini', model));
+  }
+  return { answers };
+}
+
+async function applyVat(admin: SupabaseClient, items: VatItem[]) {
+  const { answers, error } = await classifyVat(admin, items);
+  if (error && !answers.length) return { ok: false, error, checked: 0 };
+  const byId = new Map(answers.map((a) => [a.id, a]));
+  const results = [];
+  for (const it of items) {
+    const a = byId.get(it.id);
+    // No answer for an item the model was shown: a person decides (the item is flagged for review).
+    const { data } = await admin.rpc('svc_set_item_vat', { p_item: it.id, p: a ? { treatment: a.treatment, confidence: a.confidence, reason: a.reason, law: a.law,
+      source: a.source, model: a.model } : { treatment: null } });
+    results.push({ id: it.id, name: it.name, treatment: a?.treatment ?? null, confidence: a?.confidence ?? 0, applied: Boolean(data?.applied), kept: data?.kept });
+  }
+  return { ok: true, checked: results.length, results };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
   const authHeader = req.headers.get('Authorization') || '';
   const sb = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: authHeader } }, auth: { persistSession: false } });
   const admin = createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false } });
+  // The database's own calls (new or renamed items waiting for a VAT decision) carry the shared hook secret, not a user.
+  const hook = req.headers.get('x-counta-hook') || '';
+  if (hook) {
+    let expected = Deno.env.get('PUSH_HOOK_SECRET') || '';
+    if (!expected) {
+      const { data } = await admin.rpc('app_secret', { p_name: 'PUSH_HOOK_SECRET' });
+      expected = typeof data === 'string' ? data.trim() : '';
+    }
+    if (!expected || expected !== hook) return json({ ok: false, error: 'Not allowed.' }, 401);
+    let hb: any = {};
+    try { hb = await req.json(); } catch { /* empty body */ }
+    if (hb.action !== 'vat_classify_pending') return json({ ok: false, error: 'Unknown action.' }, 400);
+    try {
+      await loadKeys(admin);
+      const { data: items } = await admin.rpc('svc_items_for_vat', { p_limit: 60 });
+      return json(await applyVat(admin, (items as VatItem[]) || []));
+    } catch (e) {
+      return json({ ok: false, error: (e as Error).message }, 500);
+    }
+  }
   const { data: u } = await sb.auth.getUser();
   if (!u?.user) return json({ ok: false, error: 'Sign in first.' }, 401);
   let body: any;
@@ -410,6 +472,15 @@ Deno.serve(async (req) => {
     await loadKeys(admin);
     switch (body.action) {
       case 'status': return json({ ok: true, configured: Boolean(GEMINI_KEY), model: MODEL });
+      case 'vat_classify_item': {
+        // The item must be visible to the caller (row-level security), which proves they belong to its business.
+        const { data: it } = await sb.from('items').select('id, org_id, name, category, brand, description, item_type, selling_unit, vat_treatment')
+          .eq('id', String(body.item_id || '')).maybeSingle();
+        if (!it) return json({ ok: false, error: 'Item not found.' });
+        const { data: org } = await admin.from('orgs').select('industry').eq('id', it.org_id).maybeSingle();
+        return json(await applyVat(admin, [{ id: it.id, org_id: it.org_id, name: it.name, category: it.category, brand: it.brand, description: it.description,
+          item_type: it.item_type, unit: it.selling_unit, current: it.vat_treatment, industry: org?.industry }]));
+      }
       case 'read_invoice': {
         const { data: m } = await sb.from('members').select('id').eq('user_id', u.user.id).limit(1).maybeSingle();
         return await readInvoice(sb, admin, body, m?.id ?? null);
