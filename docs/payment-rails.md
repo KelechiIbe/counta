@@ -21,6 +21,34 @@ At the till the screen waits for the transfer, checks every four seconds and say
 
 Payouts (supplier bills, refunds, withdrawals) leave from the wallet. Bills are paid net of withholding tax, and the WHT is credited to 2202 until it is remitted. Above the business's approval threshold a second person must approve. If Flutterwave does not answer, the payout stays "processing" and the poller asks again; it is never resent blindly.
 
+## Bulk payments
+
+Payments, Bulk payments takes a spreadsheet of payments: salaries, allowances, suppliers' bills and other costs. The template (Download the template) has a Payments sheet with a dropdown of the rail's banks, a worked example and a How to fill it sheet. A payroll or bank upload sheet with the same information works too; its columns are matched on screen.
+
+Each row needs the beneficiary's name, bank, 10-digit account number and the amount they receive. What the row pays for is one of:
+
+| Column | Posts | Notes |
+| --- | --- | --- |
+| Bill number | Dr 2101 payables (the bill's supplier) / Cr 2202 WHT / Cr wallet | Paid through the same path as Pay bill. Leave Amount empty to pay what is owed after WHT. The bill clears when the bank confirms. |
+| Supplier in Counta | Dr 2101 payables (that supplier) / Cr wallet | A payment on account, with no WHT. |
+| Account code | Dr that account / Cr wallet | Any postable account except bank, cash, wallet, receivables, payables, customer advances, inventory and equity accounts. |
+| (none) | Dr the account chosen on upload / Cr wallet | For a payroll sheet, choose Salaries & Wages once. |
+
+On upload Counta asks the bank for the name on every account (five at a time) and checks every row against the books: the bill exists and is approved, the amount is not more than is owed, the account can take a payment, the same bill is not paid twice. A row whose bank name differs from the sheet stays unticked until someone ticks it. Rows that pay the same account the same amount, or an amount paid to that account in the last seven days, are flagged. The batch must fit in the wallet with the estimated transfer fees (₦10.75 up to ₦5,000, ₦26.88 up to ₦50,000, ₦53.75 above).
+
+A batch is approved once, as a whole: when its total is at or above the approval threshold and the person who made it is not the owner, someone else who makes payments approves it. One notice goes out for the approval and one when the batch finishes, not one per row. Rows of a batch cannot be approved one by one.
+
+Send now hands the rows to Flutterwave from the business's payout subaccount (`debit_subaccount`), one transfer per row with its own `CNTP-` reference. Each row moves to "processing" before it is sent, so the page and the five-minute poll can both push a batch without paying anyone twice; closing the page does not stop it. A row Flutterwave refuses is marked failed with Flutterwave's reason and nothing leaves the wallet for it. Results come back per row (webhook `transfer.completed`, or the poll), and Download the results gives each row's status, fee, WHT, reference and reason.
+
+Flutterwave's bulk transfer endpoint (`POST /v3/bulk-transfers`, results from `GET /v3/transfers?batch_id=`) is built in and switched off. Flutterwave documents `debit_subaccount` for single transfers but not inside `bulk_data`; if it were ignored, a bulk transfer would be paid from TaxStreem's main balance instead of the business's wallet. Once Flutterwave confirms in writing that bulk items debit the payout subaccount, switch it on with:
+
+```sql
+update public.payment_rails set capabilities = array_append(capabilities, 'bulk_payout')
+where code = 'flutterwave' and not ('bulk_payout' = any(capabilities));
+```
+
+Batches made after that go as one bulk transfer of up to 100 rows per request. Removing `bulk_payout` sends any batch still waiting one row at a time.
+
 ## Flutterwave setup
 
 | Secret | Value |

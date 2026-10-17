@@ -53,6 +53,8 @@ The VAT on each line comes from the item's treatment, which the tax agent sets w
 
 Each business can switch on a shop at `/shop/<slug>` (Sell, Online shop). It lists the goods the business sells, optionally limited to chosen categories, with their price and whether they are in stock at the shop's branch, read live from stock levels; the business can choose to show the quantity too. The shop link and its QR code can be shared on WhatsApp, Instagram and anywhere else. New orders notify everyone who records sales.
 
+Each product shows its photo and a storefront description: what it is, size or weight, what is in the pack, how to use it. Both are set on the item (Inventory, Items, Edit, Online shop); the description is up to 4,000 characters and keeps its line breaks. Customers tap a product to see the large photo and the full description and add it to the cart from there. The staff note on the item (Description) is never shown in the shop. Photos taken on a phone are resized in the browser to at most 1,600 pixels before upload, so they load quickly and stay under the 5 MB limit.
+
 The shop wears the business's branding: its colour (shared with invoices), logo, a banner picture, a tagline and links to Instagram, Facebook, TikTok and X. These are set under Sell, Online shop, Look and checkout.
 
 Checkout runs in four steps:
@@ -74,11 +76,13 @@ Invoices, receipts, quotes, orders and credit notes print in one of three templa
 | Modern | A band of the brand colour across the top, a coloured table heading and a bold total |
 | Minimal | Plain and spacious; the brand colour only on the title and the total |
 
-Every document carries the business's logo, office address, phone, email, website, TIN and RC number, the customer's name, contact person, address and TIN, the VAT status of each line, the amount in words, the payment details and an optional signature line. Each of TIN, RC number, VAT status, amount in words and signature can be switched off. Counta picks black or white text for whatever colour is chosen. The same document is the customer's online copy, the A4 print and the PDF ("View, print or PDF" on any document), and the emails use the same logo and colour.
+Every document carries the business's logo, office address, phone, email, website, Tax ID and RC number, the customer's name, contact person, address and Tax ID, the VAT status of each line, the amount in words, the payment details and an optional signature line. Each of Tax ID, RC number, VAT status, amount in words and signature can be switched off. Counta picks black or white text for whatever colour is chosen. The same document is the customer's online copy, the A4 print and the PDF ("View, print or PDF" on any document), and the emails use the same logo and colour.
 
 ## Customers
 
-A customer can have a street address, city, state and country, a contact person, a TIN and up to five more email addresses that receive a copy of every email. None of these is required. Quick add at the till and on invoices takes a phone number, with email, TIN and address one tap away.
+A customer can have a street address, city, state and country, a contact person, a Tax ID (or the tax number of their own country, for a customer abroad) and up to five more email addresses that receive a copy of every email. None of these is required. Quick add at the till and on invoices takes a phone number, with email, Tax ID and address one tap away.
+
+The Tax ID replaced the TIN: 13 digits, from the NIN for an individual and from the RC number for a company. A Tax ID typed into Counta (the business's own under Settings, a customer's, a vendor's) must have 13 digits; spaces and dashes are dropped. A number already on file, including an old TIN, keeps printing until someone types a new one, and imports and TaxStreem sign-in bring numbers in as they are. Screens mark an old TIN so it can be replaced.
 
 ## VAT status of each sale
 

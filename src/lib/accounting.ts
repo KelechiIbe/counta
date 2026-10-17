@@ -84,7 +84,7 @@ export const AREPORTS: ADef[] = [
     cols: (x) => [c('line', 'Line'), m('current', periodLabel(x.from, x.to))] },
   { id: 'wht_schedule', group: 'Tax', title: 'Withholding tax schedule', period: 'range',
     blurb: 'WHT deducted from vendors (to pay to NRS) and WHT credit notes received from customers.',
-    cols: () => [c('date', 'Date', 'date'), c('kind', 'Kind'), c('party', 'Party'), c('tin', 'TIN'), c('category', 'Category', 'text', { pdf: false }), c('document', 'Document'), m('base', 'Base', { total: true }), c('rate', 'Rate', 'pct'), m('wht', 'WHT', { total: true })] },
+    cols: () => [c('date', 'Date', 'date'), c('kind', 'Kind'), c('party', 'Party'), c('tin', 'Tax ID'), c('category', 'Category', 'text', { pdf: false }), c('document', 'Document'), m('base', 'Base', { total: true }), c('rate', 'Rate', 'pct'), m('wht', 'WHT', { total: true })] },
 ];
 export const areport = (id: string) => AREPORTS.find((r) => r.id === id)!;
 

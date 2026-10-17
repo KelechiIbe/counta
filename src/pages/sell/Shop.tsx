@@ -97,7 +97,7 @@ export default function Shop() {
       </div>
       <div className="card card-pad stack" style={{ gap: 12 }}>
         <div className="label">Look and checkout</div>
-        <Field label="Banner" hint="A wide picture across the top of the shop, about 1500 × 500. PNG, JPG or WebP under 3 MB.">
+        <Field label="Banner" hint="A wide picture across the top of the shop, about 1500 × 500. PNG, JPG or WebP; large pictures are resized for you.">
           <div className="stack" style={{ gap: 8 }}>
             <div style={{ width: '100%', maxWidth: 520, aspectRatio: '3 / 1', borderRadius: 12, overflow: 'hidden', background: look.brand_color || '#0072F5', display: 'grid', placeItems: 'center' }}>
               {look.shop_banner_path ? <img src={photoUrl(look.shop_banner_path) || ''} alt="Shop banner" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />

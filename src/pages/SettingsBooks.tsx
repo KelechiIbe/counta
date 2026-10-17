@@ -7,6 +7,7 @@ import { edge, money, useMessages } from '../lib/api';
 import { when } from '../lib/format';
 import { Icon } from '../components/Icon';
 import { Alert, Field, Label } from '../components/ui';
+import { TAX_ID_HINT, isOldTin, taxIdError } from '../lib/taxid';
 
 function Section({ id, title, sub, children }: { id?: string; title: string; sub?: string; children: ReactNode }) {
   return (
@@ -17,6 +18,12 @@ function Section({ id, title, sub, children }: { id?: string; title: string; sub
   );
 }
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const MONTH_END = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+// The financial year is twelve months, so its end fixes its start: a year ending on 30 June starts on 1 July.
+// Counta stores the month it starts in; this screen asks for the end, the way accountants and the CAC put it.
+const endLabel = (m: number) => (m === 2 ? '28 February (29 in a leap year)' : `${MONTH_END[m - 1]} ${MONTHS[m - 1]}`);
+const endFromStart = (start: number) => ((start + 10) % 12) + 1;
+const startFromEnd = (end: number) => (end % 12) + 1;
 
 export function BooksSection() {
   const { data: inv } = useInventory();
@@ -35,7 +42,10 @@ export function BooksSection() {
   if (!inv) return null;
   const owner = inv.me.role === 'owner';
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
+  const tinErr = taxIdError(f.tin, inv.org.tin);
+  const start = Number(f.fiscal_year_start || 1);
   async function save() {
+    if (tinErr) { toast(tinErr, 'err'); return; }
     const pct = Number(f.auto_post_threshold);
     if (!(pct >= 80 && pct <= 100)) { toast('Atlas posts on its own only when at least 80% sure. Choose 80 to 100.', 'err'); return; }
     try {
@@ -49,9 +59,13 @@ export function BooksSection() {
   return (
     <Section id="books" title="Books and tax" sub={owner ? 'How the statements are prepared and when Atlas may post on its own.' : 'Only the owner can change these.'}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
-        <Field label="TIN"><input className="input" disabled={!owner} value={f.tin || ''} onChange={(e) => set('tin', e.target.value)} /></Field>
+        <Field label="Tax ID" error={tinErr} hint={!tinErr && isOldTin(f.tin) ? 'An old TIN. Replace it with your 13-digit Tax ID.' : !tinErr ? TAX_ID_HINT : undefined}>
+          <input className="input" disabled={!owner} inputMode="numeric" maxLength={20} placeholder="13 digits" value={f.tin || ''} onChange={(e) => set('tin', e.target.value)} /></Field>
         <Field label="RC number"><input className="input" disabled={!owner} value={f.rc_number || ''} onChange={(e) => set('rc_number', e.target.value)} /></Field>
-        <Field label="Financial year starts in"><select className="input" disabled={!owner} value={f.fiscal_year_start || '1'} onChange={(e) => set('fiscal_year_start', e.target.value)}>{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select></Field>
+        <Field label="Financial year ends on" hint={`So each year runs from 1 ${MONTHS[start - 1]} to ${endLabel(endFromStart(start))}.`}>
+          <select className="input" disabled={!owner} value={endFromStart(start)} onChange={(e) => set('fiscal_year_start', String(startFromEnd(Number(e.target.value))))}>
+            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{endLabel(i + 1)}</option>)}
+          </select></Field>
       </div>
       <Field label="Registered address" hint="Printed on invoices and in note 1 to the statements."><input className="input" disabled={!owner} value={f.address || ''} onChange={(e) => set('address', e.target.value)} /></Field>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
@@ -64,7 +78,7 @@ export function BooksSection() {
         <Field label="Books start on" hint="Opening balances are dated the day before."><input className="input" disabled={!owner} type="date" value={f.books_start || ''} onChange={(e) => set('books_start', e.target.value)} /></Field>
       </div>
       <label className="check"><input type="checkbox" disabled={!owner} checked={!!f.cash_sales_without_invoices} onChange={(e) => set('cash_sales_without_invoices', e.target.checked)} />We take money for sales that are not rung up in Counta (so Atlas may treat unexplained money in as sales)</label>
-      <label className="check"><input type="checkbox" disabled={!owner} checked={!!f.wht_small_company} onChange={(e) => set('wht_small_company', e.target.checked)} />Small company: no WHT on bills under ₦2m from suppliers with a TIN (WHT Regulations 2024)</label>
+      <label className="check"><input type="checkbox" disabled={!owner} checked={!!f.wht_small_company} onChange={(e) => set('wht_small_company', e.target.checked)} />Small company: no WHT on bills under ₦2m from suppliers with a Tax ID (WHT Regulations 2024)</label>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
         <Field label="Invoices are due after (days)"><input className="input" disabled={!owner} inputMode="numeric" value={f.invoice_terms_days || ''} onChange={(e) => set('invoice_terms_days', e.target.value)} /></Field>
         <label className="check" style={{ alignSelf: 'end' }}><input type="checkbox" disabled={!owner} checked={!!f.prices_include_vat} onChange={(e) => set('prices_include_vat', e.target.checked)} />Our prices include VAT</label>

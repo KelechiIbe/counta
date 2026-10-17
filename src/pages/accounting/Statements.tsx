@@ -81,7 +81,7 @@ export default function Statements() {
               <Icon name={w.level === 'error' ? 'alert' : w.level === 'warn' ? 'info' : 'pencil'} size={15} color={w.level === 'error' ? '#DC2626' : w.level === 'warn' ? '#B45309' : '#6B7280'} />
               <span style={{ flex: 1 }}>{w.text}</span>
               {canEdit && (w.key || /director|secretary|approval/i.test(w.text)) && <button className="link" style={{ fontSize: 13, flex: 'none' }} onClick={() => setEditing(true)}>Edit</button>}
-              {/RC number and TIN/.test(w.text) && <a className="link" style={{ fontSize: 13, flex: 'none' }} href="/settings#branding">Open</a>}
+              {/RC number and (TIN|Tax ID)/.test(w.text) && <a className="link" style={{ fontSize: 13, flex: 'none' }} href="/settings#branding">Open</a>}
               {/Close the period/.test(w.text) && <a className="link" style={{ fontSize: 13, flex: 'none' }} href="/accounting/close">Open</a>}
               {/books inbox/.test(w.text) && <a className="link" style={{ fontSize: 13, flex: 'none' }} href="/accounting/inbox">Open</a>}
               {/Banking/.test(w.text) && <a className="link" style={{ fontSize: 13, flex: 'none' }} href="/accounting/banking">Open</a>}

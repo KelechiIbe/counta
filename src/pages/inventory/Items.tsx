@@ -16,6 +16,7 @@ import TransferModal from '../../components/TransferModal';
 import { ItemAccountCard } from '../../components/ChartOfAccounts';
 import { printLabel, qrSvg } from '../../lib/labels';
 import { supabase, rpc } from '../../lib/supabase';
+import { shrinkImage } from '../../lib/images';
 import { edge } from '../../lib/api';
 
 const COLS = 'minmax(240px,2fr) 120px minmax(160px,1.2fr) 100px 100px 90px 110px 110px 24px';
@@ -121,11 +122,14 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
   async function upload(f: File) {
     if (!f.type.startsWith('image/')) { toast('Choose an image file.', 'err'); return; }
     setUploading(true);
-    const ext = (f.name.split('.').pop() || 'jpg').toLowerCase();
-    const path = `${orgId}/${it.id}-${Date.now()}.${ext}`;
-    const { error } = await supabase.storage.from('item-photos').upload(path, f, { upsert: true, contentType: f.type });
-    if (error) { toast(error.message, 'err'); setUploading(false); return; }
-    await run(() => rpc('set_item_photo', { p_item: it.id, p_path: path }), { ok: 'Photo saved', invalidate: ['inv'] });
+    try {
+      // Each upload gets its own name, so nothing is overwritten and the shop never shows a stale cached picture.
+      const pic = await shrinkImage(f);
+      const path = `${orgId}/${it.id}-${Date.now()}.${pic.ext}`;
+      const { error } = await supabase.storage.from('item-photos').upload(path, pic.blob, { contentType: pic.type, cacheControl: '31536000' });
+      if (error) throw new Error(error.message);
+      await run(() => rpc('set_item_photo', { p_item: it.id, p_path: path }), { ok: 'Photo saved', invalidate: ['inv'] });
+    } catch (e) { toast((e as Error).message, 'err'); }
     setUploading(false);
   }
 

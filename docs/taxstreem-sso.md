@@ -47,7 +47,7 @@ What happens on Counta's side:
 1. The `/sso` page posts the token to the `taxstreem` edge function.
 2. The function checks the signature, issuer, audience, times, `jti` and `email_verified`.
 3. The person is found by email, or created with the email already confirmed.
-4. The business is found by `org.id`, or created and owned by the person signing in. Its TIN and RC number come from the token.
+4. The business is found by `org.id`, or created and owned by the person signing in. Its Tax ID (or old TIN) and RC number come from the token.
 5. The person becomes a member with the role's default permissions, unless they already are one. A member the owner has switched off is refused.
 6. The function returns a one-time token hash; the page exchanges it for a session and opens `next`.
 

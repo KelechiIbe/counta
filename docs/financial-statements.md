@@ -6,7 +6,7 @@ Accounting, Financial statements builds the full annual (or interim) financial s
 
 | Section | Contents |
 | --- | --- |
-| Corporate information | Directors, company secretary, registered office, RC number, date of incorporation, TIN, principal activity, auditors (or the small-company exemption), bankers and solicitors |
+| Corporate information | Directors, company secretary, registered office, RC number, date of incorporation, Tax ID, principal activity, auditors (or the small-company exemption), bankers and solicitors |
 | Report of the directors | Legal form and principal activity, business review, results, dividend, directors, directors' interests, property, plant and equipment, donations, employment and employees, events after the reporting period, auditors, signed by order of the Board by the company secretary (CAMA 2020) |
 | Statement of directors' responsibilities | The CAMA 2020 and FRC Act wording, going concern, signed by two directors with their FRC numbers |
 | Statement of profit or loss and other comprehensive income | By function, with note references and comparatives |
@@ -31,7 +31,7 @@ The owner or the bookkeeper edits them (`update_corporate_info`).
 
 ## Before signing
 
-The page lists what to fix first. Errors: no directors, a statement of financial position that does not cast, cash flows that do not end on the cash in the books, unreconciled bank items, transactions waiting in suspense. Warnings: one director only, opening balances still in 3999, books not closed to the period end, no RC number or TIN, no company secretary. Notes: standard wording used where the directors have not written their own, and no approval date yet (a blank line prints).
+The page lists what to fix first. Errors: no directors, a statement of financial position that does not cast, cash flows that do not end on the cash in the books, unreconciled bank items, transactions waiting in suspense. Warnings: one director only, opening balances still in 3999, books not closed to the period end, no RC number or Tax ID, no company secretary. Notes: standard wording used where the directors have not written their own, and no approval date yet (a blank line prints).
 
 ## Export
 

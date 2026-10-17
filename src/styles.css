@@ -283,3 +283,21 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 /* Headline figures on tiles: one line, shrinking a little on narrow screens rather than wrapping the minus sign away from the number. */
 .kpi-val { font-size: 22px; font-weight: 700; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 @media (max-width: 400px) { .hide-xs { display: none !important; } }
+
+/* Shop product view: photo beside the details on a laptop, photo above them on a phone. */
+.shop-product { overflow: hidden; }
+.shop-product-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 0; }
+@media (max-width: 720px) {
+  .shop-product { overflow-y: auto; }
+  .shop-product-grid { grid-template-columns: minmax(0, 1fr); }
+  .shop-product-grid > div:first-child { max-height: 46vh; aspect-ratio: auto !important; }
+}
+
+/* Bulk payments: a wide review table that scrolls sideways inside its card on a phone. */
+.bulk-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.bulk-table th { text-align: left; font-weight: 600; font-size: 12px; color: var(--ink-3, #6B7280); padding: 8px 10px; border-bottom: 1px solid var(--line); background: #FAFAFA; position: sticky; top: 0; z-index: 1; white-space: nowrap; }
+.bulk-table td { padding: 8px 10px; border-bottom: 1px solid #F3F4F6; vertical-align: top; }
+.bulk-table td.num, .bulk-table th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bulk-table tr.off td { opacity: .55; }
+.bulk-progress { height: 8px; border-radius: 4px; background: #EEF0F3; overflow: hidden; display: flex; }
+.bulk-progress > span { display: block; height: 100%; }

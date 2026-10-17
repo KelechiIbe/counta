@@ -120,7 +120,7 @@ export default function Migrate() {
       </Step>
 
       <Step n={sys ? 5 : 4} title="Suppliers" optional>
-        <div className="ink3" style={{ fontSize: 13, lineHeight: 1.5 }}>Names, phone numbers, emails and TINs, so purchase orders, Martina's supplier calls and the input VAT schedule work from day one. Suppliers already in Counta are updated.</div>
+        <div className="ink3" style={{ fontSize: 13, lineHeight: 1.5 }}>Names, phone numbers, emails and Tax IDs, so purchase orders, Martina's supplier calls and the input VAT schedule work from day one. Suppliers already in Counta are updated.</div>
         <SimpleImport kind="vendors" orgId={orgId!} source={sys?.name || 'Spreadsheet'} importId={plan.vendorsId} onDone={() => { refresh(); qc.invalidateQueries({ queryKey: ['inv'] }); setPlan({ vendorsId: uuid() }); }} />
       </Step>
 

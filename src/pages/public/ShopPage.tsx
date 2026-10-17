@@ -32,6 +32,7 @@ export function ShopPage() {
   const [err, setErr] = useState<string | null>(null);
   const [placed, setPlaced] = useState<any>(null);
   const [logoBroken, setLogoBroken] = useState(false);
+  const [view, setView] = useState<any | null>(null);
   const clientRef = useRef(crypto.randomUUID());
   useEffect(() => save('counta.cart.' + slug, cart), [cart, slug]);
   useEffect(() => save('counta.buyer', { ...f, note: '' }), [f]);
@@ -41,6 +42,11 @@ export function ShopPage() {
   const brand = cleanHex(shop?.brand_color);
   const on = onColor(brand);
   useEffect(() => { if (shop?.title) document.title = shop.title; }, [shop?.title]);
+  useEffect(() => {
+    if (!view) return;
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setView(null); };
+    window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k);
+  }, [view]);
   if (cat.isLoading) return <Shell><div style={{ padding: 80, display: 'grid', placeItems: 'center' }}><Spinner /></div></Shell>;
   if (cat.error || !shop) return <Shell><div style={{ padding: 24 }}><Alert kind="yellow" icon="alert">This shop is not open right now.</Alert></div></Shell>;
 
@@ -155,12 +161,14 @@ export function ShopPage() {
             const out = i.available === false;
             return (
               <div key={i.id} className="card" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', opacity: out ? 0.55 : 1 }}>
-                <div style={{ aspectRatio: '1 / 1', background: tint(brand, 0.06), display: 'grid', placeItems: 'center' }}>
-                  {i.photo_path ? <img src={photoUrl(i.photo_path) || ''} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" /> : <Icon name="package" size={30} color={tint(brand, 0.5)} />}
-                </div>
+                <button type="button" onClick={() => setView(i)} aria-label={`About ${i.name}`}
+                  style={{ aspectRatio: '1 / 1', background: tint(brand, 0.06), display: 'grid', placeItems: 'center', border: 0, padding: 0, cursor: 'pointer', width: '100%' }}>
+                  {i.photo_path ? <img src={photoUrl(i.photo_path) || ''} alt={i.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" /> : <Icon name="package" size={30} color={tint(brand, 0.5)} />}
+                </button>
                 <div className="stack" style={{ padding: 10, gap: 4, flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, lineHeight: 1.3 }}>{i.name}</div>
+                  <button type="button" onClick={() => setView(i)} style={{ fontWeight: 600, fontSize: 14, lineHeight: 1.3, border: 0, background: 'none', padding: 0, textAlign: 'left', cursor: 'pointer', color: 'inherit' }}>{i.name}</button>
                   {i.description && <div className="faint" style={{ fontSize: 12, lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{i.description}</div>}
+                  {i.description && i.description.length > 70 && <button type="button" className="link" style={{ fontSize: 12, alignSelf: 'flex-start', color: brand }} onClick={() => setView(i)}>More about it</button>}
                   <div className="row" style={{ justifyContent: 'space-between', marginTop: 2 }}><b>{N2(i.price)}</b><span className="faint" style={{ fontSize: 11 }}>per {i.unit}</span></div>
                   {i.stock != null && !out && <div className="faint" style={{ fontSize: 11 }}>{Number(i.stock)} left</div>}
                   <div style={{ marginTop: 'auto', paddingTop: 4 }}>
@@ -179,7 +187,43 @@ export function ShopPage() {
           <div style={{ marginTop: 4 }}>Shop powered by Counta · TaxStreem</div>
         </footer>
       </main>
-      {count > 0 && !step && (
+      {view && (() => {
+        const inCart = cart.find((l) => l.id === view.id)?.qty || 0;
+        const out = view.available === false;
+        return (
+          <div className="modal-wrap" style={{ zIndex: 55 }}>
+            <div className="scrim dark" onClick={() => setView(null)} />
+            <div className="modal shop-product" style={{ width: 760 }} role="dialog" aria-modal="true" aria-label={view.name}>
+              <div className="shop-product-grid">
+                <div style={{ background: tint(brand, 0.06), display: 'grid', placeItems: 'center', aspectRatio: '1 / 1', minHeight: 0 }}>
+                  {view.photo_path ? <img src={photoUrl(view.photo_path) || ''} alt={view.name} style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#fff' }} />
+                    : <Icon name="package" size={56} color={tint(brand, 0.5)} />}
+                </div>
+                <div className="stack" style={{ padding: 20, gap: 10, minWidth: 0 }}>
+                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                    <h2 style={{ margin: 0, fontSize: 20, lineHeight: 1.25 }}>{view.name}</h2>
+                    <button className="x-btn" onClick={() => setView(null)} aria-label="Close"><Icon name="x" size={18} /></button>
+                  </div>
+                  {(view.brand || view.category) && <div className="faint" style={{ fontSize: 13 }}>{[view.brand, view.category].filter(Boolean).join(' · ')}</div>}
+                  <div className="row" style={{ gap: 8, alignItems: 'baseline' }}><b style={{ fontSize: 22 }}>{N2(view.price)}</b><span className="faint" style={{ fontSize: 13 }}>per {view.unit}</span></div>
+                  {view.stock != null && !out && <div className="faint" style={{ fontSize: 13 }}>{Number(view.stock)} left</div>}
+                  {view.description ? <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: 'pre-line', color: '#374151', overflowY: 'auto', maxHeight: 320 }}>{view.description}</div>
+                    : <div className="faint" style={{ fontSize: 13 }}>Ask the shop for more about this product{shop.whatsapp ? ' on WhatsApp' : ''}.</div>}
+                  <div style={{ marginTop: 'auto', paddingTop: 6 }}>
+                    {out ? <div className="faint" style={{ textAlign: 'center' }}>Sold out</div> : inCart ? (
+                      <div className="stack" style={{ gap: 8 }}>
+                        <Stepper qty={inCart} onLess={() => add(view, -1)} onMore={() => add(view, 1)} brand={brand} />
+                        <button className="btn btn-block" style={btn} onClick={() => { setView(null); setStep('cart'); }}>Go to the cart</button>
+                      </div>
+                    ) : <button className="btn btn-block" style={btn} onClick={() => add(view)}><Icon name="plus" size={14} color={on} />Add to cart</button>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      {count > 0 && !step && !view && (
         <button className="btn" style={{ ...btn, position: 'fixed', left: '50%', transform: 'translateX(-50%)', bottom: 'max(18px, env(safe-area-inset-bottom))', zIndex: 20, padding: '14px 22px', boxShadow: `0 12px 32px ${tint(brand, 0.3)}`, borderRadius: 14 }} onClick={() => setStep('cart')}>
           {count} {count === 1 ? 'item' : 'items'} · {N2(subtotal)} · Check out<Icon name="arrowR" size={16} color={on} />
         </button>

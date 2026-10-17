@@ -9,6 +9,7 @@ import { qrSvg } from '../../lib/labels';
 import { bluetoothSupported, connectPrinter, printBluetooth, printBrowser, printerName } from '../../lib/printer';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Modal, ModalHead, Spinner } from '../../components/ui';
+import { taxIdError } from '../../lib/taxid';
 import { COUNTRIES, isExport } from '../../lib/countries';
 import { InvoiceDoc, PrintPortal, type DocData } from '../../components/InvoiceDoc';
 
@@ -73,7 +74,9 @@ function NewCustomerInline({ name, onDone }: { name: string; onDone: (c: Custome
   const [more, setMore] = useState(false);
   const [busy, setBusy] = useState(false);
   const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
+  const tinErr = f.country === 'NG' ? taxIdError(f.tin) : null;
   async function add() {
+    if (tinErr) { toast(tinErr, 'err'); return; }
     setBusy(true);
     try {
       const id = await rpc<string>('save_customer', { p_org: orgId, p_customer: { name, phone: f.phone || null, email: f.email || null, tin: f.tin || null,
@@ -97,7 +100,8 @@ function NewCustomerInline({ name, onDone }: { name: string; onDone: (c: Custome
       ) : (
         <div className="stack" style={{ gap: 6, marginTop: 6 }}>
           <input className="input input-sm" placeholder="Email" value={f.email} onChange={(e) => set('email', e.target.value)} inputMode="email" />
-          <input className="input input-sm" placeholder="Tax ID (TIN)" value={f.tin} onChange={(e) => set('tin', e.target.value)} />
+          <input className={'input input-sm' + (tinErr ? ' err' : '')} placeholder={f.country === 'NG' ? 'Tax ID (13 digits)' : 'Tax number'} value={f.tin} onChange={(e) => set('tin', e.target.value)} title={tinErr || undefined} />
+          {tinErr && <div className="err-text" style={{ fontSize: 12 }}>{tinErr}</div>}
           <input className="input input-sm" placeholder="Street address" value={f.address} onChange={(e) => set('address', e.target.value)} />
           <div className="row">
             <input className="input input-sm" placeholder="City" value={f.city} onChange={(e) => set('city', e.target.value)} />
