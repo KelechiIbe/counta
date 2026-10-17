@@ -5,7 +5,8 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { rpc, photoUrl } from '../../lib/supabase';
 import { edge } from '../../lib/api';
-import { N2, fmtDay } from '../../lib/format';
+import { N2, fmtDay, when } from '../../lib/format';
+import { InvoiceDoc, PrintPortal, cleanHex, onColor } from '../../components/InvoiceDoc';
 import { qrSvg } from '../../lib/labels';
 import { Icon } from '../../components/Icon';
 import { Alert, Spinner } from '../../components/ui';
@@ -61,58 +62,80 @@ export function PublicDoc() {
   if (doc.isLoading) return <Frame><div style={{ padding: 60, display: 'grid', placeItems: 'center' }}><Spinner /></div></Frame>;
   if (doc.error || !d) return <Frame><Alert kind="yellow" icon="alert">This link does not open a document. Ask the business to send it again.</Alert></Frame>;
   const owe = !paid && balance > 0.004 && !['void', 'cancelled', 'credited', 'converted', 'expired'].includes(d.status) && d.doc_type !== 'quote' && d.doc_type !== 'credit_note';
+  const tracking = d.tracking;
   return (
-    <Frame org={d.org}>
-      <div className="card card-pad stack" style={{ gap: 14 }}>
-        <div className="row wrap" style={{ justifyContent: 'space-between' }}>
-          <div><div style={{ fontSize: 22, fontWeight: 700 }}>{LABEL[d.doc_type]} {d.number}</div>
-            <div className="muted" style={{ fontSize: 13 }}>{fmtDay(d.issue_date)}{d.due_date && d.doc_type !== 'receipt' ? ` · ${d.doc_type === 'quote' ? 'valid until' : 'due'} ${fmtDay(d.due_date)}` : ''}</div></div>
-          <div style={{ textAlign: 'right' }}><div className="muted" style={{ fontSize: 12 }}>For</div><div style={{ fontWeight: 600 }}>{d.customer_name}</div>{d.customer_tin && <div className="faint" style={{ fontSize: 11 }}>TIN {d.customer_tin}</div>}</div>
-        </div>
-        {d.status === 'void' && <Alert kind="grey" icon="info">This document was cancelled.</Alert>}
-        <div className="card" style={{ overflow: 'hidden', borderRadius: 12 }}>
-          {(d.lines || []).map((l: any, i: number) => (
-            <div key={i} className="tr" style={{ gridTemplateColumns: 'minmax(0,1fr) auto', padding: '10px 14px' }}>
-              <span>{l.description}<span className="faint" style={{ display: 'block', fontSize: 12 }}>{Number(l.qty)} {l.unit_label} × {N2(l.unit_price)}{Number(l.discount) ? ` − ${N2(l.discount)}` : ''}{l.vat_treatment === 'zero' ? ' · zero-rated' : l.vat_treatment === 'exempt' ? ' · VAT exempt' : ''}</span></span>
-              <span className="num">{N2(l.gross)}</span>
-            </div>
-          ))}
-          <div className="stack" style={{ padding: '10px 14px', gap: 4, borderTop: '1px solid #F3F4F6', fontSize: 14 }}>
-            <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Before VAT</span><span className="num">{N2(d.subtotal)}</span></div>
-            <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">VAT</span><span className="num">{N2(d.vat_total)}</span></div>
-            <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700, fontSize: 17 }}><span>Total</span><span className="num">{N2(d.total)}</span></div>
-            {Number(d.amount_paid) > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Paid</span><span className="num">{N2(d.amount_paid)}</span></div>}
-            {Number(d.credited) > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Credited</span><span className="num">{N2(d.credited)}</span></div>}
-          </div>
-        </div>
-        {d.notes && <div className="muted" style={{ fontSize: 13 }}>{d.notes}</div>}
-        {d.terms && <div className="faint" style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{d.terms}</div>}
-        {paid ? <Alert kind="green" icon="check">Paid. Thank you.</Alert> : owe && (
-          <div className="stack" style={{ gap: 10, background: '#F0F7FF', borderRadius: 14, padding: 16 }}>
+    <Frame>
+      {d.status === 'void' && <Alert kind="grey" icon="info">This document was cancelled.</Alert>}
+      {tracking && <OrderTracking t={tracking} brand={d.org?.brand_color} />}
+      {paid ? <Alert kind="green" icon="check">Paid. Thank you.</Alert> : owe && (
+        <div className="stack no-print" style={{ gap: 10, background: '#fff', border: '1px solid var(--line)', borderRadius: 14, padding: 16 }}>
+          <div className="row wrap" style={{ justifyContent: 'space-between' }}>
             <div style={{ fontWeight: 700, fontSize: 18 }}>{N2(balance)} to pay</div>
-            {err && <Alert kind="red" icon="alert">{err}</Alert>}
-            {req && req.status === 'pending' && req.method === 'account' ? (
-              <div style={{ textAlign: 'center', background: '#fff', borderRadius: 12, padding: 16 }}>
-                <div className="muted" style={{ fontSize: 13 }}>Transfer exactly {N2(req.amount)} to</div>
-                <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: '.06em', margin: '6px 0' }}>{req.account_number}</div>
-                <div style={{ fontWeight: 600 }}>{req.bank_name}</div><div className="muted" style={{ fontSize: 13 }}>{req.account_name}</div>
-                <div className="row" style={{ justifyContent: 'center', gap: 8, marginTop: 12, color: '#6B7280', fontSize: 13 }}><Spinner small />This page updates when the money lands.</div>
-              </div>
-            ) : req && req.status === 'pending' && req.method === 'qr' ? (
-              <div style={{ textAlign: 'center', background: '#fff', borderRadius: 12, padding: 16 }}>
-                {req.qr_image ? <img src={req.qr_image} alt="QR code to pay" style={{ width: 200 }} /> : <div style={{ width: 200, margin: '0 auto' }} dangerouslySetInnerHTML={{ __html: qr }} />}
-              </div>
-            ) : waiting ? <div className="row" style={{ gap: 8, color: '#6B7280', fontSize: 13 }}><Spinner small />Checking your payment…</div> : (
-              <div className="row wrap">
-                <button className="btn btn-primary" disabled={!!busy} onClick={() => pay('account')}><Icon name="building" size={16} color="#fff" />{busy === 'account' ? 'Getting an account…' : 'Pay by bank transfer'}</button>
-                <button className="btn btn-secondary" disabled={!!busy} onClick={() => pay('link')}><Icon name="card" size={16} />{busy === 'link' ? 'Opening…' : 'Card or USSD'}</button>
-              </div>
-            )}
+            {d.due_date && <div className="muted" style={{ fontSize: 13 }}>Due {fmtDay(d.due_date)}</div>}
           </div>
-        )}
-        <div className="row"><button className="btn btn-ghost btn-sm" onClick={() => window.print()}><Icon name="printer" size={14} />Print or save as PDF</button></div>
-      </div>
+          {err && <Alert kind="red" icon="alert">{err}</Alert>}
+          {req && req.status === 'pending' && req.method === 'account' ? (
+            <div style={{ textAlign: 'center', background: '#F8FAFC', borderRadius: 12, padding: 16 }}>
+              <div className="muted" style={{ fontSize: 13 }}>Transfer exactly {N2(req.amount)} to</div>
+              <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: '.06em', margin: '6px 0' }}>{req.account_number}</div>
+              <div style={{ fontWeight: 600 }}>{req.bank_name}</div><div className="muted" style={{ fontSize: 13 }}>{req.account_name}</div>
+              <div className="row" style={{ justifyContent: 'center', gap: 8, marginTop: 12, color: '#6B7280', fontSize: 13 }}><Spinner small />This page updates when the money lands.</div>
+            </div>
+          ) : req && req.status === 'pending' && req.method === 'qr' ? (
+            <div style={{ textAlign: 'center', background: '#F8FAFC', borderRadius: 12, padding: 16 }}>
+              {req.qr_image ? <img src={req.qr_image} alt="QR code to pay" style={{ width: 200 }} /> : <div style={{ width: 200, margin: '0 auto' }} dangerouslySetInnerHTML={{ __html: qr }} />}
+            </div>
+          ) : waiting ? <div className="row" style={{ gap: 8, color: '#6B7280', fontSize: 13 }}><Spinner small />Checking your payment…</div> : (
+            <div className="row wrap">
+              <button className="btn btn-primary" style={brandBtn(d.org?.brand_color)} disabled={!!busy} onClick={() => pay('account')}><Icon name="building" size={16} color={onColor(cleanHex(d.org?.brand_color))} />{busy === 'account' ? 'Getting an account…' : 'Pay by bank transfer'}</button>
+              <button className="btn btn-secondary" disabled={!!busy} onClick={() => pay('link')}><Icon name="card" size={16} />{busy === 'link' ? 'Opening…' : 'Card or USSD'}</button>
+            </div>
+          )}
+        </div>
+      )}
+      <InvoiceDoc d={d} />
+      <PrintPortal><InvoiceDoc d={d} fixed /></PrintPortal>
+      <div className="row no-print" style={{ justifyContent: 'center' }}><button className="btn btn-secondary btn-sm" onClick={() => window.print()}><Icon name="printer" size={14} />Print or save as PDF</button></div>
     </Frame>
+  );
+}
+
+const brandBtn = (c?: string | null) => ({ background: cleanHex(c), borderColor: cleanHex(c), color: onColor(cleanHex(c)) });
+
+// Where an online order has got to: placed, confirmed, on its way (or ready for pickup), delivered.
+function OrderTracking({ t, brand }: { t: any; brand?: string | null }) {
+  const color = cleanHex(brand);
+  const pickup = t.method === 'pickup';
+  const steps = [
+    { label: 'Order placed', at: t.placed_at, done: true },
+    { label: 'Confirmed by the shop', at: t.confirmed_at, done: !!t.confirmed },
+    pickup
+      ? { label: 'Ready for pickup', at: t.dispatched_at, done: ['dispatched', 'delivered'].includes(t.delivery_status) }
+      : { label: t.scheduled_for ? `On its way (planned ${fmtDay(t.scheduled_for)})` : 'On its way', at: t.dispatched_at, done: ['dispatched', 'delivered'].includes(t.delivery_status) },
+    { label: pickup ? 'Collected' : 'Delivered', at: t.delivered_at, done: t.delivery_status === 'delivered' },
+  ];
+  if (t.cancelled) return <Alert kind="grey" icon="info">This order was cancelled.</Alert>;
+  return (
+    <div className="card card-pad no-print" style={{ padding: 16 }}>
+      <div className="label" style={{ marginBottom: 10 }}>Your order</div>
+      <div className="stack" style={{ gap: 0 }}>
+        {steps.map((s, i) => (
+          <div key={i} className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 'none' }}>
+              <span style={{ width: 22, height: 22, borderRadius: 11, display: 'grid', placeItems: 'center', background: s.done ? color : '#E5E7EB', color: onColor(color) }}>
+                {s.done && <Icon name="check" size={13} color={onColor(color)} />}
+              </span>
+              {i < steps.length - 1 && <span style={{ width: 2, height: 22, background: steps[i + 1].done ? color : '#E5E7EB' }} />}
+            </div>
+            <div style={{ paddingTop: 1 }}>
+              <div style={{ fontWeight: s.done ? 600 : 500, color: s.done ? '#111827' : '#6B7280', fontSize: 14 }}>{s.label}</div>
+              {s.done && s.at && <div className="faint" style={{ fontSize: 12 }}>{when(s.at)}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+      {pickup && t.pickup_address && <div className="muted" style={{ fontSize: 13, marginTop: 10 }}>Pick up from: {t.pickup_address}</div>}
+    </div>
   );
 }
 

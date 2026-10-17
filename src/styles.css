@@ -188,6 +188,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
   .icon-btn.show-sm, .hdr-seg.show-sm { display: grid !important; }
   .hdr-seg.show-sm { display: block !important; }
   .sec { grid-template-columns: 1fr !important; gap: 12px !important; }
+  .brand-grid { grid-template-columns: 1fr !important; }
   /* iOS zooms into any field under 16px; keep fields at 16px on phones */
   input:not([type=checkbox]):not([type=radio]):not([type=range]), select, textarea { font-size: 16px !important; }
   .header { min-height: 0; padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); gap: 8px; flex-wrap: wrap; }

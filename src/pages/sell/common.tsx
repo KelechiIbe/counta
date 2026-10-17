@@ -10,6 +10,7 @@ import { bluetoothSupported, connectPrinter, printBluetooth, printBrowser, print
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Modal, ModalHead, Spinner } from '../../components/ui';
 import { COUNTRIES, isExport } from '../../lib/countries';
+import { InvoiceDoc, PrintPortal, type DocData } from '../../components/InvoiceDoc';
 
 export const docUrl = (token: string) => `${window.location.origin}/p/${token}`;
 
@@ -242,17 +243,32 @@ export function SendBox({ sale, onSent }: { sale: Sale; onSent?: () => void }) {
 export function PrintButtons({ sale }: { sale: Sale }) {
   const toast = useToast();
   const [name, setName] = useState(printerName());
+  const [preview, setPreview] = useState(false);
   return (
     <div className="row wrap">
+      <button className="btn btn-secondary btn-sm" onClick={() => setPreview(true)}><Icon name="file" size={14} />{sale.doc_type === 'receipt' ? 'A4 receipt or PDF' : 'View, print or PDF'}</button>
+      {preview && <DocPreview sale={sale} onClose={() => setPreview(false)} />}
       {bluetoothSupported() && (
         <button className="btn btn-secondary btn-sm" onClick={async () => {
           try { if (!printerName()) setName(await connectPrinter()); await printBluetooth(sale); toast('Printed'); }
           catch (e) { if ((e as Error).name !== 'NotFoundError') toast((e as Error).message, 'err'); }
         }}><Icon name="printer" size={14} />{name ? `Print on ${name}` : 'Bluetooth printer'}</button>
       )}
-      <button className="btn btn-secondary btn-sm" onClick={() => { try { printBrowser(sale); } catch (e) { toast((e as Error).message, 'err'); } }}><Icon name="printer" size={14} />Print</button>
+      <button className="btn btn-secondary btn-sm" onClick={() => { try { printBrowser(sale); } catch (e) { toast((e as Error).message, 'err'); } }}><Icon name="printer" size={14} />Till slip</button>
       <a className="btn btn-ghost btn-sm" href={docUrl(sale.public_token)} target="_blank" rel="noreferrer"><Icon name="external" size={14} />Open the customer's copy</a>
     </div>
+  );
+}
+
+// The branded A4 document as the customer sees it, with print and save as PDF.
+export function DocPreview({ sale, onClose }: { sale: Sale; onClose: () => void }) {
+  return (
+    <Modal onClose={onClose} width={900}>
+      <ModalHead title={`${DOC_LABEL[sale.doc_type]} ${sale.number}`} sub="As your customer sees it. Change the template and colour in Settings, Branding." onClose={onClose}
+        extra={<button className="btn btn-primary btn-sm" onClick={() => window.print()}><Icon name="printer" size={14} color="#fff" />Print or save as PDF</button>} />
+      <div className="modal-body" style={{ background: '#F4F6F8' }}><InvoiceDoc d={sale as unknown as DocData} /></div>
+      <PrintPortal><InvoiceDoc d={sale as unknown as DocData} fixed /></PrintPortal>
+    </Modal>
   );
 }
 

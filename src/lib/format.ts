@@ -85,3 +85,35 @@ export function uuid(): string {
 export function kpiFont(v: string): number {
   return v.length > 16 ? 16 : v.length > 14 ? 18 : v.length > 12 ? 20 : 22;
 }
+
+// "One million, two hundred and five thousand naira and fifty kobo only", the way Nigerian invoices and cheques write amounts.
+const ONES = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen',
+  'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+function under1000(n: number): string {
+  const h = Math.floor(n / 100), r = n % 100;
+  const rest = r < 20 ? ONES[r] : TENS[Math.floor(r / 10)] + (r % 10 ? '-' + ONES[r % 10] : '');
+  return [h ? ONES[h] + ' hundred' : '', rest].filter(Boolean).join(h && rest ? ' and ' : '');
+}
+export function wholeWords(n: number): string {
+  n = Math.floor(Math.abs(n));
+  if (n === 0) return 'zero';
+  const scales = ['', ' thousand', ' million', ' billion', ' trillion'];
+  const parts: string[] = [];
+  let i = 0;
+  while (n > 0 && i < scales.length) {
+    const chunk = n % 1000;
+    if (chunk) parts.unshift(under1000(chunk) + scales[i]);
+    n = Math.floor(n / 1000); i++;
+  }
+  // "one thousand and five": the last group takes "and" when it has no hundreds.
+  const last = parts.length > 1 ? parts[parts.length - 1] : '';
+  if (last && !/hundred/.test(last) && !/thousand|million|billion|trillion/.test(last)) parts[parts.length - 1] = 'and ' + last;
+  return parts.join(', ').replace(', and ', ' and ');
+}
+export function amountInWords(amount: number, currency = 'naira', minor = 'kobo'): string {
+  const v = Math.round(Math.abs(Number(amount) || 0) * 100);
+  const whole = Math.floor(v / 100), cents = v % 100;
+  const text = `${wholeWords(whole)} ${currency}${cents ? ` and ${wholeWords(cents)} ${minor}` : ''} only`;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
