@@ -31,6 +31,8 @@ Payouts (supplier bills, refunds, withdrawals) leave from the wallet. Bills are 
 
 Webhook URL in the Flutterwave dashboard: `https://krtqqhndmncarwusukrw.supabase.co/functions/v1/payments/webhook/flutterwave`, with the same secret hash. Switch on webhooks for transfers as well as charges, and webhook retries.
 
+Payments, Settings shows whether the keys and the secret hash are set and when Flutterwave last reached Counta with a verified event. Flutterwave only sends an event once money moves, so that line stays empty until the first payment or transfer. Phone numbers go to Flutterwave as digits only (`08035550142`); Flutterwave refuses anything else.
+
 ## Adding a partner rail
 
 A partner implements the Counta Rail API below over HTTPS and gives TaxStreem an API key and a webhook secret. TaxStreem then registers the rail:
