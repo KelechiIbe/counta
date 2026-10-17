@@ -4,7 +4,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { DOC_LABEL, METHOD_LABEL, money, today, useChart, useCustomers, useSale, useSales, type Customer, type DocType, type Sale, type SaleRow } from '../../lib/api';
+import { DOC_LABEL, METHOD_LABEL, VAT_STATUS, money, today, useChart, useCustomers, useSale, useSales, type Customer, type DocType, type Sale, type SaleRow } from '../../lib/api';
+import { countryName, isExport } from '../../lib/countries';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { ItemPicker } from '../../components/ItemPicker';
@@ -21,13 +22,14 @@ export default function Sales() {
   const [tab, setTab] = useState<Tab>(() => (params.get('tab') as Tab) || 'all');
   const [q, setQ] = useState('');
   const [range, setRange] = useState({ from: '', to: '' });
+  const [vs, setVs] = useState('');
   const [editing, setEditing] = useState<{ id?: string; type: 'invoice' | 'quote' } | null>(null);
   const open = params.get('open');
   const filter = useMemo(() => ({
     q: q || null, from: range.from || null, to: range.to || null,
     doc_type: tab === 'all' || tab === 'unpaid' || tab === 'confirm' ? (tab === 'unpaid' ? 'invoice,receipt,order' : null) : tab,
-    status: tab === 'unpaid' ? 'open,partially_paid' : null, limit: 500,
-  }), [tab, q, range]);
+    status: tab === 'unpaid' ? 'open,partially_paid' : null, vat_status: vs || null, limit: 500,
+  }), [tab, q, range, vs]);
   const sales = useSales(filter);
   const meta = useMeta();
   if (!inv) return null;
@@ -35,7 +37,8 @@ export default function Sales() {
   const pending = sales.data?.pending_payments || [];
   const cols: RCol[] = [{ key: 'number', label: 'Number' }, { key: 'doc', label: 'Type' }, { key: 'issue_date', label: 'Date', type: 'date' }, { key: 'customer_name', label: 'Customer' },
     { key: 'status', label: 'Status' }, { key: 'subtotal', label: 'Before VAT', type: 'money', total: true }, { key: 'vat_total', label: 'VAT', type: 'money', total: true },
-    { key: 'total', label: 'Total', type: 'money', total: true }, { key: 'balance', label: 'Balance', type: 'money', total: true }, { key: 'due_date', label: 'Due', type: 'date' }];
+    { key: 'total', label: 'Total', type: 'money', total: true }, { key: 'balance', label: 'Balance', type: 'money', total: true }, { key: 'due_date', label: 'Due', type: 'date' },
+    { key: 'vat_status', label: 'VAT status (0 VATable, 1 exempt, 2 zero-rated)' }, { key: 'export_to', label: 'Export to' }];
   return (
     <div className="container">
       <div className="row wrap" style={{ justifyContent: 'space-between', gap: 10 }}>
@@ -46,7 +49,8 @@ export default function Sales() {
         <div className="row wrap">
           <ExportMenu name={`${inv.org.name} sales ${today()}`} disabled={!rows.length}
             sheets={() => [{ meta: meta('Sales and invoices', range.from ? `${fmtDay(range.from)} to ${fmtDay(range.to || today())}` : 'Latest 500'), cols,
-              rows: rows.map((r) => ({ ...r, doc: DOC_LABEL[r.doc_type], status: r.status.replace(/_/g, ' ') })) }]} />
+              rows: rows.map((r) => ({ ...r, doc: DOC_LABEL[r.doc_type], status: r.status.replace(/_/g, ' '), vat_status: (r.vat_statuses || []).slice().sort().join(', '),
+                export_to: r.export ? countryName(r.customer_country) : '' })) }]} />
           <button className="btn btn-secondary btn-sm" onClick={() => setEditing({ type: 'quote' })}><Icon name="plus" size={14} />Quote</button>
           <button className="btn btn-primary btn-sm" onClick={() => setEditing({ type: 'invoice' })}><Icon name="plus" size={14} color="#fff" />Invoice</button>
         </div>
@@ -59,17 +63,24 @@ export default function Sales() {
               <input className="input input-sm" type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} style={{ width: 150 }} aria-label="From" />
               <span className="faint">to</span>
               <input className="input input-sm" type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} style={{ width: 150 }} aria-label="To" />
+              <select className="input input-sm" value={vs} onChange={(e) => setVs(e.target.value)} style={{ width: 170 }} aria-label="VAT status">
+                <option value="">Any VAT status</option>{[0, 1, 2].map((k) => <option key={k} value={k}>{k} · {VAT_STATUS[k].label}</option>)}
+              </select>
             </div>
           </div>
+          <div className="faint" style={{ fontSize: 12, padding: '8px 20px', borderBottom: '1px solid var(--line)' }}>
+            VAT status: <b>0</b> VATable (7.5%) · <b>1</b> Exempt · <b>2</b> Zero-rated. Sales to customers outside Nigeria are exports and always 2.
+          </div>
           <div className="tbl">
-            <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '130px 110px minmax(160px,1.4fr) 130px 120px 120px 140px', minWidth: 900 }}>
-              <span>Number</span><span>Date</span><span>Customer</span><span>Status</span><span className="right">Total</span><span className="right">Balance</span><span>Due</span>
+            <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '130px 110px minmax(160px,1.4fr) 90px 130px 120px 120px 140px', minWidth: 990 }}>
+              <span>Number</span><span>Date</span><span>Customer</span><span title="0 VATable · 1 Exempt · 2 Zero-rated">VAT status</span><span>Status</span><span className="right">Total</span><span className="right">Balance</span><span>Due</span>
             </div>
             {sales.isLoading ? <SkeletonRows n={8} /> : !rows.length ? <div style={{ padding: 20 }}><Empty>No sales match.</Empty></div> : rows.map((r) => (
-              <div key={r.id} className="tr click" onClick={() => setParams({ open: r.id })} style={{ gridTemplateColumns: '130px 110px minmax(160px,1.4fr) 130px 120px 120px 140px', minWidth: 900 }}>
+              <div key={r.id} className="tr click" onClick={() => setParams({ open: r.id })} style={{ gridTemplateColumns: '130px 110px minmax(160px,1.4fr) 90px 130px 120px 120px 140px', minWidth: 990 }}>
                 <span><b>{r.number}</b><span className="faint" style={{ display: 'block', fontSize: 11 }}>{DOC_LABEL[r.doc_type]}{r.channel === 'online' ? ' · shop' : ''}</span></span>
                 <span className="muted">{fmtDay(r.issue_date)}</span>
-                <span className="ellipsis">{r.customer_name}</span>
+                <span className="ellipsis">{r.customer_name}{r.export && <span className="faint" style={{ display: 'block', fontSize: 11 }}>Export · {countryName(r.customer_country)}</span>}</span>
+                <span><VatStatusChips codes={r.vat_statuses} /></span>
                 <span><StatusChip s={r.status} />{Number(r.pending) > 0 && <span className="chip t-amber" style={{ marginLeft: 4 }}>to confirm</span>}</span>
                 <span className="right num">{N2(r.total)}</span>
                 <span className="right num" style={{ color: Number(r.balance) > 0 ? '#C2410C' : undefined }}>{Number(r.balance) ? N2(r.balance) : '—'}</span>
@@ -85,13 +96,23 @@ export default function Sales() {
   );
 }
 
+export function VatStatusChips({ codes }: { codes?: number[] }) {
+  const list = (codes || []).slice().sort();
+  if (!list.length) return <span className="faint">—</span>;
+  return (
+    <span className="row" style={{ gap: 3 }}>
+      {list.map((k) => <span key={k} className={'chip ' + VAT_STATUS[k].tone} title={VAT_STATUS[k].label} style={{ minWidth: 22, textAlign: 'center' }}>{k}</span>)}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------- one document
 export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClose: () => void; onEdit?: (s: Sale) => void; actions?: (s: Sale, act: (fn: () => Promise<any>, ok: string) => Promise<void>, busy: boolean) => React.ReactNode }) {
   const { data: inv } = useInventory();
   const sale = useSale(id);
   const toast = useToast();
   const qc = useQueryClient();
-  const [modal, setModal] = useState<'pay' | 'request' | 'return' | 'void' | 'credit' | null>(null);
+  const [modal, setModal] = useState<'pay' | 'request' | 'return' | 'void' | 'credit' | 'export' | null>(null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const s = sale.data;
@@ -116,6 +137,15 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
           <>
             {s.status === 'pending' && s.doc_type === 'receipt' && <Alert kind="yellow" icon="clock">Waiting for the customer's transfer. It posts the moment the money lands.</Alert>}
             {s.status === 'draft' && <Alert kind="grey" icon="pencil">Draft. Nothing is in the books until it is issued.</Alert>}
+            {s.export ? (
+              <Alert kind="blue" icon="truck">Export{isExport(s.customer_country) ? ` to ${countryName(s.customer_country)}` : ''}: every line is zero-rated (VAT status 2), whatever the item's usual treatment.{s.export_note ? ` Note: ${s.export_note}` : ''}</Alert>
+            ) : isExport(s.customer_country) && s.export_note ? (
+              <Alert kind="yellow" icon="info">The customer is in {countryName(s.customer_country)}, but this sale is treated as a local supply. Note: {s.export_note}</Alert>
+            ) : null}
+            {!s.journal_id && (s.status === 'draft' || (s.doc_type === 'quote' && s.status === 'open') || (s.doc_type === 'order' && s.status === 'pending')) && s.doc_type !== 'receipt'
+              && (can(inv, 'approve_adjustments') || can(inv, 'keep_books')) && (
+              <div><button className="link" style={{ fontSize: 13 }} onClick={() => { setReason(''); setModal('export'); }}>{s.export ? 'Not an export? Charge VAT as normal' : 'Exported? Zero-rate this sale'}</button></div>
+            )}
             {s.viewed_at && <div className="faint" style={{ fontSize: 12 }}>The customer opened it {when(s.viewed_at)}.</div>}
             <SaleLines sale={s} />
             <PaymentsList sale={s} />
@@ -150,6 +180,17 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
         <Modal onClose={() => setModal(null)} width={420}><ModalHead title="Use the customer's credit" sub={`${N2(s.customer_credit)} available`} onClose={() => setModal(null)} />
           <div className="modal-body"><Field label="Amount"><input className="input" inputMode="decimal" value={reason || String(Math.min(Number(s.customer_credit), Number(s.balance)))} onChange={(e) => setReason(e.target.value)} /></Field></div>
           <div className="modal-ft"><button className="btn btn-primary" disabled={busy} onClick={() => act(() => rpc('apply_customer_credit', { p_sale: s.id, p_amount: money(reason) ?? Math.min(Number(s.customer_credit), Number(s.balance)) }), 'Credit applied')}>Apply</button></div>
+        </Modal>
+      )}
+      {s && modal === 'export' && (
+        <Modal onClose={() => setModal(null)} width={460}>
+          <ModalHead title={s.export ? 'Treat as a local sale' : 'Treat as an export'} sub={s.export
+            ? 'Each line goes back to its item\'s own VAT treatment (0, 1 or 2).'
+            : 'Every line becomes zero-rated (VAT status 2). Keep the shipping or export papers with your VAT records.'} onClose={() => setModal(null)} />
+          <div className="modal-body"><Field label="Why" hint="Saved with the sale for the VAT records."><input className="input" autoFocus value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder={s.export ? 'Delivered and used in Nigeria' : 'Shipped to the buyer in Accra, bill of lading 1234'} /></Field></div>
+          <div className="modal-ft"><button className="btn btn-primary" disabled={busy || reason.trim().length < 3}
+            onClick={() => act(() => rpc('set_sale_export', { p_sale: s.id, p_export: !s.export, p_reason: reason }), s.export ? 'VAT charged as normal' : 'Zero-rated as an export')}>Save</button></div>
         </Modal>
       )}
       {s && modal === 'void' && (
@@ -266,7 +307,7 @@ export function DocEditor({ id, type, onClose, onSaved }: { id?: string; type: '
     setLines((s.lines || []).filter((l) => l.kind !== 'delivery').map((l) => {
       const it = inv.items.find((i) => i.id === l.item_id);
       return { key: l.id, item_id: l.item_id, description: l.description, qty: String(Number(l.qty)), unit: it && Number((l as any).unit_factor) > 1 ? 'purchase' : 'selling',
-        unit_price: String(Number(l.unit_price)), discount: Number(l.discount) ? String(Number(l.discount)) : '', vat_treatment: l.vat_treatment, revenue_account: l.revenue_account || '',
+        unit_price: String(Number(l.unit_price)), discount: Number(l.discount) ? String(Number(l.discount)) : '', vat_treatment: l.item_vat_treatment || l.vat_treatment, revenue_account: l.revenue_account || '',
         pack: it?.pack_size || 1, units: [it?.selling_unit || l.unit_label, it?.purchase_unit || l.unit_label] };
     }));
   }, [existing.data?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -278,7 +319,9 @@ export function DocEditor({ id, type, onClose, onSaved }: { id?: string; type: '
   const upd = (k: string, patch: Partial<ELine>) => setLines((ls) => ls.map((l) => (l.key === k ? { ...l, ...patch } : l)));
   const gross = (l: ELine) => Math.max(0, (Number(l.qty) || 0) * (money(l.unit_price) || 0) - (money(l.discount) || 0));
   const sum = lines.reduce((a, l) => a + gross(l), 0) + (money(f.delivery_fee) || 0);
-  const vat = inv.org.vat_registered ? lines.reduce((a, l) => a + (l.vat_treatment === 'standard' ? (f.prices_include_vat ? gross(l) - gross(l) / 1.075 : gross(l) * 0.075) : 0), 0) : 0;
+  // A customer outside Nigeria makes the sale an export: zero-rated, unless a manager has said otherwise on this document.
+  const exp = existing.data && existing.data.customer_id === customer?.id ? !!existing.data.export : isExport(customer?.country);
+  const vat = inv.org.vat_registered && !exp ? lines.reduce((a, l) => a + (l.vat_treatment === 'standard' ? (f.prices_include_vat ? gross(l) - gross(l) / 1.075 : gross(l) * 0.075) : 0), 0) : 0;
   const total = f.prices_include_vat ? sum : sum + vat;
   async function save(issue: boolean) {
     if (!customer) { toast('Choose the customer.', 'err'); return; }
@@ -305,7 +348,8 @@ export function DocEditor({ id, type, onClose, onSaved }: { id?: string; type: '
         <button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button></div>
       <div className="drawer-body stack" style={{ gap: 14 }}>
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 12 }}>
-          <Field label="Customer" req><CustomerPicker value={customer} onChange={setCustomer} walkIn={false} placeholder="Choose the customer" /></Field>
+          <Field label="Customer" req hint={exp ? `Export${isExport(customer?.country) ? ` to ${countryName(customer?.country)}` : ''}: zero-rated for VAT.` : undefined}>
+            <CustomerPicker value={customer} onChange={setCustomer} walkIn={false} placeholder="Choose the customer" /></Field>
           <Field label="Date"><input className="input" type="date" value={f.issue_date} onChange={(e) => set('issue_date', e.target.value)} /></Field>
           <Field label={type === 'quote' ? 'Valid until' : 'Due'} hint={customer?.terms_days ? `${customer.terms_days} days for this customer` : undefined}><input className="input" type="date" value={f.due_date} onChange={(e) => set('due_date', e.target.value)} /></Field>
         </div>
@@ -321,7 +365,8 @@ export function DocEditor({ id, type, onClose, onSaved }: { id?: string; type: '
                   <select className="input input-sm" value={l.vat_treatment} onChange={(e) => upd(l.key, { vat_treatment: e.target.value })} aria-label="VAT"><option value="standard">VAT 7.5%</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select>
                   <select className="input input-sm" value={l.revenue_account} onChange={(e) => upd(l.key, { revenue_account: e.target.value })} aria-label="Income account"><option value="">Usual income account</option>{revenue.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select>
                 </div>}
-                {l.item_id && l.vat_treatment !== 'standard' && <span className="faint" style={{ fontSize: 11 }}>{l.vat_treatment === 'zero' ? 'Zero-rated' : 'Exempt'}</span>}
+                {exp ? <span className="faint" style={{ fontSize: 11 }}>Zero-rated export · VAT 2{l.vat_treatment !== 'zero' ? ` (normally ${l.vat_treatment === 'exempt' ? 'exempt' : 'VATable'})` : ''}</span>
+                  : l.item_id && l.vat_treatment !== 'standard' && <span className="faint" style={{ fontSize: 11 }}>{l.vat_treatment === 'zero' ? 'Zero-rated · VAT 2' : 'Exempt · VAT 1'}</span>}
               </span>
               <input className="input input-sm num" inputMode="decimal" value={l.qty} onChange={(e) => upd(l.key, { qty: e.target.value })} aria-label="Quantity" />
               {l.item_id && l.pack > 1 ? <select className="input input-sm" value={l.unit} onChange={(e) => {

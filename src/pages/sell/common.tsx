@@ -3,12 +3,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { DOC_LABEL, edge, edgeOk, METHOD_LABEL, STATUS_TONE, statusLabel, useCustomers, type Customer, type PayRequest, type Sale } from '../../lib/api';
+import { DOC_LABEL, edge, edgeOk, METHOD_LABEL, STATUS_TONE, VAT_STATUS, statusLabel, useCustomers, vatStatusOf, type Customer, type PayRequest, type Sale } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
 import { qrSvg } from '../../lib/labels';
 import { bluetoothSupported, connectPrinter, printBluetooth, printBrowser, printerName } from '../../lib/printer';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Modal, ModalHead, Spinner } from '../../components/ui';
+import { COUNTRIES, isExport } from '../../lib/countries';
 
 export const docUrl = (token: string) => `${window.location.origin}/p/${token}`;
 
@@ -67,12 +68,15 @@ function NewCustomerInline({ name, onDone }: { name: string; onDone: (c: Custome
   const { orgId } = useSession();
   const toast = useToast();
   const qc = useQueryClient();
-  const [phone, setPhone] = useState('');
+  const [f, setF] = useState({ phone: '', email: '', tin: '', address: '', city: '', country: 'NG' });
+  const [more, setMore] = useState(false);
   const [busy, setBusy] = useState(false);
+  const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
   async function add() {
     setBusy(true);
     try {
-      const id = await rpc<string>('save_customer', { p_org: orgId, p_customer: { name, phone: phone || null } });
+      const id = await rpc<string>('save_customer', { p_org: orgId, p_customer: { name, phone: f.phone || null, email: f.email || null, tin: f.tin || null,
+        address: f.address || null, city: f.city || null, country: f.country || 'NG' } });
       await qc.invalidateQueries({ queryKey: ['customers'] });
       const list = await rpc<{ customers: Customer[] }>('get_customers', { p_org: orgId });
       const c = list.customers.find((x) => x.id === id);
@@ -84,9 +88,23 @@ function NewCustomerInline({ name, onDone }: { name: string; onDone: (c: Custome
     <div style={{ borderTop: '1px solid #F3F4F6', marginTop: 4, padding: '8px 6px 2px' }}>
       <div style={{ fontSize: 12, marginBottom: 6 }}>Add <b>{name}</b> as a new customer</div>
       <div className="row">
-        <input className="input input-sm" placeholder="Phone (for WhatsApp receipts)" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <input className="input input-sm" placeholder="Phone (for WhatsApp receipts)" value={f.phone} onChange={(e) => set('phone', e.target.value)} inputMode="tel" />
         <button className="btn btn-primary btn-xs" disabled={busy} onClick={add}>Add</button>
       </div>
+      {!more ? (
+        <button type="button" className="link" style={{ fontSize: 12, marginTop: 6 }} onClick={() => setMore(true)}>Add email, Tax ID and address (optional)</button>
+      ) : (
+        <div className="stack" style={{ gap: 6, marginTop: 6 }}>
+          <input className="input input-sm" placeholder="Email" value={f.email} onChange={(e) => set('email', e.target.value)} inputMode="email" />
+          <input className="input input-sm" placeholder="Tax ID (TIN)" value={f.tin} onChange={(e) => set('tin', e.target.value)} />
+          <input className="input input-sm" placeholder="Street address" value={f.address} onChange={(e) => set('address', e.target.value)} />
+          <div className="row">
+            <input className="input input-sm" placeholder="City" value={f.city} onChange={(e) => set('city', e.target.value)} />
+            <select className="input input-sm" value={f.country} onChange={(e) => set('country', e.target.value)} aria-label="Country">{COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</select>
+          </div>
+          {isExport(f.country) && <div className="faint" style={{ fontSize: 12 }}>Outside Nigeria: their sales are exports and zero-rated for VAT.</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -265,10 +283,12 @@ export function SaleLines({ sale, compact }: { sale: Sale; compact?: boolean }) 
     <div className="card" style={{ overflow: 'hidden', borderRadius: 12 }}>
       {(sale.lines || []).map((l) => (
         <div key={l.id} className="tr" style={{ gridTemplateColumns: compact ? '1fr auto' : 'minmax(160px,2fr) 70px 110px 90px 110px', padding: '9px 14px' }}>
-          <span style={{ minWidth: 0 }}>{l.description}{compact && <span className="faint" style={{ display: 'block', fontSize: 12 }}>{Number(l.qty)} {l.unit_label} × {N2(l.unit_price)}{Number(l.discount) ? ` − ${N2(l.discount)}` : ''}{l.vat_treatment !== 'standard' ? ` · ${l.vat_treatment === 'zero' ? 'zero-rated' : 'exempt'}` : ''}{Number(l.returned_qty) ? ` · ${Number(l.returned_qty)} returned` : ''}</span>}</span>
+          <span style={{ minWidth: 0 }}>{l.description}{compact && <span className="faint" style={{ display: 'block', fontSize: 12 }}>{Number(l.qty)} {l.unit_label} × {N2(l.unit_price)}{Number(l.discount) ? ` − ${N2(l.discount)}` : ''}{` · VAT ${vatStatusOf(l.vat_treatment)}`}{l.vat_treatment !== 'standard' ? ` ${l.vat_treatment === 'zero' ? 'zero-rated' : 'exempt'}` : ''}{Number(l.returned_qty) ? ` · ${Number(l.returned_qty)} returned` : ''}</span>}</span>
           {!compact && <span className="right num">{Number(l.qty)}</span>}
           {!compact && <span className="right num">{N2(l.unit_price)}</span>}
-          {!compact && <span className="right faint">{l.vat_treatment === 'standard' ? N2(l.vat) : l.vat_treatment === 'zero' ? 'Zero-rated' : 'Exempt'}</span>}
+          {!compact && <span className="right faint" title={`VAT status ${vatStatusOf(l.vat_treatment)}: ${VAT_STATUS[vatStatusOf(l.vat_treatment)].label}${sale.export && l.item_vat_treatment && l.item_vat_treatment !== 'zero' ? ` (export; normally ${l.item_vat_treatment === 'exempt' ? 'exempt' : 'VATable'})` : ''}`}>
+            {l.vat_treatment === 'standard' ? N2(l.vat) : l.vat_treatment === 'zero' ? 'Zero-rated' : 'Exempt'}<span className={'chip ' + VAT_STATUS[vatStatusOf(l.vat_treatment)].tone} style={{ marginLeft: 6, fontSize: 10, padding: '1px 6px' }}>{vatStatusOf(l.vat_treatment)}</span>
+          </span>}
           <span className="right num" style={{ fontWeight: 500 }}>{N2(l.gross)}</span>
         </div>
       ))}

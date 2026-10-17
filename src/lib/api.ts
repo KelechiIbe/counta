@@ -28,16 +28,23 @@ export interface SaleRow {
   amount_paid: number; credited: number; vat_total: number; subtotal: number; issue_date: string; due_date: string | null; channel: string; created_at: string;
   overdue_days: number; pending: number; confirmed: boolean; public_token: string; sent_at: string | null; viewed_at: string | null; location_id: string | null;
   cost_total?: number; created_by_name?: string; shift_id?: string | null; reference?: string | null;
+  export?: boolean; customer_country?: string | null; pay_later?: boolean; vat_statuses?: number[];
 }
 export interface SaleLine {
   id: string; item_id: string | null; description: string; kind: 'goods' | 'service' | 'delivery'; qty: number; unit_label: string; unit_price: number; list_price: number | null;
   discount: number; vat_treatment: string; vat_rate: number; net: number; vat: number; gross: number; cost?: number | null; returned_qty: number; revenue_account?: string;
+  vat_status?: 0 | 1 | 2; item_vat_treatment?: string | null;
 }
+// VAT status codes as the NRS schedules use them.
+export const VAT_STATUS: Record<number, { label: string; short: string; tone: string }> = {
+  0: { label: 'VATable', short: 'VATable 7.5%', tone: 't-blue' }, 1: { label: 'Exempt', short: 'Exempt', tone: 't-grey' }, 2: { label: 'Zero-rated', short: 'Zero-rated', tone: 't-green' },
+};
+export const vatStatusOf = (treatment?: string | null): 0 | 1 | 2 => (treatment === 'exempt' ? 1 : treatment === 'zero' ? 2 : 0);
 export interface Sale extends SaleRow {
   lines: SaleLine[]; payments: any[]; refunds: any[]; credits: any[]; applied_to: any[]; credit_notes: any[]; requests: PayRequest[]; deliveries: any[];
   org: Record<string, any>; customer: Record<string, any> | null; customer_phone: string | null; customer_email: string | null; customer_credit?: number;
   prices_include_vat: boolean; vat_registered: boolean; notes: string | null; terms: string | null; delivery_method: string | null; delivery_address: string | null;
-  delivery_fee?: number; discount_total?: number; journal_ref?: string | null; journal_id?: string | null; location_name?: string | null; original_sale_id?: string | null; converted_to?: string | null; change?: number;
+  delivery_fee?: number; discount_total?: number; export_note?: string | null; journal_ref?: string | null; journal_id?: string | null; location_name?: string | null; original_sale_id?: string | null; converted_to?: string | null; change?: number;
 }
 export interface PayRequest {
   id: string; tx_ref?: string; method: 'account' | 'link' | 'qr'; rail?: string; amount: number; status: string; account_number: string | null; bank_name: string | null;
@@ -49,7 +56,7 @@ export interface Customer {
   id: string; name: string; kind: string; phone: string | null; email: string | null; address: string | null; tin: string | null; is_walk_in: boolean; archived: boolean;
   credit_limit: number; terms_days: number; price_list_id: string | null; price_list_name: string | null; balance: number; receivable: number; advance: number;
   overdue: number; oldest_due: string | null; open_count: number; sales_12m: number; last_sale: string | null; whatsapp_opt_in: boolean; tags: string[]; notes: string | null;
-  credit_notes: number;
+  credit_notes: number; city?: string | null; state?: string | null; country?: string | null; contact_person?: string | null; cc_emails?: string[];
 }
 export interface PriceList { id: string; name: string; kind: 'wholesale' | 'distributor' | 'custom' | 'staff'; rule: 'fixed' | 'discount_on_retail' | 'markup_on_cost'; pct: number; active?: boolean; items: { item_id: string; price: number; min_qty: number }[] }
 export interface Shift {

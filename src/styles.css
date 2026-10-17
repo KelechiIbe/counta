@@ -98,6 +98,8 @@ button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .btn-dark { background: var(--ink); color: #fff; } .btn-dark:hover:not(:disabled) { background: #000; color: #fff; }
 .btn-ghost { background: transparent; color: var(--muted); border: 0; padding: 8px 10px; }
 .btn-ghost:hover { color: var(--ink); }
+.link { background: none; border: 0; padding: 0; color: var(--primary); font-weight: 500; cursor: pointer; text-align: left; }
+.link:hover { text-decoration: underline; }
 .btn-danger { background: #fff; color: var(--red); border-color: #FECACA; } .btn-danger:hover:not(:disabled) { background: var(--red-bg); }
 .btn-sm { border-radius: 10px; padding: 8px 14px; font-size: 13px; }
 .btn-xs { border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 600; }
