@@ -81,7 +81,7 @@ export function MessagesSection() {
   const toast = useToast();
   const qc = useQueryClient();
   const msgs = useMessages();
-  const status = useQuery({ queryKey: ['msg-status'], queryFn: () => edge<{ email: boolean; whatsapp: boolean }>('messaging', { action: 'status' }), staleTime: 60_000 });
+  const status = useQuery({ queryKey: ['msg-status'], queryFn: () => edge<{ email: boolean; whatsapp: boolean; sender?: string | null; sender_set?: boolean; email_key?: boolean }>('messaging', { action: 'status' }), staleTime: 60_000 });
   const s = msgs.data?.settings;
   const [f, setF] = useState({ reminders_enabled: false, reminder_days: '-3, 0, 3, 7, 14', reply_to_email: '' });
   useEffect(() => { if (s) setF({ reminders_enabled: !!s.reminders_enabled, reminder_days: (s.reminder_days || []).join(', '), reply_to_email: s.reply_to_email || '' }); }, [s?.reminders_enabled, s?.reply_to_email]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -100,7 +100,9 @@ export function MessagesSection() {
       <div className="row wrap" style={{ gap: 8 }}>
         <span className={'chip ' + (status.data?.email ? 't-green' : 't-grey')}>Email {status.data?.email ? 'on' : 'off'}</span>
         <span className={'chip ' + (status.data?.whatsapp ? 't-green' : 't-grey')}>WhatsApp {status.data?.whatsapp ? 'on' : 'off'}</span>
+        {status.data?.sender && <span className="chip t-grey">Sends from {inv.org.name} via Counta &lt;{status.data.sender}&gt;</span>}
       </div>
+      {status.data?.email_key && status.data.sender_set && !status.data.sender && <Alert kind="red" icon="alert">The sending address (RESEND_FROM) has no email address in it. It should be an address on the domain verified in Resend, such as billing@yourdomain.com.</Alert>}
       {status.data && (!status.data.email || !status.data.whatsapp) && <Alert kind="blue" icon="info">TaxStreem switches these on for everyone with its Resend and WhatsApp Business keys. Until then, messages wait and go out as soon as they are on.</Alert>}
       <label className="check"><input type="checkbox" disabled={!owner} checked={f.reminders_enabled} onChange={(e) => setF({ ...f, reminders_enabled: e.target.checked })} />Remind customers about unpaid invoices automatically</label>
       <Field label="On these days from the due date" hint="Negative is before it is due: -3, 0, 3, 7, 14."><input className="input" disabled={!owner || !f.reminders_enabled} value={f.reminder_days} onChange={(e) => setF({ ...f, reminder_days: e.target.value })} style={{ maxWidth: 260 }} /></Field>
@@ -108,8 +110,10 @@ export function MessagesSection() {
       {owner && <div><button className="btn btn-primary" onClick={save}>Save</button></div>}
       {recent.length > 0 && <div className="stack" style={{ gap: 4 }}><div className="mini-label">Latest</div>{recent.map((m: any) => (
         <div key={m.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span className="ellipsis"><Icon name={m.channel === 'whatsapp' ? 'wa' : 'mail'} size={13} /> {m.subject || m.template} · {m.to_address}</span>
-          <span className="faint">{m.status} · {when(m.created_at)}</span></div>
-      ))}</div>}
+          <span className={m.status === 'failed' ? '' : 'faint'} style={m.status === 'failed' ? { color: 'var(--red)' } : undefined} title={m.error || undefined}>{m.status} · {when(m.created_at)}</span></div>
+      ))}
+        {recent.filter((m: any) => m.status === 'failed' && m.error).slice(0, 1).map((m: any) => <Alert key={m.id} kind="red" icon="alert">Last failure: {m.error}</Alert>)}
+      </div>}
     </Section>
   );
 }
