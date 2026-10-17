@@ -42,3 +42,29 @@ On the first day, opening stock comes from the migration upload above, dated the
 ### What month-end close adds
 
 A perpetual figure can still be wrong in two ways. Someone can post into a month the accountant has already reported, and stock can be worth less than it cost. Month-end close fixes both; see `docs/month-end-close.md`. After a close, next month opens on exactly the closed figure and nothing can move it.
+
+## Moving the books from another accounting system
+
+Accounting, Move your books brings the opening position across from QuickBooks, Zoho Books, Xero or Sage (or any system that can export a trial balance), at a cut-over date. The end of a financial year that the old system has closed is the best cut-over: the opening balances are then final, and the first year in Counta compares cleanly with the old statements.
+
+1. Choose the system and the cut-over date. The page shows where each report lives in that system: trial balance, unpaid customer invoices (A/R ageing detail), unpaid supplier bills (A/P ageing detail), customers, suppliers and items.
+2. Upload the trial balance. Counta finds the columns (account code, name, type, debit and credit, or one balance column), skips totals, and reads account numbers written in front of names.
+3. Each account is placed in Counta's chart: first by rules, then by the AI for anything the rules are less than 90% sure of. Suggestions 80% sure or more are confirmed; anything less waits for a person, who can also change any of them. Bank, cash and wallet accounts open as new accounts in Banking with their balance.
+4. Customers and suppliers come in from their lists (optional). Items and stock come in under Inventory, Move to Counta, dated the same cut-over day; their stock value is netted against the inventory in the trial balance so it is not counted twice.
+5. Unpaid invoices and bills come in from the ageing reports, each as an open document with its own number, date, due date and the amount still unpaid, so statements, reminders and payments work on them at once.
+6. The check compares receivables, payables and inventory in the trial balance with the lists. Differences can be fixed by exporting again at the cut-over date, or accepted: what the lists do not explain posts to the control account to be cleared later.
+7. Post. One opening journal (source "migration") dated the cut-over day, the open invoices and bills pointing at it, and the books start the next day. The cash flow statement treats these balances as opening cash and balances, never as cash moving. The VAT return and sales analysis leave the opening documents out.
+
+The owner can undo a move until something has been paid against its opening invoices or bills (`reverse_books_migration`).
+
+### Tables and functions
+
+| Name | Purpose |
+| --- | --- |
+| `books_migrations`, `migration_accounts`, `migration_open_items` | One draft per business, its trial balance lines with their mapping, and its unpaid invoices and bills |
+| `start_books_migration`, `set_migration_trial_balance`, `map_migration_account`, `confirm_migration_accounts` | Set up the draft and place the accounts |
+| `migration_ai_map` | Writes the AI's suggestions (the `ai` edge function, action `map_accounts`); never overrides a person, and only replaces a rule that was less sure |
+| `set_migration_open_items`, `import_customers` | Unpaid documents and customers |
+| `get_books_migration` | The draft, its accounts and open items, and the checks |
+| `post_books_migration`, `reverse_books_migration` | Post the opening position, or undo it |
+
