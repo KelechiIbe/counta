@@ -494,7 +494,7 @@ async function mapAccounts(sb: SupabaseClient, body: any) {
   for (let i = 0; i < todo.length; i += 80) {
     const chunkIds = new Set(todo.slice(i, i + 80).map((a: any) => a.id));
     const chunkRows = rows.split(NL).filter((r: string) => chunkIds.has(JSON.parse(r).id)).join(NL);
-    const out = await gemini(MAP_SYSTEM, [{ text: prompt.replace(rows, chunkRows) }], MAP_SCHEMA, 0.1, { thinking: 'low' });
+    const out = await gemini(MAP_SYSTEM, [{ text: prompt.replace(rows, () => chunkRows) }], MAP_SCHEMA, 0.1, { thinking: 'low' });
     model = out.model;
     results.push(...((out.data?.results || []) as any[]).filter((r) => chunkIds.has(r.id)));
   }
