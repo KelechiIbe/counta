@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { lastMonthEnd, money, today, useAssets, useBills, useChart, useCustomers } from '../../lib/api';
+import { lastMonthEnd, money, today, useAssets, useBills, useChart, useCustomers, moneyAccounts } from '../../lib/api';
 import { N2, fmtDay } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows } from '../../components/ui';
@@ -151,7 +151,7 @@ function BankPicker({ value, onChange }: { value: string; onChange: (v: string) 
   const { data: inv } = useInventory();
   const { orgId } = useSession();
   const [list, setList] = useState<any[] | null>(null);
-  if (list === null) rpc<any>('get_till', { p_org: orgId, p_location: inv?.locations[0]?.id }).then((t) => setList((t.accounts || []).filter((a: any) => a.kind !== 'cash'))).catch(() => setList([]));
+  if (list === null) moneyAccounts(orgId!).then((accounts) => setList((accounts || []).filter((a: any) => a.kind !== 'cash'))).catch(() => setList([]));
   return <Field label="From"><select className="input" value={value} onChange={(e) => onChange(e.target.value)}><option value="">Choose the account</option>{(list || []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>;
 }
 

@@ -18,7 +18,8 @@ export async function gemini(cfg: { g: GeminiConfig; model: string }, system: st
       res = await generateContent(cfg.g, model, {
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text }] }],
-        generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature },
+        // Gemini 3 and later loop or lose accuracy below their default temperature, so it is only set for older models.
+        generationConfig: { responseMimeType: 'application/json', responseSchema: schema, ...(/^gemini-[12]\./.test(model) ? { temperature } : {}) },
       }, 55_000);
     } catch (e) {
       if (e instanceof CredentialError) throw e;

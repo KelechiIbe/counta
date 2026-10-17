@@ -33,7 +33,7 @@ export default defineConfig({
         navigateFallback: '/index.html',
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         // Export libraries load only when someone downloads a file, so phones do not install them up front.
-        globIgnores: ['**/push-sw.js', '**/exceljs*.js', '**/xlsx-*.js', '**/pdf-vendor-*.js'],
+        globIgnores: ['**/push-sw.js', '**/exceljs*.js', '**/xlsx-*.js', '**/pdf-vendor-*.js', '**/pdfjs-*.js', '**/mono-connect-*.js'],
         importScripts: ['push-sw.js'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         runtimeCaching: [
@@ -43,7 +43,7 @@ export default defineConfig({
             options: { cacheName: 'fonts' }
           },
           {
-            urlPattern: ({ url }) => /\/assets\/(exceljs|xlsx-|pdf-vendor-)/.test(url.pathname),
+            urlPattern: ({ url }) => /\/assets\/(exceljs|xlsx-|pdf-vendor-|pdfjs-|pdf\.worker)/.test(url.pathname),
             handler: 'CacheFirst',
             options: { cacheName: 'export-libs', expiration: { maxEntries: 12 } }
           },
@@ -64,6 +64,9 @@ export default defineConfig({
         manualChunks(id) {
           if (id.includes('vite/preload-helper') || id.includes('commonjsHelpers')) return 'runtime';
           if (/node_modules\/(jspdf|jspdf-autotable|canvg|html2canvas|dompurify|rgbcolor|stackblur-canvas|svg-pathdata)\//.test(id)) return 'pdf-vendor';
+          // Reading PDF statements and linking a bank load only when someone does it.
+          if (/node_modules\/pdfjs-dist\//.test(id)) return 'pdfjs';
+          if (/node_modules\/@mono\.co\//.test(id)) return 'mono-connect';
           return undefined;
         }
       }

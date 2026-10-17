@@ -73,6 +73,13 @@ Codes below are the defaults. Amounts are net of VAT unless marked.
 | Month-end close, allowance falls | `close_period` | 1207 | 6805 |
 | Close reopened | `reopen_period` | the close's entry reversed | |
 | Rule change or item move | `set_posting_rule`, `set_item_inventory_account` | new account | old account |
+| Customer credit note for an amount | `credit_sale` | 4131 (goods) or the line's revenue account, net; 2201 the VAT inside | 1101 gross |
+| Supplier credit note | `record_vendor_credit` | 2101 gross | the bill line's account net; 1402 the VAT inside (VAT-registered business) |
+| | goods sent back | | 1203 at weighted average cost; 5103 Purchase Returns for the difference |
+| | allowance on stock with nothing sent back | | 5103 Purchase Returns |
+| Supplier credit used on another bill | `use_vendor_credit` | no journal (both sides in 2101); the bill's WHT falls with it | |
+| Supplier refund of a credit | `refund_vendor_credit` | the bank account | 2101 |
+| Tax charge | `post_tax_charge` | 7501 companies income tax, 7505 minimum tax top-up, 7502 development levy | 2208, 2209 |
 
 Nothing posts into a closed period. A journal or movement dated on or before the last closed day, such as a phone sale that synced late, moves to the first open day with a note. See `month-end-close.md`.
 

@@ -141,7 +141,12 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
   const short = Math.max(total + fees - available, 0);
   const dupes = useMemo(() => {
     const seen = new Map<string, number>(); const out = new Set<number>();
-    rows.forEach((r) => { const k = `${r.account_number}|${r.amount}`; if (seen.has(k)) { out.add(r.row); out.add(seen.get(k)!); } else seen.set(k, r.row); });
+    rows.forEach((r) => {
+      const amt = r.server?.amount ?? r.amount;
+      if (amt == null || !r.account_number) return;
+      const k = `${r.account_number}|${Number(amt)}|${(r.bill || '').toLowerCase()}`;
+      if (seen.has(k)) { out.add(r.row); out.add(seen.get(k)!); } else seen.set(k, r.row);
+    });
     return out;
   }, [rows]);
   const recent = useMemo(() => new Set((pay.data?.payouts || []).filter((p: any) => ['processing', 'successful'].includes(p.status) && Date.now() - Date.parse(p.created_at) < 7 * 86400_000)
@@ -231,7 +236,7 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
                         <td className="num">{s?.amount != null ? N2(s.amount) : r.amount != null ? N2(r.amount) : '—'}</td>
                         <td style={{ minWidth: 180, fontSize: 12 }}>
                           {problems.map((p: string, k: number) => <div key={k} style={{ color: '#B91C1C' }}>{p}</div>)}
-                          {!problems.length && nameOk === false && <div style={{ color: '#B45309' }}>The bank's name differs from the sheet. Tick it only if this is who you mean to pay.</div>}
+                          {!problems.length && nameOk === false && <div style={{ color: '#B45309' }}>{r.name ? "The bank's name differs from the sheet." : 'The sheet gives no name for this account.'} Tick it only if this is who you mean to pay.</div>}
                           {dupes.has(r.row) && <div style={{ color: '#B45309' }}>Same account and amount as another row.</div>}
                           {recent.has(`${r.account_number}|${Number(s?.amount ?? r.amount)}`) && <div style={{ color: '#B45309' }}>Paid this amount in the last 7 days.</div>}
                           {r.notes.map((n, k) => <div key={'n' + k} className="faint">{n}</div>)}

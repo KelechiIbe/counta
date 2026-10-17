@@ -16,6 +16,8 @@ Accounting, Financial statements builds the full annual (or interim) financial s
 | Notes | 1 General information, 2 Basis of preparation (compliance, measurement, currency, going concern, judgements, comparatives, new standards), 3 Material accounting policies, 4 Judgements and estimates, 5 Revenue (with disaggregation and contract balances), 6 Cost of sales, 7 Expenses, 8 Finance income and costs, 9 Profit before tax, 10 Staff costs and directors' emoluments, 11 Taxation (charge, reconciliation, current tax, deferred tax), 12 Property, plant and equipment, 13 Intangible assets, 14 Inventories, 15 Trade and other receivables (with expected credit losses), 16 Cash and cash equivalents, 17 Share capital and reserves, 18 Borrowings, 19 Trade and other payables, 20 Other statutory liabilities, 21 Related parties, 22 Financial risk management, 23 Capital management, 24 Contingencies and commitments, 25 Events after the reporting period, 26 Approval, and 27 Unreconciled bank items when there are any |
 | Statement of value added | Value added and how it was applied (other national disclosure) |
 | Five-year financial summary | Up to five year ends, with earnings per share when the issued shares are recorded |
+| Tax computation | Companies income tax and the development levy under the Nigeria Tax Act 2025, each adjustment with its source; see [tax-computation.md](tax-computation.md) |
+| Capital allowances | By class and asset by asset: tax value brought forward, additions, disposals, allowances, balancing charges and tax value carried forward |
 
 Tax wording follows the period: the Nigeria Tax Act 2025 (company income tax at 30%, the 4% development levy, the 15% minimum effective tax rate, small companies exempt) for periods ending on or after 1 January 2026, and CITA with tertiary education tax before that. The new-standards note follows the financial year.
 
@@ -31,7 +33,7 @@ The owner or the bookkeeper edits them (`update_corporate_info`).
 
 ## Before signing
 
-The page lists what to fix first. Errors: no directors, a statement of financial position that does not cast, cash flows that do not end on the cash in the books, unreconciled bank items, transactions waiting in suspense. Warnings: one director only, opening balances still in 3999, books not closed to the period end, no RC number or Tax ID, no company secretary. Notes: standard wording used where the directors have not written their own, and no approval date yet (a blank line prints).
+The page lists what to fix first. Errors: no directors, a statement of financial position that does not cast, cash flows that do not end on the cash in the books, unreconciled bank items, transactions waiting in suspense. Warnings: one director only, opening balances still in 3999, books not closed to the period end, no RC number or Tax ID, no company secretary. Notes: standard wording used where the directors have not written their own, and no approval date yet (a blank line prints). The tax computation's own points to check are listed too, with a warning when the tax charge in the accounts differs from the computation.
 
 ## Export
 

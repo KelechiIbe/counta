@@ -11,6 +11,7 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@mono.co/connect.js@2.2.0",
         "npm:@supabase/supabase-js@^2.118.0",
         "npm:@tanstack/react-query@^5.104.3",
         "npm:@types/qrcode@^1.5.6",
@@ -23,6 +24,7 @@
         "npm:idb-keyval@^6.3.0",
         "npm:jspdf-autotable@^5.0.9",
         "npm:jspdf@^4.2.1",
+        "npm:pdfjs-dist@5.4.624",
         "npm:qrcode@^1.5.4",
         "npm:react-dom@^18.3.1",
         "npm:react-router-dom@^6.30.5",

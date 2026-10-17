@@ -26,13 +26,15 @@ The VAT on each line comes from the item's treatment, which the tax agent sets w
 - Pay by transfer waits on screen, checks every four seconds and says the payment out loud when the money arrives.
 - Receipt: on screen, by WhatsApp or email, printed on an 80 mm thermal printer over Bluetooth (ESC/POS), or printed from the browser.
 - Keyboard: F2 to search, F9 to pay.
-- Returns and voids: a return credits the lines returned, puts the stock back (or writes it off) and refunds by the method chosen. A void needs a reason.
+- Returns and voids: a return credits the lines returned, puts the stock back (or writes it off) and refunds by the method chosen: cash from the branch drawer, or a transfer from the bank account chosen on the form. A void needs a reason.
+- Refunds, payments and bills choose their account from `money_accounts`, which answers anyone who sells, keeps the books, approves adjustments or makes payments, so a manager or an accountant who does not use the till can still pick the account.
 
 ## Invoices, quotes, credit notes
 
 - Quotes convert to invoices. Invoices can take a deposit, part payments and WHT credits from customers that withhold.
 - Each document has a public page (`/p/<token>`) that shows it and lets the customer pay by transfer, link or QR without signing in. It can be printed or saved as PDF.
 - Credit notes reverse revenue, VAT and stock for returned goods.
+- A credit note for an amount (Return or credit, then Credit an amount) covers a price reduction, a discount agreed after the sale or a service not delivered. Nothing comes back into stock. The amount is spread over the lines by what each can still be credited, or entered line by line; the VAT inside it comes off output VAT at each line's own rate, and the rest comes off revenue (4131 Sales Returns for goods, the line's own revenue account for services). A line cannot be credited twice, whether by a return or a credit note. The credit clears what is still owed on the sale first, then is refunded or kept as the customer's credit (`credit_sale`).
 
 ## Customers and credit
 

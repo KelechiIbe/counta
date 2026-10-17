@@ -5,7 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { edge, money, today, useBill, useBills, useChart, type Bill } from '../../lib/api';
+import { edge, money, today, useBill, useBills, useChart, type Bill, moneyAccounts } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
@@ -13,8 +13,9 @@ import { taxIdError } from '../../lib/taxid';
 import { ExportMenu, useMeta } from '../../components/Books';
 import type { RCol } from '../../lib/reports';
 import { StatusChip } from '../sell/common';
+import { CreditsList, UseCredits, VendorCreditModal } from './VendorCredits';
 
-type Tab = 'all' | 'draft' | 'unpaid' | 'overdue' | 'paid';
+type Tab = 'all' | 'draft' | 'unpaid' | 'overdue' | 'paid' | 'credits';
 
 export default function Bills() {
   const { data: inv } = useInventory();
@@ -44,13 +45,13 @@ export default function Bills() {
         <div className="card card-pad"><div className="label">To approve</div><div style={{ fontSize: 26, fontWeight: 700, marginTop: 6 }}>{all.filter((b) => b.status === 'draft').length}</div></div>
       </div>
       <div className="row wrap" style={{ justifyContent: 'space-between' }}>
-        <Pills value={tab} onChange={setTab} options={[{ id: 'unpaid', label: 'To pay' }, { id: 'draft', label: 'To approve', count: all.filter((b) => b.status === 'draft').length || undefined }, { id: 'overdue', label: 'Overdue' }, { id: 'paid', label: 'Paid' }, { id: 'all', label: 'All' }]} />
+        <Pills value={tab} onChange={setTab} options={[{ id: 'unpaid', label: 'To pay' }, { id: 'draft', label: 'To approve', count: all.filter((b) => b.status === 'draft').length || undefined }, { id: 'overdue', label: 'Overdue' }, { id: 'paid', label: 'Paid' }, { id: 'all', label: 'All' }, { id: 'credits', label: 'Credit notes' }]} />
         <div className="row wrap">
           <ExportMenu name={`${inv.org.name} bills ${today()}`} disabled={!rows.length} sheets={() => [{ meta: meta('Bills', `As at ${fmtDay(today())}`), cols, rows: rows as any }]} />
           {(can(inv, 'keep_books') || can(inv, 'approve_pos')) && <button className="btn btn-primary btn-sm" onClick={() => setEditing('new')}><Icon name="plus" size={14} color="#fff" />Bill</button>}
         </div>
       </div>
-      <div className="card" style={{ overflow: 'hidden' }}>
+      {tab === 'credits' ? <CreditsList /> : <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-hd"><div className="row" style={{ flex: 1 }}><Icon name="search" size={15} color="#9CA3AF" /><input className="input input-sm" style={{ border: 0, boxShadow: 'none' }} placeholder="Bill, vendor or their invoice number" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search bills" /></div></div>
         <div className="tbl">
           <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '110px minmax(160px,1.4fr) 110px 120px 120px 120px 120px', minWidth: 900 }}>
@@ -68,7 +69,7 @@ export default function Bills() {
             </div>
           ))}
         </div>
-      </div>
+      </div>}
       {open && <BillDrawer id={open} onClose={() => setParams({})} onEdit={(id) => setEditing(id)} />}
       {editing && <BillEditor id={editing === 'new' ? null : editing} vendors={bills.data?.vendors || []} whtRates={bills.data?.wht_rates || []} assetClasses={bills.data?.asset_classes || []}
         onClose={() => setEditing(null)} onSaved={(id) => { setEditing(null); setParams({ open: id }); }} />}
@@ -83,6 +84,7 @@ function BillDrawer({ id, onClose, onEdit }: { id: string; onClose: () => void; 
   const qc = useQueryClient();
   const [pay, setPay] = useState(false);
   const [voiding, setVoiding] = useState(false);
+  const [crediting, setCrediting] = useState(false);
   const [reason, setReason] = useState('');
   const b = bill.data;
   const refresh = () => Promise.all(['bill', 'bills', 'inbox', 'payments', 'assets'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
@@ -119,11 +121,16 @@ function BillDrawer({ id, onClose, onEdit }: { id: string; onClose: () => void; 
               <div key={p.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{p.method === 'wallet' ? 'From the wallet' : p.method === 'bank' ? 'From the bank' : p.method} · {when(p.paid_at)}{p.reference ? ` · ${p.reference}` : ''}</span>
                 <span className="row" style={{ gap: 6 }}><StatusChip s={p.status} /><span className="num">{N2(p.net)} + WHT {N2(p.wht)}</span></span></div>
             ))}</div>}
+            {(b.credit_notes || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Credit notes</div>{b.credit_notes.map((c: any) => (
+              <div key={c.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{c.number}{c.vendor_ref ? ` (their ${c.vendor_ref})` : ''} · {fmtDay(c.credit_date)} · {c.reason}</span><span className="num">{N2(c.total)}</span></div>
+            ))}</div>}
+            {can(inv, 'keep_books') && <UseCredits bill={b} />}
             {(b.assets || []).length > 0 && <Alert kind="blue" icon="info">{b.assets.length} fixed asset{b.assets.length === 1 ? '' : 's'} from this bill wait in Fixed assets to be confirmed.</Alert>}
             <div className="row wrap">
               {b.status === 'draft' && <button className="btn btn-secondary btn-sm" onClick={() => onEdit(b.id)}><Icon name="pencil" size={14} />Edit</button>}
               {b.status === 'draft' && can(inv, 'keep_books') && <button className="btn btn-primary btn-sm" onClick={() => act(() => rpc('approve_bill', { p_bill: b.id }), `${b.number} approved and in the books`)}>Approve</button>}
               {['approved', 'partially_paid'].includes(b.status) && can(inv, 'make_payments') && <button className="btn btn-primary btn-sm" onClick={() => setPay(true)}><Icon name="send" size={14} color="#fff" />Pay</button>}
+              {['approved', 'partially_paid', 'paid'].includes(b.status) && can(inv, 'keep_books') && <button className="btn btn-secondary btn-sm" onClick={() => setCrediting(true)}><Icon name="undo" size={14} />Credit note</button>}
               {['draft', 'approved'].includes(b.status) && can(inv, 'keep_books') && <button className="btn btn-ghost btn-sm" onClick={() => setVoiding(true)}>Void</button>}
             </div>
             {voiding && <div className="row"><input className="input input-sm" autoFocus placeholder="Why is it voided?" value={reason} onChange={(e) => setReason(e.target.value)} />
@@ -132,6 +139,7 @@ function BillDrawer({ id, onClose, onEdit }: { id: string; onClose: () => void; 
         )}
       </div>
       {pay && b && <PayBill bill={b} onClose={() => setPay(false)} onDone={refresh} />}
+      {crediting && b && <VendorCreditModal bill={b} onClose={() => setCrediting(false)} />}
     </Drawer>
   );
 }
@@ -148,7 +156,7 @@ function PayBill({ bill, onClose, onDone }: { bill: any; onClose: () => void; on
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     edge<{ banks: any[] }>('payments', { action: 'banks' }).then((r) => setBanks(r.banks || []));
-    rpc<any>('get_till', { p_org: orgId, p_location: inv?.locations[0]?.id }).then((t) => setOwn(t.accounts || [])).catch(() => {});
+    moneyAccounts(orgId!).then((accounts) => setOwn(accounts || [])).catch(() => {});
   }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (f.method !== 'wallet' || !/^\d{10}$/.test(f.account_number) || !f.bank_code || f.account_name) return;
