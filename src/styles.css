@@ -282,3 +282,4 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 
 /* Headline figures on tiles: one line, shrinking a little on narrow screens rather than wrapping the minus sign away from the number. */
 .kpi-val { font-size: 22px; font-weight: 700; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+@media (max-width: 400px) { .hide-xs { display: none !important; } }

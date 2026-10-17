@@ -1,6 +1,6 @@
-// Pages anyone with the link can open, without signing in: a document (invoice, receipt, order, quote) with a way to pay it,
-// and the online shop.
-import { useEffect, useMemo, useRef, useState } from 'react';
+// Pages anyone with the link can open, without signing in: a branded document (invoice, receipt, order, quote) with a way
+// to pay it and, for shop orders, where the order has got to. The online shop lives in ShopPage.tsx.
+import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { rpc, photoUrl } from '../../lib/supabase';
@@ -10,8 +10,6 @@ import { InvoiceDoc, PrintPortal, cleanHex, onColor } from '../../components/Inv
 import { qrSvg } from '../../lib/labels';
 import { Icon } from '../../components/Icon';
 import { Alert, Spinner } from '../../components/ui';
-
-const LABEL: Record<string, string> = { receipt: 'Receipt', invoice: 'Invoice', quote: 'Quote', order: 'Order', credit_note: 'Credit note' };
 
 function Frame({ children, org }: { children: React.ReactNode; org?: any }) {
   return (
@@ -70,8 +68,9 @@ export function PublicDoc() {
       {paid ? <Alert kind="green" icon="check">Paid. Thank you.</Alert> : owe && (
         <div className="stack no-print" style={{ gap: 10, background: '#fff', border: '1px solid var(--line)', borderRadius: 14, padding: 16 }}>
           <div className="row wrap" style={{ justifyContent: 'space-between' }}>
-            <div style={{ fontWeight: 700, fontSize: 18 }}>{N2(balance)} to pay</div>
-            {d.due_date && <div className="muted" style={{ fontSize: 13 }}>Due {fmtDay(d.due_date)}</div>}
+            <div style={{ fontWeight: 700, fontSize: 18 }}>{N2(balance)} to pay{d.pay_later ? (d.delivery_method === 'delivery' ? ' on delivery' : ' at pickup') : ''}</div>
+            {d.due_date && !d.pay_later && <div className="muted" style={{ fontSize: 13 }}>Due {fmtDay(d.due_date)}</div>}
+            {d.pay_later && <div className="muted" style={{ fontSize: 13, flexBasis: '100%' }}>Or pay now online and skip the wait.</div>}
           </div>
           {err && <Alert kind="red" icon="alert">{err}</Alert>}
           {req && req.status === 'pending' && req.method === 'account' ? (
@@ -139,113 +138,4 @@ function OrderTracking({ t, brand }: { t: any; brand?: string | null }) {
   );
 }
 
-// ---------------------------------------------------------------- shop
-interface CartLine { id: string; name: string; price: number; unit: string; qty: number; stock: number | null }
-export function ShopPage() {
-  const { slug = '' } = useParams();
-  const cat = useQuery({ queryKey: ['shop', slug], queryFn: () => rpc<any>('shop_catalog', { p_slug: slug }), retry: false });
-  const [cart, setCart] = useState<CartLine[]>(() => { try { return JSON.parse(localStorage.getItem('counta.cart.' + slug) || '[]'); } catch { return []; } });
-  const [q, setQ] = useState('');
-  const [category, setCategory] = useState('');
-  const [checkout, setCheckout] = useState(false);
-  const [f, setF] = useState({ name: '', phone: '', email: '', delivery_method: 'pickup', address: '' });
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [placed, setPlaced] = useState<any>(null);
-  const clientRef = useRef(crypto.randomUUID());
-  useEffect(() => { try { localStorage.setItem('counta.cart.' + slug, JSON.stringify(cart)); } catch { /* private window */ } }, [cart, slug]);
-  const shop = cat.data?.shop;
-  const items: any[] = cat.data?.items || [];
-  const cats = useMemo(() => Array.from(new Set(items.map((i) => i.category))).sort(), [items]);
-  const shown = items.filter((i) => (!category || i.category === category) && (!q.trim() || i.name.toLowerCase().includes(q.trim().toLowerCase())));
-  const total = cart.reduce((a, l) => a + l.price * l.qty, 0);
-  const method = shop && !shop.pickup ? 'delivery' : shop && !shop.delivery ? 'pickup' : f.delivery_method;
-  const fee = method === 'delivery' ? Number(shop?.delivery_fee || 0) : 0;
-  const add = (i: any, d = 1) => setCart((c) => {
-    const x = c.find((l) => l.id === i.id);
-    const next = Math.max(0, (x?.qty || 0) + d);
-    const capped = i.stock != null ? Math.min(next, Number(i.stock)) : next;
-    if (!x) return capped > 0 ? [...c, { id: i.id, name: i.name, price: Number(i.price), unit: i.unit, qty: capped, stock: i.stock }] : c;
-    return capped > 0 ? c.map((l) => (l.id === i.id ? { ...l, qty: capped } : l)) : c.filter((l) => l.id !== i.id);
-  });
-  async function place() {
-    setBusy(true); setErr(null);
-    try {
-      const r = await rpc<any>('shop_place_order', { p_slug: slug, p_order: { client_uuid: clientRef.current, customer: { name: f.name, phone: f.phone, email: f.email || null },
-        delivery_method: method, address: method === 'delivery' ? f.address : null, lines: cart.map((l) => ({ item_id: l.id, qty: l.qty })) } });
-      setPlaced(r); setCart([]);
-    } catch (e) { setErr((e as Error).message); }
-    setBusy(false);
-  }
-  if (cat.isLoading) return <Frame><div style={{ padding: 60, display: 'grid', placeItems: 'center' }}><Spinner /></div></Frame>;
-  if (cat.error || !shop) return <Frame><Alert kind="yellow" icon="alert">This shop is not open right now.</Alert></Frame>;
-  if (placed) return (
-    <Frame org={shop}>
-      <div className="card card-pad stack" style={{ gap: 12, textAlign: 'center' }}>
-        <Icon name="check" size={36} color="#15803D" />
-        <div style={{ fontSize: 20, fontWeight: 700 }}>Order {placed.number} received</div>
-        <div className="muted">{shop.name} will confirm it shortly{shop.whatsapp ? ' on WhatsApp' : ''}. You can pay now so it goes out faster.</div>
-        <a className="btn btn-primary" href={`/p/${placed.token}`}>Pay {N2(placed.total)} now</a>
-        {shop.whatsapp && <a className="btn btn-secondary" href={`https://wa.me/${String(shop.whatsapp).replace(/\D/g, '')}?text=${encodeURIComponent(`Hello, I just placed order ${placed.number}.`)}`} target="_blank" rel="noreferrer"><Icon name="wa" size={16} />Message the shop</a>}
-      </div>
-    </Frame>
-  );
-  return (
-    <Frame org={shop}>
-      <div className="stack" style={{ gap: 12 }}>
-        {shop.note && <Alert kind="blue" icon="info">{shop.note}</Alert>}
-        <div className="row wrap" style={{ gap: 8 }}>
-          <input className="input" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: '1 1 200px' }} />
-          {cats.length > 1 && <select className="input" style={{ width: 'auto' }} value={category} onChange={(e) => setCategory(e.target.value)}><option value="">Everything</option>{cats.map((c) => <option key={c} value={c}>{c}</option>)}</select>}
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(170px,1fr))', gap: 10 }}>
-          {shown.map((i) => {
-            const inCart = cart.find((l) => l.id === i.id)?.qty || 0;
-            return (
-              <div key={i.id} className="card" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ aspectRatio: '4/3', background: '#EFF2FA', display: 'grid', placeItems: 'center' }}>
-                  {i.photo_path ? <img src={photoUrl(i.photo_path) || ''} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" /> : <Icon name="package" size={28} color="#9CA3AF" />}
-                </div>
-                <div className="stack" style={{ padding: 10, gap: 4, flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{i.name}</div>
-                  <div className="row" style={{ justifyContent: 'space-between' }}><b>{N2(i.price)}</b><span className="faint" style={{ fontSize: 11 }}>per {i.unit}</span></div>
-                  {i.stock != null && <div className="faint" style={{ fontSize: 11 }}>{Number(i.stock)} left</div>}
-                  <div style={{ marginTop: 'auto' }}>{inCart ? (
-                    <div className="row" style={{ justifyContent: 'space-between' }}><button className="btn btn-secondary btn-xs" onClick={() => add(i, -1)} aria-label="One less"><Icon name="minus" size={13} /></button><b>{inCart}</b><button className="btn btn-secondary btn-xs" onClick={() => add(i, 1)} aria-label="One more"><Icon name="plus" size={13} /></button></div>
-                  ) : <button className="btn btn-primary btn-sm btn-block" onClick={() => add(i)}>Add</button>}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        {!shown.length && <div className="empty">Nothing matches.</div>}
-      </div>
-      {cart.length > 0 && !checkout && (
-        <button className="btn btn-dark" style={{ position: 'fixed', left: '50%', transform: 'translateX(-50%)', bottom: 20, zIndex: 20, padding: '14px 22px', boxShadow: 'var(--shadow-cta)' }} onClick={() => setCheckout(true)}>
-          {cart.reduce((a, l) => a + l.qty, 0)} items · {N2(total)} · Check out
-        </button>
-      )}
-      {checkout && (
-        <div className="modal-wrap"><div className="scrim dark" onClick={() => setCheckout(false)} />
-          <div className="modal" style={{ width: 480 }}>
-            <div className="modal-hd"><div className="drawer-title">Your order</div><button className="x-btn" onClick={() => setCheckout(false)} aria-label="Close"><Icon name="x" size={18} /></button></div>
-            <div className="modal-body">
-              {cart.map((l) => <div key={l.id} className="row" style={{ justifyContent: 'space-between', fontSize: 14 }}><span>{l.qty} × {l.name}</span><span className="num">{N2(l.qty * l.price)}</span></div>)}
-              <input className="input" placeholder="Your name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-              <input className="input" placeholder="Phone (WhatsApp)" inputMode="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
-              <input className="input" placeholder="Email (optional)" inputMode="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
-              {(shop.pickup && shop.delivery) && <div className="row" style={{ gap: 8 }}>
-                <button className={'pill' + (f.delivery_method === 'pickup' ? ' on' : '')} onClick={() => setF({ ...f, delivery_method: 'pickup' })}>I'll pick it up</button>
-                <button className={'pill' + (f.delivery_method === 'delivery' ? ' on' : '')} onClick={() => setF({ ...f, delivery_method: 'delivery' })}>Deliver it{Number(shop.delivery_fee) ? ` (+${N2(shop.delivery_fee)})` : ''}</button>
-              </div>}
-              {method === 'delivery' && <textarea className="input" placeholder="Delivery address" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />}
-              <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700, fontSize: 17 }}><span>Total</span><span className="num">{N2(total + fee)}</span></div>
-              {err && <Alert kind="red" icon="alert">{err}</Alert>}
-            </div>
-            <div className="modal-ft"><button className="btn btn-primary btn-block" disabled={busy || !f.name.trim() || f.phone.replace(/\D/g, '').length < 10 || (method === 'delivery' && !f.address.trim())} onClick={place}>{busy ? 'Placing…' : 'Place order'}</button></div>
-          </div>
-        </div>
-      )}
-    </Frame>
-  );
-}
+export { ShopPage } from './ShopPage';
