@@ -51,9 +51,10 @@ function Loading() {
 }
 
 function RequireAuth({ children, needOrg = true }: { children: ReactNode; needOrg?: boolean }) {
-  const { session, ready, memberships, orgId } = useSession();
+  const { session, ready, memberships, orgId, loadingMemberships } = useSession();
   const loc = useLocation();
-  if (!ready) return <Loading />;
+  // Right after sign-in the businesses are still loading: wait for them instead of sending the person to set up a new one.
+  if (!ready || (loadingMemberships && !memberships.length)) return <Loading />;
   if (!session) return <Navigate to={'/login?next=' + encodeURIComponent(loc.pathname + loc.search)} replace />;
   if (needOrg && (!memberships.length || !orgId)) return <Navigate to="/onboarding" replace />;
   return <>{children}</>;
