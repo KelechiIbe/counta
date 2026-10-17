@@ -33,6 +33,8 @@ export const useToast = () => useContext(ToastCtx);
 export interface Membership { member_id: string; org_id: string; role: string; name: string; is_sample: boolean; email: string | null }
 interface SessionCtx {
   session: Session | null; ready: boolean; memberships: Membership[]; orgId: string | null; setOrgId: (id: string | null) => void;
+  // True while the businesses of someone who just signed in are being fetched.
+  loadingMemberships: boolean;
   refreshMemberships: () => Promise<Membership[]>; signOut: () => Promise<void>;
 }
 const Ctx = createContext<SessionCtx>(null as any);
@@ -44,6 +46,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [loadingMemberships, setLoadingMemberships] = useState(false);
   const [orgId, setOrgIdState] = useState<string | null>(safeGet(ORG_KEY));
   const qc = useQueryClient();
 
@@ -80,7 +83,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     });
     const { data: sub } = supabase.auth.onAuthStateChange((evt, s) => {
       setSession(s);
-      if (evt === 'SIGNED_IN') refreshMemberships().catch(() => {});
+      if (evt === 'SIGNED_IN') {
+        setLoadingMemberships(true);
+        refreshMemberships().catch(() => {}).finally(() => setLoadingMemberships(false));
+      }
       if (evt === 'SIGNED_OUT') { setMemberships([]); qc.clear(); }
     });
     return () => sub.subscription.unsubscribe();
@@ -88,8 +94,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => { await supabase.auth.signOut(); setOrgId(null); }, [setOrgId]);
 
-  const value = useMemo(() => ({ session, ready, memberships, orgId, setOrgId, refreshMemberships, signOut }),
-    [session, ready, memberships, orgId, setOrgId, refreshMemberships, signOut]);
+  const value = useMemo(() => ({ session, ready, memberships, orgId, setOrgId, refreshMemberships, signOut, loadingMemberships }),
+    [session, ready, memberships, orgId, setOrgId, refreshMemberships, signOut, loadingMemberships]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 export const useSession = () => useContext(Ctx);
