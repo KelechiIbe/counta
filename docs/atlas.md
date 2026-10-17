@@ -133,6 +133,8 @@ The full set (statements and notes) exports as one workbook or one PDF with a co
 
 | Name | Used by | Notes |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | `atlas`, `ai` | Already in Vault |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | `atlas`, `ai` | Gemini on Vertex AI with Application Default Credentials ([gemini-vertex.md](gemini-vertex.md)) |
+| `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` | `atlas`, `ai` | `infrastructure-staging-477918`, `us-central1` |
+| `GEMINI_API_KEY` | `atlas`, `ai` | In Vault; used only when no ADC credential is set |
 | `NUMENS_API_URL`, `NUMENS_API_KEY` | `ai` | When set, Numens answers VAT questions instead of Gemini |
 | `PUSH_HOOK_SECRET` | all functions | Already set; pg_cron and pg_net send it as `x-counta-hook` |
