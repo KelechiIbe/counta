@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { DOC_LABEL, METHOD_LABEL, VAT_STATUS, money, today, useChart, useCustomers, useSale, useSales, type Customer, type DocType, type Sale, type SaleRow } from '../../lib/api';
+import { DOC_LABEL, METHOD_LABEL, VAT_STATUS, money, today, useChart, useCustomers, useSale, useSales, type Customer, type DocType, type Sale, type SaleRow, moneyAccounts } from '../../lib/api';
 import { countryName, isExport } from '../../lib/countries';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
@@ -224,7 +224,7 @@ function CreditAmount({ sale, onClose, onDone, onGoods }: { sale: Sale; onClose:
   const [own, setOwn] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   useEffect(() => { rpc<any>('sale_creditable', { p_sale: sale.id }).then(setInfo).catch((e) => toast((e as Error).message, 'err')); }, [sale.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { rpc<any>('get_till', { p_org: orgId, p_location: sale.location_id || inv?.locations[0]?.id }).then((t) => setOwn(t.accounts || [])).catch(() => {}); }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { moneyAccounts(orgId!).then((accounts) => setOwn(accounts || [])).catch(() => {}); }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   const lines: any[] = (info?.lines || []).filter((l: any) => Number(l.creditable) > 0);
   const pool = lines.reduce((a, l) => a + Number(l.creditable), 0);
   const total = byLine ? lines.reduce((a, l) => a + (money(amt[l.id]) || 0), 0) : money(whole) || 0;
@@ -286,6 +286,9 @@ function CreditAmount({ sale, onClose, onDone, onGoods }: { sale: Sale; onClose:
 
 function ReturnGoods({ sale, onClose, onDone, onAmount }: { sale: Sale; onClose: () => void; onDone: () => void; onAmount: () => void }) {
   const toast = useToast();
+  const { orgId } = useSession();
+  const [own, setOwn] = useState<any[]>([]);
+  useEffect(() => { moneyAccounts(orgId!).then((accounts) => setOwn(accounts || [])).catch(() => {}); }, [orgId]);
   const [qty, setQty] = useState<Record<string, string>>({});
   const [restock, setRestock] = useState(true);
   const [reason, setReason] = useState('');
@@ -323,9 +326,11 @@ function ReturnGoods({ sale, onClose, onDone, onAmount }: { sale: Sale; onClose:
           <Field label="Refund"><select className="input" value={refund.method} onChange={(e) => setRefund({ ...refund, method: e.target.value })}><option value="none">Keep as credit / reduce what they owe</option><option value="cash">Cash</option><option value="transfer">Bank transfer</option></select></Field>
           {refund.method !== 'none' && <Field label="Refund amount"><input className="input" inputMode="decimal" value={refund.amount} placeholder={Math.max(0, value - Number(sale.balance)).toFixed(2)} onChange={(e) => setRefund({ ...refund, amount: e.target.value })} /></Field>}
         </div>
+        {refund.method === 'transfer' && <Field label="Paid from"><select className="input" value={refund.bank_account_id} onChange={(e) => setRefund({ ...refund, bank_account_id: e.target.value })}>
+          <option value="">Choose the account</option>{own.filter((a) => a.kind !== 'cash').map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>}
         <div style={{ fontWeight: 600 }}>Credit note about {N2(value)}</div>
       </div>
-      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || value <= 0 || !reason.trim()} onClick={go}>Raise credit note</button></div>
+      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || value <= 0 || !reason.trim() || (refund.method === 'transfer' && !refund.bank_account_id)} onClick={go}>Raise credit note</button></div>
     </Modal>
   );
 }
@@ -338,7 +343,7 @@ function PendingPayments({ rows }: { rows: any[] }) {
   const [bank, setBank] = useState<Record<string, string>>({});
   const [accounts, setAccounts] = useState<any[]>([]);
   const { orgId } = useSession();
-  useEffect(() => { rpc<any>('get_till', { p_org: orgId, p_location: inv?.locations[0]?.id }).then((t) => setAccounts((t.accounts || []).filter((a: any) => a.kind !== 'cash'))).catch(() => {}); }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { moneyAccounts(orgId!).then((accounts) => setAccounts((accounts || []).filter((a: any) => a.kind !== 'cash'))).catch(() => {}); }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   const canConfirm = can(inv, 'keep_books') || can(inv, 'approve_adjustments');
   async function decide(id: string, yes: boolean, fallback?: string) {
     try {

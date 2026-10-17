@@ -5,7 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { METHOD_LABEL, edge, edgeOk, money, useChart, useCustomers, usePayments } from '../../lib/api';
+import { METHOD_LABEL, edge, edgeOk, money, useChart, useCustomers, usePayments, moneyAccounts } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
@@ -237,7 +237,7 @@ function PayoutModal({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     edge<{ banks: any[] }>('payments', { action: 'banks' }).then((r) => setBanks(r.banks || []));
-    rpc<any>('get_till', { p_org: orgId, p_location: inv?.locations[0]?.id }).then((t) => setOwn((t.accounts || []).filter((a: any) => a.kind === 'bank'))).catch(() => {});
+    moneyAccounts(orgId!).then((accounts) => setOwn((accounts || []).filter((a: any) => a.kind === 'bank'))).catch(() => {});
   }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!/^\d{10}$/.test(f.account_number) || !f.bank_code) return;

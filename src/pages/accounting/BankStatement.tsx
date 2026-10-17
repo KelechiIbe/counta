@@ -54,20 +54,30 @@ export default function StatementUpload({ account, onClose }: { account: any; on
     await readWithAi(file, doc, text, text.scanned ? 'This PDF is a scan with no text in it, so the AI reader is reading the pages.' : 'The columns of this PDF could not be read, so the AI reader is reading it.');
   }
 
-  // Long statements go in parts of six pages (four for scans); each part comes back as lines and the parts are joined.
+  // Long statements go two pages at a time, three parts at once; a part that fails is tried once more. The parts come
+  // back as lines and are joined in page order.
   async function readWithAi(file: File, doc: any, text: PdfText, why?: string) {
     if (why) toast(why);
-    const per = text.scanned ? 4 : 6;
-    const parts: AiStatement[] = [];
-    for (let from = 1; from <= doc.numPages; from += per) {
-      const to = Math.min(doc.numPages, from + per - 1);
-      setStep({ k: 'reading', label: `The AI reader is reading page${to > from ? `s ${from} to ${to}` : ` ${from}`} of ${doc.numPages}…` });
+    const per = 2;
+    const ranges: [number, number][] = [];
+    for (let from = 1; from <= doc.numPages; from += per) ranges.push([from, Math.min(doc.numPages, from + per - 1)]);
+    const parts: AiStatement[] = new Array(ranges.length);
+    let done = 0;
+    const show = () => setStep({ k: 'reading', label: doc.numPages <= per ? 'The AI reader is reading the statement…'
+      : `The AI reader is reading the ${doc.numPages} pages · ${Math.min(done * per, doc.numPages)} of ${doc.numPages} read…` });
+    show();
+    const readPart = async (i: number) => {
+      const [from, to] = ranges[i];
       const body = text.scanned ? { action: 'read_statement', images: await pageImages(doc, from, to), first_page: from }
         : { action: 'read_statement', pages: text.pages.slice(from - 1, to).map(pageText), first_page: from };
-      const r = await edge<AiStatement>('ai', body);
-      if (r.ok === false) throw new Error(r.reason === 'not_configured' ? 'AI reading is not switched on, so a scanned statement cannot be read. Ask the bank for an Excel or CSV copy.' : r.error || 'The AI reader could not read the statement.');
-      parts.push(r);
-    }
+      let r = await edge<AiStatement>('ai', body);
+      if (r.ok === false && r.reason !== 'not_configured') r = await edge<AiStatement>('ai', body);
+      if (r.ok === false) throw new Error(r.reason === 'not_configured' ? 'AI reading is not switched on, so this statement cannot be read. Ask the bank for an Excel or CSV copy.'
+        : `Pages ${from}${to > from ? `–${to}` : ''} could not be read: ${r.error || 'the AI reader did not answer'}. Try again, or ask the bank for an Excel or CSV copy.`);
+      parts[i] = r; done++; show();
+    };
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(3, ranges.length) }, async () => { while (next < ranges.length) await readPart(next++); }));
     setStep({ k: 'review', file, st: fromAi(parts, file.name), pdf: { doc, text } });
   }
 

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { DOC_LABEL, edge, edgeOk, METHOD_LABEL, STATUS_TONE, VAT_STATUS, statusLabel, useCustomers, vatStatusOf, type Customer, type PayRequest, type Sale } from '../../lib/api';
+import { DOC_LABEL, edge, edgeOk, METHOD_LABEL, STATUS_TONE, VAT_STATUS, statusLabel, useCustomers, vatStatusOf, type Customer, type PayRequest, type Sale, moneyAccounts } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
 import { qrSvg } from '../../lib/labels';
 import { bluetoothSupported, connectPrinter, printBluetooth, printBrowser, printerName } from '../../lib/printer';
@@ -384,7 +384,7 @@ export function RecordPayment({ sale, onClose, onDone }: { sale: Sale; onClose: 
   const [busy, setBusy] = useState(false);
   const canConfirm = can(inv, 'keep_books') || can(inv, 'approve_adjustments');
   const [confirm, setConfirm] = useState(false);
-  useEffect(() => { rpc<any>('get_till', { p_org: orgId, p_location: sale.location_id || inv?.locations[0]?.id }).then((t) => setAccounts(t.accounts || [])).catch(() => {}); }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { moneyAccounts(orgId!).then((accounts) => setAccounts(accounts || [])).catch(() => {}); }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
   async function save() {
     setBusy(true);

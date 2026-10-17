@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { money, today, useCustomers, useSales, type Customer } from '../../lib/api';
+import { money, today, useCustomers, useSales, type Customer, moneyAccounts } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows } from '../../components/ui';
@@ -220,7 +220,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
 function useAccounts() {
   const { data: inv } = useInventory();
   const { orgId } = useSession();
-  return useQuery({ queryKey: ['till-accounts', orgId], enabled: !!orgId && !!inv, queryFn: async () => (await rpc<any>('get_till', { p_org: orgId, p_location: inv!.locations[0]?.id })).accounts as any[] });
+  return useQuery({ queryKey: ['till-accounts', orgId], enabled: !!orgId && !!inv, queryFn: () => moneyAccounts(orgId!) });
 }
 
 // A payment not tied to one invoice: spread over the oldest open invoices, the rest held as the customer's credit.

@@ -224,7 +224,7 @@ async function webhook(req: Request) {
   }
   if (/reauthori[sz]ed/i.test(event)) await svc('svc_feed_status', { p_mono_id: monoId, d: { reauth_required: false } });
   const ready = /account_updated|account_connected|reauthori[sz]ed/i.test(event) && (!status || ['AVAILABLE', 'PARTIAL', 'SUCCESSFUL'].includes(status))
-    || (/jobs\.update/i.test(event) && /finished/i.test(String(d.status || meta.status || '')));
+    || (/jobs[._]update/i.test(event) && /finished/i.test(String(d.status || meta.status || '')));
   if (!ready) {
     if (status) await svc('svc_feed_status', { p_mono_id: monoId, d: { data_status: status } });
     return json({ ok: true, waiting: status || event });

@@ -84,14 +84,15 @@ const SYN: [Role, string[]][] = [
   ['value_date', ['value date', 'val date', 'value dt', 'effective date', 'valuedate']],
   ['date', ['transaction date', 'trans date', 'tran date', 'txn date', 'trans dt', 'tran dt', 'posting date', 'posted date', 'date posted', 'post date', 'book date',
     'entry date', 'actual date', 'created on', 'date time', 'datetime', 'trans time', 'transaction time', 'posted', 'date']],
-  ['description', ['narration', 'narrative', 'description', 'details', 'transaction details', 'transaction description', 'remarks', 'remark', 'particulars',
+  ['description', ['narration', 'narrative', 'naration', 'description', 'details', 'detail', 'transaction details', 'transaction detail', 'transaction description',
+    'remarks', 'remark', 'particulars', 'transaction particulars',
     'transaction narration', 'narration description', 'memo', 'transaction remarks', 'beneficiary details', 'purpose']],
   ['reference', ['reference', 'ref', 'ref no', 'reference no', 'reference number', 'cheque no', 'chq no', 'chq', 'cheque number', 'cheque', 'document no',
     'transaction reference', 'trans ref', 'txn ref', 'tran ref', 'session id', 'transaction id', 'instrument no', 'check no']],
   ['debit', ['debit', 'debits', 'debit amount', 'debit amt', 'dr', 'dr amount', 'withdrawal', 'withdrawals', 'withdrawal amt', 'withdrawal amount', 'money out',
-    'paid out', 'outflow', 'outflows', 'debit ngn', 'payments']],
+    'paid out', 'pay out', 'amount out', 'outflow', 'outflows', 'debit ngn', 'payments']],
   ['credit', ['credit', 'credits', 'credit amount', 'credit amt', 'cr', 'cr amount', 'deposit', 'deposits', 'deposit amount', 'lodgement', 'lodgements', 'lodgment',
-    'money in', 'paid in', 'inflow', 'inflows', 'credit ngn', 'receipts']],
+    'money in', 'paid in', 'pay in', 'amount in', 'inflow', 'inflows', 'credit ngn', 'receipts']],
   ['drcr', ['dr cr', 'dr/cr', 'd c', 'd/c', 'cr dr', 'cr/dr', 'debit credit', 'debit/credit', 'type', 'transaction type', 'tran type', 'txn type', 'direction']],
   ['amount', ['amount', 'transaction amount', 'txn amount', 'tran amount', 'amt', 'amount ngn', 'value']],
   ['balance', ['balance', 'running balance', 'closing balance', 'available balance', 'ledger balance', 'book balance', 'balance ngn', 'bal', 'current balance', 'account balance']],
@@ -123,6 +124,9 @@ export function rolesOf(header: string[]): Role[] {
   }
   // A statement that prints only a value date uses it as the transaction date.
   if (!taken.has('date') && taken.has('value_date')) roles[roles.indexOf('value_date')] = 'date';
+  // OPay and PalmPay print one signed column headed "Debit/Credit" (-5,000.00 out, +20,000.00 in): with no other amount
+  // column, that is the amount. A column of DR and CR markers then reads no figures and the statement goes to the AI reader.
+  if (!taken.has('amount') && !taken.has('debit') && !taken.has('credit') && taken.has('drcr')) roles[roles.indexOf('drcr')] = 'amount';
   return roles;
 }
 const usable = (roles: Role[]) => roles.includes('date') && (roles.includes('amount') || roles.includes('debit') || roles.includes('credit'));
@@ -145,7 +149,8 @@ export function readMeta(text: string, fileName = '', tail = ''): StmtMeta {
   const t = text.replace(/\u00a0/g, ' ');
   const all = `${t}\n${tail.replace(/\u00a0/g, ' ')}`;
   const bank = BANKS.find(([re]) => re.test(t) || re.test(fileName))?.[1] || null;
-  const acct = t.match(/(?:account|acct|a\/c)\s*(?:no|number|num|#)?\.?\s*[:\-]?\s*(\d[\d\s-]{8,16}\d)/i)?.[1]?.replace(/\D/g, '')
+  // The number may be printed in groups ("0123 456 789"), but never runs on to the next line.
+  const acct = t.match(/(?:account|acct|a\/c)[ \t]*(?:no|number|num|#)?\.?[ \t]*[:\-]?[ \t]*(\d(?:[ -]?\d){9,11})(?!\d)/i)?.[1]?.replace(/\D/g, '')
     || t.match(/(?:^|[^\d])(\d{10})(?:[^\d]|$)/)?.[1] || null;
   const name = t.match(/(?:account|acct|customer)\s*name\s*[:\-]?\s*([A-Z0-9&.,'()\- ]{3,80}?)(?:\s{2,}|\n|\||$|\s(?:account|acct|currency|address|period|branch|date)\b)/i)?.[1]?.trim() || null;
   const datePat = '(\\d{1,2}[-/. ](?:\\d{1,2}|[A-Za-z]{3,9})[-/. ]\\d{2,4}|\\d{4}-\\d{2}-\\d{2}|[A-Za-z]{3,9} \\d{1,2},? \\d{4})';
@@ -409,10 +414,12 @@ export async function pageImages(doc: any, from: number, to: number): Promise<{ 
   const out: { mime: string; data: string }[] = [];
   for (let p = from; p <= Math.min(to, doc.numPages); p++) {
     const page = await doc.getPage(p);
-    const vp = page.getViewport({ scale: Math.min(2, 1700 / page.getViewport({ scale: 1 }).width) });
+    // About 2,000 pixels across, so small print on a scan stays legible to the reader.
+    const vp = page.getViewport({ scale: Math.min(3.5, 2000 / page.getViewport({ scale: 1 }).width) });
     const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
     await page.render({ canvasContext: c.getContext('2d')!, viewport: vp, canvas: c }).promise;
-    out.push({ mime: 'image/jpeg', data: c.toDataURL('image/jpeg', 0.8).split(',')[1] });
+    out.push({ mime: 'image/jpeg', data: c.toDataURL('image/jpeg', 0.85).split(',')[1] });
+    page.cleanup();
   }
   return out;
 }
@@ -454,10 +461,11 @@ function headingOf(lines: PdfLine[], i: number): { roles: Role[]; cols: Chunk[];
   return null;
 }
 
+const NOISE = /^(channel|category|branch|originating branch|status|terminal( id)?|mode|transaction channel|tran channel)$/;
 // Turns the printed lines into the same table an Excel statement gives: the heading fixes where each column sits,
 // and every word below goes to the column it falls under (figures by their right edge, as banks right-align them).
 export function pdfTable(t: PdfText): { rows: Cell[][]; header: number; roles: Role[]; metaText: string } | null {
-  let cols: { role: Role; x0: number; x1: number }[] | null = null;
+  let cols: { role: Role; x0: number; x1: number; label: string }[] | null = null;
   const rows: Cell[][] = []; let header = -1; let metaText = '';
   const NUMERIC: Role[] = ['debit', 'credit', 'amount', 'balance'];
   for (let p = 0; p < t.pages.length; p++) {
@@ -467,7 +475,7 @@ export function pdfTable(t: PdfText): { rows: Cell[][]; header: number; roles: R
       const hd = headingOf(lines, k);
       if (!hd) continue;
       if (!cols) { header = rows.length; rows.push(hd.roles.map((r) => r)); }
-      cols = hd.cols.map((c, j) => ({ role: hd.roles[j], x0: c.x0, x1: c.x1 }));
+      cols = hd.cols.map((c, j) => ({ role: hd.roles[j], x0: c.x0, x1: c.x1, label: norm(c.s) }));
       if (header === 0 && !metaText) metaText = lines.slice(0, k).map((l) => l.chunks.map((c) => c.s).join('  ')).join('\n');
       i = k + 1 + hd.skip; headed = true;
       break;
@@ -492,6 +500,8 @@ export function pdfTable(t: PdfText): { rows: Cell[][]; header: number; roles: R
           const mid = (c.x0 + c.x1) / 2;
           let d = Infinity;
           cols.forEach((col, j) => { const dd = mid >= col.x0 - 4 && mid <= col.x1 + 4 ? 0 : Math.min(Math.abs(col.x0 - mid), Math.abs(col.x1 - mid)); if (dd < d) { d = dd; best = j; } });
+          // A channel or category column ("Mobile", "POS", "Bills") says nothing about who paid; it stays out of the narration.
+          if (d === 0 && cols[best].role === 'ignore' && NOISE.test(cols[best].label)) continue;
           // Words spilling out of the narration belong to it.
           if (descCol >= 0 && /[a-z]{2}/i.test(c.s) && !stmtDate(c.s) && !['description', 'reference', 'drcr'].includes(cols[best].role)) best = descCol;
         }
@@ -533,29 +543,61 @@ export interface AiStatement {
 export function fromAi(parts: AiStatement[], fileName: string): Statement {
   const head = parts[0] || ({ lines: [] } as AiStatement);
   const last = parts[parts.length - 1] || head;
+  const pick = (k: 'opening_balance' | 'closing_balance', order: AiStatement[]) => order.map((p) => p[k]).find((v) => v != null) ?? null;
   const meta: StmtMeta = {
     bank_name: head.bank_name || readMeta('', fileName).bank_name, account_number: head.account_number || null, account_name: head.account_name || null,
     period_from: head.period_from || null, period_to: last.period_to || head.period_to || null,
-    opening_balance: head.opening_balance ?? null, closing_balance: last.closing_balance ?? head.closing_balance ?? null,
+    opening_balance: pick('opening_balance', parts), closing_balance: pick('closing_balance', [last, ...parts.slice(0, -1).reverse()]),
   };
   const problems: string[] = [];
+  // Each part is put oldest first (by its dates, or the order the reader saw when its dates are all one day), and the
+  // parts in date order: a statement printed newest first has its newest lines on page 1.
+  const asc = parts.map((p, k) => {
+    const days = p.lines.map((l) => l.date).filter(Boolean) as string[];
+    const rev = days.length > 1 && days[0] !== days[days.length - 1] ? days[0] > days[days.length - 1] : p.order === 'newest_first';
+    const lines = rev ? [...p.lines].reverse() : p.lines;
+    const d = lines.map((l) => l.date).filter(Boolean) as string[];
+    return { k, p, lines, from: d[0] || '', to: d[d.length - 1] || '' };
+  });
+  const newestFirst = asc.length > 1 && asc[0].from > asc[asc.length - 1].from;
+  const ordered = newestFirst ? [...asc].reverse() : asc;
   const raw: StmtLine[] = [];
   let n = 0;
-  for (const p of parts) {
-    const ls = p.order === 'newest_first' ? [...p.lines].reverse() : p.lines;
-    for (const l of ls) {
+  for (const { p, lines } of ordered) {
+    for (const l of lines) {
       n++;
-      if (!l.date) { problems.push(`Line ${n} has no date the reader could make out: "${l.description.slice(0, 60)}".`); continue; }
+      if (!l.date) { problems.push(`Line ${n} has no date the reader could make out: "${String(l.description || '').slice(0, 60)}".`); continue; }
       const amt = r2(Math.abs(l.credit || 0) - Math.abs(l.debit || 0));
       if (!amt) continue;
       raw.push({ row: n, date: l.date, description: l.description, reference: l.reference, amount: amt, balance: l.balance ?? null, issues: [] });
     }
     if (p.notes) problems.push(p.notes);
   }
-  // Each part comes back oldest first; a statement printed newest first had its parts in reverse page order.
-  if (parts.length > 1 && raw.length > 1 && raw[0].date > raw[raw.length - 1].date) raw.reverse();
+  // A reader looking at a newest-first page sometimes gives the balance after the oldest line as the opening balance.
+  const first = raw[0];
+  const near = (a: number | null | undefined, b: number | null | undefined) => a != null && b != null && Math.abs(a - b) < 0.011;
+  if (first && first.balance != null && near(meta.opening_balance, first.balance) && !near(r2(first.balance - first.amount), meta.opening_balance)) {
+    meta.opening_balance = r2(first.balance - first.amount);
+  }
+  // Read a few pages at a time, a reader may give where its pages start or end as the statement's opening or closing
+  // balance. A figure that is the balance part-way through the statement is not either; the lines' own balances are used.
+  if (raw.length > 1 && meta.opening_balance != null && first?.balance != null && !near(r2(first.balance - first.amount), meta.opening_balance)
+      && raw.slice(1).some((l) => l.balance != null && (near(l.balance, meta.opening_balance) || near(r2(l.balance - l.amount), meta.opening_balance)))) meta.opening_balance = null;
+  const end = raw[raw.length - 1];
+  if (raw.length > 1 && meta.closing_balance != null && end?.balance != null && !near(end.balance, meta.closing_balance)
+      && raw.slice(0, -1).some((l) => near(l.balance, meta.closing_balance))) meta.closing_balance = null;
+  // Money in read as money out (or the other way) shows in the running balance: when the balance before and after say
+  // plainly which way it went, that is what is recorded, and the line says so.
+  let prev: number | null = meta.opening_balance;
+  for (const l of raw) {
+    if (l.balance != null && prev != null && Math.abs(r2(prev + l.amount) - l.balance) >= 0.011 && Math.abs(r2(prev - l.amount) - l.balance) < 0.011) {
+      l.amount = -l.amount;
+      l.issues.push(`Read as money ${l.amount > 0 ? 'out' : 'in'}; the running balance shows money ${l.amount > 0 ? 'in' : 'out'}, so it is recorded that way.`);
+    }
+    prev = l.balance ?? (prev == null ? null : r2(prev + l.amount));
+  }
   const s = settle(raw, meta);
-  return { kind: 'pdf', read_by: 'ai', meta: s.meta, lines: s.lines, problems: [...problems, ...s.problems], newest_first: false, balance_check: s.balance_check, difference: s.difference };
+  return { kind: 'pdf', read_by: 'ai', meta: s.meta, lines: s.lines, problems: [...problems, ...s.problems], newest_first: newestFirst || asc.some((x) => x.lines !== x.p.lines), balance_check: s.balance_check, difference: s.difference };
 }
 
 export const lastFour = (s: string | null | undefined) => (s || '').replace(/\D/g, '').slice(-4);

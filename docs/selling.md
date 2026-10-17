@@ -26,7 +26,8 @@ The VAT on each line comes from the item's treatment, which the tax agent sets w
 - Pay by transfer waits on screen, checks every four seconds and says the payment out loud when the money arrives.
 - Receipt: on screen, by WhatsApp or email, printed on an 80 mm thermal printer over Bluetooth (ESC/POS), or printed from the browser.
 - Keyboard: F2 to search, F9 to pay.
-- Returns and voids: a return credits the lines returned, puts the stock back (or writes it off) and refunds by the method chosen. A void needs a reason.
+- Returns and voids: a return credits the lines returned, puts the stock back (or writes it off) and refunds by the method chosen: cash from the branch drawer, or a transfer from the bank account chosen on the form. A void needs a reason.
+- Refunds, payments and bills choose their account from `money_accounts`, which answers anyone who sells, keeps the books, approves adjustments or makes payments, so a manager or an accountant who does not use the till can still pick the account.
 
 ## Invoices, quotes, credit notes
 

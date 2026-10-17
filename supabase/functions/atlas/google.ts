@@ -133,17 +133,32 @@ export async function accessToken(cfg: GeminiConfig): Promise<string> {
 
 // ------------------------------------------------------------------ calls
 export const thinkingLevel = (cfg: GeminiConfig, level: 'low' | 'high') => (cfg.mode === 'vertex' ? level.toUpperCase() : level);
+// Gemini 2.5 takes a thinking budget rather than a level; "low" turns its thinking off, which keeps reading jobs quick.
+export const thinkingConfig = (cfg: GeminiConfig, model: string, level: 'low' | 'high') =>
+  (/^gemini-2\./.test(model) ? { thinkingBudget: level === 'low' ? 0 : -1 } : { thinkingLevel: thinkingLevel(cfg, level) });
+
+// Newer Gemini models are served on Vertex AI's global endpoint and not in every region. A model the region does not
+// have is asked for on the global endpoint, and remembered.
+const globalOnly = new Set<string>();
 
 // POSTs a generateContent request to Vertex AI (ADC) or the Gemini API (key). The request and response bodies are the same.
 export async function generateContent(cfg: GeminiConfig, model: string, body: unknown, timeoutMs: number): Promise<Response> {
   if (cfg.mode === 'vertex') {
-    const loc = cfg.location || 'us-central1';
-    const host = VERTEX_BASE || (loc === 'global' ? 'https://aiplatform.googleapis.com' : `https://${loc}-aiplatform.googleapis.com`);
     const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${await accessToken(cfg)}` };
     // A user's own credential bills the project it is told to.
     if (cfg.credType === 'authorized_user') headers['x-goog-user-project'] = cfg.adc?.quota_project_id || cfg.project || '';
-    return fetch(`${host}/v1/projects/${encodeURIComponent(cfg.project || '')}/locations/${encodeURIComponent(loc)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`,
-      { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+    const call = (loc: string) => {
+      const host = VERTEX_BASE || (loc === 'global' ? 'https://aiplatform.googleapis.com' : `https://${loc}-aiplatform.googleapis.com`);
+      return fetch(`${host}/v1/projects/${encodeURIComponent(cfg.project || '')}/locations/${encodeURIComponent(loc)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`,
+        { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+    };
+    const loc = cfg.location || 'us-central1';
+    if (loc === 'global' || globalOnly.has(model)) return call('global');
+    const res = await call(loc);
+    if (res.status !== 404) return res;
+    await res.body?.cancel();
+    globalOnly.add(model);
+    return call('global');
   }
   if (cfg.mode === 'api_key') {
     return fetch(`${GEMINI_API}/models/${model}:generateContent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.key || '' },

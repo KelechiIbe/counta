@@ -183,6 +183,22 @@ begin
       from sale_lines l where l.sale_id = s.id));
 end $$;
 
+-- The business's cash drawers, bank accounts and wallets, to choose where a refund or a payment goes. The till's own
+-- list answers only people who sell; an accountant or a manager raising a credit note or paying a bill needs it too.
+create or replace function public.money_accounts(p_org uuid) returns jsonb
+language plpgsql stable security definer set search_path = public, private as $$
+declare m public.members;
+begin
+  m := private.require(p_org, null);
+  if not (private.perm_of(m, 'record_sales') or private.perm_of(m, 'keep_books') or private.perm_of(m, 'approve_adjustments')
+          or private.perm_of(m, 'make_payments') or private.perm_of(m, 'see_margins')) then
+    raise exception 'Your role does not see the business''s accounts.' using errcode = '42501';
+  end if;
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'kind', b.kind, 'bank_name', b.bank_name, 'account_number', b.account_number,
+      'account_name', b.account_name, 'provider', b.provider, 'location_id', b.location_id) order by b.kind, b.name), '[]'::jsonb)
+    from bank_accounts b where b.org_id = p_org and b.active);
+end $$;
+
 -- What a new credit note does to its sale: it first clears what is still owed on it, then pays money back if asked,
 -- and the rest stays with the customer as credit for their next purchase.
 create or replace function private.settle_credit_note(p_cn uuid, p_sale uuid, p_refund jsonb, m public.members) returns jsonb
@@ -703,7 +719,8 @@ language sql immutable set search_path = public, private as $$
 $$;
 
 -- A line already here from another source (the feed, or a statement of the same period in another format). With a
--- balance on both copies the balance decides. Otherwise a feed line and a statement line are the same when their
+-- balance on both copies the balance decides (on the same day for two statements; a feed may date a line a day apart).
+-- A transfer in and out of the same amount can leave the same balance on two days, so a day apart is not enough there. Otherwise a feed line and a statement line are the same when their
 -- narrations share most of their words (the bank and Mono write them differently), and two statements' lines only when
 -- they fall on the same day with the same narration, so a second ₦45,000 to the same person that day stays a second
 -- payment. Each existing line answers for one new line only (p_claimed), so two identical charges on one day stay two.
@@ -719,7 +736,7 @@ language sql stable security definer set search_path = public, private as $$
   where x.bank_account_id = p_bank and x.amount = p_amount and x.line_date between p_day - 1 and p_day + 1
     and x.import_id is distinct from p_import and x.id <> all(coalesce(p_claimed, '{}'))
     and (not p_feed or x.source is distinct from 'api')
-    and case when x.balance_after is not null and p_balance is not null then x.balance_after = p_balance
+    and case when x.balance_after is not null and p_balance is not null then x.balance_after = p_balance and (x.line_date = p_day or p_feed or x.source = 'api')
              when p_feed or x.source = 'api' then private.narr_like(x.description, p_desc)
              else x.line_date = p_day and private.narr_key(x.description) = private.narr_key(p_desc) end
   order by (x.balance_after is not null and x.balance_after = p_balance) desc, abs(x.line_date - p_day), x.created_at
@@ -989,11 +1006,13 @@ language sql immutable set search_path = '' as $$
       || ')[\s\-#:/.]*(NO\.?\s*)?0*' || ltrim(split_part(p_number, '-', 2), '0') || '([^0-9]|$)'), false)
 $$;
 
--- Whether a narration carries the supplier's own invoice number (ADX/2026/044 as ADX2026044 or ADX-2026-044).
+-- Whether a narration carries the supplier's own invoice number (ADX/2026/044 as ADX2026044, ADX-2026-044 or
+-- ADX 2026 044), standing on its own: "2026" is not found inside "OCT 2026" or a token number.
 create or replace function private.ref_in_text(p_ref text, p_text text) returns boolean
 language sql immutable set search_path = '' as $$
-  select coalesce(length(regexp_replace(upper(p_ref), '[^A-Z0-9]', '', 'g')) >= 4 and regexp_replace(upper(p_ref), '[^A-Z0-9]', '', 'g') ~ '[0-9]'
-    and position(regexp_replace(upper(p_ref), '[^A-Z0-9]', '', 'g') in regexp_replace(upper(coalesce(p_text, '')), '[^A-Z0-9]', '', 'g')) > 0, false)
+  select coalesce(length(regexp_replace(upper(p_ref), '[^A-Z0-9]', '', 'g')) >= 4 and upper(p_ref) ~ '[0-9]'
+    and upper(coalesce(p_text, '')) ~ ('(^|[^A-Z0-9])' || array_to_string(array(select x from regexp_split_to_table(upper(p_ref), '[^A-Z0-9]+') x where x <> ''), '[^A-Z0-9]*')
+      || '($|[^A-Z0-9])'), false)
 $$;
 
 create or replace function private.match_bank_line(p_line uuid) returns text
@@ -1090,9 +1109,13 @@ begin
       return 'statutory';
     end if;
 
-    -- 3b The bill the narration names (Counta's number or the supplier's own invoice number).
+    -- 3b The bill the narration names: Counta's number, or the supplier's own invoice number together with the amount
+    --    owed or the supplier's name (a short invoice number alone could be a coincidence).
     select bb2.* into bb from bills bb2 where bb2.org_id = bl.org_id and bb2.status in ('approved', 'partially_paid')
-      and (private.doc_in_text(bb2.number, v_text) or private.ref_in_text(bb2.vendor_ref, v_text))
+      and (private.doc_in_text(bb2.number, v_text)
+           or private.ref_in_text(bb2.vendor_ref, v_text) and (abs(bb2.total - bb2.amount_paid - v_amt) < 0.005
+             or abs(bb2.total - bb2.amount_paid - greatest(bb2.wht_expected - bb2.wht_withheld, 0) - v_amt) < 0.005
+             or private.name_in((select name from vendors where id = bb2.vendor_id), coalesce(bl.counterparty, '') || ' ' || bl.description)))
     order by bb2.due_date limit 1;
     if bb.id is not null then
       v_due := bb.total - bb.amount_paid - coalesce((select sum(gross) from bill_payments where bill_id = bb.id and status = 'processing'), 0);
@@ -1891,12 +1914,12 @@ begin
   end if;
 end $$;
 
-grant execute on function public.credit_sale(uuid, jsonb), public.sale_creditable(uuid), public.record_vendor_credit(uuid, jsonb),
+grant execute on function public.money_accounts(uuid), public.credit_sale(uuid, jsonb), public.sale_creditable(uuid), public.record_vendor_credit(uuid, jsonb),
   public.use_vendor_credit(uuid, uuid, numeric), public.refund_vendor_credit(uuid, jsonb), public.get_vendor_credits(uuid, uuid),
   public.import_bank_lines(uuid, uuid, jsonb, jsonb), public.bank_feed_context(uuid), public.bank_feed_account(uuid), public.resolve_proposal(uuid, jsonb),
   public.get_banking(uuid), public.tax_computation(uuid, date, date), public.save_tax_settings(uuid, date, jsonb), public.post_tax_charge(uuid, date, date),
   public.financial_statements_pack(uuid, date, date) to authenticated;
-revoke execute on function public.credit_sale(uuid, jsonb), public.sale_creditable(uuid), public.record_vendor_credit(uuid, jsonb),
+revoke execute on function public.money_accounts(uuid), public.credit_sale(uuid, jsonb), public.sale_creditable(uuid), public.record_vendor_credit(uuid, jsonb),
   public.use_vendor_credit(uuid, uuid, numeric), public.refund_vendor_credit(uuid, jsonb), public.get_vendor_credits(uuid, uuid),
   public.import_bank_lines(uuid, uuid, jsonb, jsonb), public.bank_feed_context(uuid), public.bank_feed_account(uuid), public.resolve_proposal(uuid, jsonb),
   public.get_banking(uuid), public.tax_computation(uuid, date, date), public.save_tax_settings(uuid, date, jsonb), public.post_tax_charge(uuid, date, date),

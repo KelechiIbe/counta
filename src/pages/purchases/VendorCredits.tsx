@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { money, today, useBills, useChart } from '../../lib/api';
+import { money, today, useBills, useChart, moneyAccounts } from '../../lib/api';
 import { N2, fmtDay } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Empty, Field, Modal, ModalHead, SkeletonRows, Spinner } from '../../components/ui';
@@ -161,6 +161,7 @@ export function CreditsList() {
         <div className="muted" style={{ fontSize: 13, maxWidth: 640 }}>Credit notes from suppliers. One raised from a bill comes off that bill first; what is left is used on their next bill or paid back to you.</div>
         {can(inv, 'keep_books') && <button className="btn btn-secondary btn-sm" onClick={() => setAdding(true)}><Icon name="plus" size={14} />Credit on account</button>}
       </div>
+      {credits.error && <Alert kind="yellow" icon="shield">{(credits.error as Error).message}</Alert>}
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="tbl">
           <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '100px minmax(160px,1.3fr) 110px minmax(140px,1fr) 110px 110px 100px auto', minWidth: 940 }}>
@@ -223,7 +224,7 @@ function RefundCredit({ credit, onClose }: { credit: any; onClose: () => void })
   const qc = useQueryClient();
   const [own, setOwn] = useState<any[]>([]);
   const [f, setF] = useState({ bank_account_id: '', amount: String(credit.remaining), received_at: today(), reference: '' });
-  useEffect(() => { rpc<any>('get_till', { p_org: orgId, p_location: inv?.locations[0]?.id }).then((t) => setOwn(t.accounts || [])).catch(() => {}); }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { moneyAccounts(orgId!).then((accounts) => setOwn(accounts || [])).catch(() => {}); }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   async function go() {
     try {
       await rpc('refund_vendor_credit', { p_credit: credit.id, p: { bank_account_id: f.bank_account_id, amount: money(f.amount), received_at: f.received_at, reference: f.reference || null } });

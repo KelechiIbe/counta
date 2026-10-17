@@ -5,7 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { edge, money, today, useBill, useBills, useChart, type Bill } from '../../lib/api';
+import { edge, money, today, useBill, useBills, useChart, type Bill, moneyAccounts } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
@@ -156,7 +156,7 @@ function PayBill({ bill, onClose, onDone }: { bill: any; onClose: () => void; on
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     edge<{ banks: any[] }>('payments', { action: 'banks' }).then((r) => setBanks(r.banks || []));
-    rpc<any>('get_till', { p_org: orgId, p_location: inv?.locations[0]?.id }).then((t) => setOwn(t.accounts || [])).catch(() => {});
+    moneyAccounts(orgId!).then((accounts) => setOwn(accounts || [])).catch(() => {});
   }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (f.method !== 'wallet' || !/^\d{10}$/.test(f.account_number) || !f.bank_code || f.account_name) return;

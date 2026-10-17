@@ -131,3 +131,7 @@ export const yearStart = (d = today(), fyStart = 1) => {
   return `${start}-${String(fyStart).padStart(2, '0')}-01`;
 };
 export const lastMonthEnd = (d = today()) => { const x = new Date(d.slice(0, 8) + '01T12:00:00Z'); x.setUTCDate(0); return x.toISOString().slice(0, 10); };
+
+// The business's cash drawers, bank accounts and wallets, for choosing where money goes or comes from. Unlike the till,
+// this answers anyone who handles money (an accountant or a manager who does not sell).
+export const moneyAccounts = (orgId: string) => rpc<any[]>('money_accounts', { p_org: orgId });

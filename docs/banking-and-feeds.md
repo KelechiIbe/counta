@@ -8,7 +8,8 @@ The upload takes PDF, Excel (.xlsx, .xls, including the HTML files some banks sa
 
 What the reader does:
 
-- Finds the column headings, whatever the bank calls them: Trans Date, Posted Date, Date Posted, TransDate or Value Date; Narration, Description, Details, Remarks or Particulars; Reference, Ref No or Cheque No; Debit, Debits, Withdrawals or Money Out; Credit, Credits, Deposits, Lodgements or Money In; Balance; or one Amount column with a sign, a DR/CR suffix or a separate Dr/Cr column.
+- Finds the column headings, whatever the bank calls them: Trans Date, Posted Date, Date Posted, TransDate, Date/Time or Value Date; Narration, Description, Details, Transaction Detail, Remarks or Particulars; Reference, Ref No or Cheque No; Debit, Debits, Withdrawals or Money Out; Credit, Credits, Deposits, Lodgements or Money In; Balance or Balance After; or one Amount column with a sign (OPay's signed Debit/Credit column), a DR/CR suffix or a separate Dr/Cr column. Channel and category columns are left out of the narration.
+- Tested on statements laid out as Zenith, First Bank, UBA, Kuda, OPay, Moniepoint, Fidelity, Ecobank, PalmPay, Wema (ALAT), GTBank, Access and Stanbic IBTC print them, as PDF and as Excel exports (`stmt/banks.mjs` in the test harness).
 - Reads dates day first (01/10/2026 is 1 October), with or without a time, in any of the forms banks print (01-Oct-2026, 1 Oct 26, 2026-10-01).
 - Joins narrations that run onto a second or third printed line, and leaves page footers out.
 - Puts statements printed newest first into date order.
@@ -16,7 +17,7 @@ What the reader does:
 - Reads the account number, account name, period and opening and closing balances from the top of the statement (or an Opening Balance and Closing Balance row in the table).
 - Checks every balance against the one before and the whole statement against its opening and closing figures. Lines that do not follow are marked on the review screen.
 
-A PDF with a password asks for it. A scanned PDF (pictures of pages, no text) goes to the AI reader (`ai` function, action `read_statement`) in parts of four pages; a PDF whose layout the column reader cannot follow can be sent to the AI reader from the review screen. The AI's answer passes the same checks.
+A PDF with a password asks for it. A scanned PDF (pictures of pages, no text) goes to the AI reader (`ai` function, action `read_statement`); a PDF whose layout the column reader cannot follow can be sent to the AI reader from the review screen. The pages go two at a time, three parts at once, each tried a second time if it fails, and scans are sent about 2,000 pixels wide so small print stays legible. The parts are joined in date order, and the AI's answer passes the same checks, with two corrections the running balance makes certain: a line read as money in that the balances show went out (or the other way) is turned round and marked, and a page's first or last balance given as the statement's opening or closing balance is not used.
 
 If the account number on the statement does not end in the same four digits as the account chosen in Counta, the upload waits until the person ticks that it is the right account (`import_bank_lines` refuses it otherwise).
 
@@ -51,7 +52,7 @@ Each new line, from a statement or a feed, runs through the matcher in this orde
 1. Already in the books on that account within three days (a payment recorded at the till or against a bill).
 2. Money in: a transfer waiting for confirmation is confirmed.
 3. Money in: the narration names an open invoice or order (INV-0042, inv 42, Invoice no. 42), whoever paid it. Short by 2%, 5% or 10% of the net amount, the difference is the customer's WHT credit. Paid over, the extra is held as the customer's credit and flagged.
-4. Money out: tax and levy payments go to their tax account. A bill named in the narration (Counta's number or the supplier's own invoice number, with or without its punctuation) is paid, with WHT if the amount is net of it.
+4. Money out: tax and levy payments go to their tax account. A bill named in the narration is paid, with WHT if the amount is net of it: by Counta's number, or by the supplier's own invoice number (with or without its punctuation, standing on its own in the narration) when the amount is what is owed or the supplier is named too.
 5. A customer or supplier named in the narration.
 6. Transfers between the business's own accounts.
 7. Rules learned from earlier answers, then known payees (bank charges, power, telecoms).

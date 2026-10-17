@@ -29,4 +29,6 @@ The functions read the secrets again every minute, so nothing needs redeploying.
 
 ## Models
 
-The default is `gemini-3.8-flash` (or `GEMINI_MODEL`). When a model is busy or not offered in `us-central1`, the functions try `gemini-3.6-flash`, `gemini-3.5-flash` and then `gemini-2.5-flash`. A refused permission (401 or 403) stops at once with the reason, because no other model would fix it. Quick structured jobs ask for low thinking (`thinkingLevel: LOW`).
+The default is `gemini-3.8-flash` (or `GEMINI_MODEL`). Vertex AI serves the newer Gemini models on its global endpoint rather than in every region, so a model `us-central1` does not have is asked for on the global endpoint and remembered. When a model is busy or not offered at all, the functions try `gemini-3.6-flash`, `gemini-3.5-flash` and then `gemini-2.5-flash`. A refused permission (401 or 403) stops at once with the reason, because no other model would fix it.
+
+Gemini 3 and later models are left at their default temperature (Google warns that a lower one makes them loop or lose accuracy); a temperature is set only for 2.x models. Quick structured jobs ask for low thinking: `thinkingLevel: LOW` on Gemini 3 and later, a thinking budget of 0 on 2.5.

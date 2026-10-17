@@ -5,7 +5,7 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 import { cleanVat, numens, VAT_SCHEMA, VAT_SYSTEM, type VatAnswer, type VatItem, vatPrompt } from './vat.ts';
-import { accessProblem, CredentialError, fallbackModels, type GeminiConfig, geminiConfig, generateContent, quotaMessage, thinkingLevel } from './google.ts';
+import { accessProblem, CredentialError, fallbackModels, type GeminiConfig, geminiConfig, generateContent, quotaMessage, thinkingConfig } from './google.ts';
 
 let MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -43,13 +43,13 @@ const notConfigured = () => ({ ok: false, reason: 'not_configured', error: CFG.p
 
 type Part = { text: string } | { inlineData: { mimeType: string; data: string } };
 
-// Models that just failed are skipped for two minutes, and each attempt gives up after 50 seconds,
+// Models that just failed are skipped for two minutes, and each attempt gives up after 50 seconds (80 for a statement),
 // so a busy model costs one slow call rather than every call.
 const resting = new Map<string, number>();
 // thinking: 'low' keeps simple structured jobs (matching columns, reading stock lines) quick. A model that
 // does not accept the setting is retried once without it.
 const noThinking = new Set<string>();
-async function gemini(system: string, parts: Part[], schema: unknown, temperature = 0.1, opts: { thinking?: 'low' } = {}): Promise<{ data: any; model: string }> {
+async function gemini(system: string, parts: Part[], schema: unknown, temperature = 0.1, opts: { thinking?: 'low'; timeoutMs?: number } = {}): Promise<{ data: any; model: string }> {
   let lastErr = '';
   const all = [MODEL, ...fallbackModels(CFG).filter((m) => m !== MODEL)];
   const ready = all.filter((m) => (resting.get(m) || 0) < Date.now());
@@ -61,10 +61,11 @@ async function gemini(system: string, parts: Part[], schema: unknown, temperatur
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: 'user', parts }],
           generationConfig: {
-            responseMimeType: 'application/json', responseSchema: schema, temperature,
-            ...(think ? { thinkingConfig: { thinkingLevel: thinkingLevel(CFG, opts.thinking!) } } : {}),
+            // Gemini 3 and later loop or lose accuracy below their default temperature, so it is only set for older models.
+            responseMimeType: 'application/json', responseSchema: schema, ...(/^gemini-[12]\./.test(model) ? { temperature } : {}),
+            ...(think ? { thinkingConfig: thinkingConfig(CFG, model, opts.thinking!) } : {}),
           },
-        }, 50_000);
+        }, opts.timeoutMs || 50_000);
       } catch (e) {
         if (e instanceof CredentialError) throw e;
         lastErr = `${model} did not answer (${(e as Error).name})`; resting.set(model, Date.now() + 120_000); res = null; break;
@@ -404,14 +405,14 @@ INDUSTRY: ${String(body.industry || 'retail')}`,
 
 // ---------------------------------------------------------------- bank statements
 // Reads a bank statement the column reader could not: a scanned PDF (page images) or an unusual layout (page text with
-// the columns kept apart by " | "). Up to 8 pages a call; the app sends a long statement in parts and joins them.
+// the columns kept apart by " | "). Up to 8 pages a call; the app sends a long statement two pages at a time and joins the parts.
 const STATEMENT_SCHEMA = {
   type: 'OBJECT',
   properties: {
     bank_name: S.nstr, account_number: { type: 'STRING', nullable: true, description: 'Digits only, usually 10' }, account_name: S.nstr, currency: S.nstr,
     period_from: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' }, period_to: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' },
-    opening_balance: { type: 'NUMBER', nullable: true, description: 'Balance before the first transaction, negative if overdrawn' },
-    closing_balance: { type: 'NUMBER', nullable: true, description: 'Balance after the last transaction, negative if overdrawn' },
+    opening_balance: { type: 'NUMBER', nullable: true, description: "The statement's opening balance as printed (header, Opening Balance or Balance B/F line), negative if overdrawn; null when not printed on these pages" },
+    closing_balance: { type: 'NUMBER', nullable: true, description: "The statement's closing balance as printed (header, Closing Balance or Balance C/F line), negative if overdrawn; null when not printed on these pages. Never the last balance on a page" },
     order: { type: 'STRING', enum: ['oldest_first', 'newest_first'] },
     lines: {
       type: 'ARRAY',
@@ -425,12 +426,13 @@ const STATEMENT_SCHEMA = {
           credit: { type: 'NUMBER', nullable: true, description: 'Money in, positive naira' },
           balance: { type: 'NUMBER', nullable: true, description: 'Running balance after this line, negative if overdrawn' },
         },
-        required: ['date', 'description'],
+        // Every field is asked for (null when not printed), so a reader in a hurry does not leave the balances out.
+        required: ['date', 'description', 'reference', 'debit', 'credit', 'balance'],
       },
     },
     notes: { type: 'STRING', nullable: true, description: 'Anything the person should check, in one plain sentence' },
   },
-  required: ['lines', 'order'],
+  required: ['bank_name', 'account_number', 'account_name', 'period_from', 'period_to', 'opening_balance', 'closing_balance', 'order', 'lines', 'notes'],
 };
 
 async function readStatement(body: any) {
@@ -459,8 +461,20 @@ ${first > 1 ? `These are pages from page ${first} on: the statement's header may
   if (pages.length) parts.push({ text: pages.map((p, i) => `PAGE ${first + i}:\n${p}`).join('\n\n') });
   for (const im of images) parts.push({ inlineData: { mimeType: im.mime, data: im.data } });
   parts.push({ text: 'Read this statement.' });
+  // An answer whose lines carry no amounts, or whose fields run into each other, is a reading gone wrong: asked once more.
+  const garbled = (d: any) => {
+    const ls = Array.isArray(d?.lines) ? d.lines : [];
+    return !ls.length || ls.filter((l: any) => l?.debit == null && l?.credit == null).length > ls.length / 2
+      || ls.some((l: any) => /[\r\n]|\s\|\s/.test(`${l?.reference ?? ''}${l?.date ?? ''}`) || String(l?.reference ?? '').length > 80);
+  };
   try {
-    const { data, model } = await gemini(system, parts, STATEMENT_SCHEMA, 0, { thinking: 'low' });
+    let { data, model } = await gemini(system, parts, STATEMENT_SCHEMA, 0, { thinking: 'low', timeoutMs: 80_000 });
+    if (garbled(data)) {
+      try {
+        const again = await gemini(system, parts, STATEMENT_SCHEMA, 0, { thinking: 'low', timeoutMs: 80_000 });
+        if (!garbled(again.data)) ({ data, model } = again);
+      } catch { /* the first answer stands, and the checks in the app show what is wrong with it */ }
+    }
     const day = (v: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
     const lines = (data.lines || []).map((l: any) => ({
       date: day(l.date), description: String(l.description || '').replace(/\s+/g, ' ').trim().slice(0, 500), reference: l.reference ? String(l.reference).slice(0, 120) : null,
