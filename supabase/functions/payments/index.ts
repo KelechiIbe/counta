@@ -134,11 +134,19 @@ function flwDate(v: unknown, fallbackMinutes = 60): string {
 
 let bankCache: { at: number; list: { code: string; name: string }[] } | null = null;
 
+// Flutterwave accepts phone numbers as digits only. "+234 803 555 0142", "0803-555-0142" and "2348035550142" all become
+// "08035550142"; anything that is not a plausible number is left out (the phone is optional on every call that takes it).
+function ngPhone(p?: string | null): string | undefined {
+  const d = String(p || '').replace(/\D/g, '');
+  const n = d.startsWith('234') && d.length >= 12 ? '0' + d.slice(3) : d;
+  return n.length >= 10 && n.length <= 14 ? n : undefined;
+}
+
 const flutterwave: Rail = {
   async configured() { return Boolean(await secret('FLW_SECRET_KEY')); },
   async openWallet(org) {
     const email = (org.email || `wallet-${org.id.slice(0, 8)}@counta.ng`).toLowerCase();
-    const payload = (e: string) => JSON.stringify({ account_name: org.name.slice(0, 60), email: e, mobilenumber: (org.phone || '').replace(/^\+234/, '0') || undefined, country: 'NG' });
+    const payload = (e: string) => JSON.stringify({ account_name: org.name.slice(0, 60), email: e, mobilenumber: ngPhone(org.phone), country: 'NG' });
     let r: any;
     try { r = await flw('/payout-subaccounts', { method: 'POST', body: payload(email) }); }
     catch (e) {
@@ -161,7 +169,7 @@ const flutterwave: Rail = {
     const nm = splitName(c.walk_in ? ctx.org_name : c.name);
     if (method === 'account') {
       const v = await flw('/virtual-account-numbers', { method: 'POST', body: JSON.stringify({
-        email, amount: r.amount, tx_ref: r.tx_ref, firstname: nm.first, lastname: nm.last, phonenumber: c.phone || undefined,
+        email, amount: r.amount, tx_ref: r.tx_ref, firstname: nm.first, lastname: nm.last, phonenumber: ngPhone(c.phone),
         narration: String(ctx.narration || ctx.org_name).slice(0, 50), is_permanent: false }) });
       const d = v.data || {};
       return { provider_ref: d.flw_ref || d.order_ref, account_number: d.account_number, bank_name: d.bank_name, account_name: ctx.org_name,
@@ -170,7 +178,7 @@ const flutterwave: Rail = {
     if (method === 'qr') {
       try {
         const q = await flw('/charges?type=qr', { method: 'POST', body: JSON.stringify({ tx_ref: r.tx_ref, amount: r.amount, currency: 'NGN', email,
-          phone_number: c.phone || undefined, fullname: c.name || ctx.org_name, is_nqr: '1' }) });
+          phone_number: ngPhone(c.phone), fullname: c.name || ctx.org_name, is_nqr: '1' }) });
         const img = q?.meta?.authorization?.qr_image || q?.data?.meta?.authorization?.qr_image;
         if (img) return { provider_ref: q.data?.flw_ref, qr_image: img, expires_at: new Date(Date.now() + 30 * 60_000).toISOString() };
       } catch (e) { console.log('nqr unavailable, falling back to a link QR', (e as Error).message); }
@@ -179,7 +187,7 @@ const flutterwave: Rail = {
     const l = await flw('/payments', { method: 'POST', body: JSON.stringify({
       tx_ref: r.tx_ref, amount: r.amount, currency: 'NGN',
       redirect_url: ctx.public_token ? `${APP_URL}/p/${ctx.public_token}?paid=1` : `${APP_URL}/paid`,
-      customer: { email, name: c.walk_in ? ctx.org_name : (c.name || 'Customer'), phonenumber: c.phone || undefined },
+      customer: { email, name: c.walk_in ? ctx.org_name : (c.name || 'Customer'), phonenumber: ngPhone(c.phone) },
       customizations: { title: String(ctx.org_name).slice(0, 60), description: String(ctx.narration || '').slice(0, 100) },
       payment_options: 'banktransfer,card,ussd,account', meta: { org_id: ctx.org_id, request_id: r.id } }) });
     return { link_url: l.data?.link, expires_at: new Date(Date.now() + 3 * 24 * 3600_000).toISOString() };
@@ -590,8 +598,14 @@ Deno.serve(async (req) => {
       case 'status': {
         const { data, error } = await sb.rpc('get_payments', { p_org: body.org_id });
         if (error) throw new UserError(error.message);
-        const { rail } = await railFor(data?.rail?.code || 'flutterwave');
-        return json({ ok: true, configured: await rail.configured(), payments: data });
+        const { rail, row } = await railFor(data?.rail?.code || 'flutterwave');
+        // Whether the rail can reach Counta: the shared webhook secret is set, and when the rail last sent a verified event.
+        const webhookSecret = row.kind === 'flutterwave' ? 'FLW_WEBHOOK_HASH' : row.webhook_secret;
+        const { data: last } = await admin.from('payment_events').select('received_at, event, outcome').eq('rail', row.code)
+          .order('received_at', { ascending: false }).limit(1).maybeSingle();
+        return json({ ok: true, configured: await rail.configured(), payments: data, webhook: {
+          url: `${SUPABASE_URL}/functions/v1/payments/webhook/${row.kind === 'flutterwave' ? 'flutterwave' : `rail/${row.code}`}`,
+          secret_set: Boolean(webhookSecret && (await secret(webhookSecret))), last_event: last || null } });
       }
       case 'open_wallet': {
         const { data: m } = await sb.from('members').select('id').eq('org_id', body.org_id).eq('user_id', u.user.id).eq('status', 'active').maybeSingle();
