@@ -16,6 +16,9 @@ const Pricing = lazy(() => import('./pages/inventory/Pricing'));
 const Insights = lazy(() => import('./pages/inventory/Insights'));
 const Locations = lazy(() => import('./pages/inventory/Locations'));
 const Reports = lazy(() => import('./pages/inventory/Reports'));
+const Production = lazy(() => import('./pages/inventory/Production'));
+const MonthEnd = lazy(() => import('./pages/inventory/MonthEnd'));
+const Migrate = lazy(() => import('./pages/inventory/Migrate'));
 const Assistant = lazy(() => import('./pages/Assistant'));
 const Settings = lazy(() => import('./pages/Settings'));
 
@@ -81,6 +84,9 @@ export default function App() {
         <Route path="/inventory/insights" element={<Insights />} />
         <Route path="/inventory/locations" element={<Locations />} />
         <Route path="/inventory/reports" element={<Reports />} />
+        <Route path="/inventory/production" element={<Production />} />
+        <Route path="/inventory/month-end" element={<MonthEnd />} />
+        <Route path="/inventory/migrate" element={<Migrate />} />
         <Route path="/assistant" element={<Assistant />} />
         <Route path="/settings" element={<Settings />} />
       </Route>

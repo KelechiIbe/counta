@@ -34,6 +34,11 @@ No posting function names an account code. Each asks for a role, and `private.ac
 | `opening_equity` | 3999 Opening Balance Equity (System) | 3999, 9007, 3005 |
 | `landed_duty` | 5105 Import Duties & Landing Costs | 5104, 5105 |
 | `landed_freight` | 5104 Carriage Inwards & Clearing | 5104, 5105, 6606 |
+| `wip` | 1202 Inventory - Work in Progress | 1202 |
+| `job_materials` | 5202 Direct Materials & Expenses (default for new jobs; each job keeps its own) | 5202, 5207, 5209, 5305, 5306, 6208, 6209, 6216, 1521 |
+| `production_absorbed` | 5400 Inventory Movement (System) | 5400, 5401, 5201, 5304, 5306 |
+| `nrv_writedown` | 6805 Inventory Write-Downs | 6805, 5400, 5209 |
+| `nrv_allowance` | 1207 Allowance for Inventory Obsolescence | 1207 |
 
 `public.set_posting_rule(org, role, code)` is owner only. Moving `inventory` or `goods_in_transit` posts a reclass journal (source type `reclass`) so the balance follows; other roles apply to new postings. `public.set_item_inventory_account(item, code)` moves one item and reclasses its stock at weighted average cost. A trigger blocks any other write to `items.inventory_account`.
 
@@ -56,7 +61,20 @@ Codes below are the defaults. Amounts are net of VAT unless marked.
 | Count shortfall, Miscount or Unrecorded sale | `approve_count_internal` | 5400 | 1203 |
 | Count surplus (stock found) | `approve_count_internal` | 1203 | 5400 |
 | Batch quarantined or expired | `quarantine_internal` | 6805 | 1203 |
+| Issue to a production run | `issue_materials` | 1202 qty × WAC | the material's inventory account |
+| Issue to a job | `issue_materials` | the job's account (default 5202) | the material's inventory account |
+| Return from a run or job | `issue_materials` with `p_return` | the material's inventory account | 1202 or the job's account, at the cost it left at |
+| Labour and other costs added to a run | `complete_production` | 1202 | 5400 |
+| Output of a production run | `complete_production` | the finished item's inventory account, the run's whole cost | 1202 |
+| Run cancelled with value in progress | `close_job` | 6805 | 1202 |
+| Opening stock from a migration | `import_inventory` with `as_of` | the item's inventory account, dated 23:59:59 on the go-live day | 3999 |
+| Migration upload undone | `undo_import` | 3999 | the item's inventory account |
+| Month-end close, allowance rises | `close_period` | 6805 | 1207 |
+| Month-end close, allowance falls | `close_period` | 1207 | 6805 |
+| Close reopened | `reopen_period` | the close's entry reversed | |
 | Rule change or item move | `set_posting_rule`, `set_item_inventory_account` | new account | old account |
+
+Nothing posts into a closed period. A journal or movement dated on or before the last closed day, such as a phone sale that synced late, moves to the first open day with a note. See `month-end-close.md`.
 
 Read across a period, the 5000 group gives cost of sales by the purchases method: 5101 purchases + 5104/5105 landed charges + 5400 inventory movement. 5400 nets to cost of goods sold less the stock still on hand, so it is negative in a month where stock builds up. Write-downs sit in 6805 under operating expenses.
 

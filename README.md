@@ -4,7 +4,7 @@ Counta is the inventory module for TaxStreem. Inventory runs as a sub-ledger of 
 
 ## What is in here
 
-The desktop app covers nine screens. **Overview** carries the Martina prompt bar, the KPI snapshot, a single needs-action queue and the movement ledger. **Items** lists every product with units shown in purchase and selling terms, an item drawer (stock, details, units and labels, batches, movements), Excel export, and upload from our template or any sheet the business already keeps. **Receive stock** reads typed and handwritten invoices with Gemini, asks the user to confirm any line under 85% confidence beside a crop of the photo, previews the journal against the TaxStreem chart of accounts and posts it. **Stock counts** lets the owner schedule blind counts and approve or reject variances with reasons. **Reorder** shows suggestions sized by velocity, lead time, safety days and seasonality, explainable vendor scores, FX timing advice and draft purchase orders that go out on the vendor's channel. **Pricing** handles price proposals (cost increase, below replacement cost, margin under threshold), landed cost allocation and the price change audit trail. **Insights** compares cash against stock, suggests dead stock markdowns and runs the FEFO batch table with quarantine. **Reports** has 22 stock, ledger, purchase, sales and control reports that download as Excel, CSV or PDF, plus a month-end pack in one workbook. **Locations & staff** holds branch cards, transfers through goods in transit, the permission matrix, voice review and the activity log.
+The desktop app covers twelve screens. **Overview** carries the Martina prompt bar, the KPI snapshot, a single needs-action queue and the movement ledger. **Items** lists every product with units shown in purchase and selling terms, an item drawer (stock, details, units and labels, batches, movements), Excel export, and upload from our template or any sheet the business already keeps. **Receive stock** reads typed and handwritten invoices with Gemini, asks the user to confirm any line under 85% confidence beside a crop of the photo, previews the journal against the TaxStreem chart of accounts and posts it. **Stock counts** lets the owner schedule blind counts and approve or reject variances with reasons. **Reorder** shows suggestions sized by velocity, lead time, safety days and seasonality, explainable vendor scores, FX timing advice and draft purchase orders that go out on the vendor's channel. **Pricing** handles price proposals (cost increase, below replacement cost, margin under threshold), landed cost allocation and the price change audit trail. **Production & jobs** issues raw materials, packaging and spares to production runs (cost held in work in progress until output is recorded) and to jobs (charged to the job's own account), with recipes, recipe-versus-actual variance and returns. **Insights** opens on Leak radar (shrink, count accuracy, cash short, what to count next and daily spot checks), then compares cash against stock, suggests dead stock markdowns and runs the FEFO batch table with quarantine. **Reports** has 24 stock, ledger, purchase, sales, production and control reports that download as Excel, CSV or PDF, plus a month-end pack in one workbook. **Month-end close** sets the allowance for stock worth less than cost and locks the period. **Move to Counta** brings items, opening stock, suppliers and past sales across from QuickBooks, Sage, Zoho, Odoo, Tally, Loyverse, Business Central, Square or a spreadsheet, dated a go-live day and reconciled to the old system. **Locations & staff** holds branch cards, transfers through goods in transit, the permission matrix, voice review and the activity log.
 
 The item form and the import template follow the kind of business: a pharmacy records generic name, strength and dosage form with batches on; a fashion store records size, colour and fabric; an auto parts dealer records OEM part number and fitment; a manufacturer records raw materials, packaging and spares that are not for sale and sit in their own inventory accounts. Thirteen trades are set up. `docs/reports-and-import.md` covers the fields, how an uploaded sheet is read and matched, what the import posts, and every report.
 
@@ -14,7 +14,9 @@ Martina can also phone people through ElevenLabs voice agents. From a purchase o
 
 Installed as an app, Counta sends push notifications when a count needs approval or comes back for a recount, an invoice needs checking, stock is on its way to a branch, a price check opens, or a phone call finishes. A banner asks to install (Chrome's install prompt on Android, Share then Add to Home Screen on iPhone) and then to turn on notifications.
 
-The phone app lives at `/m`. It has Today (queue, counts assigned to you, transfers arriving, items running low), barcode and QR scanning, voice sales in Pidgin, Yoruba, Hausa, Igbo or English, invoice photos, blind counts and a WhatsApp-style Martina chat. Sales, counts, transfer confirmations and invoice photos queue on the device when there is no data and post in order, with their original time and a client UUID so a retry never posts twice.
+The phone app lives at `/m`. It has Today (queue, counts and spot checks assigned to you, transfers arriving, items running low), barcode and QR scanning, voice sales in Pidgin, Yoruba, Hausa, Igbo or English, invoice photos, blind counts, issuing stock to a run or job, and a WhatsApp-style Martina chat. Sales, counts, issues, transfer confirmations and invoice photos queue on the device when there is no data and post in order, with their original time and a client UUID so a retry never posts twice.
+
+More on the newer parts: `docs/production-and-jobs.md`, `docs/moving-to-counta.md` (including how opening and closing stock are worked out), `docs/month-end-close.md` and `docs/leak-radar.md`.
 
 ## Stack
 
@@ -22,14 +24,18 @@ React 18, TypeScript, Vite, React Router and TanStack Query on the front end, sh
 
 ```
 src/
-  pages/inventory/   Overview, Items, Receive, Counts, Reorder, Pricing, Insights, Reports, Locations
+  pages/inventory/   Overview, Items, Receive, Counts, Reorder, Pricing, Production, Insights (Leak radar), Reports,
+                     Month-end close, Move to Counta, Locations
   pages/             Assistant (Martina), Settings, Onboarding, auth
-  mobile/            phone app, offline queue (IndexedDB), scan, sell, receive, count, chat
+  mobile/            phone app, offline queue (IndexedDB), scan, sell, receive, count, issue to a job, chat
   lib/               domain rules, receiving, ledger formatting, chart of accounts, Martina, Supabase client,
-                     industries (item fields per trade), sheet (reading and matching uploads), reports, exporters
-docs/                TaxStreem chart of accounts (CSV), the posting reference, voice and push, reports and import
+                     industries (item fields per trade), sheet (reading and matching uploads), migrate (source system
+                     presets), jobs, reports, exporters
+docs/                TaxStreem chart of accounts (CSV), the posting reference, voice and push, reports and import,
+                     production and jobs, moving to Counta, month-end close, Leak radar
 supabase/
-  migrations/        schema, RLS, posting functions, sample business, storage, cron, hardening, TaxStreem chart
+  migrations/        schema, RLS, posting functions, sample business, storage, cron, hardening, TaxStreem chart,
+                     production and jobs, period close, migration, Leak radar
   functions/ai       Gemini: read_invoice, ask, chat, voice, map_columns and extract_rows for uploads
   functions/fx       daily USD/NGN rate for FX timing advice
   functions/voice    ElevenLabs outbound calls: vendor orders and staff reminders
@@ -54,12 +60,17 @@ Counta posts into the TaxStreem chart of accounts, the same 393 accounts as Acco
 | Opening stock (including stock brought in by an upload) | 3999 Opening Balance Equity (System) |
 | Import duty | 5105 Import Duties & Landing Costs |
 | Clearing and haulage | 5104 Carriage Inwards & Clearing |
+| Materials in an open production run | 1202 Inventory - Work in Progress |
+| Stock issued to a job, repair or project | 5202 Direct Materials & Expenses (each job may choose 5207, 5209, 5305, 5306, 6208, 6209, 6216 or 1521) |
+| Labour and overheads taken into a run's output | 5400 Inventory Movement (System) |
+| Month-end write-down to net realisable value | 6805 Inventory Write-Downs |
+| Allowance for stock below cost | 1207 Allowance for Inventory Obsolescence |
 
-Receipts follow the purchases method with perpetual stock: Dr 5101 net, Dr 1402 input VAT, Cr 2101 gross, then Dr 1203 and Cr 5400 for the stock that went onto the shelf. Sales relieve stock first-expiry-first-out with Dr 5400 / Cr 1203 at weighted average cost, so the cost of sales group reads purchases plus landed charges plus inventory movement. Transfers move value through 1204 until the receiving branch confirms. Landed cost posts duty to 5105 and other charges to 5104, and the share on stock still on hand moves into 1203 through 5400. Every posting runs inside a `security definer` function that checks the caller's permission first. Owners change the rules in Settings > Chart of accounts; moving the stock-on-hand or goods-in-transit role, or one item's account, posts a reclass journal so the balance follows. `docs/accounting.md` has the journal for every event.
+Receipts follow the purchases method with perpetual stock: Dr 5101 net, Dr 1402 input VAT, Cr 2101 gross, then Dr 1203 and Cr 5400 for the stock that went onto the shelf. Sales relieve stock first-expiry-first-out with Dr 5400 / Cr 1203 at weighted average cost, so the cost of sales group reads purchases plus landed charges plus inventory movement. Transfers move value through 1204 until the receiving branch confirms. Landed cost posts duty to 5105 and other charges to 5104, and the share on stock still on hand moves into 1203 through 5400. Issues to a production run move materials into 1202 and its output moves the run's whole cost into the finished item; issues to a job go straight to the job's account. Month-end close posts the change in the allowance for stock below cost (Dr 6805 / Cr 1207) and locks the period. Every posting runs inside a `security definer` function that checks the caller's permission first. Owners change the rules in Settings > Chart of accounts; moving the stock-on-hand or goods-in-transit role, or one item's account, posts a reclass journal so the balance follows. `docs/accounting.md` has the journal for every event.
 
 ## Roles
 
-Templates exist for owner, manager, staff and cashier, with per-person overrides across eight permissions: record sales, receive stock, count stock, approve adjustments, edit costs and prices, approve POs, transfer stock and see margins. A database constraint enforces the hard rule that anyone who records sales can never edit prices or approve adjustments. Costs and margins are masked server-side for roles without see margins.
+Templates exist for owner, manager, staff and cashier, with per-person overrides across nine permissions: record sales, receive stock, count stock, approve adjustments, edit costs and prices, approve POs, transfer stock, issue to jobs and see margins. A database constraint enforces the hard rule that anyone who records sales can never edit prices or approve adjustments. Costs and margins are masked server-side for roles without see margins.
 
 ## Running it
 

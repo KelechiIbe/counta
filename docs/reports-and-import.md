@@ -41,7 +41,7 @@ Items that are not sold can have a price of zero; the phone app will not ring th
 
 ## Spreadsheet import
 
-Inventory → Items → Upload (or Upload inventory on an empty Overview) takes .xlsx, .xls, .csv or .ods up to 15MB.
+Inventory → Items → Upload (or Upload inventory on an empty Overview) takes .xlsx, .xls, .csv or .ods up to 15MB. A business coming from another system should use Move to Counta instead, which dates opening stock on a go-live day and checks it against the old system (`moving-to-counta.md`).
 
 **Template.** The upload panel offers a template for any trade. It has the Items sheet with the trade's columns and an opening stock column per branch, an Example sheet filled with two or three realistic rows, a Guide sheet, and dropdowns (from a hidden Lists sheet) for category, kind of item, units, VAT and yes/no fields. Items → Export produces the same layout filled with the current item list, so a business can edit in Excel and upload it again.
 
@@ -63,8 +63,8 @@ Inventory → Reports. Every report runs in `public.inventory_report` from the s
 
 | Group | Report | Notes |
 | --- | --- | --- |
-| Stock | Stock valuation | Qty, unit cost, value at cost, retail value and margin per item and branch, as at a date. Checks the total against the inventory accounts in the ledger |
-| Stock | Stock movement summary | Opening, received, sold at cost, transfers, adjustments and closing, in quantity and value. Opening + movements = closing |
+| Stock | Stock valuation | Qty, unit cost, value at cost, retail value and margin per item and branch, as at a date, plus work in progress on open production runs. Checks the total against the inventory accounts in the ledger and shows the allowance for stock below cost and the carrying amount |
+| Stock | Stock movement summary | Opening, received, produced, sold at cost, issued to jobs and runs, transfers, adjustments and closing, in quantity and value. Opening + movements = closing |
 | Stock | Stock card (item ledger) | Every movement of an item with a running balance |
 | Stock | Batches & expiry | Batch, NAFDAC number, expiry, days left, quantity left and status |
 | Stock | Reorder list, Slow & dead stock, Item list | Same data as the Reorder and Insights screens; the item list includes the trade's extra fields |
@@ -73,6 +73,8 @@ Inventory → Reports. Every report runs in `public.inventory_report` from the s
 | Books | Trial balance (Counta accounts) | Opening, debits, credits and closing balance for each account Counta posts to |
 | Purchases | Purchases register, Purchases by line, Input VAT schedule, Purchases by vendor, Purchase orders | The input VAT schedule lists vendor, invoice, net and VAT for the VAT return |
 | Sales | Sales by item, Sales by day, Sales by staff | By item and by day: quantity, sales value, cost of sales and gross profit. By staff: how many sales each person recorded, how many by voice or offline, and their value |
+| Production | Production runs and jobs | Every run or job open in the period: materials issued and returned, labour and other costs, output and cost per unit |
+| Production | Stock issued to jobs | Each issue and return: run or job, branch, item, quantity, unit cost, value and who did it |
 | Controls | Stock adjustments & write-offs, Transfers register, Price changes, Cash vs stock | Who did what, when, and the value |
 
-**Month-end pack** builds one workbook with a contents sheet and the valuation, movement summary, inventory ledger, trial balance, purchases register, input VAT schedule, sales by item, adjustments and transfers for the chosen period.
+**Month-end pack** builds one workbook with a contents sheet and the valuation, movement summary, inventory ledger, trial balance, purchases register, input VAT schedule, sales by item, production runs and jobs, adjustments and transfers for the chosen period.

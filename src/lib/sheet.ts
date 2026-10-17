@@ -11,29 +11,30 @@ export interface SheetData { name: string; rows: Cell[][]; rowNo?: number[] }
 // Core fields. Keys ending in _pu are per purchase unit (carton, bag...) and get converted.
 export interface CoreField { key: string; label: string; group: 'Item' | 'Stock & units' | 'Pricing'; syn: string[]; template?: string }
 export const CORE_FIELDS: CoreField[] = [
-  { key: 'name', label: 'Product name', group: 'Item', template: 'Product name*', syn: ['product name', 'product', 'item name', 'item', 'description of goods', 'product description', 'name', 'goods', 'particulars', 'stock name', 'item description', 'material', 'material description', 'article'] },
-  { key: 'sku', label: 'Catalogue ID / SKU', group: 'Item', template: 'Catalogue ID / SKU', syn: ['sku', 'item code', 'code', 'product code', 'product id', 'item id', 'catalogue id', 'catalog id', 'item no', 'item number', 'stock code', 'material code', 'ref', 'reference'] },
-  { key: 'barcode', label: 'Barcode', group: 'Item', template: 'Barcode', syn: ['barcode', 'bar code', 'ean', 'upc', 'gtin', 'ean13', 'ean code'] },
-  { key: 'category', label: 'Category', group: 'Item', template: 'Category', syn: ['category', 'group', 'department', 'class', 'product group', 'product category', 'section', 'family'] },
+  { key: 'name', label: 'Product name', group: 'Item', template: 'Product name*', syn: ['product name', 'product', 'item name', 'item', 'description of goods', 'product description', 'name', 'goods', 'particulars', 'stock name', 'item description', 'material', 'material description', 'article', 'product service name', 'name of item', 'item name english'] },
+  { key: 'sku', label: 'Catalogue ID / SKU', group: 'Item', template: 'Catalogue ID / SKU', syn: ['sku', 'item code', 'code', 'product code', 'product id', 'item id', 'catalogue id', 'catalog id', 'item no', 'item number', 'stock code', 'material code', 'ref', 'reference', 'internal reference', 'part number', 'part no'] },
+  { key: 'barcode', label: 'Barcode', group: 'Item', template: 'Barcode', syn: ['barcode', 'bar code', 'ean', 'upc', 'gtin', 'ean13', 'ean code', 'isbn'] },
+  { key: 'category', label: 'Category', group: 'Item', template: 'Category', syn: ['category', 'group', 'department', 'class', 'product group', 'product category', 'section', 'family', 'stock group', 'category name', 'item group', 'item category', 'item class'] },
   { key: 'brand', label: 'Brand', group: 'Item', template: 'Brand', syn: ['brand', 'brand name', 'make', 'label'] },
   { key: 'item_type', label: 'Kind of item', group: 'Item', template: 'Kind of item', syn: ['item type', 'type of item', 'kind of item', 'kind', 'stock type', 'material type', 'inventory type'] },
-  { key: 'description', label: 'Description', group: 'Item', template: 'Description', syn: ['long description', 'details', 'remarks', 'comment', 'comments', 'notes'] },
+  { key: 'description', label: 'Description', group: 'Item', template: 'Description', syn: ['long description', 'details', 'remarks', 'comment', 'comments', 'notes', 'sales description'] },
   { key: 'vat_treatment', label: 'VAT', group: 'Item', template: 'VAT (standard / zero / exempt)', syn: ['vat', 'tax', 'vat treatment', 'vat status', 'vatable', 'tax code', 'vat applicable'] },
   { key: 'nafdac_no', label: 'NAFDAC number', group: 'Item', template: 'NAFDAC no.', syn: ['nafdac', 'nafdac no', 'nafdac number', 'nafdac reg no', 'reg no', 'registration number'] },
-  { key: 'vendor', label: 'Preferred vendor', group: 'Item', template: 'Preferred vendor', syn: ['vendor', 'supplier', 'preferred vendor', 'preferred supplier', 'distributor', 'source'] },
+  { key: 'vendor', label: 'Preferred vendor', group: 'Item', template: 'Preferred vendor', syn: ['vendor', 'supplier', 'preferred vendor', 'preferred supplier', 'distributor', 'source', 'vendor name', 'supplier name', 'default vendor name'] },
   { key: 'track_batches', label: 'Track batches (Yes/No)', group: 'Stock & units', template: 'Track batches (Yes/No)', syn: ['track batches', 'batch tracked', 'track expiry', 'batch tracking'] },
   { key: 'purchase_unit', label: 'Buy by the (purchase unit)', group: 'Stock & units', template: 'Buy by the', syn: ['purchase unit', 'buy unit', 'buying unit', 'pack type', 'case type', 'carton type', 'outer'] },
   { key: 'pack_size', label: 'Units per purchase unit', group: 'Stock & units', template: 'Units per purchase unit', syn: ['pack size', 'units per carton', 'carton size', 'ctn size', 'case size', 'qty per carton', 'pcs per ctn', 'per carton', 'pack qty', 'units per pack', 'conversion', 'pieces per carton', 'packing', 'pack'] },
-  { key: 'selling_unit', label: 'Sell by the (selling unit)', group: 'Stock & units', template: 'Sell by the', syn: ['unit', 'uom', 'selling unit', 'sell unit', 'unit of measure', 'base unit', 'units'] },
-  { key: 'qty', label: 'Quantity on hand (selling units)', group: 'Stock & units', template: 'Opening qty', syn: ['qty', 'quantity', 'on hand', 'stock', 'balance', 'closing stock', 'stock level', 'qty on hand', 'stock on hand', 'soh', 'available', 'current stock', 'opening stock', 'opening qty', 'qty in pcs', 'pieces', 'loose'] },
+  { key: 'selling_unit', label: 'Sell by the (selling unit)', group: 'Stock & units', template: 'Sell by the', syn: ['unit', 'uom', 'selling unit', 'sell unit', 'unit of measure', 'base unit', 'units', 'base unit of measure', 'stocking u m', 'u m'] },
+  { key: 'qty', label: 'Quantity on hand (selling units)', group: 'Stock & units', template: 'Opening qty', syn: ['qty', 'quantity', 'on hand', 'stock', 'balance', 'closing stock', 'stock level', 'qty on hand', 'stock on hand', 'soh', 'available', 'current stock', 'opening stock', 'opening qty', 'qty in pcs', 'pieces', 'loose', 'quantity on hand', 'on hand qty', 'in stock', 'current quantity', 'closing quantity', 'stock qty', 'closing qty'] },
   { key: 'qty_pu', label: 'Quantity on hand (purchase units)', group: 'Stock & units', syn: ['qty in ctn', 'qty ctn', 'cartons', 'ctns', 'no of cartons', 'cases', 'bags', 'qty in cartons', 'carton qty', 'qty (ctn)'] },
-  { key: 'reorder_floor', label: 'Reorder floor (selling units)', group: 'Stock & units', template: 'Reorder floor', syn: ['reorder level', 'reorder', 'reorder point', 'min', 'minimum', 'min stock', 'minimum stock', 'safety stock', 'rol', 'floor'] },
+  { key: 'reorder_floor', label: 'Reorder floor (selling units)', group: 'Stock & units', template: 'Reorder floor', syn: ['reorder level', 'reorder', 'reorder point', 'min', 'minimum', 'min stock', 'minimum stock', 'safety stock', 'rol', 'floor', 'reorder pt', 'reorder pt min', 'low stock', 'minimum level'] },
   { key: 'batch_no', label: 'Batch / lot number', group: 'Stock & units', template: 'Batch no.', syn: ['batch', 'batch no', 'batch number', 'lot', 'lot no', 'lot number'] },
   { key: 'expiry_date', label: 'Expiry date', group: 'Stock & units', template: 'Expiry date (DD/MM/YYYY)', syn: ['expiry', 'expiry date', 'exp', 'exp date', 'expiration', 'expires', 'best before', 'bbd', 'use by'] },
-  { key: 'price', label: 'Selling price (per selling unit)', group: 'Pricing', template: 'Selling price (₦ per selling unit)', syn: ['price', 'selling price', 'sell price', 'retail price', 'unit price', 'sp', 'sales price', 'rrp', 'price per unit', 'retail'] },
+  { key: 'price', label: 'Selling price (per selling unit)', group: 'Pricing', template: 'Selling price (₦ per selling unit)', syn: ['price', 'selling price', 'sell price', 'retail price', 'unit price', 'sp', 'sales price', 'rrp', 'price per unit', 'retail', 'sales price rate', 'selling rate', 'price level 1', 'sales price 1', 'list price', 'sale price'] },
   { key: 'price_pu', label: 'Selling price (per purchase unit)', group: 'Pricing', syn: ['price per carton', 'carton price', 'ctn price', 'price/ctn', 'case price', 'bag price', 'price per bag'] },
-  { key: 'cost', label: 'Cost (per selling unit)', group: 'Pricing', template: 'Cost (₦ per selling unit)', syn: ['cost', 'cost price', 'unit cost', 'buy price', 'buying price', 'purchase price', 'cp', 'landing cost', 'avg cost', 'average cost'] },
+  { key: 'cost', label: 'Cost (per selling unit)', group: 'Pricing', template: 'Cost (₦ per selling unit)', syn: ['cost', 'cost price', 'unit cost', 'buy price', 'buying price', 'purchase price', 'cp', 'landing cost', 'avg cost', 'average cost', 'purchase cost', 'purchase rate', 'standard cost', 'default unit cost', 'closing rate'] },
   { key: 'cost_pu', label: 'Cost (per purchase unit)', group: 'Pricing', syn: ['cost per carton', 'carton cost', 'ctn cost', 'cost/ctn', 'case cost', 'cost per bag', 'bag cost'] },
+  { key: 'value_total', label: 'Stock value (total)', group: 'Pricing', syn: ['stock value', 'closing value', 'inventory value', 'total value', 'value', 'asset value', 'opening stock value', 'total cost', 'extended cost', 'item value', 'valuation', 'closing stock value'] },
   { key: 'import_priced', label: 'Import-priced (Yes/No)', group: 'Pricing', template: 'Import-priced (Yes/No)', syn: ['imported', 'import priced', 'import'] },
 ];
 
@@ -105,7 +106,9 @@ export interface Matched { maps: ColMap[]; how: ('exact' | 'close' | 'none')[] }
 
 // Name-based matching: exact names and synonyms first, then the longest synonym found inside the header.
 // When no column is called a product name, a "Description" column (or the wordiest text column) is used.
-export function autoMatch(headers: string[], industry: string | undefined, locations: Location[], samples: Cell[][] = []): Matched {
+// preset: exact or leading header names from a known system's export ("purchase cost" -> cost). Presets win over
+// synonyms but not over branch stock columns.
+export function autoMatch(headers: string[], industry: string | undefined, locations: Location[], samples: Cell[][] = [], preset: Record<string, string> = {}): Matched {
   const fields = fieldsFor(industry);
   const cands: { field: string; syn: string; core: boolean }[] = [
     ...CORE_FIELDS.flatMap((f) => [norm(f.label), norm(f.template || ''), ...f.syn.map(norm)].filter(Boolean).map((syn) => ({ field: f.key, syn, core: true }))),
@@ -122,12 +125,15 @@ export function autoMatch(headers: string[], industry: string | undefined, locat
   headers.forEach((raw, idx) => {
     const h = norm(raw);
     let m: ColMap | null = null; let kind: 'exact' | 'close' | 'none' = 'none';
-    if (/^(s ?n|s no|sno|no|sl no|serial|#|s ?no)$/.test(h)) { maps.push({ field: 'ignore' }); how.push('exact'); return; }
-    const loc = h ? locFor(h) : undefined;
+    const pk = Object.keys(preset).filter((k) => h === norm(k) || h.startsWith(norm(k) + ' ')).sort((a, b) => b.length - a.length)[0];
+    if (pk && (preset[pk] === 'ignore' || preset[pk] === 'note')) { maps.push({ field: preset[pk] }); how.push('exact'); return; }
+    if (!pk && /^(s ?n|s no|sno|no|sl no|serial|#|s ?no)$/.test(h)) { maps.push({ field: 'ignore' }); how.push('exact'); return; }
+    const loc = h && !/(low stock|reorder|minimum|min level|optimal|alert|price|cost|value)/.test(h) ? locFor(h) : undefined;
     // A branch column: "Yaba qty", "Stock - Ikeja", or just "Ikeja" over a column of numbers.
     if (loc && (/(qty|quantity|stock|on hand|balance|soh|opening|count|units|pcs|ctn|carton)/.test(h) || ((h === norm(loc.name) || (!!loc.code && h === norm(loc.code))) && numeric(idx)))) {
       m = { field: /(ctn|carton|case|bag|purchase unit)/.test(h) && !/selling unit/.test(h) ? 'qty_pu' : 'qty', location: loc.id }; kind = 'exact';
     }
+    if (!m && pk && !used.has(preset[pk])) { m = { field: preset[pk] }; kind = 'exact'; }
     if (!m && h) {
       const ex = cands.find((c) => !used.has(c.field) && c.syn === h);
       if (ex) { m = { field: ex.field }; kind = 'exact'; }
@@ -329,6 +335,7 @@ export function buildRows(rows: Cell[][], headerIdx: number, maps: ColMap[], ind
         case 'pack_size': pack = parsePack(v); if (pack == null) warnings.push(`Pack size "${t}" not read`); break;
         case 'expiry_date': { const dt = parseDate(v); if (dt) d.expiry_date = dt; else warnings.push(`Expiry "${t}" not read`); break; }
         case 'reorder_floor': { const n = parseNum(v); if (n != null) d.reorder_floor = n; break; }
+        case 'value_total': { const n = parseNum(v); if (n != null) d._value_total = (d._value_total || 0) + n; break; }
         case 'price': case 'price_pu': case 'cost': case 'cost_pu': {
           const n = parseNum(v); if (n == null) { warnings.push(`${m.field.startsWith('price') ? 'Price' : 'Cost'} "${t}" not read`); break; }
           d['_' + m.field] = n; break;
@@ -350,13 +357,18 @@ export function buildRows(rows: Cell[][], headerIdx: number, maps: ColMap[], ind
     const per = (n: number | undefined, basis: 'selling' | 'purchase', isPuField: boolean) => n == null ? undefined : (isPuField || basis === 'purchase' ? n / pk : n);
     d.price = d._price_pu != null ? d._price_pu / pk : per(d._price, s.priceIn, false);
     d.cost = d._cost_pu != null ? d._cost_pu / pk : per(d._cost, s.costIn, false);
-    for (const k of ['_price', '_price_pu', '_cost', '_cost_pu']) delete d[k];
+    const valueTotal = d._value_total as number | undefined;
+    for (const k of ['_price', '_price_pu', '_cost', '_cost_pu', '_value_total']) delete d[k];
     if (d.price != null) d.price = Math.round(d.price * 100) / 100;
     if (d.cost != null) d.cost = Math.round(d.cost * 10000) / 10000;
     for (const [loc, q] of Object.entries(qtyByLoc)) {
       const total = q.su + q.pu * pk;
       if (total < 0) { warnings.push('Negative quantity left out'); continue; }
       if (total > 0) d.stock.push({ location_id: loc, qty: Math.round(total * 1000) / 1000, batch_no: d.batch_no || null, expiry_date: d.expiry_date || null });
+    }
+    if (d.cost == null && valueTotal != null) {
+      const q = d.stock.reduce((a: number, x: { qty: number }) => a + x.qty, 0);
+      if (q > 0) d.cost = Math.round((valueTotal / q) * 10000) / 10000;
     }
     if (!d.stock.length && (d.batch_no || d.expiry_date)) d.track_batches = true;
     delete d.batch_no; delete d.expiry_date;

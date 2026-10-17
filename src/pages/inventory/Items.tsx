@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { useLoc } from '../../shell/AppShell';
 import { buildItems, batchWindow, daysLabel, marginColor, pct, qtyLabel, suAbbr, type ItemView, type Status } from '../../lib/domain';
@@ -58,6 +58,7 @@ export default function Items() {
           setExporting(false);
         }}><Icon name="download" size={16} />{exporting ? 'Exporting…' : 'Export'}</button>
         {can(inv, 'edit_prices') && <button className="btn btn-secondary" onClick={() => setUpload(true)}><Icon name="upload" size={16} />Upload</button>}
+        {can(inv, 'edit_prices') && inv.items.length < 5 && <Link className="btn btn-ghost" to="/inventory/migrate"><Icon name="truck" size={16} />Move from another system</Link>}
         {can(inv, 'edit_prices') && <button className="btn btn-primary" onClick={() => setAdd(true)}><Icon name="plus" size={16} color="#fff" />Add item</button>}
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>

@@ -9,8 +9,9 @@ import { K, N, P, addDays, fmtDay, plural, weekday } from '../../lib/format';
 import { batchWindow, buildItems, daysLabel, deadStock, qtyLabel, waLink } from '../../lib/domain';
 import { Icon } from '../../components/Icon';
 import { Alert, Annot, Chip, Empty, Field, Label, Modal, ModalHead } from '../../components/ui';
+import LeakRadar from './LeakRadar';
 
-type Tab = 'variance' | 'dead' | 'expiry';
+type Tab = 'leaks' | 'variance' | 'dead' | 'expiry';
 const TONE = {
   red: { border: '#FECACA', bg: '#FEF2F2', fg: '#991B1B', icon: 'trendDown' },
   green: { border: '#BBF7D0', bg: '#F0FDF4', fg: '#166534', icon: 'check' },
@@ -22,15 +23,16 @@ export default function Insights() {
   const { data: inv } = useInventory();
   const location = useLocation();
   const nav = useNavigate();
-  const [tab, setTab] = useState<Tab>((location.state as any)?.tab || 'variance');
+  const [tab, setTab] = useState<Tab>((location.state as any)?.tab || (can(inv, 'see_margins') ? 'leaks' : 'dead'));
   useEffect(() => { if ((location.state as any)?.tab) nav(location.pathname, { replace: true, state: null }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   if (!inv) return null;
-  const tabs: { id: Tab; label: string }[] = [{ id: 'variance', label: 'Cash vs stock' }, { id: 'dead', label: 'Dead stock' }, { id: 'expiry', label: 'Batches & expiry' }];
+  const tabs: { id: Tab; label: string }[] = [{ id: 'leaks', label: 'Leak radar' }, { id: 'variance', label: 'Cash vs stock' }, { id: 'dead', label: 'Dead stock' }, { id: 'expiry', label: 'Batches & expiry' }];
   return (
     <div className="container">
       <div className="row wrap" style={{ gap: 6 }}>
         {tabs.map((t) => <button key={t.id} className={'pill' + (tab === t.id ? ' on' : '')} onClick={() => setTab(t.id)}>{t.label}</button>)}
       </div>
+      {tab === 'leaks' && <LeakRadar />}
       {tab === 'variance' && <Variance />}
       {tab === 'dead' && <Dead />}
       {tab === 'expiry' && <Expiry />}
