@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession } from '../state/session';
 import { useCounts, useTransfers } from '../lib/queries';
 import { buildItems, qtyLabel } from '../lib/domain';
@@ -15,6 +16,7 @@ import SellScreen from './Sell';
 import ReceiveScreen from './ReceivePhone';
 import { CountList, CountSheet } from './CountPhone';
 import ChatScreen from './ChatPhone';
+import IssueScreen from './IssuePhone';
 
 export default function MobileApp() {
   const { data: inv, isLoading } = useInventory();
@@ -28,6 +30,11 @@ export default function MobileApp() {
     if (!loc || !inv.locations.some((l) => l.id === loc)) setLocState(inv.me.location_id || inv.locations.find((l) => l.is_main)?.id || inv.locations[0]?.id || '');
   }, [inv, loc]);
   useEffect(() => { document.title = 'Counta · phone'; }, []);
+  const qc = useQueryClient();
+  // What the phone just posted changes stock, counts and jobs, so fetch them fresh.
+  useEffect(() => {
+    if (queue.lastSync) for (const k of ['inv', 'jobs', 'counts', 'transfers', 'ledger', 'activity']) void qc.invalidateQueries({ queryKey: [k] });
+  }, [queue.lastSync?.at]); // eslint-disable-line react-hooks/exhaustive-deps
   const setLoc = (l: string) => { setLocState(l); try { localStorage.setItem(key, l); } catch { /* ignore */ } };
   const value = useMemo(() => ({ loc, setLoc, queue }), [loc, queue]); // eslint-disable-line react-hooks/exhaustive-deps
   if (isLoading && !inv) return <div className="m-shell" style={{ display: 'grid', placeItems: 'center' }}><Spinner /></div>;
@@ -54,6 +61,7 @@ export default function MobileApp() {
             <Route path="count" element={<CountList />} />
             <Route path="count/:id" element={<CountSheet />} />
             <Route path="chat" element={<ChatScreen />} />
+            <Route path="issue" element={<IssueScreen />} />
           </Routes>
         </div>
         <nav className="m-tabs" style={{ gridTemplateColumns: `repeat(${shown.length}, 1fr)` }}>
@@ -106,6 +114,7 @@ function Today() {
     ['scan', 'Scan an item', '/m/scan', true],
     ['mic', 'Talk to record a sale', '/m/sell', can(inv, 'record_sales')],
     ['camera', 'Photograph an invoice', '/m/receive', can(inv, 'receive_stock')],
+    ['factory', 'Issue to a job', '/m/issue', can(inv, 'issue_stock')],
     ['chat', 'Ask Martina', '/m/chat', true],
   ];
   return (

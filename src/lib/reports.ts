@@ -6,7 +6,7 @@ import { typeLabel, fieldsFor, formatAttr, ALL_FIELDS } from './industries';
 
 export type ColType = 'text' | 'date' | 'money' | 'num' | 'qty' | 'pct' | 'int';
 export interface RCol { key: string; label: string; type?: ColType; total?: boolean; cost?: boolean; pdf?: boolean; width?: number }
-export type Group = 'Stock' | 'Books' | 'Purchases' | 'Sales' | 'Controls';
+export type Group = 'Stock' | 'Books' | 'Purchases' | 'Sales' | 'Production' | 'Controls';
 export interface ReportDef {
   id: string; group: Group; title: string; blurb: string; period: 'range' | 'asAt' | 'none';
   item?: boolean; location?: boolean; accounts?: boolean; needsCosts?: boolean;
@@ -26,7 +26,7 @@ export const REPORTS: ReportDef[] = [
   },
   {
     id: 'movement_summary', group: 'Stock', title: 'Stock movement summary', period: 'range', location: true, item: true, needsCosts: true, source: 'rpc',
-    blurb: 'Opening stock, receipts, sales at cost, transfers, adjustments and closing stock per item, in quantity and value. The stock reconciliation for the period.',
+    blurb: 'Opening stock, receipts, sales at cost, transfers, stock issued to jobs, production, adjustments and closing stock per item, in quantity and value. The stock reconciliation for the period.',
     cols: [c('item', 'Item'), c('category', 'Category', 'text', { pdf: false }), c('unit', 'Unit'),
       c('opening_qty', 'Opening qty', 'qty'), money('opening_value', 'Opening value'),
       c('added_qty', 'Opening stock added', 'qty', { pdf: false }), money('added_value', 'Added value', { pdf: false }),
@@ -34,6 +34,8 @@ export const REPORTS: ReportDef[] = [
       c('sold_qty', 'Sold', 'qty'), money('cogs', 'Cost of sales'), money('revenue', 'Sales', { pdf: false }),
       c('transfer_in_qty', 'Transfers in', 'qty', { pdf: false }), money('transfer_in_value', 'Transfers in value', { pdf: false }),
       c('transfer_out_qty', 'Transfers out', 'qty', { pdf: false }), money('transfer_out_value', 'Transfers out value', { pdf: false }),
+      c('issued_qty', 'Issued to jobs', 'qty', { pdf: false }), money('issued_value', 'Issued value'),
+      c('produced_qty', 'Produced', 'qty', { pdf: false }), money('produced_value', 'Produced value'),
       c('adjust_qty', 'Adjusted', 'qty'), money('adjust_value', 'Adjustment value'), money('cost_adjust', 'Cost changes', { pdf: false }),
       c('closing_qty', 'Closing qty', 'qty'), money('closing_value', 'Closing value')],
   },
@@ -142,6 +144,21 @@ export const REPORTS: ReportDef[] = [
       c('offline', 'Offline', 'int', { total: true }), money('revenue', 'Sales value'), c('first', 'First', 'date'), c('last', 'Last', 'date')],
   },
   {
+    id: 'jobs', group: 'Production', title: 'Production runs and jobs', period: 'range', location: true, source: 'rpc',
+    blurb: 'Every run or job open in the period: materials issued and returned, labour and other costs, output and cost per unit.',
+    cols: [c('ref', 'Ref'), c('kind', 'Kind'), c('name', 'Name'), c('location', 'Branch'), c('status', 'Status'), c('opened', 'Opened', 'date'),
+      c('closed', 'Closed', 'date'), c('makes', 'Makes'), c('produced_qty', 'Made', 'qty'), c('account', 'Account', 'text', { pdf: false }),
+      c('customer', 'Customer', 'text', { pdf: false }), money('materials', 'Materials', { cost: true }), money('returned', 'Returned', { cost: true, pdf: false }),
+      money('other_costs', 'Other costs', { cost: true }), money('total_cost', 'Total cost', { cost: true }), c('unit_cost', 'Cost per unit', 'money', { cost: true })],
+  },
+  {
+    id: 'issues', group: 'Production', title: 'Stock issued to jobs', period: 'range', location: true, item: true, source: 'rpc',
+    blurb: 'Each issue and return: what went to which run or job, from which branch, at what cost, and who issued it.',
+    cols: [c('date', 'Date', 'date'), c('job', 'Ref'), c('job_name', 'Run or job'), c('type', 'Movement'), c('item', 'Item'), c('location', 'Branch'),
+      c('qty', 'Qty', 'qty'), c('unit', 'Unit'), c('unit_cost', 'Unit cost', 'money', { cost: true }), money('value', 'Value', { cost: true }),
+      c('account', 'Charged to'), c('journal', 'Journal'), c('by', 'By'), c('note', 'Note', 'text', { pdf: false })],
+  },
+  {
     id: 'adjustments', group: 'Controls', title: 'Stock adjustments & write-offs', period: 'range', location: true, item: true, source: 'rpc',
     blurb: 'Count variances, write-offs and quarantined batches, with the reason, counter and approver.',
     cols: [c('date', 'Date', 'date'), c('journal', 'Journal'), c('count', 'Count', 'text', { pdf: false }), c('type', 'Type'), c('item', 'Item'), c('location', 'Branch'),
@@ -168,10 +185,10 @@ export const REPORTS: ReportDef[] = [
 ];
 
 export const reportById = (id: string) => REPORTS.find((r) => r.id === id) || REPORTS[0];
-export const GROUPS: Group[] = ['Stock', 'Books', 'Purchases', 'Sales', 'Controls'];
+export const GROUPS: Group[] = ['Stock', 'Books', 'Purchases', 'Sales', 'Production', 'Controls'];
 
 // The month-end pack: one workbook, one sheet per report.
-export const PACK = ['valuation', 'movement_summary', 'gl', 'trial_balance', 'purchases', 'input_vat', 'sales_by_item', 'adjustments', 'transfers'];
+export const PACK = ['valuation', 'movement_summary', 'gl', 'trial_balance', 'purchases', 'input_vat', 'sales_by_item', 'jobs', 'adjustments', 'transfers'];
 
 // ---------- reports worked out in the browser ----------
 export function clientRows(def: ReportDef, inv: Inventory, suggestions: Suggestion[]): Record<string, unknown>[] {

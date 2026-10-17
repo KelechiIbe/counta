@@ -5,7 +5,7 @@ import { Icon } from '../../components/Icon';
 import { ai, rpc } from '../../lib/supabase';
 import { aiStatus } from '../../lib/martina';
 import { useInventory, useSession, useToast } from '../../state/session';
-import { N, num } from '../../lib/format';
+import { N, fmtDay, num } from '../../lib/format';
 import { acct, usePostingMap } from '../../lib/accounts';
 import { INDUSTRIES, ITEM_TYPES, defaultVat, fieldsFor, industryOf, typeSells } from '../../lib/industries';
 import {
@@ -21,7 +21,11 @@ const CHUNK = 250;
 
 interface Result { created: number; updated: number; skipped: { row: number; name: string; reason: string }[]; stock_ignored: number; zero_cost: number; journals: string[]; opening_value: number }
 
-export default function ImportPanel({ onClose }: { onClose: () => void }) {
+// A migration passes its go-live date, the old system's name and one id for the whole upload, so the opening stock
+// is dated correctly and the upload can be undone as a unit.
+export interface MigrationContext { asOf: string; source: string; importId: string; expectedValue?: number | null; preset?: Record<string, string> }
+
+export default function ImportPanel({ onClose, migration, onDone }: { onClose: () => void; migration?: MigrationContext; onDone?: (r: { created: number; updated: number; opening_value: number; skipped: number }) => void }) {
   const { data: inv } = useInventory();
   const { orgId } = useSession();
   const toast = useToast();
@@ -61,7 +65,7 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
 
   function rematch(s: SheetData, h: number) {
     const hdr = Array.from({ length: Math.max((s.rows[h] || []).length, ...s.rows.slice(h, h + 30).map((r) => r.length)) }, (_, i) => cellText(s.rows[h]?.[i] ?? null));
-    const m = autoMatch(hdr, inv?.org.industry, locations, s.rows.slice(h + 1, h + 9));
+    const m = autoMatch(hdr, inv?.org.industry, locations, s.rows.slice(h + 1, h + 9), migration?.preset || {});
     setMaps(m.maps); setHow(m.how); setAiNote(null); setAiRows(null);
     const plain = m.maps;
     if (plain.some((x) => x.field === 'qty_pu') && !plain.some((x) => x.field === 'qty')) setQtyIn('purchase');
@@ -156,9 +160,23 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
     return (d: any) => (d.sku && bySku.get(String(d.sku).toLowerCase())) || (d.barcode && byCode.get(String(d.barcode))) || (d.name && byName.get(String(d.name).toLowerCase().replace(/\s+/g, ' '))) || null;
   }, [inv]);
 
+  // Accounting systems list services, non-stock lines and bundles beside real stock. None of those belong in an inventory.
+  const nonStock = useMemo(() => {
+    const out = new Set<number>();
+    if (!sheet || aiRows) return out;
+    const col = headers.findIndex((h) => /^(type|item type|product type|product service type|kind)$/i.test(h.replace(/[^a-z ]/gi, ' ').replace(/\s+/g, ' ').trim()));
+    if (col < 0) return out;
+    for (let i = headerIdx + 1; i < sheet.rows.length; i++) {
+      const v = cellText(sheet.rows[i]?.[col] ?? null).trim().toLowerCase();
+      if (/^(services?|non[- ]?inventory( part| item)?|non[- ]?stock( item)?|bundle|group|discount|other charge|subtotal|payment|sales tax( item)?|fixed asset)$/.test(v)) out.add(sheet.rowNo?.[i] ?? i + 1);
+    }
+    return out;
+  }, [sheet, headerIdx, headers, aiRows]);
+
   const preview = useMemo(() => {
     const seen = new Set<string>();
     return built.map((b) => {
+      if (nonStock.has(b.row)) return { ...b, state: 'skip' as const, qty: 0, value: 0, dup: false, why: 'Service or non-stock line' };
       const ex = existing(b.data);
       const key = String(b.data.name || '').toLowerCase();
       const dup = !ex && key && seen.has(key);
@@ -166,14 +184,15 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
       const state: 'new' | 'update' | 'skip' | 'problem' = b.issues.length && !(ex && mode === 'update' && b.issues.every((x) => x === 'No selling price')) ? 'problem'
         : ex ? (mode === 'update' ? 'update' : 'skip') : dup ? 'skip' : 'new';
       const qty = (b.data.stock || []).reduce((a: number, s: any) => a + Number(s.qty || 0), 0);
-      return { ...b, state, qty, value: state === 'new' ? qty * Number(b.data.cost || 0) : 0, dup };
+      return { ...b, state, qty, value: state === 'new' ? qty * Number(b.data.cost || 0) : 0, dup, why: '' };
     });
-  }, [built, existing, mode]);
+  }, [built, existing, mode, nonStock]);
   const counts = useMemo(() => ({
     new: preview.filter((p) => p.state === 'new').length, update: preview.filter((p) => p.state === 'update').length,
     skip: preview.filter((p) => p.state === 'skip').length, problem: preview.filter((p) => p.state === 'problem').length,
     value: preview.reduce((a, p) => a + p.value, 0), stockOnExisting: preview.filter((p) => p.state === 'update' && p.qty > 0).length,
     zeroCost: preview.filter((p) => p.state === 'new' && p.qty > 0 && !(Number(p.data.cost) > 0)).length,
+    nonStock: preview.filter((p) => p.why).length,
   }), [preview]);
 
   const hasName = maps.some((m) => m.field === 'name');
@@ -193,15 +212,17 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
         const part = Math.floor(i / CHUNK) + 1; const parts = Math.ceil(rows.length / CHUNK);
         const r = await rpc<any>('import_inventory', {
           p_org: orgId, p_rows: rows.slice(i, i + CHUNK),
-          p_options: { mode, location_id: loc, file_name: parts > 1 ? `${file || 'import'} (part ${part} of ${parts})` : file || 'Spreadsheet import' },
+          p_options: { mode, location_id: loc, file_name: parts > 1 ? `${file || 'import'} (part ${part} of ${parts})` : file || 'Spreadsheet import',
+            ...(migration ? { as_of: migration.asOf, source: migration.source, import_id: migration.importId, expected_value: migration.expectedValue ?? null } : {}) },
         });
         total.created += r.created; total.updated += r.updated; total.skipped.push(...(r.skipped || []));
         total.stock_ignored += r.stock_ignored; total.zero_cost += r.zero_cost; total.opening_value += Number(r.opening_value || 0);
         if (r.journal_ref) total.journals.push(r.journal_ref);
         setProgress(Math.min(1, (i + CHUNK) / rows.length));
       }
-      total.skipped.push(...preview.filter((p) => p.state === 'problem' || p.state === 'skip').map((p) => ({ row: p.row, name: p.data.name || '', reason: p.issues[0] || (p.dup ? 'Appears twice in the file' : 'Already in your items') })));
+      total.skipped.push(...preview.filter((p) => p.state === 'problem' || p.state === 'skip').map((p) => ({ row: p.row, name: p.data.name || '', reason: p.why || p.issues[0] || (p.dup ? 'Appears twice in the file' : 'Already in your items') })));
       setResult(total); setStep('done');
+      onDone?.({ created: total.created, updated: total.updated, opening_value: total.opening_value, skipped: total.skipped.length });
       await Promise.all(['inv', 'ledger', 'activity'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
     } catch (e: any) {
       setResult(total.created || total.updated ? total : null);
@@ -227,7 +248,7 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
       <div className="drawer-hd">
         <span style={{ width: 44, height: 44, borderRadius: '50%', background: '#F3F4F6', display: 'grid', placeItems: 'center', flex: 'none' }}><Icon name="upload" size={20} color="#6B7280" /></span>
         <div className="grow" style={{ minWidth: 0 }}>
-          <div style={{ fontFamily: 'var(--font-brand)', fontSize: 21, fontWeight: 600 }}>Upload inventory</div>
+          <div style={{ fontFamily: 'var(--font-brand)', fontSize: 21, fontWeight: 600 }}>{migration ? `Items and stock from ${migration.source}` : 'Upload inventory'}</div>
           <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>{step === 'map' ? `${file} · match the columns` : step === 'preview' ? `${file} · check before importing` : 'From our template or the sheet you already keep'}</div>
         </div>
         <XButton onClick={onClose} />
@@ -235,6 +256,7 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
       <div className="drawer-body">
         {step === 'start' && (
           <div className="stack" style={{ gap: 16 }}>
+            {migration && <Alert kind="blue" icon="cal">Opening stock posts as at close of business on {fmtDay(migration.asOf)}, your go-live date. Upload the stock your old system shows for that day.</Alert>}
             <div className="card" style={{ padding: 16, borderRadius: 14, background: '#FAFCFF', borderColor: '#CFE3FF' }}>
               <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
                 <Icon name="download" size={18} color="#0072F5" style={{ marginTop: 2 }} />
@@ -288,6 +310,10 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
             </div>
             {aiBusy && <Alert kind="blue" icon="sparkles">Martina is matching the columns…</Alert>}
             {!aiBusy && aiNote && <Alert kind="blue" icon="sparkles">{aiNote}</Alert>}
+            {(() => {
+              const plainQty = maps.map((m, i) => (m.field === 'qty' && !m.location ? headers[i] : null)).filter(Boolean);
+              return plainQty.length > 1 ? <Alert kind="yellow" icon="alert">{plainQty.length} columns are being added together as stock: {plainQty.join(', ')}. Leave out any that is not stock on hand today.</Alert> : null;
+            })()}
             {!aiBusy && !aiNote && status.data?.configured && how.some((h, i) => h !== 'exact' && headers[i]) && (
               <button className="btn btn-secondary btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => askMartina()}><Icon name="sparkles" size={14} />Ask Martina to match the columns</button>
             )}
@@ -369,6 +395,7 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
               </div>
             )}
             {counts.stockOnExisting > 0 && mode === 'update' && <Alert kind="blue" icon="info">{counts.stockOnExisting} existing item{counts.stockOnExisting === 1 ? ' has' : 's have'} a quantity in the sheet. Quantities of existing items change only through a stock count, so those are left out.</Alert>}
+            {counts.nonStock > 0 && <Alert kind="blue" icon="info">{counts.nonStock} service or non-stock line{counts.nonStock === 1 ? ' is' : 's are'} left out. Counta keeps the things you hold on a shelf; services and charges stay in your accounts.</Alert>}
             {counts.zeroCost > 0 && <Alert kind="yellow" icon="alert">{counts.zeroCost} new item{counts.zeroCost === 1 ? ' has' : 's have'} stock but no cost, so that stock goes into the books at ₦0. Add a cost column, or go back and match it.</Alert>}
             <div className="card" style={{ borderRadius: 12, overflow: 'auto', maxHeight: 420 }}>
               <table className="mini-table">
@@ -382,7 +409,7 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
                         <div className="faint" style={{ fontSize: 11 }}>{[p.data.category, p.data.brand, p.data.item_type && ITEM_TYPES.find((t) => t.id === p.data.item_type)?.label, ...Object.entries(p.data.attributes || {}).slice(0, 3).map(([, v]) => String(v))].filter(Boolean).join(' · ')}</div>
                         {p.warnings.filter((w) => w !== 'Read by Martina').length > 0 && <div style={{ fontSize: 11, color: '#A16207' }}>{p.warnings.filter((w) => w !== 'Read by Martina').join('; ')}</div>}
                       </td>
-                      <td><span className={'chip ' + (p.state === 'new' ? 't-green' : p.state === 'update' ? 't-blue' : p.state === 'skip' ? 't-grey' : 't-red')}>{p.state === 'new' ? 'New' : p.state === 'update' ? 'Update' : p.state === 'skip' ? (p.dup ? 'Duplicate' : 'Exists') : p.issues[0]}</span></td>
+                      <td><span className={'chip ' + (p.state === 'new' ? 't-green' : p.state === 'update' ? 't-blue' : p.state === 'skip' ? 't-grey' : 't-red')}>{p.state === 'new' ? 'New' : p.state === 'update' ? 'Update' : p.state === 'skip' ? (p.why ? 'Not stock' : p.dup ? 'Duplicate' : 'Exists') : p.issues[0]}</span></td>
                       <td className="right num">{p.data.price != null ? N(p.data.price) : '—'}</td>
                       <td className="right num">{p.data.cost != null ? N(p.data.cost) : '—'}</td>
                       <td className="right">{p.data.pack_size || 1}</td>

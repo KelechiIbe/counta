@@ -22,7 +22,9 @@ export const puAbbr = (pu: string) => PU_ABBR[pu] || (pu || '').toLowerCase();
 export const suAbbr = (su: string) => SU_ABBR[su] || su;
 export function pluralUnit(u: string, n: number): string {
   if (Math.abs(n) === 1 || /s$/i.test(u) || /^(kg|g|l|ml|cl|ltr)$/i.test(u)) return u;
-  if (u === 'box') return 'boxes';
+  if (/(x|ch|sh)$/i.test(u)) return u + 'es';
+  if (/^(loaf|leaf|half|shelf)$/i.test(u)) return u.slice(0, -1) + 'ves';
+  if (/[^aeiou]y$/i.test(u)) return u.slice(0, -1) + 'ies';
   return u + 's';
 }
 const fq = (n: number) => Number(n).toLocaleString('en-NG', { maximumFractionDigits: 3 });

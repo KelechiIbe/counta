@@ -6,7 +6,7 @@ import { rpc } from '../lib/supabase';
 import { readInvoice, startReceipt, uploadDocument, type Source } from '../lib/receive';
 import { uuid } from '../lib/format';
 
-export type OpKind = 'sale' | 'count' | 'receipt' | 'transfer_receive';
+export type OpKind = 'sale' | 'count' | 'receipt' | 'transfer_receive' | 'issue';
 export interface Op {
   id: string; org: string; kind: OpKind; label: string; detail: string; created_at: string; queued_offline: boolean;
   status: 'queued' | 'posting' | 'posted' | 'failed'; error?: string; result?: string; payload: any; author: string;
@@ -73,6 +73,12 @@ async function runOp(op: Op): Promise<string> {
       const r = await rpc<any>('submit_count', { p_session: p.session_id, p_lines: p.lines, p_device: deviceId(), p_offline: op.queued_offline, p_client_uuid: op.id });
       const n = (r?.variances || []).length;
       return r?.duplicate ? 'Already submitted' : n ? `Submitted · ${n} difference${n === 1 ? '' : 's'} for the owner` : 'Submitted · no differences';
+    }
+    case 'issue': {
+      const r = await rpc<any>('issue_materials', { p_job: p.job_id, p_lines: p.lines, p_return: false, p_client_uuid: op.id, p_device: deviceId(),
+        p_offline: op.queued_offline, p_recorded_at: op.created_at });
+      if (r?.duplicate) return 'Already posted';
+      return `Posted · ${r.journal_ref}${r.warnings?.length ? ' · below zero on the books, count soon' : ''}`;
     }
     case 'transfer_receive': {
       try { const ref = await rpc<string>('receive_transfer', { p_transfer: p.transfer_id }); return `Received · ${ref}`; }

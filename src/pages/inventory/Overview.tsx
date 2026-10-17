@@ -108,6 +108,11 @@ function EmptyState() {
           <button className="btn btn-primary" onClick={() => setOpen(true)} style={{ marginTop: 22, padding: '13px 22px', fontSize: 16, borderRadius: 14, boxShadow: 'var(--shadow-cta)' }}>
             <Icon name="upload" size={18} color="#fff" />Upload inventory
           </button>
+        ) : null}
+        {canImport ? (
+          <button className="btn btn-secondary" onClick={() => nav('/inventory/migrate')} style={{ marginTop: 10 }}>
+            <Icon name="truck" size={16} />Moving from QuickBooks, Sage, Zoho, Tally or another system?
+          </button>
         ) : <div className="hint" style={{ marginTop: 22 }}>The owner sets up the product list. You will see it here once it is in.</div>}
         <div className="muted" style={{ fontSize: 13, marginTop: 18 }}>
           Want to look around first? <button className="btn-ghost" style={{ color: '#0072F5', cursor: 'pointer', padding: 0, fontSize: 13 }} onClick={sample} disabled={busy}>{busy ? 'Building the sample shop…' : 'Open the sample business'}</button>

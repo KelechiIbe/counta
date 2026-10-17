@@ -86,7 +86,10 @@ export default function Reports() {
       const total = (data.rows || []).reduce((a, r) => a + (Number(r.value) || 0), 0);
       const gl = Number(data.extra.gl_inventory || 0); const git = Number(data.extra.gl_in_transit || 0);
       const diff = Math.round((total - gl) * 100) / 100;
-      return [`Inventory accounts in the ledger: ${N(gl)}${git ? ` · goods in transit ${N(git)}` : ''} · ${Math.abs(diff) < 1 ? 'agrees with this report' : `difference ${N(diff)}`}`];
+      const allow = Number(data.extra.allowance || 0);
+      const lines = [`Inventory accounts in the ledger: ${N(gl)}${git ? ` · goods in transit ${N(git)}` : ''} · ${Math.abs(diff) < 1 ? 'agrees with this report' : `difference ${N(diff)}`}`];
+      if (allow) lines.push(`Less allowance for stock below cost ${N(allow)} · carrying amount ${N(total - allow)}`);
+      return lines;
     }
     return [];
   };
@@ -222,7 +225,7 @@ export default function Reports() {
             <div className="card-pad"><Alert kind="red" icon="alert">{(q.error as Error).message}</Alert></div>
           ) : (
             <>
-              {extraLines(def, q.data).map((l) => <div key={l} className="card-pad" style={{ paddingTop: 12, paddingBottom: 0 }}><Alert kind={/agrees/.test(l) ? 'green' : 'yellow'} icon={/agrees/.test(l) ? 'check' : 'info'}>{l}</Alert></div>)}
+              {extraLines(def, q.data).map((l) => <div key={l} className="card-pad" style={{ paddingTop: 12, paddingBottom: 0 }}><Alert kind={/agrees|carrying/.test(l) ? (/allowance/.test(l) ? 'blue' : 'green') : 'yellow'} icon={/agrees/.test(l) ? 'check' : 'info'}>{l}</Alert></div>)}
               <div className="row" style={{ justifyContent: 'space-between', padding: '12px 20px 0', fontSize: 12 }}>
                 <span className="muted">{rows.length.toLocaleString('en-NG')} row{rows.length === 1 ? '' : 's'}{rows.length > shown.length ? ` · showing the first ${shown.length}; downloads include every row` : ''}{q.data?.truncated ? ' · capped at 50,000 rows, narrow the period' : ''}</span>
                 {!costs && def.cols.some((c) => c.cost) && <span className="faint">Cost columns hidden for your role</span>}

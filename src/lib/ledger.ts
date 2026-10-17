@@ -6,6 +6,7 @@ const TYPE: Record<string, [string, string]> = {
   opening: ['Opening', 'grey'], receipt: ['Receipt', 'blue'], sale: ['Sale', 'grey'], voice_sale: ['Voice', 'grey'],
   transfer_out: ['Transfer', 'purple'], transfer_in: ['Transfer', 'purple'], adjustment: ['Adjustment', 'amber'],
   quarantine: ['Quarantine', 'red'], write_off: ['Write-off', 'red'],
+  issue: ['Issued', 'orange'], issue_return: ['Returned', 'orange'], production_in: ['Produced', 'green'],
 };
 export const typeLabel = (t: string) => TYPE[t]?.[0] || t;
 export const typeTone = (t: string) => 't-' + (TYPE[t]?.[1] || 'grey');
@@ -49,6 +50,7 @@ export function moveRef(m: LedgerRow, locs: Location[]): string {
     case 'adjustment': return j + (m.journal_memo?.replace(/^Count /, 'Count ') || 'Adjustment') ;
     case 'quarantine': return j + (m.note || 'Out of sellable stock');
     case 'opening': return j + (m.journal_memo || 'Opening balance');
+    case 'issue': case 'issue_return': case 'production_in': return j + (m.journal_memo || '');
     default: return j + (m.journal_memo || '');
   }
 }
