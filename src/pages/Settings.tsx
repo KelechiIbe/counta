@@ -233,7 +233,8 @@ function AiCheckButton({ onDone }: { onDone: () => void }) {
   async function go() {
     setState({ busy: true });
     const r = await aiCheck();
-    setState({ ok: r.ok, text: r.ok ? `Gemini answered in ${((r.ms || 0) / 1000).toFixed(1)}s (${r.model}).` : r.error });
+    const route = r.auth === 'vertex' ? `on Vertex AI in ${r.location || 'us-central1'}` : r.auth === 'api_key' ? 'through the Gemini API key, not Vertex AI' : '';
+    setState({ ok: r.ok, text: r.ok ? `Gemini (${r.model}) answered ${route} in ${((r.ms || 0) / 1000).toFixed(1)}s.`.replace('  ', ' ') : r.error });
     onDone();
   }
   return (
