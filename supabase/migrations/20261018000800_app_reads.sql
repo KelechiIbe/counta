@@ -85,3 +85,61 @@ end $$;
 
 revoke all on function public.get_inventory(uuid) from public, anon;
 grant execute on function public.get_inventory(uuid) to authenticated;
+
+-- The till shows the price each line will be charged before checkout: the customer's price list, quantity tiers and the
+-- purchase unit (a carton of 40 at the carton price). The same rule create_sale applies.
+-- p_lines: [{item_id, qty, unit: 'selling'|'purchase'}] -> [{item_id, unit, price}]
+create or replace function public.till_prices(p_org uuid, p_list uuid, p_lines jsonb) returns jsonb
+language plpgsql stable security definer set search_path = public, private as $$
+declare x jsonb; it public.items; v_factor numeric; v_qty numeric; v_out jsonb := '[]'::jsonb;
+begin
+  perform private.require(p_org, 'record_sales');
+  if jsonb_typeof(p_lines) <> 'array' then return v_out; end if;
+  for x in select * from jsonb_array_elements(p_lines) limit 300 loop
+    select * into it from items where id = nullif(x->>'item_id', '')::uuid and org_id = p_org;
+    continue when not found;
+    v_factor := case when x->>'unit' = 'purchase' then it.pack_size else 1 end;
+    v_qty := greatest(coalesce(private.num(x->>'qty'), 1), 0);
+    v_out := v_out || jsonb_build_object('item_id', it.id, 'unit', coalesce(x->>'unit', 'selling'),
+      'price', round(coalesce(private.list_price(p_org, it.id, p_list, v_qty * v_factor), it.price) * v_factor, 2));
+  end loop;
+  return v_out;
+end $$;
+revoke all on function public.till_prices(uuid, uuid, jsonb) from public, anon;
+grant execute on function public.till_prices(uuid, uuid, jsonb) to authenticated;
+
+-- An order taken by staff (by phone, by a sales rep, or for delivery from a van). It waits unposted until it is
+-- confirmed, the same way an online shop order does; deposits paid against it sit as customer advances.
+create or replace function public.save_order(p_org uuid, p_doc jsonb) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare m public.members; s public.sales;
+begin
+  m := private.require(p_org, 'record_sales');
+  if nullif(p_doc->>'customer_id', '') is null and coalesce(trim(p_doc->'customer'->>'name'), '') = '' then raise exception 'Choose the customer.'; end if;
+  s := private.create_sale(p_org, (p_doc - 'tenders' - 'pay_in_full' - 'id') || jsonb_build_object('doc_type', 'order', 'status', 'issue',
+    'channel', coalesce(nullif(p_doc->>'channel', ''), 'phone')), m);
+  perform private.notify_perm(p_org, 'record_sales', 'order', 'New order ' || s.number || ' · ' || s.customer_name,
+    '₦' || to_char(s.total, 'FM999,999,999,990.00') || coalesce(' · ' || s.delivery_method, ''), '/sell/orders', 'order-' || s.id, m.id);
+  return private.sale_json(s.id, private.can_see_costs(p_org));
+end $$;
+revoke all on function public.save_order(uuid, jsonb) from public, anon;
+grant execute on function public.save_order(uuid, jsonb) to authenticated;
+
+-- How the statements are framed (IFRS or IFRS for SMEs, the principal activity in note 1) and the small-company WHT
+-- exemption (suppliers with a TIN, bills under ₦2m). Owner only.
+create or replace function public.update_books_settings(p_org uuid, p_patch jsonb) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare m public.members; o public.orgs;
+begin
+  m := private.require(p_org, null);
+  if m.role <> 'owner' then raise exception 'Only the owner changes how the books are reported.' using errcode = '42501'; end if;
+  if p_patch ? 'reporting_framework' and p_patch->>'reporting_framework' not in ('ifrs', 'ifrs_sme') then raise exception 'Choose IFRS or IFRS for SMEs.'; end if;
+  update orgs set
+    reporting_framework = coalesce(nullif(p_patch->>'reporting_framework', ''), reporting_framework),
+    principal_activity = case when p_patch ? 'principal_activity' then nullif(trim(p_patch->>'principal_activity'), '') else principal_activity end,
+    wht_small_company = coalesce((p_patch->>'wht_small_company')::boolean, wht_small_company)
+  where id = p_org returning * into o;
+  return jsonb_build_object('reporting_framework', o.reporting_framework, 'principal_activity', o.principal_activity, 'wht_small_company', o.wht_small_company);
+end $$;
+revoke all on function public.update_books_settings(uuid, jsonb) from public, anon;
+grant execute on function public.update_books_settings(uuid, jsonb) to authenticated;

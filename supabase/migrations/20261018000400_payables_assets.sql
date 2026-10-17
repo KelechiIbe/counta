@@ -679,7 +679,7 @@ begin
   b := private.write_bill(p_org, (p_bill - 'id' - 'status') || jsonb_build_object('source', 'prism', 'external_ref', v_ref), m);
   update bills set created_by = null where id = b.id;
   perform private.notify_perm(p_org, 'keep_books', 'bill', 'New bill from Prism: ' || (select name from vendors where id = b.vendor_id),
-    '₦' || to_char(b.total, 'FM999,999,999,990.00') || coalesce(' · ' || b.vendor_ref, '') || ' · check and approve it', '/purchases/bills/' || b.id, 'bill-' || b.id);
+    '₦' || to_char(b.total, 'FM999,999,999,990.00') || coalesce(' · ' || b.vendor_ref, '') || ' · check and approve it', '/purchases/bills?open=' || b.id, 'bill-' || b.id);
   return jsonb_build_object('duplicate', false, 'bill', private.bill_json(b.id));
 end $$;
 

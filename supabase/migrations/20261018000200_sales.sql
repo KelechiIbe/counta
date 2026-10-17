@@ -879,10 +879,10 @@ begin
     -- Someone who can confirm money is told there is a payment to check against the bank.
     perform private.notify_perm(p_org, 'approve_adjustments', 'payment', 'Confirm a ' || p_method || ' of ₦' || to_char(c.amount, 'FM999,999,999,990.00'),
       coalesce((select name from customers where id = p_customer), '') || coalesce(' · ' || c.reference, '') || ' · recorded by ' || coalesce(m.display_name, 'the shop'),
-      '/sell/payments', 'confirm-payments', m.id);
+      '/sell/sales?tab=confirm', 'confirm-payments', m.id);
     perform private.notify_perm(p_org, 'keep_books', 'payment', 'Confirm a ' || p_method || ' of ₦' || to_char(c.amount, 'FM999,999,999,990.00'),
       coalesce((select name from customers where id = p_customer), '') || coalesce(' · ' || c.reference, '') || ' · recorded by ' || coalesce(m.display_name, 'the shop'),
-      '/sell/payments', 'confirm-payments', m.id);
+      '/sell/sales?tab=confirm', 'confirm-payments', m.id);
   end if;
   return c;
 end $$;

@@ -57,6 +57,9 @@ begin
       v_line := case when r.bal > 0 then 'Unreconciled balances (assets)' else 'Unreconciled balances (liabilities)' end;
     elsif v_line = 'Unclassified' then
       v_line := case when r.bal > 0 then 'Other current assets' else 'Other current liabilities' end;
+    elsif v_line = 'Cash and cash equivalents' and r.bal < 0 then
+      -- An overdrawn account is a liability. It is not set off against cash in other accounts (IAS 32.42).
+      v_line := 'Bank overdrafts';
     end if;
     v_amt := case when v_line in (select unnest(private.asset_lines()) ) then r.bal else -r.bal end;
     v := jsonb_set(v, array[v_line], to_jsonb(coalesce((v->>v_line)::numeric, 0) + v_amt));
@@ -124,7 +127,7 @@ declare v jsonb := '[]'::jsonb; l text; v_nca numeric; v_ncap numeric; v_ca nume
     'Assets held for sale', 'Other current assets', 'Cash and cash equivalents', 'Unreconciled balances (assets)'];
   eq text[] := array['Share capital', 'Share premium', 'Deposit for shares', 'Other reserves', 'Retained earnings', 'Opening balances to be confirmed', 'Non-controlling interests'];
   ncl text[] := array['Borrowings (non-current)', 'Lease liabilities (non-current)', 'Deferred tax liabilities', 'Other non-current liabilities'];
-  cl text[] := array['Trade and other payables', 'Contract liabilities', 'Current tax liabilities', 'Other statutory liabilities', 'Borrowings (current)',
+  cl text[] := array['Trade and other payables', 'Contract liabilities', 'Current tax liabilities', 'Other statutory liabilities', 'Bank overdrafts', 'Borrowings (current)',
     'Lease liabilities (current)', 'Provisions (current)', 'Other current liabilities', 'Unreconciled balances (liabilities)'];
   function_note text;
 begin
@@ -170,6 +173,7 @@ begin
       v := v || private.fr(l, private.v(c, l), private.v(p, l), 'line', 1, case l when 'Trade and other payables' then private.note_no('payables')
         when 'Contract liabilities' then private.note_no('payables') when 'Current tax liabilities' then private.note_no('tax')
         when 'Other statutory liabilities' then private.note_no('statutory') when 'Borrowings (current)' then private.note_no('borrowings')
+        when 'Bank overdrafts' then private.note_no('cash')
         when 'Unreconciled balances (liabilities)' then private.note_no('unreconciled') end);
       v_cl := v_cl + private.v(c, l); v_clp := v_clp + private.v(p, l);
     end if;
@@ -380,14 +384,16 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- 3. Notes to the financial statements
 -- ---------------------------------------------------------------------------
-create or replace function private.note_rows(p_org uuid, p_from date, p_to date, p_pfrom date, p_pto date) returns jsonb
+-- p_bpto: the date balances are compared at (the end of the previous financial year, IAS 1.38 and IAS 34.20); p_pfrom..p_pto: the comparative period.
+drop function if exists private.note_rows(uuid, date, date, date, date);
+create or replace function private.note_rows(p_org uuid, p_from date, p_to date, p_pfrom date, p_pto date, p_bpto date default null) returns jsonb
 language plpgsql stable security definer set search_path = public, private as $$
 declare o public.orgs; v jsonb := '[]'::jsonb; r record; c jsonb; p jsonb; v_fw text; v_mv jsonb; plc jsonb; plp jsonb;
-  mvc jsonb; mvp jsonb; drc jsonb; crc jsonb; balc jsonb; balo jsonb; balp jsonb; v_lines text[];
+  mvc jsonb; mvp jsonb; drc jsonb; crc jsonb; balc jsonb; balo jsonb; balp jsonb; v_lines text[]; v_bpto date := coalesce(p_bpto, p_pto);
 begin
   select * into o from orgs where id = p_org;
   c := private.sofp_map(p_org, p_to);
-  p := case when p_pto is null then '{}'::jsonb else private.sofp_map(p_org, p_pto) end;
+  p := case when v_bpto is null then '{}'::jsonb else private.sofp_map(p_org, v_bpto) end;
   plc := private.pl_map(p_org, p_from, p_to);
   plp := case when p_pfrom is null then '{}'::jsonb else private.pl_map(p_org, p_pfrom, p_pto) end;
   -- Each ledger figure is read once into a map of account to amount.
@@ -396,15 +402,17 @@ begin
   select coalesce(jsonb_object_agg(code, net), '{}') into mvp from private.movement(p_org, coalesce(p_pfrom, p_from), coalesce(p_pto, p_from - 1)) where p_pfrom is not null;
   select coalesce(jsonb_object_agg(code, bal), '{}') into balc from private.balances_at(p_org, p_to);
   select coalesce(jsonb_object_agg(code, bal), '{}') into balo from private.balances_at(p_org, p_from - 1);
-  select coalesce(jsonb_object_agg(code, bal), '{}') into balp from private.balances_at(p_org, coalesce(p_pto, p_from - 1)) where p_pto is not null;
+  select coalesce(jsonb_object_agg(code, bal), '{}') into balp from private.balances_at(p_org, v_bpto) where v_bpto is not null;
   mvp := coalesce(mvp, '{}'); balp := coalesce(balp, '{}');
   v_fw := case o.reporting_framework when 'ifrs_sme' then 'the IFRS for SMEs Accounting Standard' else 'IFRS Accounting Standards as issued by the IASB and adopted by the Financial Reporting Council of Nigeria' end;
   v := v || private.fr('1. General information', null, null, 'heading', 0)
-    || private.fr(o.name || coalesce(' (RC ' || nullif(o.rc_number, '') || ')', '') || ' is a business domiciled in Nigeria' || coalesce(', at ' || nullif(o.address, ''), '') || '.', null, null, 'text', 0)
+    || private.fr(o.name || coalesce(' (RC ' || nullif(regexp_replace(o.rc_number, '^\s*RC\s*', '', 'i'), '') || ')', '') || ' is a business domiciled in Nigeria' || coalesce(', at ' || nullif(o.address, ''), '') || '.', null, null, 'text', 0)
     || private.fr('Its principal activity is ' || coalesce(nullif(o.principal_activity, ''), replace(coalesce(o.industry, 'trading'), '_', ' ')) || '. Tax identification number: ' || coalesce(nullif(o.tin, ''), 'not recorded') || '.', null, null, 'text', 0)
-    || private.fr('These financial statements cover ' || to_char(p_from, 'FMDD Month YYYY') || ' to ' || to_char(p_to, 'FMDD Month YYYY') || ' and are presented in Nigerian naira (₦), the functional currency.', null, null, 'text', 0)
+    || private.fr('These financial statements cover ' || to_char(p_from, 'FMDD FMMonth YYYY') || ' to ' || to_char(p_to, 'FMDD FMMonth YYYY') || ' and are presented in Nigerian naira (₦), the functional currency.', null, null, 'text', 0)
     || private.fr('2. Basis of preparation and significant accounting policies', null, null, 'heading', 0)
     || private.fr('The financial statements are prepared in accordance with ' || v_fw || ', on the historical cost basis and the going concern assumption.', null, null, 'text', 0)
+    || case when p_pfrom is null then '[]'::jsonb else private.fr('Comparatives: profit or loss figures are for ' || to_char(p_pfrom, 'FMDD FMMonth YYYY') || ' to ' || to_char(p_pto, 'FMDD FMMonth YYYY')
+         || '; balances are at ' || to_char(v_bpto, 'FMDD FMMonth YYYY') || case when v_bpto <> p_pto then ', the end of the previous financial year' else '' end || '.', null, null, 'text', 0) end
     || private.fr('Revenue (IFRS 15): recognised when control of goods passes to the customer at the point of sale or delivery, or as services are performed, at the transaction price net of VAT, discounts and returns.', null, null, 'text', 0)
     || private.fr('Inventories (IAS 2): measured at the lower of cost and net realisable value. Cost is weighted average and includes landed charges; production includes materials and absorbed labour.', null, null, 'text', 0)
     || private.fr('Property, plant and equipment (IAS 16): measured at cost less accumulated depreciation and impairment, depreciated on a straight-line basis over useful lives (computer hardware 3 years, motor vehicles 4 years, office equipment 4 years, furniture 5 years, plant 10 years, buildings 40 to 50 years). Land is not depreciated.', null, null, 'text', 0)
@@ -455,11 +463,18 @@ begin
       ('13. Trade and other payables', array['Trade and other payables', 'Contract liabilities']), ('14. Statutory liabilities', array['Other statutory liabilities', 'Current tax liabilities']),
       ('15. Borrowings', array['Borrowings (current)', 'Borrowings (non-current)', 'Lease liabilities (current)', 'Lease liabilities (non-current)']),
       ('17. Unreconciled balances', array['Unreconciled balances'])) t(title, lines) loop
-    v_mv := (select jsonb_agg(private.fr(m.code || ' ' || m.name, sg * private.v(balc, m.code), case when p_pto is null then null else sg * private.v(balp, m.code) end, 'line', 1) order by m.code)
+    v_mv := (select jsonb_agg(private.fr(m.code || ' ' || m.name, sg * private.v(balc, m.code), case when v_bpto is null then null else sg * private.v(balp, m.code) end, 'line', 1) order by m.code)
       from (select mm.*, case when mm.code ~ '^(1|9)' then 1 else -1 end sg from private.acct_meta(p_org) mm where mm.ifrs_line = any(r.lines)) m
       where private.v(balc, m.code) <> 0 or private.v(balp, m.code) <> 0);
     continue when v_mv is null;
     v := v || private.fr(r.title, null, null, 'heading', 0) || v_mv;
+    if r.title like '11.%' then
+      v := v || private.fr('Cash and cash equivalents in the statement of cash flows', private.v(c, 'Cash and cash equivalents') - private.v(c, 'Bank overdrafts'),
+        case when v_bpto is null then null else private.v(p, 'Cash and cash equivalents') - private.v(p, 'Bank overdrafts') end, 'subtotal', 0);
+      if private.v(c, 'Bank overdrafts') <> 0 or private.v(p, 'Bank overdrafts') <> 0 then
+        v := v || private.fr('Overdrawn accounts are shown under current liabilities as bank overdrafts. They are repayable on demand and part of day-to-day cash management, so the statement of cash flows counts them within cash (IAS 7.8).', null, null, 'text', 0);
+      end if;
+    end if;
     if r.title like '10.%' and private.v(c, '_customer_credit_reclass') > 0 then
       v := v || private.fr('Customers in credit, shown under contract liabilities', private.v(c, '_customer_credit_reclass'), null, 'line', 1);
     end if;
@@ -524,7 +539,7 @@ returns jsonb
 language plpgsql stable security definer set search_path = public, private as $$
 declare m public.members; o public.orgs; v_today date; v_from date; v_to date; v_pfrom date; v_pto date; v_rows jsonb := '[]'::jsonb; v_extra jsonb := '{}'::jsonb;
   c jsonb; p jsonb; v_cmp text := coalesce(nullif(p_options->>'compare', ''), 'prior_year'); v_accts text[]; r record; v_cf jsonb; v_days numeric; v_months int;
-  v_month date; v_cols jsonb; v_t jsonb; v_pt jsonb;
+  v_month date; v_cols jsonb; v_t jsonb; v_pt jsonb; v_bpto date;
 begin
   m := private.require(p_org, null);
   if not private.can_handle_money(p_org) then raise exception 'Financial reports need See margins, Keep the books or Make payments.' using errcode = '42501'; end if;
@@ -537,6 +552,8 @@ begin
   if v_cmp = 'prior_period' then v_pto := v_from - 1; v_pfrom := v_from - (v_to - v_from) - 1;
   elsif v_cmp = 'prior_year' then v_pto := (v_to - interval '1 year')::date; v_pfrom := (v_from - interval '1 year')::date;
   end if;
+  -- The statement of financial position compares with the end of the previous financial year (IAS 1.38; IAS 34.20(a) for part-years).
+  v_bpto := case when v_cmp = 'prior_year' then private.fy_start(p_org, v_to) - 1 else v_pto end;
   v_extra := jsonb_build_object('from', v_from, 'to', v_to, 'prior_from', v_pfrom, 'prior_to', v_pto, 'org', jsonb_build_object('name', o.name, 'tin', o.tin,
     'rc_number', o.rc_number, 'address', o.address, 'framework', o.reporting_framework), 'closed_through', private.closed_through(p_org));
   if jsonb_typeof(p_options->'accounts') = 'array' then select array_agg(value) into v_accts from jsonb_array_elements_text(p_options->'accounts'); end if;
@@ -650,8 +667,9 @@ begin
 
   elsif p_report = 'sofp' then
     c := private.sofp_map(p_org, v_to);
-    p := case when v_pto is null then '{}'::jsonb else private.sofp_map(p_org, v_pto) end;
+    p := case when v_bpto is null then '{}'::jsonb else private.sofp_map(p_org, v_bpto) end;
     v_rows := private.sofp_rows(c, p);
+    v_extra := v_extra || jsonb_build_object('prior_from', null, 'prior_to', v_bpto);
     v_extra := v_extra || jsonb_build_object('check', jsonb_build_object(
       'assets', (select (x->>'current')::numeric from jsonb_array_elements(v_rows) x where x->>'line' = 'Total assets'),
       'equity_and_liabilities', (select (x->>'current')::numeric from jsonb_array_elements(v_rows) x where x->>'line' = 'Total equity and liabilities')),
@@ -674,7 +692,7 @@ begin
     v_extra := v_extra || jsonb_build_object('check', v_cf->'check', 'casts', (v_cf->'check'->>'ties')::boolean);
 
   elsif p_report = 'notes' then
-    v_rows := private.note_rows(p_org, v_from, v_to, v_pfrom, v_pto);
+    v_rows := private.note_rows(p_org, v_from, v_to, v_pfrom, v_pto, v_bpto);
 
   elsif p_report = 'ratios' then
     c := private.sofp_map(p_org, v_to); p := case when v_pto is null then '{}'::jsonb else private.sofp_map(p_org, v_pto) end;
@@ -707,9 +725,11 @@ begin
         private.ratio(private.v(p, 'Trade and other payables') * v_days, private.v(v_pt, 'cost_of_sales') * 1.075), 'Payables ÷ cost of sales incl. VAT × days', 'How long the business takes to pay suppliers.', 'days'),
       ('Efficiency', 'Asset turnover (annualised)', private.ratio(private.v(v_t, 'revenue') * 365 / v_days, private.tot_assets(c)), private.ratio(private.v(v_pt, 'revenue') * 365 / v_days, private.tot_assets(p)),
         'Revenue × 365 ÷ days ÷ total assets', 'Sales generated by each ₦1 of assets.', 'x'),
-      ('Leverage', 'Debt to equity', private.ratio(private.v(c, 'Borrowings (current)') + private.v(c, 'Borrowings (non-current)') + private.v(c, 'Lease liabilities (current)')
-          + private.v(c, 'Lease liabilities (non-current)'), private.tot_equity(c)),
-        private.ratio(private.v(p, 'Borrowings (current)') + private.v(p, 'Borrowings (non-current)'), private.tot_equity(p)), 'Borrowings ÷ equity', 'How much of the business is funded by lenders.', 'x'),
+      ('Leverage', 'Debt to equity', private.ratio(private.v(c, 'Bank overdrafts') + private.v(c, 'Borrowings (current)') + private.v(c, 'Borrowings (non-current)')
+          + private.v(c, 'Lease liabilities (current)') + private.v(c, 'Lease liabilities (non-current)'), private.tot_equity(c)),
+        private.ratio(private.v(p, 'Bank overdrafts') + private.v(p, 'Borrowings (current)') + private.v(p, 'Borrowings (non-current)')
+          + private.v(p, 'Lease liabilities (current)') + private.v(p, 'Lease liabilities (non-current)'), private.tot_equity(p)),
+        'Borrowings, overdrafts and leases ÷ equity', 'How much of the business is funded by lenders.', 'x'),
       ('Leverage', 'Interest cover', private.ratio(private.v(v_t, 'operating_profit'), private.v(v_t, 'finance_costs')), private.ratio(private.v(v_pt, 'operating_profit'), private.v(v_pt, 'finance_costs')),
         'Operating profit ÷ finance costs', 'Times interest is covered by profit. Below 2 is tight.', 'x')
     ) t(g, n, cur, pri, f, rd, u);
@@ -803,7 +823,7 @@ $$;
 create or replace function private.cur_liabs(c jsonb) returns numeric
 language sql immutable set search_path = public, private as $$
   select coalesce(sum(private.v(c, l)), 0) from unnest(array['Trade and other payables', 'Contract liabilities', 'Current tax liabilities', 'Other statutory liabilities',
-    'Borrowings (current)', 'Lease liabilities (current)', 'Provisions (current)', 'Other current liabilities', 'Unreconciled balances (liabilities)']) l
+    'Bank overdrafts', 'Borrowings (current)', 'Lease liabilities (current)', 'Provisions (current)', 'Other current liabilities', 'Unreconciled balances (liabilities)']) l
 $$;
 create or replace function private.tot_assets(c jsonb) returns numeric
 language sql immutable set search_path = public, private as $$ select coalesce(sum(private.v(c, l)), 0) from unnest(private.asset_lines()) l $$;
@@ -1133,6 +1153,6 @@ revoke execute on function public.accounting_report(uuid, text, date, date, json
   public.close_books(uuid, date, jsonb, jsonb, text), public.close_year(uuid, date) from public, anon;
 revoke execute on function private.fy_start(uuid, date), private.balances_at(uuid, date), private.movement(uuid, date, date), private.acct_meta(uuid),
   private.sofp_map(uuid, date), private.pl_map(uuid, date, date), private.cash_flow_parts(uuid, date, date), private.cash_flow_rows(uuid, date, date, date, date),
-  private.soce_rows(uuid, date, date), private.note_rows(uuid, date, date, date, date), private.vat_rows(uuid, date, date),
+  private.soce_rows(uuid, date, date), private.note_rows(uuid, date, date, date, date, date), private.vat_rows(uuid, date, date),
   private.sales_analysis(uuid, date, date, text, boolean), private.cash_forecast(uuid, date), private.accrue_bills(uuid, date, public.members)
   from public, anon, authenticated;

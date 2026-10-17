@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useEffect, useId, type CSSProperties, type ReactElement, type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { tone } from '../lib/domain';
 import { photoUrl } from '../lib/supabase';
@@ -67,10 +67,19 @@ export function ModalHead({ title, sub, onClose, extra }: { title: ReactNode; su
 }
 
 export function Field({ label, req, error, children, hint, style }: { label: ReactNode; req?: boolean; error?: string | null; children: ReactNode; hint?: ReactNode; style?: CSSProperties }) {
+  // Tie the label to a lone input, select or textarea so screen readers announce it and a click on it focuses the control.
+  const autoId = useId();
+  let id: string | undefined;
+  let body = children;
+  if (isValidElement(children) && typeof children.type === 'string' && ['input', 'select', 'textarea'].includes(children.type)) {
+    const props = children.props as { id?: string };
+    id = props.id || autoId;
+    if (!props.id) body = cloneElement(children as ReactElement<{ id?: string }>, { id });
+  }
   return (
     <div style={style}>
-      <label className="field-label">{label}{req && <span className="req"> *</span>}</label>
-      {children}
+      <label className="field-label" htmlFor={id}>{label}{req && <span className="req"> *</span>}</label>
+      {body}
       {error ? <div className="err-text">{error}</div> : hint ? <div className="hint" style={{ marginTop: 6 }}>{hint}</div> : null}
     </div>
   );

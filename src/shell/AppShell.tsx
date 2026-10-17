@@ -7,20 +7,50 @@ import { initials } from '../lib/format';
 import { useNeedsAction } from './needsAction';
 import { InstallBanner } from '../components/InstallBanner';
 import { store } from '../lib/pwa';
+import { useInbox } from '../lib/api';
 
 // ---------- location picker state shared by Overview, Items and Insights ----------
 const LocCtx = createContext<{ loc: string; setLoc: (l: string) => void }>({ loc: 'ALL', setLoc: () => {} });
 export const useLoc = () => useContext(LocCtx);
 
 const TITLES: Record<string, string> = {
+  '/home': 'Home',
   '/inventory': 'Inventory', '/inventory/items': 'Items', '/inventory/receive': 'Receive stock', '/inventory/counts': 'Stock counts',
   '/inventory/reorder': 'Reorder', '/inventory/pricing': 'Pricing', '/inventory/insights': 'Insights', '/inventory/locations': 'Locations & staff', '/inventory/reports': 'Reports',
-  '/inventory/production': 'Production & jobs', '/inventory/month-end': 'Month-end close', '/inventory/migrate': 'Move to Counta',
-  '/assistant': 'AI Assistant', '/settings': 'Settings',
+  '/inventory/production': 'Production & jobs', '/inventory/month-end': 'Stock close', '/inventory/migrate': 'Move to Counta',
+  '/sell/till': 'Till', '/sell/sales': 'Sales', '/sell/customers': 'Customers', '/sell/orders': 'Orders & deliveries', '/sell/price-lists': 'Price lists', '/sell/shop': 'Online shop',
+  '/payments': 'Payments', '/purchases/bills': 'Bills', '/purchases/vendors': 'Vendors',
+  '/accounting/inbox': 'Books inbox', '/accounting/banking': 'Banking & reconciliation', '/accounting/statements': 'Financial statements',
+  '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close',
+  '/accounting/journals': 'Journals', '/assistant': 'AI Assistant', '/settings': 'Settings',
 };
+export const titleFor = (path: string) => TITLES[path] || TITLES[Object.keys(TITLES).filter((k) => path.startsWith(k + '/')).sort((x, y) => y.length - x.length)[0]] || 'Counta';
 const PICKER = new Set(['/inventory', '/inventory/items', '/inventory/insights']);
 const MAIN_APP: string = import.meta.env.VITE_MAIN_APP_URL || 'https://app.taxstreem.com';
 const SUPPORT_URL: string = import.meta.env.VITE_SUPPORT_URL || 'https://www.taxstreem.com';
+
+type Sub = [string, string, number?];
+function Group({ to, label, icon, subs, active, onClose, show = true }: { to: string; label: string; icon: string; subs?: Sub[]; active: boolean; onClose: () => void; show?: boolean }) {
+  if (!show) return null;
+  return (
+    <>
+      <NavLink to={to} className={() => 'nav-item' + (active ? ' active' : '')} onClick={onClose}>
+        <Icon name={icon} size={20} color={active ? '#111827' : '#6B7280'} /><span style={{ flex: 1 }}>{label}</span>
+        {!active && subs?.some((x) => (x[2] || 0) > 0) && <span className="nav-badge">{subs.reduce((a, x) => a + (x[2] || 0), 0)}</span>}
+      </NavLink>
+      {active && subs && (
+        <div className="nav-sub">
+          {subs.map(([path, l, badge]) => (
+            <NavLink key={path} to={path} end className={({ isActive }) => (isActive ? 'active' : '')} onClick={onClose}>
+              <span style={{ flex: 1 }}>{l}</span>
+              {(badge || 0) > 0 && <span className="nav-badge">{badge}</span>}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
 
 function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { data: inv } = useInventory();
@@ -31,20 +61,22 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [menu, setMenu] = useState(false);
   const populated = (inv?.items.length ?? 0) > 0;
   const current = memberships.find((m) => m.org_id === orgId);
-  const inInventory = loc.pathname.startsWith('/inventory');
-
-  const external = (label: string, icon: string, chev = false) => (
+  const p = loc.pathname;
+  const money = can(inv, 'keep_books') || can(inv, 'make_payments') || can(inv, 'see_margins');
+  const inbox = useInbox(money);
+  const ib = inbox.data;
+  const external = (label: string, icon: string) => (
     <a className="nav-item" href={MAIN_APP} target="_blank" rel="noreferrer" title={label + ' opens in the main TaxStreem app'}>
-      <Icon name={icon} size={20} color="#6B7280" /><span style={{ flex: 1 }}>{label}</span>
-      {chev && <Icon name="chevR" size={16} color="#9CA3AF" />}
+      <Icon name={icon} size={20} color="#6B7280" /><span style={{ flex: 1 }}>{label}</span><Icon name="external" size={14} color="#9CA3AF" />
     </a>
   );
-  const subs: [string, string, number][] = [
-    ['/inventory', 'Overview', 0], ['/inventory/items', 'Items', 0], ['/inventory/receive', 'Receive stock', badges.receive],
+  const invSubs: Sub[] = populated ? [
+    ['/inventory', 'Overview'], ['/inventory/items', 'Items'], ['/inventory/receive', 'Receive stock', badges.receive],
     ['/inventory/counts', 'Stock counts', badges.counts], ['/inventory/reorder', 'Reorder', badges.reorder], ['/inventory/pricing', 'Pricing', badges.pricing],
-    ['/inventory/production', 'Production & jobs', 0], ['/inventory/insights', 'Insights', 0], ['/inventory/reports', 'Reports', 0],
-    ['/inventory/month-end', 'Month-end close', 0], ['/inventory/locations', 'Locations & staff', badges.locations],
-  ];
+    ['/inventory/production', 'Production & jobs'], ['/inventory/insights', 'Insights'], ['/inventory/reports', 'Reports'],
+    ['/inventory/month-end', 'Stock close'], ['/inventory/locations', 'Locations & staff', badges.locations],
+  ] : [];
+  const questions = (ib?.questions?.length || 0) + Number(ib?.payments_to_confirm || 0);
   return (
     <aside className={'sidebar' + (open ? ' open' : '')} aria-label="Main navigation">
       <div className="sidebar-head">
@@ -53,27 +85,20 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
       </div>
       <div className="sidebar-section">MENU</div>
       <nav className="nav">
-        {external('Dashboard', 'house')}
-        {external('Transactions', 'receipt')}
-        {external('Accounting', 'book', true)}
-        {external('Invoices', 'file')}
-        {external('My Invoices', 'file')}
-        {external('Vendors', 'users')}
+        <Group to="/home" label="Home" icon="house" active={p === '/home'} onClose={onClose} />
+        <Group to="/sell/till" label="Sell" icon="receipt" active={p.startsWith('/sell')} onClose={onClose} show={can(inv, 'record_sales') || money}
+          subs={[['/sell/till', 'Till'], ['/sell/sales', 'Sales & invoices'], ['/sell/customers', 'Customers'], ['/sell/orders', 'Orders & deliveries'],
+            ['/sell/price-lists', 'Price lists'], ['/sell/shop', 'Online shop']]} />
+        <Group to="/payments" label="Payments" icon="card" active={p.startsWith('/payments')} onClose={onClose} show={can(inv, 'record_sales') || money}
+          subs={[['/payments', 'Wallet & payments', Number(ib?.payouts_to_approve || 0)]]} />
+        <Group to="/purchases/bills" label="Purchases" icon="file" active={p.startsWith('/purchases')} onClose={onClose} show={money || can(inv, 'approve_pos')}
+          subs={[['/purchases/bills', 'Bills', Number(ib?.bills_to_approve || 0)], ['/purchases/vendors', 'Vendors']]} />
+        <Group to="/inventory" label="Inventory" icon="package" active={p.startsWith('/inventory')} onClose={onClose} subs={invSubs} />
+        <Group to="/accounting/inbox" label="Accounting" icon="book" active={p.startsWith('/accounting')} onClose={onClose} show={money}
+          subs={[['/accounting/inbox', 'Books inbox', questions], ['/accounting/banking', 'Banking'], ['/accounting/statements', 'Financial statements'],
+            ['/accounting/ledgers', 'Ledgers & reports'], ['/accounting/cfo', 'CFO pack'], ['/accounting/journals', 'Journals'], ['/accounting/assets', 'Fixed assets', Number(ib?.assets_to_confirm || 0)],
+            ['/accounting/close', 'Period close']]} />
         {external('Taxes', 'landmark')}
-        {external('Filed Taxes', 'archive')}
-        <NavLink to="/inventory" end={false} className={() => 'nav-item' + (inInventory ? ' active' : '')} onClick={onClose}>
-          <Icon name="package" size={20} color={inInventory ? '#111827' : '#6B7280'} /><span style={{ flex: 1 }}>Inventory</span>
-        </NavLink>
-        {populated && (
-          <div className="nav-sub">
-            {subs.map(([to, label, badge]) => (
-              <NavLink key={to} to={to} end className={({ isActive }) => (isActive ? 'active' : '')} onClick={onClose}>
-                <span style={{ flex: 1 }}>{label}</span>
-                {badge > 0 && <span className="nav-badge">{badge}</span>}
-              </NavLink>
-            ))}
-          </div>
-        )}
         <NavLink to="/assistant" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} onClick={onClose}>
           {({ isActive }) => (<><Icon name="sparkles" size={20} color={isActive ? '#111827' : '#6B7280'} /><span>AI Assistant</span></>)}
         </NavLink>
@@ -94,7 +119,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           <div className="card rise" style={{ position: 'absolute', bottom: 76, left: 0, right: 0, boxShadow: 'var(--shadow-drawer)', padding: 6, zIndex: 5 }}>
             <div className="mini-label" style={{ padding: '8px 10px 4px' }}>Businesses</div>
             {memberships.map((m) => (
-              <button key={m.org_id} className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setOrgId(m.org_id); setMenu(false); nav('/inventory'); }}>
+              <button key={m.org_id} className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setOrgId(m.org_id); setMenu(false); nav('/home'); }}>
                 <span className="org-ini" style={{ width: 28, height: 28, fontSize: 10, borderRadius: 7 }}>{initials(m.name)}</span>
                 <span className="grow ellipsis">{m.name}{m.is_sample ? ' · sample' : ''}</span>
                 {m.org_id === orgId && <Icon name="check" size={16} color="#0072F5" />}
@@ -126,9 +151,9 @@ function Header({ onMenu }: { onMenu: () => void }) {
   const nav = useNavigate();
   const { total } = useNeedsAction();
   const populated = (inv?.items.length ?? 0) > 0;
-  const title = path === '/inventory' ? 'Inventory' : TITLES[path] || 'Inventory';
+  const title = titleFor(path);
   const owner = inv?.me.role === 'owner';
-  const roleLabel = !inv ? '' : owner ? 'Owner view' : `${inv.me.role === 'manager' ? 'Manager' : inv.me.role === 'cashier' ? 'Cashier' : 'Staff'} view · ${inv.me.display_name.split(' ')[0]}`;
+  const roleLabel = !inv ? '' : owner ? 'Owner view' : `${({ manager: 'Manager', cashier: 'Cashier', accountant: 'Accountant' } as Record<string, string>)[inv.me.role] || 'Staff'} view · ${inv.me.display_name.split(' ')[0]}`;
   return (
     <header className="header">
       <div className="row hdr-left" style={{ gap: 14, minWidth: 0, flex: '1 1 360px', flexWrap: 'wrap' }}>
@@ -148,7 +173,7 @@ function Header({ onMenu }: { onMenu: () => void }) {
           <Icon name="chat" size={18} color="#0072F5" /><span>Get Help</span>
         </a>
         <a className="icon-btn show-sm" href={SUPPORT_URL} target="_blank" rel="noreferrer" aria-label="Get help"><Icon name="chat" size={21} color="#0072F5" /></a>
-        <button className="icon-btn" onClick={() => nav('/inventory#needs-action')} aria-label={`${total} things need your attention`}>
+        <button className="icon-btn" onClick={() => nav('/home')} aria-label={`${total} things need your attention`}>
           <Icon name="bell" size={22} color="#4B5563" />
           {total > 0 && <span className="dot-badge">{total}</span>}
         </button>

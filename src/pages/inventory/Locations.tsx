@@ -12,7 +12,7 @@ import { Alert, Chip, Field, Label, Modal, ModalHead, SkeletonRows } from '../..
 import TransferModal from '../../components/TransferModal';
 import { ReminderCallModal } from '../../components/Calls';
 
-const ROLE: Record<string, string> = { owner: 'Owner', manager: 'Manager', staff: 'Staff', cashier: 'Cashier' };
+const ROLE: Record<string, string> = { owner: 'Owner', manager: 'Manager', staff: 'Staff', cashier: 'Cashier', accountant: 'Accountant' };
 
 export default function Locations() {
   const { data: inv } = useInventory();
@@ -121,11 +121,11 @@ export default function Locations() {
           </div>
         </div>
         <div className="tbl">
-          <div className="th hide-sm" style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1.4fr) repeat(9,minmax(84px,1fr))', gap: 8, padding: '10px 20px', minWidth: 1120, alignItems: 'end', fontSize: 10 }}>
+          <div className="th hide-sm" style={{ display: 'grid', gridTemplateColumns: `minmax(220px,1.4fr) repeat(${PERMS.length},minmax(84px,1fr))`, gap: 8, padding: '10px 20px', minWidth: 1320, alignItems: 'end', fontSize: 10 }}>
             <span>Person</span>{PERMS.map((p) => <span key={p.key} style={{ textAlign: 'center', lineHeight: 1.3 }}>{p.label}</span>)}
           </div>
           {inv.members.map((m) => (
-            <div key={m.id} className="perm-row" style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1.4fr) repeat(9,minmax(84px,1fr))', gap: 8, padding: '10px 20px', borderTop: '1px solid #F3F4F6', fontSize: 13, alignItems: 'center', minWidth: 1120 }}>
+            <div key={m.id} className="perm-row" style={{ display: 'grid', gridTemplateColumns: `minmax(220px,1.4fr) repeat(${PERMS.length},minmax(84px,1fr))`, gap: 8, padding: '10px 20px', borderTop: '1px solid #F3F4F6', fontSize: 13, alignItems: 'center', minWidth: 1320 }}>
               <div className="row" style={{ gap: 8, minWidth: 0 }}>
               <button className="row grow" style={{ gap: 10, border: 0, background: 'transparent', padding: 0, cursor: owner && m.role !== 'owner' ? 'pointer' : 'default', textAlign: 'left', font: 'inherit', minWidth: 0 }} onClick={() => owner && m.role !== 'owner' && setPerson(m)}>
                 <span style={{ width: 32, height: 32, borderRadius: 8, background: '#F3F4F6', display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700, color: '#4B5563', flex: 'none' }}>{initials(m.display_name)}</span>
@@ -260,7 +260,7 @@ function PersonModal({ member, onClose }: { member: Member | null; onClose: () =
           <Field label="Branch"><select className="input" value={f.location_id} onChange={(e) => set('location_id', e.target.value)}><option value="">All branches</option>{inv?.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
         </div>
         <Field label="Role" hint={roleNote[f.role]}>
-          <select className="input" value={f.role} onChange={(e) => set('role', e.target.value)}><option value="manager">Manager</option><option value="staff">Staff</option><option value="cashier">Cashier</option></select>
+          <select className="input" value={f.role} onChange={(e) => set('role', e.target.value)}><option value="manager">Manager</option><option value="staff">Staff</option><option value="cashier">Cashier</option><option value="accountant">Accountant</option></select>
         </Field>
         {member && <div className="hint">Changing the role resets permissions to that role's template. Fine-tune them in the matrix.</div>}
         {err && <Alert kind="red" icon="alert">{err}</Alert>}

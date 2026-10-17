@@ -610,7 +610,7 @@ begin
   if m.user_id is not null then
     perform private.notify(r.org_id, m.user_id, 'payment', 'Paid ₦' || to_char(v_amt, 'FM999,999,999,990.00') || coalesce(' for ' || s.number, ''),
       coalesce(d->'payer'->>'name', 'Customer') || ' paid by ' || case r.method when 'account' then 'transfer' when 'link' then 'payment link' else 'QR' end,
-      case when s.id is not null then '/sell/sales/' || s.id else '/sell/customers' end, 'paid-' || r.id);
+      case when s.id is not null then '/sell/sales?open=' || s.id else '/sell/customers' end, 'paid-' || r.id);
   end if;
   return jsonb_build_object('ok', true, 'request', private.request_json(r), 'collection', c.number, 'org_id', r.org_id,
     'sweep', case when r.sweep_status = 'pending' then jsonb_build_object('barter_id', w.barter_id, 'amount', v_amt - v_fee, 'reference', 'SWP-' || r.tx_ref) end);

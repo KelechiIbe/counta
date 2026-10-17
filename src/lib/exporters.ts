@@ -335,3 +335,187 @@ export function itemsXlsx(inv: Inventory) {
   });
   return buildTemplate(inv.org.industry, inv.locations, inv.org.name, rows);
 }
+
+// ---------- the books: statements and ledgers ----------
+// Statements carry _style (heading, subheading, line, subtotal, total, text, warning) and _indent on each row. Negative
+// amounts print in brackets, as accountants expect; a zero prints as a dash.
+export type StyledRow = Record<string, unknown> & { _style?: string; _indent?: number };
+export interface AccountsSheet { meta: ReportMeta; cols: RCol[]; rows: StyledRow[]; extra?: string[] }
+const ACC_FMT = '#,##0.00;(#,##0.00);"–"';
+
+function addAccountsSheet(wb: any, s: AccountsSheet) {
+  const { meta, cols, rows } = s;
+  const extra = s.extra || [];
+  const styled = rows.some((r) => r._style);
+  const ws = wb.addWorksheet(meta.title.replace(/[*?:\\/[\]]/g, '').slice(0, 31), {
+    views: [{ state: 'frozen', ySplit: 5 + extra.length }],
+    pageSetup: { orientation: cols.length > 6 ? 'landscape' : 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 },
+  });
+  ws.getCell('A1').value = meta.org; ws.getCell('A1').font = { bold: true, size: 14, color: { argb: INK } };
+  ws.getCell('A2').value = meta.title; ws.getCell('A2').font = { bold: true, size: 12, color: { argb: BLUE } };
+  ws.getCell('A3').value = `${meta.period} · ${meta.branch} · generated ${meta.generated} by ${meta.by}`; ws.getCell('A3').font = { size: 9, color: { argb: 'FF6B7280' } };
+  extra.forEach((l, i) => { const cl = ws.getCell(`A${4 + i}`); cl.value = l; cl.font = { size: 9, italic: true, color: { argb: 'FF374151' } }; });
+  const hr = 5 + extra.length;
+  const header = ws.getRow(hr);
+  cols.forEach((col, i) => {
+    const cell = header.getCell(i + 1);
+    cell.value = col.label;
+    cell.font = { bold: true, color: { argb: styled ? INK : 'FFFFFFFF' }, size: 10 };
+    if (!styled) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+    else cell.border = { bottom: { style: 'thin', color: { argb: INK } } };
+    const numeric = col.type && col.type !== 'text' && col.type !== 'date';
+    cell.alignment = { vertical: 'middle', wrapText: true, horizontal: numeric ? 'right' : 'left' };
+    ws.getColumn(i + 1).width = i === 0 && styled ? 64 : widthFor(col);
+    if (col.type === 'money') ws.getColumn(i + 1).numFmt = ACC_FMT;
+    else { const f = fmtFor(col.type); if (f) ws.getColumn(i + 1).numFmt = f; }
+    if (col.type === 'date') ws.getColumn(i + 1).numFmt = 'dd/mm/yyyy';
+  });
+  header.height = 30;
+  rows.forEach((r, ri) => {
+    const row = ws.getRow(hr + 1 + ri);
+    const st = r._style || 'line';
+    cols.forEach((col, i) => { row.getCell(i + 1).value = toCell(r[col.key], col.type) as any; });
+    const first = row.getCell(1);
+    first.alignment = { indent: Number(r._indent || 0) * 2, wrapText: st === 'text', vertical: 'top' };
+    if (st === 'heading') { row.font = { bold: true, size: 11, color: { argb: INK } }; row.height = 20; }
+    else if (st === 'subheading') row.font = { bold: true, italic: true, color: { argb: 'FF374151' } };
+    else if (st === 'subtotal' || st === 'total') {
+      row.font = { bold: true };
+      cols.forEach((col, i) => {
+        if (col.type !== 'money') return;
+        row.getCell(i + 1).border = st === 'total'
+          ? { top: { style: 'thin', color: { argb: INK } }, bottom: { style: 'double', color: { argb: INK } } }
+          : { top: { style: 'thin', color: { argb: INK } } };
+      });
+    } else if (st === 'warning') row.font = { color: { argb: 'FFDC2626' } };
+    else if (st === 'text') { row.font = { size: 10, color: { argb: 'FF374151' } }; ws.mergeCells(hr + 1 + ri, 1, hr + 1 + ri, cols.length); row.height = Math.min(120, 15 * Math.ceil(String(r[cols[0].key] || '').length / 110)); }
+  });
+  const last = hr + rows.length;
+  if (!styled && rows.length && cols.some((cl) => cl.total)) {
+    const tr = ws.getRow(last + 1);
+    tr.getCell(1).value = 'Total';
+    cols.forEach((col, i) => {
+      if (!col.total) return;
+      const L = colLetter(i);
+      const result = rows.reduce((a, r) => a + (Number(r[col.key]) || 0), 0);
+      tr.getCell(i + 1).value = { formula: `SUBTOTAL(9,${L}${hr + 1}:${L}${last})`, result: Math.round(result * 100) / 100 } as any;
+      tr.getCell(i + 1).border = { top: { style: 'thin', color: { argb: INK } }, bottom: { style: 'double', color: { argb: INK } } };
+    });
+    tr.font = { bold: true };
+  }
+  if (!styled) ws.autoFilter = { from: { row: hr, column: 1 }, to: { row: Math.max(hr, last), column: cols.length } };
+  if (meta.note) { const n = ws.getCell(`A${last + 3}`); n.value = meta.note; n.font = { size: 9, italic: true, color: { argb: 'FF6B7280' } }; }
+}
+
+export async function accountsXlsx(sheets: AccountsSheet[], cover?: ReportMeta): Promise<Blob> {
+  const ExcelJS = await excel();
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Counta · TaxStreem'; wb.created = new Date();
+  if (cover && sheets.length > 1) {
+    const ws = wb.addWorksheet('Contents');
+    ws.getCell('A1').value = cover.org; ws.getCell('A1').font = { bold: true, size: 14 };
+    ws.getCell('A2').value = cover.title; ws.getCell('A2').font = { bold: true, size: 12, color: { argb: BLUE } };
+    ws.getCell('A3').value = `${cover.period} · generated ${cover.generated} by ${cover.by}`; ws.getCell('A3').font = { size: 9, color: { argb: 'FF6B7280' } };
+    ws.getColumn(1).width = 50;
+    sheets.forEach((s, i) => {
+      const cell = ws.getCell(`A${5 + i}`);
+      const name = s.meta.title.replace(/[*?:\\/[\]]/g, '').slice(0, 31);
+      cell.value = { text: s.meta.title, hyperlink: `#'${name}'!A1` } as any;
+      cell.font = { color: { argb: BLUE }, underline: true };
+    });
+  }
+  for (const s of sheets) addAccountsSheet(wb, s);
+  const buf = await wb.xlsx.writeBuffer();
+  return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+const accText = (v: unknown, t?: string) => {
+  if (t === 'money') {
+    if (v == null || v === '') return '';
+    const n = Number(v);
+    if (!Number.isFinite(n)) return String(v);
+    if (Math.abs(n) < 0.005) return '-';
+    const s = Math.abs(n).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return n < 0 ? `(${s})` : s;
+  }
+  return pdfText(v, t);
+};
+
+export async function accountsPdf(sheets: AccountsSheet[], cover?: ReportMeta): Promise<Blob> {
+  const [{ jsPDF }, { autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
+  const wide = sheets.some((s) => s.cols.filter((c) => c.pdf !== false).length > 6);
+  const doc = new jsPDF({ orientation: wide ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
+  const footer = (title: string) => {
+    doc.setFontSize(7); doc.setTextColor(156, 163, 175);
+    doc.text(latin1(`Counta · TaxStreem · ${title}`), 36, H - 18);
+    doc.text(`Page ${(doc as any).internal.getCurrentPageInfo().pageNumber}`, W - 36, H - 18, { align: 'right' });
+  };
+  if (cover && sheets.length > 1) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(17, 24, 39); doc.text(latin1(cover.org), 36, 120);
+    doc.setFontSize(14); doc.setTextColor(0, 114, 245); doc.text(latin1(cover.title), 36, 146);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(75, 85, 99); doc.text(latin1(cover.period), 36, 166);
+    let y = 210;
+    doc.setFontSize(10); doc.setTextColor(17, 24, 39);
+    for (const s of sheets) { doc.text(latin1(s.meta.title), 36, y); y += 16; }
+    if (cover.note) { doc.setFontSize(8); doc.setTextColor(107, 114, 128); doc.text(doc.splitTextToSize(latin1(cover.note), W - 72), 36, y + 20); }
+    footer(cover.title);
+  }
+  sheets.forEach((s, si) => {
+    if (si > 0 || (cover && sheets.length > 1)) doc.addPage();
+    const pc = s.cols.filter((c) => c.pdf !== false);
+    const styled = s.rows.some((r) => r._style);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(17, 24, 39); doc.text(latin1(s.meta.org), 36, 40);
+    doc.setFontSize(11); doc.setTextColor(0, 114, 245); doc.text(latin1(s.meta.title), 36, 57);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(107, 114, 128);
+    doc.text(latin1(`${s.meta.period} · ${s.meta.branch} · generated ${s.meta.generated} by ${s.meta.by}`), 36, 70);
+    let y = 82;
+    for (const l of s.extra || []) { doc.text(latin1(l), 36, y); y += 11; }
+    const body: any[] = s.rows.map((r) => r._style === 'text'
+      ? [{ content: accText(r[pc[0].key], pc[0].type), colSpan: pc.length }]
+      : pc.map((c, i) => {
+        const v = accText(r[c.key], c.type);
+        return i === 0 && r._indent ? '    '.repeat(Number(r._indent)) + v : v;
+      }));
+    const totals = !styled && pc.some((c) => c.total) && s.rows.length
+      ? [pc.map((c, i) => (i === 0 ? 'Total' : c.total ? accText(s.rows.reduce((a, r) => a + (Number(r[c.key]) || 0), 0), c.type) : ''))] : undefined;
+    autoTable(doc as any, {
+      startY: y + 4,
+      head: [pc.map((c) => latin1(c.label))],
+      body,
+      foot: totals,
+      showFoot: 'lastPage',
+      theme: styled ? 'plain' : 'grid',
+      styles: { font: 'helvetica', fontSize: pc.length > 10 ? 6.5 : 8, cellPadding: styled ? 2.5 : 3, overflow: 'linebreak', lineColor: [230, 230, 230], lineWidth: styled ? 0 : 0.4 },
+      headStyles: styled ? { textColor: [17, 24, 39], fontStyle: 'bold', lineWidth: { bottom: 0.8 } as any, lineColor: [17, 24, 39] } : { fillColor: [0, 114, 245], textColor: 255, fontStyle: 'bold' },
+      footStyles: { fillColor: [243, 244, 246], textColor: [17, 24, 39], fontStyle: 'bold' },
+      columnStyles: Object.fromEntries(pc.map((c, i) => [i, { halign: c.type && c.type !== 'text' && c.type !== 'date' ? 'right' : 'left', ...(styled && i === 0 ? { cellWidth: 'auto' } : {}) }])) as any,
+      didParseCell: (d: any) => {
+        if (d.section !== 'body' || !styled) return;
+        const st = s.rows[d.row.index]?._style || 'line';
+        if (st === 'heading') { d.cell.styles.fontStyle = 'bold'; d.cell.styles.fontSize = 9.5; d.cell.styles.cellPadding = { top: 8, bottom: 3, left: 2.5, right: 2.5 }; }
+        if (st === 'subheading') d.cell.styles.fontStyle = 'bolditalic';
+        if (st === 'subtotal' || st === 'total') {
+          d.cell.styles.fontStyle = 'bold';
+          if (d.column.index > 0 && pc[d.column.index]?.type === 'money') {
+            d.cell.styles.lineWidth = st === 'total' ? { top: 0.6, bottom: 1.6 } : { top: 0.6 };
+            d.cell.styles.lineColor = [17, 24, 39];
+          }
+        }
+        if (st === 'warning') d.cell.styles.textColor = [220, 38, 38];
+        if (st === 'text') d.cell.styles.textColor = [55, 65, 81];
+      },
+      margin: { left: 36, right: 36, bottom: 40 },
+      didDrawPage: () => footer(s.meta.title),
+    });
+    if (s.meta.note) {
+      const fy = ((doc as any).lastAutoTable?.finalY || y) + 16;
+      doc.setFontSize(7.5); doc.setTextColor(107, 114, 128); doc.text(doc.splitTextToSize(latin1(s.meta.note), W - 72), 36, fy);
+    }
+  });
+  return doc.output('blob');
+}
+
+export function accountsCsv(cols: RCol[], rows: StyledRow[]): Blob {
+  return reportCsv(cols, rows.map((r) => (r._indent ? { ...r, [cols[0].key]: '  '.repeat(Number(r._indent)) + String(r[cols[0].key] ?? '') } : r)));
+}
