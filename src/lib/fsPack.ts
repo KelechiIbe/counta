@@ -11,7 +11,7 @@ export type Block =
   | { t: 'kv'; items: [string, string][] }
   | { t: 'sign'; items: { name: string; role: string }[]; date?: string }
   | { t: 'table'; cols: PCol[]; rows: PRow[] };
-export interface PSection { key: string; title: string; subtitle: string; blocks: Block[]; wide?: boolean; group: 'front' | 'statements' | 'notes' | 'other' }
+export interface PSection { key: string; title: string; subtitle: string; blocks: Block[]; wide?: boolean; group: 'front' | 'statements' | 'notes' | 'other' | 'tax' }
 export interface PackModel {
   orgName: string; legal: string[]; reportTitle: string; periodText: string; endText: string; framework: string; sections: PSection[];
   warnings: { level: string; text: string; key?: string }[]; generated: string; approvedOn: string | null; signers: { name: string; role: string; frc_number?: string }[];
@@ -134,6 +134,36 @@ export function buildPack(pack: any, signersOverride?: { name: string; role: str
   add({ key: 'five_year', group: 'other', title: 'Five-year financial summary', subtitle: `As at and for the years ended ${years.length ? years[0].label.slice(-4) : ''}`.trim(),
     blocks: statementBlocks((pack.five_year?.rows || []).map((r: any) => r._number ? { ...r, _style: 'line' } : r), fyCols) });
 
+  // The tax computation and capital allowance schedule go out with the statements, as the tax return needs them.
+  if (pack.tax_computation) {
+    const tc = pack.tax_computation;
+    const fig = tc.extra?.figures || {};
+    const set = tc.extra?.settings || {};
+    const flags: { level: string; text: string }[] = tc.extra?.flags || [];
+    const taxCols: PCol[] = [lineCol, { key: 'basis', label: 'Basis', type: 'text' }, money('current', `${cur}\n₦`)];
+    const intro: Block[] = [{ t: 'para', text: `Companies income tax computation under the Nigeria Tax Act 2025, from the statement of profit or loss ${periodText}. `
+      + `Each adjustment shows where its figure comes from. ${fig.small_company ? 'The company is a small company (turnover and fixed assets within the limits), so no companies income tax or development levy is charged.' : ''}`.trim() }];
+    const posted: Block[] = set.posted_ref ? [{ t: 'para', text: `The charge was posted to the accounts in ${set.posted_ref}.` }] : [];
+    const notes: Block[] = flags.length ? [{ t: 'heading', level: 3, text: 'Points to check' }, ...flags.map((f) => ({ t: 'para', text: f.text } as Block))] : [];
+    add({ key: 'tax_computation', group: 'tax', title: 'Tax computation', subtitle: periodText.replace(/^f/, 'F'),
+      blocks: [...intro, ...statementBlocks((tc.rows || []).map((r: any) => (r.memo ? { ...r, _style: 'line' } : r)), taxCols), ...posted, ...notes] });
+  }
+  if (pack.capital_allowances) {
+    const ca = pack.capital_allowances;
+    const cls: PCol[] = [{ key: 'line', label: 'Class', type: 'text' }, { key: 'rate_pct', label: 'Rate', type: 'pct' }, money('twdv_bf', 'Tax value b/f\n₦'), money('additions', 'Additions\n₦'),
+      money('disposals', 'Disposals\n₦'), money('allowance', 'Allowance\n₦'), money('balancing_charge', 'Balancing charge\n₦'), money('balancing_allowance', 'Balancing allowance\n₦'),
+      money('twdv_cf', 'Tax value c/f\n₦')];
+    const assets: any[] = ca.extra?.assets || [];
+    const assetRows = assets.map((a) => ({ ...a, line: `${a.number} ${a.name} (in use ${SHORT(a.in_use)})`, rate_pct: a.rate != null ? Number(a.rate) * 100 : null, _style: 'line', _indent: 0 }));
+    const months = Number(ca.extra?.months || 12);
+    add({ key: 'capital_allowances', group: 'tax', title: 'Capital allowances', subtitle: periodText.replace(/^f/, 'F'), wide: true, blocks: [
+      { t: 'para', text: `Annual allowances on cost at the First Schedule rates, a full year for each asset owned and in use at the end of the period${months < 12 ? `, shared for a period of ${months} months` : ''}, `
+        + `with ${Math.round(Number(ca.extra?.retention || 0.01) * 100)}% of cost kept until the asset is sold. Assets in use before the period have had one year's allowance for each earlier year end.` },
+      ...statementBlocks(ca.rows || [], cls),
+      ...(assetRows.length ? [{ t: 'heading', level: 3, text: 'Asset by asset' } as Block, ...statementBlocks(assetRows, [{ ...cls[0], label: 'Asset' }, ...cls.slice(1)])] : []),
+    ] });
+  }
+
   return {
     orgName: o.name || '', legal: [o.rc_number ? `Company registration number ${String(o.rc_number).replace(/^RC[\s:]*/i, 'RC ')}` : '', o.tin ? `Tax identification number ${o.tin}` : ''].filter(Boolean),
     reportTitle: 'Financial statements', periodText, endText, framework, sections, warnings: pack.warnings || [], generated: pack.generated_at || new Date().toISOString(), approvedOn,
@@ -150,4 +180,5 @@ export function signerItems(signers: { name: string; role: string; frc_number?: 
 export const SECTION_TITLES: Record<string, string> = {
   corporate: 'Corporate information', directors_report: "Directors' report", responsibilities: "Directors' responsibilities", sopl: 'Profit or loss',
   sofp: 'Financial position', soce: 'Changes in equity', cash_flow: 'Cash flows', notes: 'Notes', value_added: 'Value added', five_year: 'Five-year summary',
+  tax_computation: 'Tax computation', capital_allowances: 'Capital allowances',
 };

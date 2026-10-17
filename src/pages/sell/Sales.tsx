@@ -149,7 +149,7 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
             {s.viewed_at && <div className="faint" style={{ fontSize: 12 }}>The customer opened it {when(s.viewed_at)}.</div>}
             <SaleLines sale={s} />
             <PaymentsList sale={s} />
-            {(s.credit_notes || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Returns</div>{s.credit_notes.map((c: any) => <div key={c.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{c.number} · {c.notes || ''}</span><b className="num">{N2(c.total)}</b></div>)}</div>}
+            {(s.credit_notes || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Credit notes</div>{s.credit_notes.map((c: any) => <div key={c.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{c.number} · {c.notes || ''}</span><b className="num">{N2(c.total)}</b></div>)}</div>}
             {(s.deliveries || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Delivery</div>{s.deliveries.map((d: any) => <div key={d.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{d.number} · {d.address || ''}</span><StatusChip s={d.status} /></div>)}</div>}
             {s.notes && <div className="muted" style={{ fontSize: 13 }}>{s.notes}</div>}
             <div className="row wrap">
@@ -204,6 +204,87 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
 }
 
 function ReturnModal({ sale, onClose, onDone }: { sale: Sale; onClose: () => void; onDone: () => void }) {
+  const [mode, setMode] = useState<'goods' | 'amount'>((sale.lines || []).some((l) => l.kind === 'goods' && Number(l.qty) - Number(l.returned_qty) > 0) ? 'goods' : 'amount');
+  if (mode === 'amount') return <CreditAmount sale={sale} onClose={onClose} onDone={onDone} onGoods={() => setMode('goods')} />;
+  return <ReturnGoods sale={sale} onClose={onClose} onDone={onDone} onAmount={() => setMode('amount')} />;
+}
+
+// A credit note for an amount with nothing coming back: a price reduction, a discount agreed after the sale, a
+// service not delivered. VAT comes back at each line's own rate.
+function CreditAmount({ sale, onClose, onDone, onGoods }: { sale: Sale; onClose: () => void; onDone: () => void; onGoods: () => void }) {
+  const { data: inv } = useInventory();
+  const { orgId } = useSession();
+  const toast = useToast();
+  const [info, setInfo] = useState<any>(null);
+  const [byLine, setByLine] = useState(false);
+  const [whole, setWhole] = useState('');
+  const [amt, setAmt] = useState<Record<string, string>>({});
+  const [reason, setReason] = useState('');
+  const [refund, setRefund] = useState({ method: 'none', amount: '', bank_account_id: '' });
+  const [own, setOwn] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { rpc<any>('sale_creditable', { p_sale: sale.id }).then(setInfo).catch((e) => toast((e as Error).message, 'err')); }, [sale.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { rpc<any>('get_till', { p_org: orgId, p_location: sale.location_id || inv?.locations[0]?.id }).then((t) => setOwn(t.accounts || [])).catch(() => {}); }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lines: any[] = (info?.lines || []).filter((l: any) => Number(l.creditable) > 0);
+  const pool = lines.reduce((a, l) => a + Number(l.creditable), 0);
+  const total = byLine ? lines.reduce((a, l) => a + (money(amt[l.id]) || 0), 0) : money(whole) || 0;
+  const vat = byLine ? lines.reduce((a, l) => a + (Number(l.gross) ? (money(amt[l.id]) || 0) * Number(l.vat) / Number(l.gross) : 0), 0)
+    : pool ? lines.reduce((a, l) => a + total * (Number(l.creditable) / pool) * (Number(l.gross) ? Number(l.vat) / Number(l.gross) : 0), 0) : 0;
+  const due = Number(info?.due ?? sale.balance);
+  const over = Math.max(0, total - due);
+  async function go() {
+    setBusy(true);
+    try {
+      const r = await rpc<any>('credit_sale', { p_sale: sale.id, p: {
+        reason, ...(byLine ? { lines: lines.filter((l) => (money(amt[l.id]) || 0) > 0).map((l) => ({ sale_line_id: l.id, amount: money(amt[l.id]) })) } : { amount: total }),
+        refund: refund.method === 'none' ? {} : { method: refund.method, amount: money(refund.amount) ?? over, bank_account_id: refund.bank_account_id || null } } });
+      toast(`${r.credit_note?.number || 'Credit note'} raised${Number(r.refunded) > 0 ? ` · ${N2(r.refunded)} refunded` : ''}${Number(r.store_credit) > 0 ? ` · ${N2(r.store_credit)} kept as credit` : ''}`);
+      onDone(); onClose();
+    } catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(false);
+  }
+  return (
+    <Modal onClose={onClose} width={600}>
+      <ModalHead title={`Credit note on ${sale.number}`} sub="For a price reduction, a discount agreed after the sale or a service not delivered. Nothing comes back into stock." onClose={onClose} />
+      <div className="modal-body">
+        <div className="row wrap" style={{ gap: 6 }}>
+          <button className="pill on" type="button">Credit an amount</button>
+          {(sale.lines || []).some((l) => l.kind === 'goods') && <button className="pill" type="button" onClick={onGoods}>Goods came back</button>}
+        </div>
+        {!info ? <Spinner /> : !lines.length ? <Alert kind="yellow" icon="info">Everything on {sale.number} has already been credited.</Alert> : <>
+          <label className="check" style={{ fontSize: 13 }}><input type="checkbox" checked={byLine} onChange={(e) => setByLine(e.target.checked)} />Say how much comes off each line</label>
+          {byLine ? lines.map((l) => (
+            <div key={l.id} className="row" style={{ justifyContent: 'space-between', gap: 10 }}>
+              <span className="grow ellipsis">{l.description}<span className="faint" style={{ fontSize: 12 }}> · up to {N2(l.creditable)}{Number(l.vat) > 0 ? ` (VAT ${(Number(l.vat_rate) * 100).toFixed(1)}%)` : ''}</span></span>
+              <input className="input input-sm num" inputMode="decimal" style={{ width: 120 }} placeholder="0.00" value={amt[l.id] || ''} onChange={(e) => setAmt({ ...amt, [l.id]: e.target.value })} aria-label={`Credit on ${l.description}`} />
+            </div>
+          )) : (
+            <Field label="Amount to credit, VAT included" hint={`Up to ${N2(pool)}. Shared over the lines in proportion to their value.`}>
+              <input className="input num" inputMode="decimal" autoFocus value={whole} onChange={(e) => setWhole(e.target.value)} />
+            </Field>
+          )}
+          <Field label="Reason" hint="Printed on the credit note."><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Price agreed lower, installation not done…" /></Field>
+          <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: refund.method !== 'none' ? '1fr 1fr' : '1fr', gap: 10 }}>
+            <Field label="What happens to it"><select className="input" value={refund.method} onChange={(e) => setRefund({ ...refund, method: e.target.value })}>
+              <option value="none">Reduce what they owe, keep the rest as their credit</option><option value="cash">Refund in cash</option><option value="transfer">Refund by transfer</option></select></Field>
+            {refund.method !== 'none' && <Field label="Refund amount" hint={over > 0 ? `${N2(over)} is more than they still owe.` : 'What they still owe is cleared first.'}>
+              <input className="input num" inputMode="decimal" value={refund.amount} placeholder={over.toFixed(2)} onChange={(e) => setRefund({ ...refund, amount: e.target.value })} /></Field>}
+          </div>
+          {refund.method === 'transfer' && <Field label="Paid from"><select className="input" value={refund.bank_account_id} onChange={(e) => setRefund({ ...refund, bank_account_id: e.target.value })}>
+            <option value="">Choose the account</option>{own.filter((a) => a.kind !== 'cash').map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>}
+          <div className="row" style={{ justifyContent: 'space-between', background: '#FAFAFA', borderRadius: 10, padding: 10, fontSize: 13 }}>
+            <span>Credit note {N2(total)}{vat > 0 ? <span className="faint"> · output VAT reduced by about {N2(vat)}</span> : null}</span>
+            <span className="faint">{due > 0 ? `${N2(Math.min(due, total))} comes off what is owed` : 'Nothing is owed on it'}</span>
+          </div>
+        </>}
+      </div>
+      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy || total <= 0 || total > pool + 0.004 || reason.trim().length < 3 || (refund.method === 'transfer' && !refund.bank_account_id)} onClick={go}>Raise credit note</button></div>
+    </Modal>
+  );
+}
+
+function ReturnGoods({ sale, onClose, onDone, onAmount }: { sale: Sale; onClose: () => void; onDone: () => void; onAmount: () => void }) {
   const toast = useToast();
   const [qty, setQty] = useState<Record<string, string>>({});
   const [restock, setRestock] = useState(true);
@@ -226,6 +307,10 @@ function ReturnModal({ sale, onClose, onDone }: { sale: Sale; onClose: () => voi
     <Modal onClose={onClose} width={560}>
       <ModalHead title={`Return from ${sale.number}`} sub="Raises a credit note. It clears what the customer still owes first; anything over that is refunded or kept as their credit." onClose={onClose} />
       <div className="modal-body">
+        <div className="row wrap" style={{ gap: 6 }}>
+          <button className="pill" type="button" onClick={onAmount}>Credit an amount</button>
+          <button className="pill on" type="button">Goods came back</button>
+        </div>
         {lines.map((l) => (
           <div key={l.id} className="row" style={{ justifyContent: 'space-between', gap: 10 }}>
             <span className="grow ellipsis">{l.description}<span className="faint" style={{ fontSize: 12 }}> · {Number(l.qty) - Number(l.returned_qty)} {l.unit_label} can come back</span></span>

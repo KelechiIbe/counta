@@ -30,9 +30,14 @@ export async function packDocx(m: PackModel): Promise<Blob> {
     const W = width(wide);
     const amountCols = b.cols.filter(isAmount).length;
     const noteW = b.cols.some((c) => c.type === 'note') ? 700 : 0;
-    const amtW = Math.min(1900, Math.floor((W * (wide ? 0.62 : 0.5) - noteW) / Math.max(1, amountCols)));
-    const firstW = W - noteW - amtW * amountCols;
-    const widths = b.cols.map((c, i) => (i === 0 ? firstW : c.type === 'note' ? noteW : amtW));
+    // A schedule of many figure columns (capital allowances) gives the figures most of the page.
+    const amtW = Math.min(1900, Math.floor((W * (amountCols >= 5 ? 0.82 : wide ? 0.62 : 0.5) - noteW) / Math.max(1, amountCols)));
+    // Text after the first column (the basis of a tax adjustment) shares the space left over with it.
+    const extraText = b.cols.filter((c, i) => i > 0 && !isAmount(c) && c.type !== 'note').length;
+    const textW = W - noteW - amtW * amountCols;
+    const firstW = extraText ? Math.floor(textW * 0.55) : textW;
+    const otherW = extraText ? Math.floor((textW - firstW) / extraText) : 0;
+    const widths = b.cols.map((c, i) => (i === 0 ? firstW : c.type === 'note' ? noteW : isAmount(c) ? amtW : otherW));
     const head = new TableRow({ tableHeader: true, children: b.cols.map((c, i) => new TableCell({
       width: { size: widths[i], type: WidthType.DXA }, borders: { top: NONE, left: NONE, right: NONE, bottom: isAmount(c) ? thin : NONE },
       children: [new Paragraph({ alignment: isAmount(c) ? AlignmentType.RIGHT : c.type === 'note' ? AlignmentType.CENTER : AlignmentType.LEFT, children: runs(c.label, { bold: true, size: 17 }) })],
@@ -214,14 +219,14 @@ export async function packPdf(m: PackModel): Promise<Blob> {
         const avail = W() - 2 * M;
         const nAmt = cols.filter(isAmount).length;
         const noteW = cols.some((c) => c.type === 'note') ? 34 : 0;
-        const amtW = Math.min(96, (avail * (wide ? 0.62 : 0.5) - noteW) / Math.max(1, nAmt));
+        const amtW = Math.min(96, (avail * (nAmt >= 5 ? 0.82 : wide ? 0.62 : 0.5) - noteW) / Math.max(1, nAmt));
         autoTable(doc as any, {
           startY: y, margin: { left: M, right: M, bottom: BOTTOM }, theme: 'plain', showHead: 'everyPage', rowPageBreak: 'avoid',
-          styles: { fontSize: 8.8, cellPadding: { top: 2.6, bottom: 2.6, left: 3, right: 3 }, textColor: [31, 41, 55], overflow: 'linebreak', valign: 'bottom' },
+          styles: { fontSize: nAmt >= 7 ? 8 : 8.8, cellPadding: { top: 2.6, bottom: 2.6, left: 3, right: 3 }, textColor: [31, 41, 55], overflow: 'linebreak', valign: 'bottom' },
           headStyles: { fontStyle: 'bold', textColor: [17, 24, 39], fontSize: 8.3 },
           columnStyles: Object.fromEntries(cols.map((c, i) => [i, {
             halign: isAmount(c) ? 'right' : c.type === 'note' ? 'center' : 'left',
-            cellWidth: i === 0 ? 'auto' : c.type === 'note' ? noteW : amtW,
+            cellWidth: i === 0 || (!isAmount(c) && c.type !== 'note') ? 'auto' : c.type === 'note' ? noteW : amtW,
           }])) as any,
           head: [cols.map((c) => pdfSafe(c.label))],
           body: b.rows.map((r) => cols.map((c) => pdfSafe(cellText(c, r.cells[c.key])))),
@@ -315,6 +320,8 @@ export async function packXlsx(m: PackModel): Promise<Blob> {
     });
     ws.getColumn(1).width = s.key === 'corporate' ? 34 : 62;
     for (let i = 2; i <= nCols; i++) ws.getColumn(i).width = s.key === 'corporate' ? 70 : 17;
+    // A text column after the first (the basis on the tax computation) is given room to read.
+    tables.forEach((t) => t.cols.forEach((c, i) => { if (i > 0 && c.type === 'text') ws.getColumn(i + 1).width = 56; }));
     let r = 1;
     const merged = (text: string, font: Record<string, unknown>, opts: { wrap?: boolean; indent?: number; height?: number } = {}) => {
       ws.mergeCells(r, 1, r, nCols);
@@ -375,7 +382,7 @@ export async function packXlsx(m: PackModel): Promise<Blob> {
               if (st === 'subtotal' || st === 'total') cell.border = { top: { style: 'thin', color: { argb: 'FF' + LINE } }, ...(st === 'total' ? { bottom: { style: 'double', color: { argb: 'FF' + LINE } } } : {}) };
             } else {
               cell.value = v === null || v === undefined ? null : String(v);
-              cell.alignment = { horizontal: c.type === 'note' ? 'center' : 'left', indent: i === 0 && row.indent ? row.indent * 2 : undefined, wrapText: i === 0, vertical: 'top' };
+              cell.alignment = { horizontal: c.type === 'note' ? 'center' : 'left', indent: i === 0 && row.indent ? row.indent * 2 : undefined, wrapText: i === 0 || c.type === 'text', vertical: 'top' };
             }
           });
           if (st === 'heading' || st === 'subtotal' || st === 'total') xr.font = { bold: true };
@@ -395,4 +402,5 @@ const xlEsc = (s: string) => s.replace(/&/g, '&&');
 const SHEET: Record<string, string> = {
   corporate: 'Corporate information', directors_report: "Directors report", responsibilities: "Directors responsibilities", sopl: 'Profit or loss and OCI',
   sofp: 'Financial position', soce: 'Changes in equity', cash_flow: 'Cash flows', notes: 'Notes', value_added: 'Value added', five_year: 'Five-year summary',
+  tax_computation: 'Tax computation', capital_allowances: 'Capital allowances',
 };

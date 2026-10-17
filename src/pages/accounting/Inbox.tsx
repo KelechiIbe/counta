@@ -79,6 +79,7 @@ function Question({ p }: { p: AiProposal }) {
   const [remember, setRemember] = useState(true);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [other, setOther] = useState(false);
   const canAnswer = can(inv, 'keep_books');
   async function act(fn: () => Promise<any>, ok: string) {
     setBusy(true);
@@ -124,6 +125,31 @@ function Question({ p }: { p: AiProposal }) {
   }
   const l = p.line || {};
   const amt = Number(l.amount || 0);
+  const match = p.proposal?.kind === 'invoice_match' || p.proposal?.kind === 'bill_match' ? p.proposal : null;
+  if (match && !other) {
+    return (
+      <div className="card card-pad stack" style={{ gap: 10 }}>
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 600 }}>{p.question || p.title}</div>
+            <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{fmtDay(l.date)} · {l.account} · “{l.narration}”</div>
+          </div>
+          <b className="num" style={{ color: amt > 0 ? '#15803D' : '#111827', whiteSpace: 'nowrap' }}>{amt > 0 ? '+' : '−'}{N2(Math.abs(amt))}</b>
+        </div>
+        <div className="muted" style={{ fontSize: 13 }}>{match.kind === 'invoice_match' ? `${match.customer_name} has one open invoice for this amount (${match.number}), as it stands or less WHT.`
+          : `${match.vendor_name} has one open bill for this amount (${match.number}), as it stands or less WHT.`} Nothing in the narration names it, so a person confirms.</div>
+        {canAnswer ? (
+          <div className="row wrap">
+            <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => act(() => rpc('resolve_proposal', { p_proposal: p.id, p: { action: 'approve' } }), `${match.number} settled`)}>
+              Yes, it {match.kind === 'invoice_match' ? 'pays' : 'paid'} {match.number}
+            </button>
+            <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => { setOther(true); setCode(''); }}>No, it was something else</button>
+            <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => answer('ignore')} title="A duplicate on the statement, or a transfer that was reversed">Not a real transaction</button>
+          </div>
+        ) : <div className="faint" style={{ fontSize: 12 }}>Someone who keeps the books answers these.</div>}
+      </div>
+    );
+  }
   return (
     <div className="card card-pad stack" style={{ gap: 10 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>

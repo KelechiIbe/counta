@@ -1,4 +1,4 @@
-// Counta AI: Gemini-backed invoice reading, Martina answers and voice capture.
+// Counta AI: Gemini-backed invoice and bank statement reading, Martina answers and voice capture.
 // Gemini runs on Vertex AI, signed in with Application Default Credentials: the Edge Function secret
 // GOOGLE_APPLICATION_CREDENTIALS_JSON, with GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION (see google.ts). Without it, a
 // Gemini API key (GEMINI_API_KEY, Edge Function secret or Vault) is used. GEMINI_MODEL is optional (defaults to gemini-3.8-flash).
@@ -126,9 +126,11 @@ const INVOICE_SCHEMA = {
   required: ['lines', 'vat_charged', 'prices_include_vat'],
 };
 
-async function readInvoice(sb: SupabaseClient, admin: SupabaseClient, body: any, memberId: string | null) {
+async function readInvoice(sb: SupabaseClient, admin: SupabaseClient, body: any, userId: string) {
   const { data: r, error } = await sb.from('receipts').select('*').eq('id', body.receipt_id).single();
   if (error || !r) return json({ ok: false, error: 'Receipt not found or not yours.' }, 404);
+  const { data: me } = await sb.from('members').select('id').eq('user_id', userId).eq('org_id', r.org_id).maybeSingle();
+  const memberId: string | null = me?.id ?? null;
   if (!['reading', 'needs_review'].includes(r.status)) return json({ ok: false, error: 'This receipt is already ' + r.status }, 409);
   const fail = async (msg: string, reason = 'error') => {
     await sb.from('receipts').update({ status: 'needs_review', ai_error: msg }).eq('id', r.id);
@@ -400,6 +402,79 @@ INDUSTRY: ${String(body.industry || 'retail')}`,
   }
 }
 
+// ---------------------------------------------------------------- bank statements
+// Reads a bank statement the column reader could not: a scanned PDF (page images) or an unusual layout (page text with
+// the columns kept apart by " | "). Up to 8 pages a call; the app sends a long statement in parts and joins them.
+const STATEMENT_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    bank_name: S.nstr, account_number: { type: 'STRING', nullable: true, description: 'Digits only, usually 10' }, account_name: S.nstr, currency: S.nstr,
+    period_from: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' }, period_to: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' },
+    opening_balance: { type: 'NUMBER', nullable: true, description: 'Balance before the first transaction, negative if overdrawn' },
+    closing_balance: { type: 'NUMBER', nullable: true, description: 'Balance after the last transaction, negative if overdrawn' },
+    order: { type: 'STRING', enum: ['oldest_first', 'newest_first'] },
+    lines: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          date: { type: 'STRING', description: 'Transaction (posting) date, YYYY-MM-DD' },
+          description: { type: 'STRING', description: 'The full narration, wrapped lines joined' },
+          reference: S.nstr,
+          debit: { type: 'NUMBER', nullable: true, description: 'Money out, positive naira' },
+          credit: { type: 'NUMBER', nullable: true, description: 'Money in, positive naira' },
+          balance: { type: 'NUMBER', nullable: true, description: 'Running balance after this line, negative if overdrawn' },
+        },
+        required: ['date', 'description'],
+      },
+    },
+    notes: { type: 'STRING', nullable: true, description: 'Anything the person should check, in one plain sentence' },
+  },
+  required: ['lines', 'order'],
+};
+
+async function readStatement(body: any) {
+  if (!aiOn()) return json(notConfigured());
+  const pages: string[] = (Array.isArray(body.pages) ? body.pages : []).slice(0, 8).map((p: unknown) => String(p ?? '').slice(0, 30000)).filter(Boolean);
+  const images: { mime: string; data: string }[] = (Array.isArray(body.images) ? body.images : []).slice(0, 8)
+    .filter((i: any) => i && /^image\/(jpeg|png|webp)$/.test(String(i.mime)) && typeof i.data === 'string' && i.data.length < 6_000_000);
+  if (!pages.length && !images.length) return json({ ok: false, error: 'Nothing to read.' }, 400);
+  const first = Number(body.first_page || 1);
+  const system = `You read Nigerian bank statements so their transactions can be matched in a business's books.
+Statements come from GTBank, Access, Zenith, First Bank, UBA, Fidelity, FCMB, Union, Sterling, Stanbic IBTC, Wema (ALAT), Polaris, Ecobank, Keystone,
+Providus, Jaiz, Moniepoint, OPay, Kuda, PalmPay and others, each laid out its own way. Column names vary: Trans Date, Posted Date, Date Posted,
+Value Date; Narration, Description, Details, Remarks; Reference, Ref No, Cheque No; Debit, Debits, Withdrawals, Money Out; Credit, Credits,
+Deposits, Lodgements, Money In; Balance. Some use one Amount column with a sign, "DR"/"CR" after the figure, or a separate Dr/Cr column.
+Rules:
+- One entry in "lines" for every transaction, in the order printed. Join a narration that wraps onto the next printed line.
+- Skip page headers and footers, repeated column headings, "Opening Balance", "Balance B/F", "Closing Balance", "Balance C/F", totals and subtotals:
+  put the opening and closing figures in opening_balance and closing_balance instead.
+- date is the transaction or posting date, not the value date. Dates are day first (01/10/2026 is 1 October 2026).
+- debit is money out and credit is money in, both as positive numbers; leave the other one null. Never move a figure between the two.
+- balance is the running balance printed on the line, negative when the statement shows it overdrawn (DR, a minus sign or brackets).
+- order: newest_first when the printed dates run backwards.
+- Copy figures exactly as printed. Never invent a line, a date or an amount; when a figure is unreadable leave it null and say so in notes.
+${first > 1 ? `These are pages from page ${first} on: the statement's header may not be here, so leave the header fields null unless they are printed on these pages.` : ''}`;
+  const parts: Part[] = [];
+  if (pages.length) parts.push({ text: pages.map((p, i) => `PAGE ${first + i}:\n${p}`).join('\n\n') });
+  for (const im of images) parts.push({ inlineData: { mimeType: im.mime, data: im.data } });
+  parts.push({ text: 'Read this statement.' });
+  try {
+    const { data, model } = await gemini(system, parts, STATEMENT_SCHEMA, 0, { thinking: 'low' });
+    const day = (v: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+    const lines = (data.lines || []).map((l: any) => ({
+      date: day(l.date), description: String(l.description || '').replace(/\s+/g, ' ').trim().slice(0, 500), reference: l.reference ? String(l.reference).slice(0, 120) : null,
+      debit: Number.isFinite(Number(l.debit)) && l.debit !== null ? Math.abs(Number(l.debit)) : null,
+      credit: Number.isFinite(Number(l.credit)) && l.credit !== null ? Math.abs(Number(l.credit)) : null,
+      balance: Number.isFinite(Number(l.balance)) && l.balance !== null ? Number(l.balance) : null,
+    }));
+    return json({ ok: true, model, ...data, lines, period_from: day(data.period_from), period_to: day(data.period_to),
+      account_number: data.account_number ? String(data.account_number).replace(/\D/g, '') || null : null });
+  } catch (e) {
+    return json({ ok: false, reason: 'error', error: (e as Error).message });
+  }
+}
+
 // ---------------------------------------------------------------- VAT treatment of items (Numens, Gemini until Numens is connected)
 // Compares secrets in constant time.
 function sameSecret(a: string, b: string) {
@@ -560,15 +635,13 @@ Deno.serve(async (req) => {
         return json(await applyVat(admin, [{ id: it.id, org_id: it.org_id, name: it.name, category: it.category, brand: it.brand, description: it.description,
           item_type: it.item_type, unit: it.selling_unit, current: it.vat_treatment, industry: org?.industry }]));
       }
-      case 'read_invoice': {
-        const { data: m } = await sb.from('members').select('id').eq('user_id', u.user.id).limit(1).maybeSingle();
-        return await readInvoice(sb, admin, body, m?.id ?? null);
-      }
+      case 'read_invoice': return await readInvoice(sb, admin, body, u.user.id);
       case 'ask': return await ask(body);
       case 'chat': return await chat(body);
       case 'voice': return await voice(body);
       case 'map_columns': return await mapColumns(body);
       case 'extract_rows': return await extractRows(body);
+      case 'read_statement': return await readStatement(body);
       case 'map_accounts': return await mapAccounts(sb, body);
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }

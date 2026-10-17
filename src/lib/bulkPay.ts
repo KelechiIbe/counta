@@ -43,20 +43,36 @@ const GROUPS: string[][] = [
   ['union', 'unionbank'], ['fidelity'], ['zenith'], ['access'], ['sterling'], ['keystone'], ['providus'], ['kuda'],
 ];
 
-// Finds the rail's bank for whatever the sheet says: a code, the full name, or a short name people use ("GTB", "UBA").
-// Returns the bank, or the candidates to choose from when the name fits more than one.
-export function matchBank(value: string, banks: Bank[]): { bank?: Bank; options?: Bank[] } {
-  const v = String(value || '').trim();
+// The commercial banks' CBN codes have three digits. When two entries of the rail's list share a name, the one with a
+// three-digit code is the bank itself and the other a sub-ledger or a mobile wallet of it.
+const oneOf = (list: Bank[]): Bank | undefined => {
+  if (list.length === 1) return list[0];
+  const main = list.filter((b) => /^\d{3}$/.test(b.code));
+  return main.length === 1 ? main[0] : undefined;
+};
+
+// Finds the rail's bank for whatever the sheet says: a code (058, or 58 when Excel dropped the zero, or a nine-digit
+// sort code starting with it), the full name, or a short name people use ("GTB", "UBA"). Returns the bank, or the
+// candidates to choose from when the name fits more than one.
+export function matchBank(value: string | number, banks: Bank[]): { bank?: Bank; options?: Bank[] } {
+  const v = String(value ?? '').trim().replace(/^'/, '');
   if (!v || !banks.length) return {};
-  if (/^\d{3,6}$/.test(v)) { const b = banks.find((x) => x.code === v); if (b) return { bank: b }; }
+  const byCode = (c: string) => banks.find((x) => x.code.toLowerCase() === c.toLowerCase());
+  const direct = byCode(v);
+  if (direct) return { bank: direct };
+  if (/^\d{1,2}$/.test(v)) { const b = byCode(v.padStart(3, '0')); if (b) return { bank: b }; }
+  if (/^\d{9}$/.test(v)) { const b = byCode(v.slice(0, 3)); if (b) return { bank: b }; }
+  if (/^\d+$/.test(v)) return {};
   const nv = norm(v);
   const exact = banks.filter((b) => norm(b.name) === nv);
-  if (exact.length === 1) return { bank: exact[0] };
+  const one = oneOf(exact);
+  if (one) return { bank: one };
   const kv = key(v);
   if (!kv) return {};
   const forms = GROUPS.find((g) => g.includes(kv) || g.includes(kv.replace(/ /g, ''))) || [kv];
   const same = banks.filter((b) => forms.includes(key(b.name)));
-  if (same.length === 1) return { bank: same[0] };
+  const pick = oneOf(same);
+  if (pick) return { bank: pick };
   if (same.length > 1) return { options: same };
   const near = banks.filter((b) => { const k = key(b.name); return forms.some((f) => k.startsWith(f + ' ') || k.split(' ').includes(f) || (f.length >= 5 && k.includes(f))); });
   if (near.length === 1) return { bank: near[0] };
@@ -82,27 +98,50 @@ export interface BulkRow {
 }
 
 const txt = (c: Cell | undefined) => cellText(c ?? null).trim();
+
+// An account number as the sheet holds it: text with spaces, dashes or a leading apostrophe, a number that lost its
+// leading zero, or (from a CSV that Excel saved) a number shortened to 1.23457E+09, which cannot be recovered.
+export function readAccountNumber(c: Cell | undefined): { value: string; note?: string; issue?: string } {
+  if (c == null || c === '') return { value: '', issue: 'No account number' };
+  if (typeof c === 'number') {
+    if (!Number.isInteger(c) || c >= 1e10) return { value: String(c), issue: `Account number ${String(c)} is not a 10-digit number` };
+    const s = String(c);
+    if (s.length === 10) return { value: s };
+    if (s.length === 9) return { value: '0' + s, note: 'Leading zero put back on the account number' };
+    return { value: s, issue: `Account number ${s} does not have 10 digits` };
+  }
+  const raw = String(c).trim();
+  if (/\d(\.\d+)?e\+?\d+$/i.test(raw)) return { value: raw, issue: `Account number ${raw} was shortened by Excel. Format the column as text and type it again` };
+  const digits = raw.replace(/^'/, '').replace(/[\s\-./]/g, '');
+  if (/^\d{10}$/.test(digits)) return { value: digits };
+  if (/^\d{9}$/.test(digits)) return { value: '0' + digits, note: 'Leading zero put back on the account number' };
+  return { value: digits || raw, issue: `Account number ${raw} does not have 10 digits` };
+}
+
 export function readBulkRows(rows: (Record<string, Cell> & { _row: number })[], banks: Bank[]): BulkRow[] {
   return rows.map((r) => {
     const notes: string[] = [], issues: string[] = [];
-    let acct = txt(r.account_number).replace(/[\s-]/g, '');
-    // Excel drops the leading zero of an account number typed as a number.
-    if (typeof r.account_number === 'number' && /^\d{9}$/.test(acct)) { acct = '0' + acct; notes.push('Leading zero put back on the account number'); }
-    if (!/^\d{10}$/.test(acct)) issues.push(acct ? `Account number ${acct} does not have 10 digits` : 'No account number');
-    const bankText = txt(r.bank);
+    const a = readAccountNumber(r.account_number);
+    const acct = a.value;
+    if (a.note) notes.push(a.note);
+    if (a.issue) issues.push(a.issue);
+    const bankText = typeof r.bank === 'number' ? String(r.bank) : txt(r.bank);
     const m = matchBank(bankText, banks);
     if (!bankText) issues.push('No bank');
-    else if (!m.bank && !m.options) issues.push(`Bank "${bankText}" not recognised`);
+    else if (!m.bank && !m.options) issues.push(`Bank "${bankText}" not recognised. Choose it below`);
     const rawAmount = txt(r.amount);
     const amount = rawAmount === '' ? null : parseNum(r.amount ?? null);
     if (rawAmount !== '' && !(amount != null && amount > 0)) issues.push(`Amount "${rawAmount}" is not an amount in naira`);
+    // "6101 Salaries & Wages" or "6101 - Salaries": the code; a name alone is matched by the books.
+    const accountText = txt(r.account);
+    const code = accountText.match(/^\d{3,6}\b/)?.[0];
     return {
-      row: r._row, name: txt(r.name), bankText, bank_code: m.bank?.code || '', bank_name: m.bank?.name || '', bankOptions: m.bank ? undefined : m.options,
-      account_number: acct, amount: amount != null && amount > 0 ? Math.round(amount * 100) / 100 : null, narration: txt(r.narration).slice(0, 80),
-      bill: txt(r.bill), supplier: txt(r.supplier), account: txt(r.account).split(/\s/)[0] || '', reference: txt(r.reference).slice(0, 60),
+      row: r._row, name: txt(r.name).replace(/\s+/g, ' '), bankText, bank_code: m.bank?.code || '', bank_name: m.bank?.name || '', bankOptions: m.bank ? undefined : m.options,
+      account_number: acct, amount: amount != null && amount > 0 ? Math.round(amount * 100) / 100 : null, narration: txt(r.narration).replace(/\s+/g, ' ').slice(0, 80),
+      bill: txt(r.bill), supplier: txt(r.supplier).replace(/\s+/g, ' '), account: code || accountText, reference: txt(r.reference).slice(0, 60),
       notes, issues, include: true,
     };
-  }).filter((r) => r.name || r.account_number || r.amount);
+  }).filter((r) => r.name || r.account_number || r.amount || r.bill);
 }
 
 async function excel() {

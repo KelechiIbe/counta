@@ -448,14 +448,49 @@ function JRow({ code, name, dr, cr }: { code: string; name: string; dr?: number;
   );
 }
 
+// What makes an invoice photo readable, shown before the camera opens. Every point is something the reader needs to
+// fill a line or the journal: who sold it, which invoice, and each product's quantity, unit and price.
+const CAPTURE_TIPS: [string, string][] = [
+  ['Whole page in the frame', 'All four corners showing, the page flat on a table, the phone straight above it.'],
+  ['Good light, no shadow or glare', 'Daylight or a bright room. Switch the flash off if it leaves a white patch on glossy paper.'],
+  ['The supplier and the invoice', 'Supplier name, invoice number and date, and their Tax ID or VAT number when it is printed.'],
+  ['Every product line', 'Product name and size, quantity, unit (carton, bag, pack, tin), unit price and line amount.'],
+  ['The totals', 'VAT and the invoice total, so the reader can check the lines add up.'],
+  ['One page per photo', 'For an invoice of several pages, receive each page on its own or scan them into one PDF.'],
+];
+
+export async function photoCheck(file: Blob): Promise<string[]> {
+  if (!file.type.startsWith('image/')) return [];
+  try {
+    const bmp = await createImageBitmap(file);
+    const out: string[] = [];
+    if (Math.max(bmp.width, bmp.height) < 1000) out.push(`The photo is small (${bmp.width} × ${bmp.height}), so small print may not be readable. Take it closer or at a higher setting.`);
+    const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+    const g = c.getContext('2d')!; g.drawImage(bmp, 0, 0, 64, 64); bmp.close?.();
+    const px = g.getImageData(0, 0, 64, 64).data;
+    let sum = 0; let sq = 0;
+    for (let i = 0; i < px.length; i += 4) { const y = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]; sum += y; sq += y * y; }
+    const n = px.length / 4; const mean = sum / n; const sd = Math.sqrt(Math.max(sq / n - mean * mean, 0));
+    if (mean < 70) out.push('The photo is dark. Move to better light or near a window.');
+    else if (sd < 18) out.push('The photo has very little contrast, as if it is blurred or washed out. Hold the phone steady and take it again.');
+    return out;
+  } catch { return []; }
+}
+
 function Capture({ mode, header, setHeader, onFile, err }: {
   mode: Source; header: { vendor_id: string | null; location_id: string | null }; setHeader: (f: (h: any) => any) => void; onFile: (f: File) => void; err: string | null;
 }) {
   const { data: inv } = useInventory();
   const input = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
+  const [held, setHeld] = useState<{ file: File; problems: string[] } | null>(null);
+  async function take(f: File) {
+    const problems = await photoCheck(f);
+    if (problems.length) setHeld({ file: f, problems }); else onFile(f);
+  }
   return (
-    <div className="stack" style={{ gap: 16, maxWidth: 640, margin: '0 auto' }}>
+    <div className="stack" style={{ gap: 16, maxWidth: 680, margin: '0 auto' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div>
           <label className="field-label">Received at</label>
@@ -471,15 +506,47 @@ function Capture({ mode, header, setHeader, onFile, err }: {
           </select>
         </div>
       </div>
-      <div role="button" tabIndex={0} onClick={() => input.current?.click()} onKeyDown={(e) => e.key === 'Enter' && input.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) onFile(f); }}
-        style={{ border: '1.5px dashed ' + (over ? '#0072F5' : '#D1D5DB'), background: over ? '#F0F7FF' : '#fff', borderRadius: 16, padding: '40px 20px', textAlign: 'center', cursor: 'pointer' }}>
-        <div style={{ width: 52, height: 52, margin: '0 auto', borderRadius: 14, background: '#F0F7FF', display: 'grid', placeItems: 'center' }}><Icon name={mode === 'hand' ? 'camera' : 'upload'} size={24} color="#0072F5" /></div>
-        <div style={{ fontSize: 15, marginTop: 14 }}><span style={{ color: '#0072F5', textDecoration: 'underline' }}>{mode === 'hand' ? 'Take or choose a photo' : 'Choose a file'}</span> or drag & drop it here</div>
-        <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>{mode === 'hand' ? 'JPG or PNG · hold the sheet flat, all lines in frame' : 'PDF, JPG or PNG · up to 20MB'}</div>
-        <input ref={input} type="file" hidden accept={mode === 'hand' ? 'image/*' : 'image/*,application/pdf'} capture={mode === 'hand' ? 'environment' : undefined}
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ''; }} />
+      {held ? (
+        <div className="stack" style={{ gap: 10 }}>
+          <Alert kind="yellow" icon="camera">{held.problems.join(' ')}</Alert>
+          <div className="row wrap">
+            <button className="btn btn-primary btn-sm" onClick={() => { setHeld(null); camera.current?.click(); }}><Icon name="camera" size={14} />Take it again</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => { const f = held.file; setHeld(null); onFile(f); }}>Read it anyway</button>
+          </div>
+        </div>
+      ) : (
+        <div role="button" tabIndex={0} onClick={() => input.current?.click()} onKeyDown={(e) => e.key === 'Enter' && input.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
+          onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) take(f); }}
+          style={{ border: '1.5px dashed ' + (over ? '#0072F5' : '#D1D5DB'), background: over ? '#F0F7FF' : '#fff', borderRadius: 16, padding: '32px 20px', textAlign: 'center', cursor: 'pointer' }}>
+          <div style={{ width: 52, height: 52, margin: '0 auto', borderRadius: 14, background: '#F0F7FF', display: 'grid', placeItems: 'center' }}><Icon name={mode === 'hand' ? 'camera' : 'upload'} size={24} color="#0072F5" /></div>
+          <div style={{ fontSize: 15, marginTop: 14 }}><span style={{ color: '#0072F5', textDecoration: 'underline' }}>{mode === 'hand' ? 'Take or choose a photo' : 'Choose a file'}</span> or drag & drop it here</div>
+          <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>{mode === 'hand' ? 'JPG or PNG · hold the sheet flat, all lines in frame' : 'PDF, JPG or PNG · up to 20MB'}</div>
+          {mode !== 'hand' && (
+            <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} onClick={(e) => { e.stopPropagation(); camera.current?.click(); }}>
+              <Icon name="camera" size={14} />Take a photo
+            </button>
+          )}
+        </div>
+      )}
+      <input ref={input} type="file" hidden accept={mode === 'hand' ? 'image/*' : 'image/*,application/pdf'} capture={mode === 'hand' ? 'environment' : undefined}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) take(f); e.target.value = ''; }} />
+      <input ref={camera} type="file" hidden accept="image/*" capture="environment" aria-label="Take a photo of the invoice"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) take(f); e.target.value = ''; }} />
+      <div className="card" style={{ borderRadius: 12, padding: '12px 14px', background: '#FAFAFA' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>What the photo needs to show</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: '8px 16px' }}>
+          {CAPTURE_TIPS.map(([t, d]) => (
+            <div key={t} className="row" style={{ alignItems: 'flex-start', gap: 8 }}>
+              <Icon name="check" size={14} color="#15803D" sw={2.5} style={{ marginTop: 2, flex: 'none' }} />
+              <span style={{ fontSize: 12, lineHeight: 1.45 }}><b>{t}.</b> <span className="muted">{d}</span></span>
+            </div>
+          ))}
+        </div>
+        <div className="faint" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.45 }}>
+          Delivery and transport charges on the invoice are not stock: add them as landed cost after you post. Products the shop has never stocked
+          become new items, so check their name, pack size, selling unit and VAT on the next screen.
+        </div>
       </div>
       {mode === 'hand' && <div className="hint" style={{ textAlign: 'center' }}>We read market shorthand like "doz", "ctn" and "half bag", then show any line we are unsure of beside the photo.</div>}
       {err && <Alert kind="red" icon="alert">{err}</Alert>}
@@ -561,7 +628,12 @@ function LineRow({ l, items, item, docUrl, hand, canPrice, onPatch, onRemove }: 
           <div className="row">
             <button className="btn btn-primary btn-xs" onClick={() => onPatch({})}>Keep {num(Number(l.qty), 3)} {unitLabel(item, l)}</button>
             {l.alt_reading && (
-              <button className="btn btn-secondary btn-xs" onClick={() => onPatch({ qty: Number(l.alt_reading!.qty), unit_kind: l.alt_reading!.unit_kind || l.unit_kind })}>{l.alt_reading.label}</button>
+              <button className="btn btn-secondary btn-xs" onClick={() => {
+                // Another unit for the same goods (16 tins or 1 carton of 16) keeps the line's total; another count of the same unit keeps the price.
+                const alt = l.alt_reading!; const kind = alt.unit_kind || l.unit_kind; const q = Number(alt.qty);
+                const cost = kind !== l.unit_kind && q > 0 ? Math.round((Number(l.qty) * Number(l.unit_cost) / q) * 100) / 100 : l.unit_cost;
+                onPatch({ qty: q, unit_kind: kind, unit_cost: cost });
+              }}>{l.alt_reading.label}</button>
             )}
           </div>
         </div>
