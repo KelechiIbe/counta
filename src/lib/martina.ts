@@ -159,9 +159,9 @@ export async function aiStatus(): Promise<AiStatus> {
 }
 
 // A one-line request through the same connection, so whoever sets up Vertex AI sees at once whether it works.
-export async function aiCheck(): Promise<{ ok: boolean; model?: string; ms?: number; error?: string }> {
+export async function aiCheck(): Promise<{ ok: boolean; model?: string; ms?: number; error?: string; auth?: AiStatus['auth']; location?: string }> {
   try {
-    const r = await ai<{ ok: boolean; model?: string; ms?: number; error?: string }>('check', {});
-    return { ok: r?.ok === true, model: r?.model, ms: r?.ms, error: r?.ok ? undefined : r?.error || 'The check did not answer.' };
+    const r = await ai<{ ok: boolean; model?: string; ms?: number; error?: string; auth?: AiStatus['auth']; location?: string }>('check', {});
+    return { ok: r?.ok === true, model: r?.model, ms: r?.ms, auth: r?.auth, location: r?.location, error: r?.ok ? undefined : r?.error || 'The check did not answer.' };
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
