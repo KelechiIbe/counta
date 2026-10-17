@@ -880,7 +880,7 @@ begin
       || coalesce(', appointed ' || private.fdate((dd->>'appointed')::date), ''), E'\n') into v_txt
     from jsonb_array_elements(o.directors) dd
     where nullif(dd->>'resigned', '') is null or (dd->>'resigned')::date >= v_from;
-    v_rows := private.kv('Directors', coalesce(v_txt, 'To be completed: add the directors under Settings, Books and tax.'))
+    v_rows := private.kv('Directors', coalesce(v_txt, 'To be completed: add the directors under Financial statements, Company details.'))
       || private.kv('Company secretary', o.company_secretary)
       || private.kv('Registered office', coalesce(o.registered_office, o.address))
       || private.kv('Company registration number', case when nullif(o.rc_number, '') is not null then 'RC ' || regexp_replace(o.rc_number, '^\s*RC\s*', '', 'i') end)
@@ -923,7 +923,7 @@ begin
         concat_ws(' · ', coalesce(d->>'role', 'Director'), case when d->>'appointed' is not null and (d->>'appointed')::date >= v_from then 'appointed ' || private.fdate((d->>'appointed')::date) end,
           case when d->>'resigned' is not null then 'resigned ' || private.fdate((d->>'resigned')::date) end), '_style', 'kv', '_indent', 1));
     end loop;
-    if jsonb_array_length(o.directors) = 0 then v_rows := v_rows || private.ftxt('To be completed: add the directors under Settings, Books and tax.'); end if;
+    if jsonb_array_length(o.directors) = 0 then v_rows := v_rows || private.ftxt('To be completed: add the directors under Financial statements, Company details.'); end if;
     v_rows := v_rows
       || private.fhd('Directors'' interests in shares and contracts')
       || private.ftxt(coalesce(n->>'directors_interests', 'The directors'' interests in the issued share capital of ' || v_name || ' are recorded in the register of directors'' shareholdings.'
@@ -1075,14 +1075,16 @@ begin
   select coalesce(sum(l.debit - l.credit), 0) into v_susp from journal_lines l join journals j on j.id = l.journal_id
     where l.org_id = p_org and split_part(l.account_code, '-', 1) = '9001' and j.entry_date <= (pr->>'to')::date;
   if v_susp <> 0 then w := w || jsonb_build_array(jsonb_build_object('level', 'error', 'text', 'Transactions of ' || private.naira(v_susp) || ' wait in suspense (9001). Answer the books inbox first.')); end if;
-  if coalesce(private.closed_through(p_org), date '1900-01-01') < (pr->>'to')::date then w := w || jsonb_build_array(jsonb_build_object('level', 'warn', 'text', 'The books are open after ' || coalesce(private.fdate(private.closed_through(p_org)), 'the start') || '. Close the period so the figures cannot change after signing.')); end if;
+  if coalesce(private.closed_through(p_org), date '1900-01-01') < (pr->>'to')::date then w := w || jsonb_build_array(jsonb_build_object('level', 'warn', 'text',
+    case when private.closed_through(p_org) is null then 'No period has been closed yet' else 'The books are open after ' || private.fdate(private.closed_through(p_org)) end
+    || '. Close the period so the figures cannot change after signing.')); end if;
   if nullif(n->>'approved_on', '') is null then w := w || jsonb_build_array(jsonb_build_object('level', 'info', 'text', 'No approval date yet: the statements print a blank line for it.')); end if;
   foreach k in array array['going_concern', 'contingencies', 'commitments', 'events_after', 'dividend'] loop
     if nullif(n->>k, '') is null then
       w := w || jsonb_build_array(jsonb_build_object('level', 'info', 'key', k, 'text', 'Standard wording used for ' || replace(k, '_', ' ') || '. Confirm it or write your own.'));
     end if;
   end loop;
-  if nullif(o.rc_number, '') is null or nullif(o.tin, '') is null then w := w || jsonb_build_array(jsonb_build_object('level', 'warn', 'text', 'Add the RC number and TIN under Settings.')); end if;
+  if nullif(o.rc_number, '') is null or nullif(o.tin, '') is null then w := w || jsonb_build_array(jsonb_build_object('level', 'warn', 'text', 'Add the RC number and TIN under Settings, Branding.')); end if;
   if o.company_secretary is null then w := w || jsonb_build_array(jsonb_build_object('level', 'warn', 'text', 'Add the company secretary for the directors'' report.')); end if;
   return v || jsonb_build_object('warnings', w);
 end $$;
