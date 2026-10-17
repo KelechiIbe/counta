@@ -153,10 +153,11 @@ export default function StatementUpload({ account, onClose }: { account: any; on
       </div>
       {step.k === 'review' && (() => {
         const mismatch = needsConfirm(step.st, account);
+        const future = futureLines(step.st);
         return (
           <div className="modal-ft">
             <button className="btn btn-secondary" onClick={() => { setStep({ k: 'pick' }); input.current?.click(); }}>Another file</button>
-            <button className="btn btn-primary" disabled={busy || !step.st.lines.length || (mismatch && !confirmed)} onClick={() => send(step.st, step.file)}>
+            <button className="btn btn-primary" disabled={busy || !step.st.lines.length || (mismatch && !confirmed) || future > 0} onClick={() => send(step.st, step.file)}>
               {busy ? <><Spinner small />Matching…</> : `Upload ${step.st.lines.length} line${step.st.lines.length === 1 ? '' : 's'}`}
             </button>
           </div>
@@ -165,6 +166,9 @@ export default function StatementUpload({ account, onClose }: { account: any; on
     </Modal>
   );
 }
+
+// A bank statement cannot hold a transaction after today: such a date was misread, and stops the upload.
+const futureLines = (st: Statement) => st.lines.filter((l) => l.issues.some((i) => i.startsWith('Dated after today'))).length;
 
 const needsConfirm = (st: Statement, account: any) => {
   const a = lastFour(account.account_number); const b = lastFour(st.meta.account_number);
@@ -197,6 +201,8 @@ function Review({ st, account, confirmed, setConfirmed, onAi }: { st: Statement;
           <label className="check" style={{ display: 'flex', marginTop: 8, fontSize: 13 }}><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />It is the right account (the bank changed the number, or the number on file is wrong)</label>
         </Alert>
       )}
+      {futureLines(st) > 0 && <Alert kind="red" icon="alert">{futureLines(st) === 1 ? 'A line is' : `${futureLines(st)} lines are`} dated after today, so the statement was misread and cannot go in as it is.
+        Read it again{onAi ? ' with the AI reader' : ''}, or ask the bank for an Excel or CSV copy.</Alert>}
       {st.balance_check === 'agrees' && <Alert kind="green" icon="check">Opening balance plus every line reaches the closing balance{st.newest_first ? '. The bank printed the newest line first; the lines are in date order here' : ''}.</Alert>}
       {st.balance_check === 'unknown' && <Alert kind="blue" icon="info">The statement shows no opening and closing balance, so the total could not be checked. Compare the money in and out with the statement before uploading.</Alert>}
       {st.problems.length > 0 && <Alert kind="yellow" icon="alert"><div className="stack" style={{ gap: 4 }}>{st.problems.map((p, i) => <div key={i}>{p}</div>)}</div>

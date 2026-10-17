@@ -264,6 +264,22 @@ export function settle(raw: (StmtLine & { unsigned?: boolean; mag?: number })[],
     if (l.balance != null) prevBal = l.balance; else if (prevBal != null) prevBal = r2(prevBal + l.amount);
     delete (l as any).mag;
   }
+  // Dates a statement cannot carry: after today, well outside its own period, or far from the lines either side of it
+  // (a year misread on a scan). They are marked so the person checks them before the lines go in.
+  const dayMs = 86400_000;
+  const tomorrow = new Date(Date.now() + 3600_000 + dayMs).toISOString().slice(0, 10);
+  const off = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) / dayMs;
+  let odd = 0;
+  lines.forEach((l, i) => {
+    const prev = lines[i - 1]?.date, next = lines[i + 1]?.date;
+    let why: string | null = null;
+    if (l.date > tomorrow) why = 'Dated after today.';
+    else if ((meta.period_from && off(l.date, meta.period_from) > 3 && l.date < meta.period_from) || (meta.period_to && off(l.date, meta.period_to) > 3 && l.date > meta.period_to)) {
+      why = 'Dated outside the statement\'s period.';
+    } else if (prev && next && off(l.date, prev) > 60 && off(l.date, next) > 60) why = 'Dated far from the lines around it.';
+    if (why) { l.issues.push(`${why} Check this date on the statement.`); odd++; }
+  });
+  if (odd) problems.push(`${odd} line${odd === 1 ? ' has a date' : 's have dates'} to check against the statement.`);
   const m = { ...meta };
   if (m.opening_balance == null && lines.length && lines[0].balance != null) m.opening_balance = r2(lines[0].balance - lines[0].amount);
   const lastBal = [...lines].reverse().find((l) => l.balance != null)?.balance ?? null;
@@ -571,8 +587,20 @@ export function fromAi(parts: AiStatement[], fileName: string): Statement {
       if (!amt) continue;
       raw.push({ row: n, date: l.date, description: l.description, reference: l.reference, amount: amt, balance: l.balance ?? null, issues: [] });
     }
-    if (p.notes) problems.push(p.notes);
+    // Read in parts, each reader sees only its own pages: remarks about other pages or the header are not news.
+    if (p.notes && !(parts.length > 1 && /\bpages?\b|missing|incomplete|header|cut off|continu/i.test(p.notes))) problems.push(p.notes);
   }
+  // A year misread on a scan (2027 among 2026 lines): when the lines either side share a year and the same day and month
+  // in that year falls between them, that year is used, and the line says so.
+  raw.forEach((l, i) => {
+    const prev = raw[i - 1]?.date, next = raw[i + 1]?.date;
+    if (!prev || !next || prev.slice(0, 4) !== next.slice(0, 4) || l.date.slice(0, 4) === prev.slice(0, 4)) return;
+    const fixed = prev.slice(0, 4) + l.date.slice(4);
+    if (fixed >= prev && fixed <= next || Math.abs(Date.parse(fixed) - Date.parse(prev)) <= 3 * 86400_000) {
+      l.issues.push(`Year read as ${l.date.slice(0, 4)}; the lines around it are ${prev.slice(0, 4)}, so ${prev.slice(0, 4)} is used.`);
+      l.date = fixed;
+    }
+  });
   // A reader looking at a newest-first page sometimes gives the balance after the oldest line as the opening balance.
   const first = raw[0];
   const near = (a: number | null | undefined, b: number | null | undefined) => a != null && b != null && Math.abs(a - b) < 0.011;
