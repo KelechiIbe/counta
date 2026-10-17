@@ -33,7 +33,7 @@ export default function Onboarding() {
       if (industry !== 'retail') await must(supabase.from('orgs').update({ industry }).eq('id', id).select('id').single());
       await refreshMemberships(); setOrgId(id);
       toast(name.trim() + ' is set up');
-      nav('/inventory', { replace: true });
+      nav('/home', { replace: true });
     } catch (e: any) { setErr(e.message); } finally { setBusy(null); }
   }
   async function sample() {
@@ -42,7 +42,7 @@ export default function Onboarding() {
       const id = await rpc<string>('create_sample_business');
       await refreshMemberships(); setOrgId(id);
       toast('Sample business ready · Kelandellen Company Limited');
-      nav('/inventory', { replace: true });
+      nav('/home', { replace: true });
     } catch (e: any) { setErr(e.message); } finally { setBusy(null); }
   }
 
@@ -97,7 +97,7 @@ export default function Onboarding() {
           <button className="btn btn-secondary" onClick={sample} disabled={!!busy}>{busy === 'sample' && <Spinner small />}Open sample</button>
         </div>
         {memberships.length > 0 && (
-          <button className="btn btn-ghost" onClick={() => nav('/inventory')} style={{ alignSelf: 'center' }}>Back to my businesses</button>
+          <button className="btn btn-ghost" onClick={() => nav('/home')} style={{ alignSelf: 'center' }}>Back to my businesses</button>
         )}
       </div>
     </div>

@@ -80,3 +80,8 @@ export function uuid(): string {
     const r = (Math.random() * 16) | 0; return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
   });
 }
+
+// Font size for a headline figure on a tile, so long amounts stay on one line.
+export function kpiFont(v: string): number {
+  return v.length > 16 ? 16 : v.length > 14 ? 18 : v.length > 12 ? 20 : 22;
+}

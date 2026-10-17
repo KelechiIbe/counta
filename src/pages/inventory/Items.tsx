@@ -16,6 +16,7 @@ import TransferModal from '../../components/TransferModal';
 import { ItemAccountCard } from '../../components/ChartOfAccounts';
 import { printLabel, qrSvg } from '../../lib/labels';
 import { supabase, rpc } from '../../lib/supabase';
+import { edge } from '../../lib/api';
 
 const COLS = 'minmax(240px,2fr) 120px minmax(160px,1.2fr) 100px 100px 90px 110px 110px 24px';
 
@@ -265,6 +266,68 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
 }
 
 
+const VAT_LABEL: Record<string, string> = { standard: 'Standard 7.5%', zero: 'Zero-rated', exempt: 'Exempt' };
+const VAT_SOURCE: Record<string, string> = { numens: 'Numens', gemini: 'Numens (testing model)', manual: 'set by hand', import: 'from the import' };
+
+// VAT on the item: what applies at the till, who decided it and why. Below 80% sure, the agent's answer waits for a person.
+function VatCard({ it }: { it: ItemView }) {
+  const { data: inv } = useInventory();
+  const toast = useToast();
+  const { run, busy } = useAction();
+  const [pick, setPick] = useState<string | null>(null);
+  if (!inv) return null;
+  const b = it.vat_basis || null;
+  const may = can(inv, 'edit_prices') || can(inv, 'keep_books');
+  const conf = it.vat_confidence != null ? Math.round(Number(it.vat_confidence) * 100) : null;
+  const checking = !it.vat_checked && b?.source !== 'manual';
+  const suggested = it.vat_review && b?.treatment && b.treatment !== it.vat_treatment ? b.treatment : null;
+  const setVat = (t: string, why: string) => run(() => rpc('set_item_vat', { p_item: it.id, p_treatment: t, p_reason: why }), { ok: `VAT set to ${VAT_LABEL[t].toLowerCase()}` });
+  return (
+    <div className="card" style={{ padding: 14, borderRadius: 12 }}>
+      <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
+        <div className="mini-label">VAT on sales</div>
+        {checking ? <span className="chip t-blue">Numens is checking</span> : it.vat_review ? <span className="chip t-yellow">Needs your answer</span>
+          : b?.source === 'manual' ? <span className="chip t-grey">Set by hand</span> : conf != null ? <span className="chip t-green">{conf}% sure</span> : null}
+      </div>
+      <div style={{ fontSize: 16, fontWeight: 600, marginTop: 6 }}>{VAT_LABEL[it.vat_treatment] || it.vat_treatment}</div>
+      <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+        {it.vat_treatment === 'standard' ? 'Output VAT on each sale goes to account 2201.' : it.vat_treatment === 'zero' ? 'Charged at 0%; input VAT on purchases is still claimable.' : 'No VAT charged; input VAT on purchases becomes part of cost.'}
+      </div>
+      {b && (b.reason || b.law) && (
+        <div style={{ fontSize: 13, marginTop: 10, lineHeight: 1.5 }}>
+          {b.reason && <div>{b.reason}</div>}
+          <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{[b.law, b.source && (VAT_SOURCE[b.source] || b.source), b.by, b.at && when(b.at)].filter(Boolean).join(' · ')}</div>
+        </div>
+      )}
+      {it.vat_review && (
+        <Alert kind="yellow" icon="alert">
+          {suggested ? `Numens thinks this is ${VAT_LABEL[suggested].toLowerCase()} but is only ${conf}% sure, so the till still uses ${VAT_LABEL[it.vat_treatment].toLowerCase()}.`
+            : `Numens is only ${conf}% sure, so it wants a person to confirm.`}
+        </Alert>
+      )}
+      {may && (
+        <div className="row wrap" style={{ gap: 6, marginTop: 10 }}>
+          {it.vat_review && <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => setVat(suggested || it.vat_treatment, 'Confirmed the suggestion')}>{suggested ? `Use ${VAT_LABEL[suggested].toLowerCase()}` : 'Confirm'}</button>}
+          {pick == null ? <button className="btn btn-secondary btn-sm" onClick={() => setPick(it.vat_treatment)}>Change</button> : (
+            <>
+              <select className="input input-sm" value={pick} onChange={(e) => setPick(e.target.value)} style={{ width: 170 }}>
+                {Object.entries(VAT_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+              <button className="btn btn-primary btn-sm" disabled={busy} onClick={async () => { await setVat(pick, 'Changed on the item'); setPick(null); }}>Save</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setPick(null)}>Cancel</button>
+            </>
+          )}
+          {can(inv, 'edit_prices') && !checking && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(async () => {
+            await rpc('recheck_item_vat', { p_item: it.id });
+            const r = await edge('ai', { action: 'vat_classify_item', item_id: it.id });
+            if (r?.ok === false) toast(r.error || 'Numens could not answer just now. It will try again.', 'err');
+          }, { ok: 'Numens has looked again' })}>Ask Numens again</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ItemDetails({ it }: { it: ItemView }) {
   const { data: inv } = useInventory();
   if (!inv) return null;
@@ -288,6 +351,7 @@ function ItemDetails({ it }: { it: ItemView }) {
   );
   return (
     <div className="stack" style={{ gap: 12 }}>
+      <VatCard it={it} />
       {block('Item', rows)}
       {block(`${ind.label} details`, own)}
       {block('Other details', other)}

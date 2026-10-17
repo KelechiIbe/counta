@@ -11,7 +11,7 @@ export default defineConfig({
       manifest: {
         name: 'Counta by TaxStreem',
         short_name: 'Counta',
-        description: 'Stock, receipts and counts for your shop, posted straight to your books.',
+        description: 'Sales, payments, stock and books that keep themselves.',
         id: '/',
         start_url: '/',
         scope: '/',

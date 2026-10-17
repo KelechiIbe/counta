@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { edge } from '../../lib/api';
 import { Drawer, Field, XButton, Alert } from '../../components/ui';
 import { Icon } from '../../components/Icon';
 import { rpc } from '../../lib/supabase';
@@ -46,6 +48,7 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
   const { data: inv } = useInventory();
   const { orgId } = useSession();
   const { run, busy } = useAction();
+  const qc = useQueryClient();
   const editing = !!item;
   const hasStock = item ? sumQty(item) !== 0 : false;
   const ind = industryOf(inv?.org.industry);
@@ -53,7 +56,7 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
   const commonFields = fieldsFor(ind.id).filter((f) => !indFields.some((x) => x.key === f.key));
   const [f, setF] = useState({
     name: item?.name || '', item_type: (item?.item_type as ItemType) || ind.types[0], category: item?.category || ind.categories[0],
-    brand: item?.brand || '', description: item?.description || '', vat_treatment: item?.vat_treatment || defaultVat(ind.id),
+    brand: item?.brand || '', description: item?.description || '', vat_treatment: item ? item.vat_treatment : 'auto',
     purchase_unit: item?.purchase_unit || ind.purchaseUnits[0], pack_size: item ? String(item.pack_size) : '', selling_unit: item?.selling_unit || ind.sellingUnits[0],
     cost: item?.wac != null ? String(Math.round(Number(item.wac) * 100) / 100) : '', price: item && Number(item.price) > 0 ? String(item.price) : '',
     track_batches: item ? item.track_batches : ind.batches, barcode: item?.barcode || '', sku: item?.sku || '', nafdac_no: item?.nafdac_no || '',
@@ -91,8 +94,12 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
       cleanAttrs[fd.key] = fd.type === 'number' ? Number(v) : v;
     }
     for (const [k, v] of Object.entries(attrs)) if (!(k in cleanAttrs) && v !== '' && v != null && ![...indFields, ...commonFields].some((x) => x.key === k)) cleanAttrs[k] = v;
+    // 'auto' lets the tax agent (Numens) decide after saving; until it answers, the industry default applies.
+    const auto = f.vat_treatment === 'auto';
+    const chosenVat = auto ? defaultVat(ind.id) : f.vat_treatment;
+    const vatChanged = !auto && (!editing || f.vat_treatment !== item?.vat_treatment);
     const payload: any = {
-      ...f, id: item?.id, pack_size: pack, price: sells ? price : (price > 0 ? price : 0), cost: !editing || !hasStock ? cost : null,
+      ...f, vat_treatment: chosenVat, id: item?.id, pack_size: pack, price: sells ? price : (price > 0 ? price : 0), cost: !editing || !hasStock ? cost : null,
       informal_unit: INFORMAL.includes(f.selling_unit), reorder_floor: f.reorder_floor === '' ? 0 : Number(f.reorder_floor),
       preferred_vendor_id: f.preferred_vendor_id || null, alt_vendor_id: f.alt_vendor_id || null, needs_review: false,
       attributes: cleanAttrs,
@@ -101,7 +108,14 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
       ok: editing ? (item?.item_type && item.item_type !== f.item_type && hasStock ? 'Item updated · stock value moved to its new account' : 'Item updated')
         : f.barcode ? 'Item created · barcode linked' : 'Item created · QR label ready to print',
     });
-    if (id) { onSaved?.(id); onClose(); }
+    if (!id) return;
+    if (vatChanged) {
+      // A person's choice is final for the agent, so it is recorded as a manual decision.
+      await rpc('set_item_vat', { p_item: id, p_treatment: f.vat_treatment, p_reason: editing ? 'Changed on the item' : 'Set when the item was added' }).catch(() => undefined);
+    } else if (auto) {
+      edge('ai', { action: 'vat_classify_item', item_id: id }).then(() => qc.invalidateQueries({ queryKey: ['inv'] })).catch(() => undefined);
+    }
+    onSaved?.(id); onClose();
   }
 
   const fieldGrid = (fields: FieldDef[]) => (
@@ -136,8 +150,9 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
             <input className="input" list="item-brands" value={f.brand} onChange={(e) => set('brand', e.target.value)} placeholder="Optional" />
             <datalist id="item-brands">{brands.map((b) => <option key={b} value={b} />)}</datalist>
           </Field>
-          <Field label="VAT treatment">
+          <Field label="VAT treatment" hint={f.vat_treatment === 'auto' ? 'Numens reads the item and sets its VAT under the NTA 2025. You can change it later.' : undefined}>
             <select className="input" value={f.vat_treatment} onChange={(e) => set('vat_treatment', e.target.value)}>
+              {!editing && <option value="auto">Let Numens decide</option>}
               <option value="standard">Standard · 7.5%</option><option value="zero">Zero-rated (basic food, medicine, farm inputs)</option><option value="exempt">Exempt (baby products, petroleum products…)</option>
             </select>
           </Field>

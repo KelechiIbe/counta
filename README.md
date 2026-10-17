@@ -1,10 +1,22 @@
-# Counta · TaxStreem Inventory
+# Counta · TaxStreem
 
-Counta is the inventory module for TaxStreem. Inventory runs as a sub-ledger of the books: every stock movement posts a balanced journal, movements are append-only, and nothing reprices or orders without an owner tap. Staff capture stock on an installable phone app that keeps working offline.
+Counta is TaxStreem's operating system for trading businesses: selling, payments, purchases, inventory and the books in one app. The books keep themselves. Agents post every sale, bill, bank line and stock movement to the TaxStreem chart of accounts, ask a person only when they are less than 80% sure, and produce IFRS financial statements, ledgers and CFO reports that export to Excel, PDF and CSV. People open Counta from their TaxStreem account with single sign-on.
 
-## What is in here
+## Selling, payments and the books
 
-The desktop app covers twelve screens. **Overview** carries the Martina prompt bar, the KPI snapshot, a single needs-action queue and the movement ledger. **Items** lists every product with units shown in purchase and selling terms, an item drawer (stock, details, units and labels, batches, movements), Excel export, and upload from our template or any sheet the business already keeps. **Receive stock** reads typed and handwritten invoices with Gemini, asks the user to confirm any line under 85% confidence beside a crop of the photo, previews the journal against the TaxStreem chart of accounts and posts it. **Stock counts** lets the owner schedule blind counts and approve or reject variances with reasons. **Reorder** shows suggestions sized by velocity, lead time, safety days and seasonality, explainable vendor scores, FX timing advice and draft purchase orders that go out on the vendor's channel. **Pricing** handles price proposals (cost increase, below replacement cost, margin under threshold), landed cost allocation and the price change audit trail. **Production & jobs** issues raw materials, packaging and spares to production runs (cost held in work in progress until output is recorded) and to jobs (charged to the job's own account), with recipes, recipe-versus-actual variance and returns. **Insights** opens on Leak radar (shrink, count accuracy, cash short, what to count next and daily spot checks), then compares cash against stock, suggests dead stock markdowns and runs the FEFO batch table with quarantine. **Reports** has 24 stock, ledger, purchase, sales, production and control reports that download as Excel, CSV or PDF, plus a month-end pack in one workbook. **Month-end close** sets the allowance for stock worth less than cost and locks the period. **Move to Counta** brings items, opening stock, suppliers and past sales across from QuickBooks, Sage, Zoho, Odoo, Tally, Loyverse, Business Central, Square or a spreadsheet, dated a go-live day and reconciled to the old system. **Locations & staff** holds branch cards, transfers through goods in transit, the permission matrix, voice review and the activity log.
+**Sell** has a till with shifts, floats and counts, split tender, returns and receipts by WhatsApp, email or a Bluetooth thermal printer; invoices, quotes and credit notes with a public page where the customer can pay; customers on credit with limits, statements and automatic payment reminders; price lists, phone and rep orders, deliveries and vans for distributors; and an online shop that follows live stock. See `docs/selling.md`.
+
+**Payments** gives each business a wallet with its own account number and takes payment by bank transfer, payment link and QR code (no tap-to-pay). Flutterwave confirms payments through its webhook and Counta checks each one with Flutterwave before recording it; payments by any other channel are confirmed by a manager or the bookkeeper. Suppliers, refunds and withdrawals are paid from the wallet with WHT deducted. A partner integrating TaxStreem can plug in its own rail through the Counta Rail API. See `docs/payment-rails.md`.
+
+**Purchases** holds bills from stock receipts, from Prism and typed in, with withholding tax by supplier category, approval and payment.
+
+**Accounting** is Atlas: the books inbox (the agents' questions), banking and reconciliation, financial statements with notes, ledgers and reports, the CFO pack with a written commentary, journals, the fixed asset register and the month-end close. See `docs/atlas.md`. When an item is added, the tax agent (Numens, with Gemini standing in for testing) sets its VAT treatment under the Nigeria Tax Act 2025, so each sale posts its output VAT correctly.
+
+**Messages** go out by email through Resend and by WhatsApp Business with a link to pay. See `docs/messaging.md`. **Single sign-on** from TaxStreem and Prism bills are in `docs/taxstreem-sso.md`.
+
+## Inventory
+
+The inventory side covers twelve screens. **Overview** carries the Martina prompt bar, the KPI snapshot, a single needs-action queue and the movement ledger. **Items** lists every product with units shown in purchase and selling terms, an item drawer (stock, details, units and labels, batches, movements), Excel export, and upload from our template or any sheet the business already keeps. **Receive stock** reads typed and handwritten invoices with Gemini, asks the user to confirm any line under 85% confidence beside a crop of the photo, previews the journal against the TaxStreem chart of accounts and posts it. **Stock counts** lets the owner schedule blind counts and approve or reject variances with reasons. **Reorder** shows suggestions sized by velocity, lead time, safety days and seasonality, explainable vendor scores, FX timing advice and draft purchase orders that go out on the vendor's channel. **Pricing** handles price proposals (cost increase, below replacement cost, margin under threshold), landed cost allocation and the price change audit trail. **Production & jobs** issues raw materials, packaging and spares to production runs (cost held in work in progress until output is recorded) and to jobs (charged to the job's own account), with recipes, recipe-versus-actual variance and returns. **Insights** opens on Leak radar (shrink, count accuracy, cash short, what to count next and daily spot checks), then compares cash against stock, suggests dead stock markdowns and runs the FEFO batch table with quarantine. **Reports** has 24 stock, ledger, purchase, sales, production and control reports that download as Excel, CSV or PDF, plus a month-end pack in one workbook. **Month-end close** sets the allowance for stock worth less than cost and locks the period. **Move to Counta** brings items, opening stock, suppliers and past sales across from QuickBooks, Sage, Zoho, Odoo, Tally, Loyverse, Business Central, Square or a spreadsheet, dated a go-live day and reconciled to the old system. **Locations & staff** holds branch cards, transfers through goods in transit, the permission matrix, voice review and the activity log.
 
 The item form and the import template follow the kind of business: a pharmacy records generic name, strength and dosage form with batches on; a fashion store records size, colour and fabric; an auto parts dealer records OEM part number and fitment; a manufacturer records raw materials, packaging and spares that are not for sale and sit in their own inventory accounts. Thirteen trades are set up. `docs/reports-and-import.md` covers the fields, how an uploaded sheet is read and matched, what the import posts, and every report.
 
@@ -24,6 +36,12 @@ React 18, TypeScript, Vite, React Router and TanStack Query on the front end, sh
 
 ```
 src/
+  pages/home/        Home: the day's numbers from the books and what needs a person
+  pages/sell/        Till, Sales and invoices, Customers, Orders and deliveries, Price lists, Online shop
+  pages/payments/    Wallet, collections, payouts, reconciliations, payment settings
+  pages/purchases/   Bills and vendors
+  pages/accounting/  Books inbox, Banking, Financial statements, Ledgers and reports, CFO pack, Journals, Fixed assets, Period close
+  pages/public/      Document and pay page (/p/:token), online shop (/shop/:slug), TaxStreem sign-on (/sso)
   pages/inventory/   Overview, Items, Receive, Counts, Reorder, Pricing, Production, Insights (Leak radar), Reports,
                      Month-end close, Move to Counta, Locations
   pages/             Assistant (Martina), Settings, Onboarding, auth
@@ -31,12 +49,18 @@ src/
   lib/               domain rules, receiving, ledger formatting, chart of accounts, Martina, Supabase client,
                      industries (item fields per trade), sheet (reading and matching uploads), migrate (source system
                      presets), jobs, reports, exporters
-docs/                TaxStreem chart of accounts (CSV), the posting reference, voice and push, reports and import,
-                     production and jobs, moving to Counta, month-end close, Leak radar
+docs/                Atlas, selling, payment rails, messaging, TaxStreem sign-on, TaxStreem chart of accounts (CSV),
+                     the posting reference, voice and push, reports and import, production and jobs, moving to Counta,
+                     month-end close, Leak radar
 supabase/
   migrations/        schema, RLS, posting functions, sample business, storage, cron, hardening, TaxStreem chart,
                      production and jobs, period close, migration, Leak radar
-  functions/ai       Gemini: read_invoice, ask, chat, voice, map_columns and extract_rows for uploads
+  functions/ai       Gemini: read_invoice, ask, chat, voice, map_columns and extract_rows for uploads; the tax agent
+                     (VAT on items, through Numens when it is configured)
+  functions/atlas    the bookkeeper (bank lines) and the CFO commentary
+  functions/payments wallets, collections, payouts, Flutterwave and partner-rail webhooks, polling, nightly reconciliation
+  functions/messaging email (Resend) and WhatsApp Business delivery, Meta webhook
+  functions/taxstreem single sign-on from TaxStreem and Prism bills
   functions/fx       daily USD/NGN rate for FX timing advice
   functions/voice    ElevenLabs outbound calls: vendor orders and staff reminders
   functions/push     Web Push delivery for the notifications table
@@ -70,7 +94,7 @@ Receipts follow the purchases method with perpetual stock: Dr 5101 net, Dr 1402 
 
 ## Roles
 
-Templates exist for owner, manager, staff and cashier, with per-person overrides across nine permissions: record sales, receive stock, count stock, approve adjustments, edit costs and prices, approve POs, transfer stock, issue to jobs and see margins. A database constraint enforces the hard rule that anyone who records sales can never edit prices or approve adjustments. Costs and margins are masked server-side for roles without see margins.
+Templates exist for owner, manager, accountant, staff and cashier, with per-person overrides across eleven permissions: record sales, receive stock, count stock, approve adjustments, edit costs and prices, approve POs, transfer stock, issue to jobs, see margins, keep the books and make payments. A database constraint enforces the hard rule that anyone who records sales can never edit prices or approve adjustments. Costs and margins are masked server-side for roles without see margins.
 
 ## Running it
 
@@ -91,7 +115,7 @@ The Supabase URL and publishable key default to the TaxStreem Counta project, so
 
 ## Supabase setup
 
-Apply the files in `supabase/migrations` in order, then deploy the edge functions. `ai` and `fx` verify the JWT; `voice` and `push` check the caller themselves (a signed-in user, or the database's hook secret) and are deployed with JWT verification off.
+Apply the files in `supabase/migrations` in order, then deploy the edge functions. `fx` verifies the JWT. `ai`, `atlas`, `payments`, `messaging`, `taxstreem`, `voice` and `push` check the caller themselves (a signed-in user, the database's hook secret, a signed webhook or a signed TaxStreem token) and are deployed with JWT verification off.
 
 Keys can be Edge Function secrets or rows in Supabase Vault with the same name. The functions read the environment first and fall back to Vault through `public.app_secret()`, which only the service role can call. Store a Vault key with `select vault.create_secret('<value>', '<NAME>');`.
 
@@ -104,9 +128,14 @@ Keys can be Edge Function secrets or rows in Supabase Vault with the same name. 
 | `ELEVENLABS_VOICE_ID` | Optional. Voice for both agents. |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Web Push keys. Generated by the `push` function on first use and saved to Vault. |
 | `VAPID_SUBJECT` | Optional contact URL or mailto for push services (defaults to the site URL). |
-| `PUSH_HOOK_SECRET` | Generated by the migration. The database sends it with each call to `push` and `voice`. |
+| `PUSH_HOOK_SECRET` | Generated by the migration. The database sends it with each call to the functions. |
+| `FLW_SECRET_KEY`, `FLW_PUBLIC_KEY`, `FLW_WEBHOOK_HASH` | Flutterwave (`docs/payment-rails.md`) |
+| `RESEND_API_KEY`, `RESEND_FROM` | Email (`docs/messaging.md`) |
+| `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN` | WhatsApp Business (`docs/messaging.md`) |
+| `TAXSTREEM_SSO_SECRET` | Single sign-on and Prism (`docs/taxstreem-sso.md`) |
+| `NUMENS_API_URL`, `NUMENS_API_KEY` | Optional. Numens answers VAT questions instead of Gemini (`docs/atlas.md`) |
 
-In Auth settings, set the Site URL and redirect URLs to the deployed domain. A nightly pg_cron job quarantines expired batches and refreshes price alerts.
+In Auth settings, set the Site URL and redirect URLs to the deployed domain. pg_cron runs the agents every three minutes, re-checks payments every five, retries messages every ten, sends payment reminders each morning, reconciles wallets nightly, quarantines expired batches and refreshes price alerts.
 
 ## Sample business
 

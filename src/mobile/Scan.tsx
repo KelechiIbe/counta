@@ -41,7 +41,7 @@ export default function ScanScreen() {
   );
 }
 
-function Camera({ onCode, paused }: { onCode: (c: string) => void; paused: boolean }) {
+export function Camera({ onCode, paused }: { onCode: (c: string) => void; paused: boolean }) {
   const video = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<'idle' | 'on' | 'unsupported' | 'denied'>('idle');
   const supported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;

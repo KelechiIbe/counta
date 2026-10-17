@@ -12,6 +12,7 @@ import { CallList } from '../components/Calls';
 import { TOPICS, useVoiceCalls, useVoiceStatus, type VoiceCall } from '../lib/voice';
 import { INDUSTRIES, industryOf } from '../lib/industries';
 import { disablePush, enablePush, usePwaState } from '../lib/pwa';
+import { BooksSection, MessagesSection, TaxStreemSection } from './SettingsBooks';
 
 function Section({ id, title, sub, children }: { id?: string; title: string; sub?: string; children: ReactNode }) {
   return (
@@ -140,7 +141,7 @@ export default function Settings() {
     if (r === undefined) return;
     const list = await refreshMemberships();
     setOrgId(list[0]?.org_id ?? null); qc.clear();
-    nav(list.length ? '/inventory' : '/onboarding');
+    nav(list.length ? '/home' : '/onboarding');
   }
 
   return (
@@ -168,6 +169,8 @@ export default function Settings() {
         </div>
         {owner && <div><button className="btn btn-primary" onClick={saveOrg} disabled={busy}>Save settings</button></div>}
       </Section>
+      <BooksSection />
+      <MessagesSection />
       <Section title="Chart of accounts" sub={owner ? 'TaxStreem standard chart. Change where an entry lands; stock value moves with it.' : 'TaxStreem standard chart. Only the owner can change the rules.'}>
         <PostingRules owner={!!owner} onOpenChart={() => setChart(true)} />
       </Section>
@@ -188,6 +191,7 @@ export default function Settings() {
           </>
         )}
       </Section>
+      <TaxStreemSection />
       <NotificationsSection />
       <CallsSection owner={!!owner} />
       <Section title="Phone app" sub="For the people who handle stock. Works offline and syncs in order when data returns.">

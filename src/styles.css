@@ -264,3 +264,6 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 .m-btn.ghost { background: transparent; color: var(--muted); }
 .status-pill { font-size: 11px; font-weight: 600; border-radius: 6px; padding: 3px 8px; display: inline-flex; gap: 5px; align-items: center; }
 .handwrite { font-family: 'Comic Sans MS', 'Chalkboard SE', cursive; }
+
+/* Headline figures on tiles: one line, shrinking a little on narrow screens rather than wrapping the minus sign away from the number. */
+.kpi-val { font-size: 22px; font-weight: 700; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
