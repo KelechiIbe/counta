@@ -59,18 +59,32 @@ async function hmacHex(key: string, body: string) {
 }
 
 // ------------------------------------------------------------------ senders
+// The address inside RESEND_FROM, whatever surrounds it: "billing@x.ng", "TaxStreem <billing@x.ng>", or either wrapped in quotes or spaces.
+export function senderAddress(raw: string): string {
+  const m = String(raw || '').match(/[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/i);
+  return m ? m[0].toLowerCase() : '';
+}
+// A display name Resend accepts without quoting: no commas, quotes, brackets or @.
+export function displayName(name: string): string {
+  return `${String(name || 'Counta').replace(/[",;:<>()[\]\\@]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Counta'} via Counta`;
+}
+const storageUrl = (path?: string | null) => (path ? `${SUPABASE_URL}/storage/v1/object/public/item-photos/${path.split('/').map(encodeURIComponent).join('/')}` : null);
+
 async function sendEmail(m: Msg): Promise<string> {
   const key = await secret('RESEND_API_KEY');
   const from = await secret('RESEND_FROM');
   if (!key || !from) throw new Error('Email is not switched on yet: add RESEND_API_KEY and RESEND_FROM.');
   // Shown as "Business name via Counta <billing@...>", replies go to the business.
-  const addr = from.match(/<([^>]+)>/)?.[1] || from;
-  const display = `${String(m.org?.name || 'Counta').replace(/["<>]/g, '').slice(0, 60)} via Counta`;
-  const replyTo = m.params?.reply_to || m.org?.email;
+  const addr = senderAddress(from);
+  if (!addr) throw new Error('RESEND_FROM has no email address in it. Set it to an address on the domain verified in Resend, such as billing@yourdomain.com.');
+  const replyTo = m.params?.reply_to || m.org?.reply_to_email || m.org?.email;
+  const cc = (Array.isArray(m.params?.cc) ? m.params.cc : []).filter((e: unknown) => typeof e === 'string' && senderAddress(e as string)).slice(0, 5);
+  m.org = { ...m.org, logo_url: storageUrl(m.org?.logo_path) };
   const res = await fetch(`${RESEND_URL}/emails`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': `counta-${m.id}` },
-    body: JSON.stringify({ from: `${display} <${addr}>`, to: [m.to_address], subject: m.subject || wording(m).heading, html: emailHtml(m), text: emailText(m),
+    body: JSON.stringify({ from: `${displayName(m.org?.name)} <${addr}>`, to: [m.to_address], ...(cc.length ? { cc } : {}),
+      subject: m.subject || wording(m).heading, html: emailHtml(m), text: emailText(m),
       ...(replyTo ? { reply_to: replyTo } : {}), tags: [{ name: 'template', value: m.template }] }),
     signal: AbortSignal.timeout(20_000),
   });
@@ -178,7 +192,9 @@ Deno.serve(async (req) => {
     const { data: u } = await sb.auth.getUser();
     if (!u?.user) return json({ ok: false, error: 'Sign in first.' }, 401);
     if (body.action === 'status') {
-      return json({ ok: true, email: Boolean((await secret('RESEND_API_KEY')) && (await secret('RESEND_FROM'))),
+      const sender = senderAddress(await secret('RESEND_FROM'));
+      return json({ ok: true, email: Boolean((await secret('RESEND_API_KEY')) && sender), sender: sender || null,
+        sender_set: Boolean(await secret('RESEND_FROM')), email_key: Boolean(await secret('RESEND_API_KEY')),
         whatsapp: Boolean((await secret('WHATSAPP_TOKEN')) && (await secret('WHATSAPP_PHONE_NUMBER_ID'))) });
     }
     return json({ ok: false, error: 'Unknown action.' }, 400);
