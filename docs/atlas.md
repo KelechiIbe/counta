@@ -57,7 +57,7 @@ Numens powers this in production. Until `NUMENS_API_URL` and `NUMENS_API_KEY` ar
 ```
 POST {NUMENS_API_URL}/vat/classify
 Authorization: Bearer {NUMENS_API_KEY}
-{ "country": "NG", "law": "NTA2025", "items": [{ "id", "name", "category", "brand", "description", "item_type", "unit", "industry" }] }
+{ "country": "NG", "law": "NTA2025", "items": [{ "id", "name", "category", "brand", "description", "kind", "unit", "business_trade" }] }
 
 200 { "model": "numens-…", "results": [{ "id", "treatment": "standard" | "zero" | "exempt", "confidence": 0.0-1.0, "reason": "…", "law": "NTA 2025 s.187(…)" }] }
 ```

@@ -399,6 +399,14 @@ INDUSTRY: ${String(body.industry || 'retail')}`,
 }
 
 // ---------------------------------------------------------------- VAT treatment of items (Numens, Gemini until Numens is connected)
+// Compares secrets in constant time.
+function sameSecret(a: string, b: string) {
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+  let d = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) d |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return d === 0;
+}
+
 async function svcSecret(admin: SupabaseClient, name: string) {
   const env = Deno.env.get(name);
   if (env) return env.trim();
@@ -452,7 +460,7 @@ Deno.serve(async (req) => {
       const { data } = await admin.rpc('app_secret', { p_name: 'PUSH_HOOK_SECRET' });
       expected = typeof data === 'string' ? data.trim() : '';
     }
-    if (!expected || expected !== hook) return json({ ok: false, error: 'Not allowed.' }, 401);
+    if (!expected || !sameSecret(expected, hook)) return json({ ok: false, error: 'Not allowed.' }, 401);
     let hb: any = {};
     try { hb = await req.json(); } catch { /* empty body */ }
     if (hb.action !== 'vat_classify_pending') return json({ ok: false, error: 'Unknown action.' }, 400);
