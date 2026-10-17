@@ -122,11 +122,11 @@ The full set (statements and notes) exports as one workbook or one PDF with a co
 | Setting | Where | Effect |
 | --- | --- | --- |
 | Reporting framework | Settings, Books and tax | Wording in note 2 and on the statements |
-| Financial year start | Settings, Books and tax | Year to date, year-end close and comparatives |
+| Financial year end | Settings, Books and tax ("Financial year ends on") | Year to date, year-end close and comparatives. The year is twelve months, so the end fixes the start: a year ending on 30 June runs from 1 July. |
 | Auto-post threshold (80% or more) | Settings, Books and tax | When agents post without asking |
 | Sales not rung up in Counta | Settings, Books and tax | Lets the bookkeeper treat unexplained money in as sales |
 | Capitalisation threshold | Settings, Books and tax | Below it, equipment is expensed |
-| Small company WHT exemption | Settings, Books and tax | No WHT on bills under ₦2m from suppliers with a TIN |
+| Small company WHT exemption | Settings, Books and tax | No WHT on bills under ₦2m from suppliers with a Tax ID |
 | Prices include VAT, invoice terms, payment details | Settings, Books and tax | Invoices and receipts |
 
 ## Secrets

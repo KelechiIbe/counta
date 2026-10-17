@@ -1,6 +1,7 @@
 // Payments: the business wallet (a Flutterwave payout subaccount, or the partner's own rail), money collected by
 // transfer, link and QR, payouts with approval, and the nightly reconciliation of the wallet against the books.
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
@@ -9,6 +10,7 @@ import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import { StatusChip } from '../sell/common';
+import { BatchList, BatchModal, BulkPayModal, TemplateButton } from './BulkPay';
 
 export default function Payments() {
   const { data: inv } = useInventory();
@@ -16,8 +18,14 @@ export default function Payments() {
   const toast = useToast();
   const qc = useQueryClient();
   const pay = usePayments();
-  const [tab, setTab] = useState<'collections' | 'payouts' | 'reconciliations' | 'settings'>('collections');
+  type Tab = 'collections' | 'payouts' | 'bulk' | 'reconciliations' | 'settings';
+  const [params, setParams] = useSearchParams();
+  const [tab, setTabState] = useState<Tab>(() => (['collections', 'payouts', 'bulk', 'reconciliations', 'settings'].includes(params.get('tab') || '') ? params.get('tab') as Tab : 'collections'));
+  const setTab = (t: Tab) => { setTabState(t); const n = new URLSearchParams(params); n.set('tab', t); n.delete('batch'); setParams(n, { replace: true }); };
+  const openBatch = params.get('batch');
+  const setOpenBatch = (id: string | null) => { const n = new URLSearchParams(params); if (id) { n.set('tab', 'bulk'); n.set('batch', id); } else n.delete('batch'); setParams(n, { replace: true }); };
   const [payout, setPayout] = useState(false);
+  const [bulk, setBulk] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [live, setLive] = useState<{ available: number; ledger: number } | null>(null);
   const d = pay.data;
@@ -72,6 +80,7 @@ export default function Payments() {
                 <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">At {d.rail?.name || 'the rail'}{w.balance_at ? ` · ${when(w.balance_at)}` : ''}</span><span className="num">{live ? N2(live.ledger) : w.provider_balance != null ? N2(w.provider_balance) : '—'}</span></div>
                 <div className="row wrap" style={{ marginTop: 6 }}>
                   {d.can?.pay_out && <button className="btn btn-primary btn-sm" onClick={() => setPayout(true)}><Icon name="send" size={14} color="#fff" />Pay out</button>}
+                  {d.can?.pay_out && <button className="btn btn-secondary btn-sm" onClick={() => setBulk(true)}><Icon name="list" size={14} />Bulk payment</button>}
                   <button className="btn btn-secondary btn-sm" disabled={!!busy} onClick={checkBalance}>{busy === 'balance' ? <Spinner small /> : <Icon name="refresh" size={14} />}Check with {d.rail?.code === 'flutterwave' ? 'Flutterwave' : 'the rail'}</button>
                 </div>
               </>
@@ -81,7 +90,9 @@ export default function Payments() {
       )}
       <Pills value={tab} onChange={setTab} options={[
         { id: 'collections', label: 'Collections' },
-        ...(money_ ? [{ id: 'payouts' as const, label: 'Payouts', count: (d?.payouts || []).filter((p: any) => p.status === 'pending_approval').length || undefined }, { id: 'reconciliations' as const, label: 'Reconciliations' }] : []),
+        ...(money_ ? [{ id: 'payouts' as const, label: 'Payouts', count: (d?.payouts || []).filter((p: any) => p.status === 'pending_approval').length || undefined },
+          { id: 'bulk' as const, label: 'Bulk payments', count: (d?.batches || []).filter((b: any) => b.status === 'pending_approval').length || undefined },
+          { id: 'reconciliations' as const, label: 'Reconciliations' }] : []),
         ...(d?.can?.settings ? [{ id: 'settings' as const, label: 'Settings' }] : []),
       ]} />
       {tab === 'collections' && (
@@ -118,6 +129,18 @@ export default function Payments() {
           ))}
         </div>
       )}
+      {tab === 'bulk' && money_ && (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div className="card-hd row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
+            <span className="faint" style={{ fontSize: 13, flex: '1 1 260px' }}>Pay suppliers' bills, salaries and other costs from one sheet. Every account is checked with the bank first, the batch is approved once, and each row has its own result.</span>
+            <span className="row wrap" style={{ gap: 8 }}>
+              <TemplateButton small />
+              {d?.can?.pay_out && w?.status === 'active' && <button className="btn btn-primary btn-sm" onClick={() => setBulk(true)}><Icon name="upload" size={14} color="#fff" />Upload a bulk payment</button>}
+            </span>
+          </div>
+          <BatchList batches={d?.batches || []} onOpen={setOpenBatch} />
+        </div>
+      )}
       {tab === 'reconciliations' && (
         <div className="card" style={{ overflow: 'hidden' }}>
           <div className="faint" style={{ fontSize: 12, padding: '12px 20px 0' }}>Every night Counta reads the wallet's balance and statement at the rail and compares them with the books. Sweeps on their way and payouts still processing are allowed for.</div>
@@ -133,6 +156,8 @@ export default function Payments() {
       )}
       {tab === 'settings' && d?.can?.settings && <PaymentSettings data={d} onSaved={refresh} />}
       {payout && <PayoutModal onClose={() => setPayout(false)} />}
+      {bulk && <BulkPayModal onClose={() => setBulk(false)} onCreated={(b) => { setBulk(false); setTabState('bulk'); setOpenBatch(b.id); }} />}
+      {openBatch && <BatchModal id={openBatch} onClose={() => setOpenBatch(null)} />}
     </div>
   );
 }

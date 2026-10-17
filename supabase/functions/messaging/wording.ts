@@ -85,7 +85,7 @@ export function emailHtml(m: Msg) {
     ? `<p style="margin:20px 0"><a href="${esc(w.link)}" style="background:${color};color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block">${esc(w.button)}</a></p>`
     : '';
   const contact = [p.business_phone, p.reply_to].filter(Boolean).map(esc).join(' · ');
-  const footer = [m.org?.address, m.org?.tin ? `TIN ${m.org.tin}` : '', m.org?.website].filter(Boolean).map((x) => esc(x)).join(' · ');
+  const footer = [m.org?.address, m.org?.tin ? `Tax ID ${m.org.tin}` : '', m.org?.website].filter(Boolean).map((x) => esc(x)).join(' · ');
   const logo = m.org?.logo_url ? `<img src="${esc(m.org.logo_url)}" alt="${esc(biz)}" style="max-height:48px;max-width:180px;display:block;margin:0 0 14px" />` : '';
   return `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">

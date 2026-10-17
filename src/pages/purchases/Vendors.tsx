@@ -1,4 +1,4 @@
-// Vendors: what the business owes each, their TIN and withholding tax category, bank details for paying from the wallet,
+// Vendors: what the business owes each, their Tax ID and withholding tax category, bank details for paying from the wallet,
 // the account their bills usually go to, and a statement.
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -8,6 +8,7 @@ import { edge, today, useBills, useChart } from '../../lib/api';
 import { N2, fmtDay } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Empty, Field, Pills, SkeletonRows } from '../../components/ui';
+import { TAX_ID_HINT, isOldTin, taxIdError } from '../../lib/taxid';
 import { ExportMenu, acc, useMeta } from '../../components/Books';
 
 export default function Vendors() {
@@ -23,11 +24,11 @@ export default function Vendors() {
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-hd"><div className="row" style={{ flex: 1 }}><Icon name="search" size={15} color="#9CA3AF" /><input className="input input-sm" style={{ border: 0, boxShadow: 'none' }} placeholder="Find a vendor" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search vendors" /></div></div>
         <div className="tbl">
-          <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: 'minmax(180px,1.5fr) 140px minmax(160px,1fr) 150px 130px', minWidth: 800 }}><span>Vendor</span><span>TIN</span><span>WHT</span><span>Bank</span><span className="right">We owe</span></div>
+          <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: 'minmax(180px,1.5fr) 140px minmax(160px,1fr) 150px 130px', minWidth: 800 }}><span>Vendor</span><span>Tax ID</span><span>WHT</span><span>Bank</span><span className="right">We owe</span></div>
           {bills.isLoading ? <SkeletonRows n={6} /> : bills.error ? <div style={{ padding: 20 }}><Alert kind="yellow" icon="shield">{(bills.error as Error).message}</Alert></div> : !list.length ? <div style={{ padding: 20 }}><Empty>No vendors yet.</Empty></div> : list.map((v: any) => (
             <div key={v.id} className="tr click" onClick={() => setOpen(v)} style={{ gridTemplateColumns: 'minmax(180px,1.5fr) 140px minmax(160px,1fr) 150px 130px', minWidth: 800 }}>
               <b className="ellipsis">{v.name}</b>
-              <span className="muted">{v.tin || <span style={{ color: '#C2410C' }}>No TIN</span>}</span>
+              <span className="muted">{v.tin ? <>{v.tin}{isOldTin(v.tin) && <span className="faint" style={{ display: 'block', fontSize: 11 }}>old TIN</span>}</> : <span style={{ color: '#C2410C' }}>No Tax ID</span>}</span>
               <span className="muted ellipsis">{(bills.data?.wht_rates || []).find((w: any) => w.code === v.wht_category)?.name || 'Not set'}</span>
               <span className="muted">{v.account_number ? `${v.bank_name || v.bank_code} · ${v.account_number.slice(-4)}` : '—'}</span>
               <span className="right num" style={{ color: Number(v.balance) > 0 ? '#C2410C' : undefined }}>{Number(v.balance) ? N2(v.balance) : '—'}</span>
@@ -57,7 +58,9 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
     edge<{ account_name: string }>('payments', { action: 'resolve_account', account_number: f.account_number, bank_code: f.bank_code }).then((r) => r.account_name && setF((x) => ({ ...x, account_name: r.account_name })));
   }, [f.account_number, f.bank_code]); // eslint-disable-line react-hooks/exhaustive-deps
   const accounts = (chart.data?.accounts || []).filter((a: any) => !a.is_group && a.active && /^[56]/.test(a.code));
+  const tinErr = taxIdError(f.tin, vendor.tin);
   async function save() {
+    if (tinErr) { toast(tinErr, 'err'); return; }
     try {
       await rpc('save_vendor_details', { p_org: orgId, p_vendor: vendor.id, p_patch: { ...f, bank_name: banks.find((b) => b.code === f.bank_code)?.name || null } });
       toast('Vendor saved'); await qc.invalidateQueries({ queryKey: ['bills'] });
@@ -72,9 +75,10 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
         <Pills value={tab} onChange={setTab} options={[{ id: 'statement', label: 'Statement' }, { id: 'details', label: 'Tax and bank details' }]} />
         {tab === 'details' ? (
           <div className="stack" style={{ gap: 12 }}>
-            {!f.tin && <Alert kind="yellow" icon="alert">Without a TIN, withholding tax on this vendor's bills is deducted at double the rate.</Alert>}
+            {!f.tin && <Alert kind="yellow" icon="alert">Without a Tax ID, withholding tax on this vendor's bills is deducted at double the rate.</Alert>}
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <Field label="TIN"><input className="input" value={f.tin} onChange={(e) => setF({ ...f, tin: e.target.value })} /></Field>
+              <Field label="Tax ID" error={tinErr} hint={tinErr ? undefined : isOldTin(f.tin) ? 'An old TIN. Ask them for their 13-digit Tax ID.' : TAX_ID_HINT}>
+                <input className="input" inputMode="numeric" maxLength={20} placeholder="13 digits" value={f.tin} onChange={(e) => setF({ ...f, tin: e.target.value })} /></Field>
               <Field label="RC number"><input className="input" value={f.rc_number} onChange={(e) => setF({ ...f, rc_number: e.target.value })} /></Field>
             </div>
             <label className="check"><input type="checkbox" checked={f.is_individual} onChange={(e) => setF({ ...f, is_individual: e.target.checked })} />An individual, not a company</label>

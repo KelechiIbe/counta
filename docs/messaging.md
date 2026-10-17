@@ -16,7 +16,7 @@ Counta sends invoices, receipts, orders, statements and payment reminders by ema
 | `RESEND_API_KEY` | API key from the Resend dashboard |
 | `RESEND_FROM` | An address on a domain verified in Resend: `billing@counta.ng` or `Counta <billing@counta.ng>` |
 
-Counta reads the email address out of `RESEND_FROM` whatever surrounds it (quotes, a display name, spaces) and sends each email from `<Business name> via Counta <that address>`, with the business's own email (or the reply-to address set in Settings) as Reply-To, so customers' replies reach the business. A customer's extra addresses (up to five) receive a copy. Resend's `Idempotency-Key` is `counta-<message id>`, so a retry never sends twice. The email has a plain-text part as well as HTML, and carries the business's logo, brand colour, address, TIN and website.
+Counta reads the email address out of `RESEND_FROM` whatever surrounds it (quotes, a display name, spaces) and sends each email from `<Business name> via Counta <that address>`, with the business's own email (or the reply-to address set in Settings) as Reply-To, so customers' replies reach the business. A customer's extra addresses (up to five) receive a copy. Resend's `Idempotency-Key` is `counta-<message id>`, so a retry never sends twice. The email has a plain-text part as well as HTML, and carries the business's logo, brand colour, address, Tax ID and website.
 
 Settings, Customer messages shows whether email is on and the address it sends from, and the reason the last message failed.
 

@@ -104,7 +104,7 @@ export const VENDOR_FIELDS: SimpleField[] = [
   { key: 'phone', label: 'Phone', syn: ['phone', 'phone number', 'mobile', 'telephone', 'tel', 'whatsapp', 'work phone', 'mobile phone', 'contact phone'] },
   { key: 'email', label: 'Email', syn: ['email', 'e mail', 'email address', 'mail'] },
   { key: 'location', label: 'Address or area', syn: ['address', 'location', 'city', 'area', 'billing address', 'street', 'state'] },
-  { key: 'tin', label: 'TIN', syn: ['tin', 'tax id', 'tax identification number', 'tax number', 'vat number', 'tax registration number', 'trn'] },
+  { key: 'tin', label: 'Tax ID', syn: ['tin', 'tax id', 'tax identification number', 'tax number', 'vat number', 'tax registration number', 'trn'] },
   { key: 'vat_registered', label: 'VAT registered (Yes/No)', syn: ['vat registered', 'vat', 'taxable', 'vat status'] },
   { key: 'credit_days', label: 'Credit days', syn: ['credit days', 'payment terms', 'terms', 'credit terms', 'due days'] },
   { key: 'lead_time_days', label: 'Delivery days', syn: ['lead time', 'lead time days', 'delivery days', 'days to deliver'] },

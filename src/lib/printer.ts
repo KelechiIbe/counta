@@ -54,7 +54,7 @@ export function receiptText(s: Sale, width = 32): string[] {
   out.push(center(s.org?.name || ''));
   if (s.org?.address) out.push(center(s.org.address));
   if (s.org?.phone) out.push(center(s.org.phone));
-  if (s.org?.tin) out.push(center('TIN ' + s.org.tin));
+  if (s.org?.tin) out.push(center('Tax ID ' + s.org.tin));
   out.push(rule);
   out.push(pad(`${s.doc_type === 'receipt' ? 'Receipt' : s.doc_type === 'invoice' ? 'Invoice' : 'Document'} ${s.number}`, new Date(s.created_at).toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })));
   if (s.customer_name && !/walk-in/i.test(s.customer_name)) out.push(ascii('Customer: ' + s.customer_name).slice(0, width));

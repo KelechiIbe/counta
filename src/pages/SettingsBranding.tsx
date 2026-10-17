@@ -5,20 +5,24 @@ import { useInventory, useSession, useToast } from '../state/session';
 import { photoUrl, rpc, supabase } from '../lib/supabase';
 import { Icon } from '../components/Icon';
 import { Alert, Field, Label } from '../components/ui';
+import { shrinkImage } from '../lib/images';
+import { TAX_ID_HINT, isOldTin, taxIdError } from '../lib/taxid';
 import { InvoiceDoc, ScaledDoc, TEMPLATES, cleanHex, sampleDoc, type Template } from '../components/InvoiceDoc';
 
 export const SWATCHES = ['#0072F5', '#0B3B75', '#0F766E', '#15803D', '#B45309', '#C2410C', '#B91C1C', '#9D174D', '#6D28D9', '#111827'];
 const SHOW: [string, string][] = [
-  ['tin', 'Your TIN'], ['rc_number', 'Your RC number'], ['vat_status', 'VAT status of each line (0, 1, 2)'], ['amount_in_words', 'Amount in words'], ['signature', 'A line for a signature'],
+  ['tin', 'Your Tax ID'], ['rc_number', 'Your RC number'], ['vat_status', 'VAT status of each line (0, 1, 2)'], ['amount_in_words', 'Amount in words'], ['signature', 'A line for a signature'],
 ];
 
 // Uploads a picture to the business's own folder in storage and returns its path.
 export async function uploadBrandImage(orgId: string, f: File, kind: 'logo' | 'banner'): Promise<string> {
   if (!/^image\/(png|jpe?g|webp)$/.test(f.type)) throw new Error('Choose a PNG, JPG or WebP picture.');
-  if (f.size > 3 * 1024 * 1024) throw new Error('Choose a picture under 3 MB.');
-  const ext = f.type === 'image/png' ? 'png' : f.type === 'image/webp' ? 'webp' : 'jpg';
-  const path = `${orgId}/brand/${kind}-${Date.now()}.${ext}`;
-  const { error } = await supabase.storage.from('item-photos').upload(path, f, { upsert: true, contentType: f.type, cacheControl: '31536000' });
+  if (f.size > 15 * 1024 * 1024) throw new Error('Choose a picture under 15 MB.');
+  // Logos print at most a few centimetres wide; banners fill the top of the shop.
+  const pic = await shrinkImage(f, kind === 'logo' ? 1000 : 2000, 0.88);
+  // A new name each time, so nothing is overwritten and no one sees an old cached picture.
+  const path = `${orgId}/brand/${kind}-${Date.now()}.${pic.ext}`;
+  const { error } = await supabase.storage.from('item-photos').upload(path, pic.blob, { contentType: pic.type, cacheControl: '31536000' });
   if (error) throw new Error(error.message);
   return path;
 }
@@ -72,7 +76,9 @@ export function BrandingSection() {
     catch (e) { toast((e as Error).message, 'err'); }
     setBusy(null);
   }
+  const tinErr = taxIdError(f.tin, o.tin);
   async function save() {
+    if (tinErr) { toast(tinErr, 'err'); return; }
     setBusy('save');
     try {
       await rpc('update_org_settings', { p_org: orgId, p_patch: { address: f.address, tin: f.tin, rc_number: f.rc_number, phone: f.phone, email: f.email } });
@@ -93,7 +99,7 @@ export function BrandingSection() {
       </div>
       <div className="brand-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 380px) minmax(0, 1fr)', gap: 24, alignItems: 'start' }}>
         <div className="stack" style={{ gap: 14 }}>
-          <Field label="Logo" hint="PNG, JPG or WebP under 3 MB. A wide logo on a white or clear background prints best.">
+          <Field label="Logo" hint="PNG, JPG or WebP. A wide logo on a white or clear background prints best. Large pictures are resized for you.">
             <div className="row" style={{ gap: 12 }}>
               <div style={{ width: 120, height: 64, border: '1px dashed #D1D5DB', borderRadius: 10, display: 'grid', placeItems: 'center', background: '#FAFAFA', overflow: 'hidden', flex: 'none' }}>
                 {f.logo_path ? <img src={photoUrl(f.logo_path) || ''} alt="Your logo" style={{ maxWidth: 112, maxHeight: 56, objectFit: 'contain' }} /> : <Icon name="image" size={22} color="#9CA3AF" />}
@@ -119,7 +125,8 @@ export function BrandingSection() {
           </Field>
           <Field label="Office address"><textarea className="input" disabled={!owner} value={f.address} onChange={(e) => set('address', e.target.value)} style={{ minHeight: 64 }} placeholder="Plot 5, Admiralty Way, Lekki, Lagos" /></Field>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="Tax ID (TIN)"><input className="input" disabled={!owner} value={f.tin} onChange={(e) => set('tin', e.target.value)} /></Field>
+            <Field label="Tax ID" error={tinErr} hint={!tinErr && isOldTin(f.tin) ? 'This is an old TIN. Replace it with your 13-digit Tax ID.' : !tinErr ? TAX_ID_HINT : undefined}>
+              <input className="input" disabled={!owner} value={f.tin} inputMode="numeric" maxLength={20} onChange={(e) => set('tin', e.target.value)} placeholder="13 digits" /></Field>
             <Field label="RC number"><input className="input" disabled={!owner} value={f.rc_number} onChange={(e) => set('rc_number', e.target.value)} /></Field>
             <Field label="Phone"><input className="input" disabled={!owner} value={f.phone} onChange={(e) => set('phone', e.target.value)} inputMode="tel" /></Field>
             <Field label="Email"><input className="input" disabled={!owner} value={f.email} onChange={(e) => set('email', e.target.value)} inputMode="email" /></Field>
@@ -136,7 +143,7 @@ export function BrandingSection() {
             ))}
           </div>
           {owner && <div><button className="btn btn-primary" disabled={busy === 'save'} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save branding'}</button></div>}
-          {!f.tin && <Alert kind="amber" icon="info">Add your TIN. Customers who are VAT-registered need it on your invoices to claim the VAT back.</Alert>}
+          {!f.tin && <Alert kind="amber" icon="info">Add your Tax ID. Customers who are VAT-registered need it on your invoices to claim the VAT back.</Alert>}
         </div>
         <div className="stack" style={{ gap: 8, minWidth: 0 }}>
           <div className="mini-label">Preview with sample figures</div>

@@ -8,6 +8,8 @@
 //   activate { request_id }                        -> fills in a request the till opened (account number, link or QR)
 //   check { request_id }                           -> asks the rail whether it has been paid
 //   send_payout { payout_id }                      -> sends an approved payout
+//   send_batch { batch_id }                        -> sends an approved bulk payment (as much as fits in ~40 seconds; the
+//                                                     five-minute poll carries on with the rest), returns the batch
 //   balance { org_id }                             -> the rail's balance for the wallet, compared with the books
 //   banks {}                                       -> Nigerian banks for payouts
 //   resolve_account { account_number, bank_code }  -> the account name the bank holds
@@ -18,7 +20,8 @@
 //   POST /payments/webhook/flutterwave             -> header verif-hash must equal FLW_WEBHOOK_HASH
 //   POST /payments/webhook/rail/<code>             -> header x-counta-signature: sha256=<HMAC of the body with the rail's webhook secret>
 // Database cron (header x-counta-hook: <PUSH_HOOK_SECRET>):
-//   { action: 'poll' }       -> re-checks unpaid requests, retries sweeps, re-checks payouts in progress
+//   { action: 'poll' }       -> re-checks unpaid requests, retries sweeps, re-checks payouts in progress, carries on
+//                               sending bulk payments and reads Flutterwave bulk transfers' results
 //   { action: 'reconcile' }  -> compares every wallet with the books
 //
 // Nothing a webhook says is trusted on its own: Counta asks the rail for the transaction before recording money.
@@ -94,6 +97,9 @@ interface Rail {
   verifyCollection(txRef: string): Promise<Verified | null>;
   payout(p: any, wallet: { account_ref?: string }): Promise<PayoutResult>;
   verifyPayout(reference: string, providerRef?: string): Promise<PayoutResult | null>;
+  // Many payouts in one request (Flutterwave bulk transfers). Used only when the rail lists 'bulk_payout'.
+  bulkPayout?(rows: any[], wallet: { account_ref?: string }, title: string): Promise<{ provider_batch_id: string }>;
+  batchResults?(providerBatchId: string): Promise<(PayoutResult & { reference: string })[]>;
   balance(accountRef: string): Promise<{ available: number; ledger: number }>;
   sweep?(barterId: string, amount: number, reference: string, narration: string): Promise<'sent' | 'done' | 'failed'>;
   // Money that reached the wallet, as the rail's own statement shows it (used when a webhook cannot say which wallet).
@@ -220,6 +226,32 @@ const flutterwave: Rail = {
     const d = r.data || {};
     const s = String(d.status || '').toUpperCase();
     return { status: s === 'SUCCESSFUL' ? 'successful' : s === 'FAILED' ? 'failed' : 'processing', provider_ref: String(d.id), fee: num(d.fee), error: d.complete_message, raw: d };
+  },
+  // Flutterwave bulk transfer: one request, one transfer per row with our own reference, each debited from the business's
+  // payout subaccount. Results come back per transfer (webhook transfer.completed, or the list for the batch id).
+  async bulkPayout(rows, wallet, title) {
+    const r = await flw('/bulk-transfers', { method: 'POST', body: JSON.stringify({
+      title: title.slice(0, 60),
+      bulk_data: rows.map((p) => ({ bank_code: p.bank_code, account_number: p.account_number, amount: num(p.amount), currency: 'NGN',
+        narration: String(p.narration).slice(0, 80), reference: p.reference, debit_currency: 'NGN',
+        ...(wallet.account_ref ? { debit_subaccount: wallet.account_ref } : {}) })) }) });
+    const id = r.data?.id;
+    if (!id) throw new UserError('Flutterwave did not return a bulk transfer id.');
+    return { provider_batch_id: String(id) };
+  },
+  async batchResults(providerBatchId) {
+    const out: (PayoutResult & { reference: string })[] = [];
+    for (let page = 1; page <= 20; page++) {
+      const r = await flw(`/transfers?batch_id=${encodeURIComponent(providerBatchId)}&page=${page}`);
+      for (const d of r.data || []) {
+        const s = String(d.status || '').toUpperCase();
+        out.push({ reference: String(d.reference || ''), status: s === 'SUCCESSFUL' ? 'successful' : s === 'FAILED' ? 'failed' : 'processing',
+          provider_ref: String(d.id || ''), fee: num(d.fee), error: d.complete_message, raw: d });
+      }
+      const info = r.meta?.page_info;
+      if (!info || num(info.current_page) >= num(info.total_pages)) break;
+    }
+    return out;
   },
   async balance(accountRef) {
     const r = await flw(`/payout-subaccounts/${encodeURIComponent(accountRef)}/balances?currency=NGN`);
@@ -386,6 +418,53 @@ async function sendPayout(sb: SupabaseClient, payoutId: string) {
   }
 }
 
+// Sends the approved rows of a bulk payment that is "sending". Rows are claimed one at a time (or 100 at a time for a
+// Flutterwave bulk transfer) and each moves to "processing" before it goes, so the page and the poll can both push the
+// same batch without paying anyone twice. Stops after budgetMs; whatever is left goes on the next push.
+async function pushBatch(b: { id: string; rail: string; bulk?: boolean; title?: string; wallet: { account_ref?: string } }, budgetMs: number) {
+  const { rail, row } = await railFor(b.rail);
+  if (!(await rail.configured())) throw new NotConfigured(row.kind === 'flutterwave' ? 'Payments are not switched on yet. Add FLW_SECRET_KEY to the Supabase Edge Function secrets.' : `The ${row.name} payment rail has no API key yet.`);
+  const bulk = Boolean(b.bulk && rail.bulkPayout);
+  const start = Date.now();
+  let sent = 0, failed = 0;
+  while (Date.now() - start < budgetMs) {
+    const rows = await svc<any[]>('svc_batch_claim', { p_batch: b.id, p_limit: bulk ? 100 : 1 });
+    if (!rows?.length) break;
+    if (bulk) {
+      try {
+        const r = await rail.bulkPayout!(rows, b.wallet, b.title || 'Counta bulk payment');
+        await svc('svc_batch_update', { p_batch: b.id, d: { provider_batch_id: r.provider_batch_id } });
+        sent += rows.length;
+      } catch (e) {
+        if (!(e instanceof UserError)) { console.log('bulk transfer without an answer', b.id, (e as Error).message); sent += rows.length; break; }
+        for (const p of rows) await svc('svc_payout_update', { p_reference: p.reference, d: { status: 'failed', error: e.message } });
+        failed += rows.length;
+      }
+      continue;
+    }
+    const p = rows[0];
+    try {
+      const r = await rail.payout(p, b.wallet);
+      await svc('svc_payout_update', { p_reference: p.reference, d: { status: r.status, provider_ref: r.provider_ref, fee: r.fee, raw: r.raw, error: r.error } });
+      sent++;
+    } catch (e) {
+      // Refused: nothing left the wallet. No answer: it may have gone, so it stays "processing" for the poll to settle.
+      if (e instanceof UserError) { await svc('svc_payout_update', { p_reference: p.reference, d: { status: 'failed', error: e.message } }); failed++; }
+      else { console.log('batch payout without an answer', p.reference, (e as Error).message); sent++; }
+    }
+  }
+  return { sent, failed };
+}
+
+async function sendBatch(sb: SupabaseClient, batchId: string) {
+  const { data, error } = await sb.rpc('payout_batch_to_send', { p_batch: batchId });
+  if (error) throw new UserError(error.message);
+  const res = await pushBatch({ id: batchId, rail: data.rail, bulk: data.batch?.bulk, title: data.batch?.title, wallet: data.wallet || {} }, 40_000);
+  const { data: batch, error: e2 } = await sb.rpc('get_payout_batch', { p_batch: batchId });
+  if (e2) throw new UserError(e2.message);
+  return { ...res, batch };
+}
+
 const day = (d: Date) => d.toISOString().slice(0, 10);
 
 // Reads each wallet's statement at the rail and records money that came in directly (customers paying the business's own
@@ -442,6 +521,24 @@ async function poll() {
       const v = await rail.verifyPayout(p.reference, p.provider_ref);
       if (v && v.status !== 'processing') { await svc('svc_payout_update', { p_reference: p.reference, d: v }); out.payouts = (out.payouts as number) + 1; }
     } catch (e) { console.log('poll payout', p.reference, (e as Error).message); }
+  }
+  // Bulk payments someone started: send what is left, and read Flutterwave bulk transfers' results.
+  out.batches = 0;
+  let batches: any[] = [];
+  try { batches = (await svc<any[]>('svc_work', { p_kind: 'batches' })) || []; } catch (e) { console.log('poll batches', (e as Error).message); }
+  for (const b of batches) {
+    try {
+      if (num(b.approved) > 0) await pushBatch({ id: b.id, rail: b.rail, bulk: b.bulk, title: b.title, wallet: { account_ref: b.account_ref } }, 20_000);
+      const { rail } = await railFor(b.rail);
+      if (rail.batchResults && num(b.processing) > 0) {
+        for (const id of b.provider_batch_ids || []) {
+          for (const v of await rail.batchResults(id)) {
+            if (v.reference.startsWith('CNTP-') && v.status !== 'processing') await svc('svc_payout_update', { p_reference: v.reference, d: v });
+          }
+        }
+      }
+      out.batches = (out.batches as number) + 1;
+    } catch (e) { console.log('poll batch', b.id, (e as Error).message); }
   }
   // Twice an hour, read the wallets' own statements for money paid straight into them.
   if (new Date().getUTCMinutes() % 30 < 5) out.wallets = await syncWallets(1);
@@ -644,6 +741,7 @@ Deno.serve(async (req) => {
         return json({ ok: true, request: r });
       }
       case 'send_payout': return json({ ok: true, payout: await sendPayout(sb, String(body.payout_id)) });
+      case 'send_batch': return json({ ok: true, ...(await sendBatch(sb, String(body.batch_id))) });
       case 'balance': {
         const { data, error } = await sb.rpc('get_payments', { p_org: body.org_id });
         if (error) throw new UserError(error.message);

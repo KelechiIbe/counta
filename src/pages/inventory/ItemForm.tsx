@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { edge } from '../../lib/api';
-import { Drawer, Field, XButton, Alert } from '../../components/ui';
+import { Drawer, Field, XButton, Alert, Thumb } from '../../components/ui';
 import { Icon } from '../../components/Icon';
-import { rpc } from '../../lib/supabase';
-import { useInventory, useSession } from '../../state/session';
+import { rpc, supabase } from '../../lib/supabase';
+import { useInventory, useSession, useToast } from '../../state/session';
 import { useAction } from '../../lib/queries';
 import { N } from '../../lib/format';
 import { sumQty } from '../../lib/domain';
@@ -47,6 +47,7 @@ export function AttrInput({ f, value, onChange }: { f: FieldDef; value: any; onC
 export default function ItemForm({ item, onClose, onSaved }: { item?: Item | null; onClose: () => void; onSaved?: (id: string) => void }) {
   const { data: inv } = useInventory();
   const { orgId } = useSession();
+  const toast = useToast();
   const { run, busy } = useAction();
   const qc = useQueryClient();
   const editing = !!item;
@@ -64,6 +65,14 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
     import_priced: item?.import_priced || false,
   });
   const [attrs, setAttrs] = useState<Record<string, any>>({ ...(item?.attributes || {}) });
+  // The storefront description lives apart from the staff note, so it is read straight from the item.
+  const [shopText, setShopText] = useState('');
+  const [shopLoaded, setShopLoaded] = useState('');
+  useEffect(() => {
+    if (!item?.id) return;
+    supabase.from('items').select('shop_description').eq('id', item.id).maybeSingle()
+      .then(({ data }) => { const v = (data as any)?.shop_description || ''; setShopText(v); setShopLoaded(v); });
+  }, [item?.id]);
   const [err, setErr] = useState<Record<string, string>>({});
   const [more, setMore] = useState(editing);
   const set = (k: keyof typeof f, v: any) => { setF({ ...f, [k]: v }); setErr({ ...err, [k]: '' }); };
@@ -109,6 +118,10 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
         : f.barcode ? 'Item created · barcode linked' : 'Item created · QR label ready to print',
     });
     if (!id) return;
+    if (sells && shopText.trim() !== shopLoaded.trim()) {
+      await rpc('set_item_shop_details', { p_item: id, p: { shop_description: shopText } }).catch((e) => toast((e as Error).message, 'err'));
+      qc.invalidateQueries({ queryKey: ['shop'] });
+    }
     if (vatChanged) {
       // A person's choice is final for the agent, so it is recorded as a manual decision.
       await rpc('set_item_vat', { p_item: id, p_treatment: f.vat_treatment, p_reason: editing ? 'Changed on the item' : 'Set when the item was added' }).catch(() => undefined);
@@ -186,6 +199,22 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
         </div>
         {priceWarn && <Alert kind="amber" icon="alert">Price is at or below cost, so every sale loses money. You can still save it.</Alert>}
         <label className="check"><input type="checkbox" checked={f.track_batches} onChange={(e) => set('track_batches', e.target.checked)} />Track batches and expiry dates{ind.nafdac ? ' (NAFDAC-regulated or perishable)' : ''}</label>
+
+        {sells && (
+          <div style={{ border: '1px solid #E6E6E6', borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+              {item && <Thumb name={item.name} path={item.photo_path} size={48} radius={10} />}
+              <div className="grow">
+                <div className="label" style={{ fontFamily: 'inherit', letterSpacing: '.06em' }}>Online shop</div>
+                <div className="hint" style={{ marginTop: 2 }}>{item ? (item.photo_path ? 'The photo shows in the shop. Change it from the item\'s picture.' : 'Add a photo by tapping the picture on the item once it is saved.') : 'Add a photo from the item once it is saved.'}</div>
+              </div>
+            </div>
+            <Field label="Description for customers" hint={`What customers read when they open the product: what it is, size or weight, what is in the pack, how to use it. Line breaks are kept. ${shopText.length.toLocaleString('en-NG')} of 4,000 characters.`}>
+              <textarea className="input" value={shopText} maxLength={4000} onChange={(e) => setShopText(e.target.value)} style={{ minHeight: 120 }}
+                placeholder={'Chocolate malt drink with ACTIV-GO, 400g tin.\nMakes about 20 cups. Mix 3 heaped spoons with hot or cold milk.'} />
+            </Field>
+          </div>
+        )}
 
         {indFields.length > 0 && (
           <div style={{ border: '1px solid #E6E6E6', borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>

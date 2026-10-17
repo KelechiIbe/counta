@@ -160,7 +160,7 @@ Rules:
 - confidence (0-100) is how sure you are of the WHOLE line: item, qty, unit and cost. Use below 85 when handwriting is ambiguous, digits could be read two ways, the unit is unclear, or qty x unit_cost does not match the printed total. When unsure, give the most likely reading and put the other plausible one in alt_reading with a short human label like "16 packs" or "1 bag (20 packs)".
 - bbox: the line's box on the page as [ymin, xmin, ymax, xmax] scaled 0-1000 (images only; null for PDFs).
 - batch_no and expiry_date (YYYY-MM-DD) only when printed on the line.
-- vendor: set vendor_id if the seller matches a known vendor, else vendor_name as printed. vat_charged = true when the invoice charges VAT or shows the seller's VAT/TIN registration with a VAT line. prices_include_vat = true only when unit prices clearly include VAT.
+- vendor: set vendor_id if the seller matches a known vendor, else vendor_name as printed. vat_charged = true when the invoice charges VAT or shows the seller's VAT registration, Tax ID or old TIN with a VAT line. prices_include_vat = true only when unit prices clearly include VAT.
 - Never invent lines or numbers that are not on the document.
 ITEM MASTER: ${JSON.stringify(items)}
 KNOWN VENDORS: ${JSON.stringify(vendors)}`;

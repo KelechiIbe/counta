@@ -7,6 +7,7 @@ import { money, today, useCustomers, useSales, type Customer } from '../../lib/a
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows } from '../../components/ui';
+import { TAX_ID_HINT, isOldTin, taxIdError } from '../../lib/taxid';
 import { ExportMenu, acc, useMeta } from '../../components/Books';
 import type { RCol } from '../../lib/reports';
 import { StatusChip, docUrl } from './common';
@@ -96,7 +97,10 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   const meta = useMeta();
   const canCredit = can(inv, 'approve_adjustments') || can(inv, 'keep_books');
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
+  const abroad = (f.country || 'NG') !== 'NG';
+  const tinErr = abroad ? null : taxIdError(f.tin, customer?.tin);
   async function save() {
+    if (tinErr) { toast(tinErr, 'err'); return; }
     setBusy(true);
     try {
       await rpc('save_customer', { p_org: orgId, p_customer: { id: customer?.id || null, name: f.name, phone: f.phone || null, email: f.email || null, address: f.address || null, tin: f.tin || null,
@@ -125,7 +129,9 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
               <Field label="Kind"><select className="input" value={f.kind} onChange={(e) => set('kind', e.target.value)}><option value="business">Business</option><option value="individual">Individual</option></select></Field>
               <Field label="Phone (WhatsApp)"><input className="input" value={f.phone} onChange={(e) => set('phone', e.target.value)} inputMode="tel" /></Field>
               <Field label="Email" hint="Invoices and statements go here."><input className="input" value={f.email} onChange={(e) => set('email', e.target.value)} inputMode="email" placeholder="accounts@customer.com" /></Field>
-              <Field label="Tax ID (TIN)" hint="Printed on your invoices to them. Needed when they deduct WHT."><input className="input" value={f.tin} onChange={(e) => set('tin', e.target.value)} /></Field>
+              <Field label={abroad ? 'Tax number in their country' : 'Tax ID'} error={tinErr}
+                hint={tinErr ? undefined : abroad ? 'Printed on your invoices to them.' : isOldTin(f.tin) ? 'An old TIN. Ask them for their 13-digit Tax ID.' : `Printed on your invoices to them. Needed when they deduct WHT. ${TAX_ID_HINT}`}>
+                <input className="input" value={f.tin} inputMode={abroad ? undefined : 'numeric'} maxLength={abroad ? 40 : 20} placeholder={abroad ? undefined : '13 digits'} onChange={(e) => set('tin', e.target.value)} /></Field>
               <Field label="Contact person"><input className="input" value={f.contact_person} onChange={(e) => set('contact_person', e.target.value)} placeholder="Who you deal with there" /></Field>
               <Field label="Copy emails to" hint="Up to 5 more addresses, separated by commas."><input className="input" value={f.cc_emails} onChange={(e) => set('cc_emails', e.target.value)} inputMode="email" placeholder="finance@customer.com" /></Field>
               <Field label="Price list"><select className="input" value={f.price_list_id} onChange={(e) => set('price_list_id', e.target.value)}><option value="">Retail</option>{priceLists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>

@@ -9,6 +9,7 @@ import { edge, money, today, useBill, useBills, useChart, type Bill } from '../.
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
+import { taxIdError } from '../../lib/taxid';
 import { ExportMenu, useMeta } from '../../components/Books';
 import type { RCol } from '../../lib/reports';
 import { StatusChip } from '../sell/common';
@@ -224,7 +225,9 @@ function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: {
   const assetCodes = new Set(assetClasses.map((c) => c.cost_account));
   const upd = (k: string, p: Partial<BLine>) => setLines((ls) => ls.map((l) => (l.key === k ? { ...l, ...p } : l)));
   const net = lines.reduce((a, l) => a + (Number(l.qty) || 0) * (money(l.unit_cost) || 0), 0);
+  const tinErr = vendor.id ? null : taxIdError(vendor.tin);
   async function save() {
+    if (tinErr) { toast(tinErr, 'err'); return; }
     setBusy(true);
     try {
       const r = await rpc<any>('save_bill', { p_org: orgId, p_bill: { id: id || null, vendor_id: vendor.id || null, vendor: vendor.id ? undefined : { name: vendor.name, tin: vendor.tin || null },
@@ -247,7 +250,7 @@ function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: {
             <datalist id="bill-vendors">{vendors.map((v) => <option key={v.id} value={v.name} />)}</datalist>
           </Field>
           <Field label="Their invoice number"><input className="input" value={f.vendor_ref} onChange={(e) => setF({ ...f, vendor_ref: e.target.value })} /></Field>
-          {!vendor.id ? <Field label="Vendor TIN" hint="Without a TIN the WHT rate doubles."><input className="input" value={vendor.tin} onChange={(e) => setVendor({ ...vendor, tin: e.target.value })} /></Field> : <span />}
+          {!vendor.id ? <Field label="Vendor's Tax ID" error={tinErr} hint={tinErr ? undefined : 'Without a Tax ID the WHT rate doubles.'}><input className="input" inputMode="numeric" maxLength={20} placeholder="13 digits" value={vendor.tin} onChange={(e) => setVendor({ ...vendor, tin: e.target.value })} /></Field> : <span />}
         </div>
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr', gap: 12 }}>
           <Field label="Bill date"><input className="input" type="date" value={f.bill_date} onChange={(e) => setF({ ...f, bill_date: e.target.value })} /></Field>

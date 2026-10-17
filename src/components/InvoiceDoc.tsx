@@ -65,7 +65,7 @@ export function InvoiceDoc({ d, template, style, fixed }: { d: DocData; template
   const logo = o.logo_path ? photoUrl(o.logo_path) : null;
   const title = TITLE[d.doc_type] || 'Invoice';
   const custLines = addressLines({ address: d.customer_address, city: d.customer?.city, state: d.customer?.state, country: d.customer?.country || d.customer_country });
-  const orgIds = [show.tin && o.tin ? `TIN ${String(o.tin).replace(/^TIN[\s:]*/i, '')}` : '', show.rc_number && o.rc_number ? `RC ${String(o.rc_number).replace(/^RC[\s:]*/i, '')}` : ''].filter(Boolean);
+  const orgIds = [show.tin && o.tin ? `Tax ID ${String(o.tin).replace(/^(TIN|Tax ID)[\s:]*/i, '')}` : '', show.rc_number && o.rc_number ? `RC ${String(o.rc_number).replace(/^RC[\s:]*/i, '')}` : ''].filter(Boolean);
   const orgContact = [o.phone, o.email, o.website ? String(o.website).replace(/^https?:\/\//, '') : ''].filter(Boolean);
   const balance = Number(d.balance ?? Number(d.total) - Number(d.amount_paid || 0) - Number(d.credited || 0));
   const pay = String(o.payment_details || '').trim();
@@ -86,7 +86,7 @@ export function InvoiceDoc({ d, template, style, fixed }: { d: DocData; template
       {custLines.map((l, i) => <div key={i}>{l}</div>)}
       {d.customer_email && <div>{d.customer_email}</div>}
       {d.customer_phone && <div>{d.customer_phone}</div>}
-      {d.customer_tin && <div>TIN {d.customer_tin}</div>}
+      {d.customer_tin && <div>Tax ID {d.customer_tin}</div>}
     </div>
   );
   const factsBlock = (
