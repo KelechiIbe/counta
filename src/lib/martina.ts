@@ -150,9 +150,18 @@ export async function chatMartina(history: ChatMsg[], ctx: ReturnType<typeof bui
   };
 }
 
-export async function aiStatus(): Promise<{ configured: boolean; model?: string }> {
+export type AiStatus = { configured: boolean; model?: string; auth?: 'vertex' | 'api_key' | 'none'; location?: string; problem?: string };
+export async function aiStatus(): Promise<AiStatus> {
   try {
-    const r = await ai<{ ok: boolean; configured?: boolean; model?: string }>('status', {});
-    return { configured: !!r?.configured, model: r?.model };
+    const r = await ai<{ ok: boolean } & AiStatus>('status', {});
+    return { configured: !!r?.configured, model: r?.model, auth: r?.auth, location: r?.location, problem: r?.problem };
   } catch { return { configured: false }; }
+}
+
+// A one-line request through the same connection, so whoever sets up Vertex AI sees at once whether it works.
+export async function aiCheck(): Promise<{ ok: boolean; model?: string; ms?: number; error?: string }> {
+  try {
+    const r = await ai<{ ok: boolean; model?: string; ms?: number; error?: string }>('check', {});
+    return { ok: r?.ok === true, model: r?.model, ms: r?.ms, error: r?.ok ? undefined : r?.error || 'The check did not answer.' };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
 }

@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useInventory, useSession, useToast } from '../state/session';
 import { useAction } from '../lib/queries';
 import { must, rpc, supabase, SUPABASE_URL } from '../lib/supabase';
-import { aiStatus } from '../lib/martina';
+import { aiCheck, aiStatus } from '../lib/martina';
 import { Icon } from '../components/Icon';
 import { Alert, Field, Label } from '../components/ui';
 import { ChartDrawer, PostingRules } from '../components/ChartOfAccounts';
@@ -176,22 +176,29 @@ export default function Settings() {
       <Section title="Chart of accounts" sub={owner ? 'TaxStreem standard chart. Change where an entry lands; stock value moves with it.' : 'TaxStreem standard chart. Only the owner can change the rules.'}>
         <PostingRules owner={!!owner} onOpenChart={() => setChart(true)} />
       </Section>
-      <Section title="AI reading" sub="Invoice OCR, voice entry and Martina's open answers run on Gemini with your own key.">
+      <Section title="AI reading" sub="Invoice OCR, voice entry, Martina's open answers and the bookkeeper run on Gemini through Vertex AI in Google Cloud.">
         {status.isLoading ? <div className="skel" style={{ height: 40 }} /> : status.data?.configured ? (
-          <Alert kind="green" icon="check">Switched on · model {status.data.model}. Invoices, handwritten sheets and voice notes are read automatically.</Alert>
+          <>
+            <Alert kind="green" icon="check">Switched on · Gemini {status.data.model}{status.data.auth === 'vertex' ? ` on Vertex AI (${status.data.location})` : ' through the Gemini API key'}. Invoices, handwritten sheets and voice notes are read automatically.</Alert>
+            {status.data.auth === 'api_key' && <Alert kind="amber" icon="info">This runs on a Gemini API key. Add the Google Cloud credential below to move it to Vertex AI; the key is then no longer used.</Alert>}
+          </>
         ) : (
           <>
-            <Alert kind="blue" icon="info">Not switched on yet. Everything else works: lines can be typed by hand and Martina answers from your records with rules.</Alert>
-            <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>
-              To switch it on, create a key in Google AI Studio, then add it to the Supabase project as an Edge Function secret named <span className="mono" style={{ background: '#F3F4F6', padding: '1px 6px', borderRadius: 6 }}>GEMINI_API_KEY</span>. Reading starts on the next invoice; nothing needs redeploying.
-            </div>
-            <div className="row wrap">
-              <a className="btn btn-secondary btn-sm" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer"><Icon name="external" size={14} />Get a Gemini key</a>
-              <a className="btn btn-secondary btn-sm" href={`https://supabase.com/dashboard/project/${project}/functions/secrets`} target="_blank" rel="noreferrer"><Icon name="external" size={14} />Open Supabase secrets</a>
-              <button className="btn btn-ghost btn-sm" onClick={() => status.refetch()}>Check again</button>
-            </div>
+            <Alert kind={status.data?.problem ? 'red' : 'blue'} icon={status.data?.problem ? 'alert' : 'info'}>{status.data?.problem || 'Not switched on yet. Everything else works: lines can be typed by hand and Martina answers from your records with rules.'}</Alert>
           </>
         )}
+        {!status.isLoading && status.data?.auth !== 'vertex' && (
+          <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>
+            Gemini signs in to Vertex AI with Application Default Credentials. In Google Cloud, give a service account the <b>Vertex AI User</b> role in the project and create a JSON key for it
+            (or use the file <span className="mono">gcloud auth application-default login</span> writes). Add the whole JSON as an Edge Function secret named <Mono>GOOGLE_APPLICATION_CREDENTIALS_JSON</Mono>,
+            and set <Mono>GOOGLE_CLOUD_PROJECT</Mono> and <Mono>GOOGLE_CLOUD_LOCATION</Mono> if they differ from the key's project and us-central1. It takes effect within a minute; nothing needs redeploying.
+          </div>
+        )}
+        <div className="row wrap">
+          <AiCheckButton onDone={() => status.refetch()} />
+          {status.data?.auth !== 'vertex' && <a className="btn btn-secondary btn-sm" href={`https://supabase.com/dashboard/project/${project}/functions/secrets`} target="_blank" rel="noreferrer"><Icon name="external" size={14} />Open Supabase secrets</a>}
+          {status.data?.auth !== 'vertex' && <a className="btn btn-secondary btn-sm" href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noreferrer"><Icon name="external" size={14} />Google Cloud service accounts</a>}
+        </div>
       </Section>
       <TaxStreemSection />
       <NotificationsSection />
@@ -215,5 +222,24 @@ export default function Settings() {
       </Section>
       {chart && <ChartDrawer onClose={() => setChart(false)} />}
     </div>
+  );
+}
+
+const Mono = ({ children }: { children: string }) => <span className="mono" style={{ background: '#F3F4F6', padding: '1px 6px', borderRadius: 6 }}>{children}</span>;
+
+// Sends one short request through the live connection and says how it went.
+function AiCheckButton({ onDone }: { onDone: () => void }) {
+  const [state, setState] = useState<{ busy?: boolean; ok?: boolean; text?: string }>({});
+  async function go() {
+    setState({ busy: true });
+    const r = await aiCheck();
+    setState({ ok: r.ok, text: r.ok ? `Gemini answered in ${((r.ms || 0) / 1000).toFixed(1)}s (${r.model}).` : r.error });
+    onDone();
+  }
+  return (
+    <span className="row wrap" style={{ gap: 8 }}>
+      <button className="btn btn-secondary btn-sm" disabled={state.busy} onClick={go}>{state.busy ? 'Checking…' : 'Test the connection'}</button>
+      {state.text && <span style={{ fontSize: 13, color: state.ok ? '#15803D' : '#B91C1C', maxWidth: 560 }}>{state.text}</span>}
+    </span>
   );
 }

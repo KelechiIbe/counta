@@ -121,8 +121,10 @@ Keys can be Edge Function secrets or rows in Supabase Vault with the same name. 
 
 | Secret | Purpose |
 | --- | --- |
-| `GEMINI_API_KEY` | Invoice reading, voice entry and Martina's open answers. Without it the app still works; lines are typed by hand and Martina answers from rules. |
-| `GEMINI_MODEL` | Optional model override (default `gemini-3.8-flash`, falling back through 3.6, 3.5 and `gemini-flash-latest` when a model is busy). |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | Gemini on Vertex AI, signed in with Application Default Credentials: the whole JSON of a service account key (or of the file `gcloud auth application-default login` writes), as text or base64. The account needs the Vertex AI User role. Used for invoice reading, voice entry, Martina's open answers, VAT decisions and the bookkeeper. Edge Function secret only. See [docs/gemini-vertex.md](docs/gemini-vertex.md). |
+| `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` | Where Vertex AI runs. Default: the credential's project and `us-central1`. Counta uses `infrastructure-staging-477918` in `us-central1`. |
+| `GEMINI_API_KEY` | Used only when no ADC credential is set. Without either, the app still works; lines are typed by hand and Martina answers from rules. |
+| `GEMINI_MODEL` | Optional model override (default `gemini-3.8-flash`, falling back through 3.6, 3.5 and, on Vertex AI, `gemini-2.5-flash` when a model is busy or not offered in the region). |
 | `ELEVENLABS_API_KEY` | Phone calls. Needs access to Agents and phone numbers. |
 | `ELEVENLABS_PHONE_NUMBER_ID` | Optional. Which ElevenLabs number to ring from when the account has several. |
 | `ELEVENLABS_VOICE_ID` | Optional. Voice for both agents. |

@@ -1,30 +1,35 @@
 // Counta AI: Gemini-backed invoice reading, Martina answers and voice capture.
-// Needs GEMINI_API_KEY, either as an Edge Function secret or in Supabase Vault (read through
-// public.app_secret). GEMINI_MODEL is optional (defaults to gemini-3.8-flash).
+// Gemini runs on Vertex AI, signed in with Application Default Credentials: the Edge Function secret
+// GOOGLE_APPLICATION_CREDENTIALS_JSON, with GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION (see google.ts). Without it, a
+// Gemini API key (GEMINI_API_KEY, Edge Function secret or Vault) is used. GEMINI_MODEL is optional (defaults to gemini-3.8-flash).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 import { cleanVat, numens, VAT_SCHEMA, VAT_SYSTEM, type VatAnswer, type VatItem, vatPrompt } from './vat.ts';
+import { accessProblem, CredentialError, fallbackModels, type GeminiConfig, geminiConfig, generateContent, quotaMessage, thinkingLevel } from './google.ts';
 
-let GEMINI_KEY = Deno.env.get('GEMINI_API_KEY') || '';
 let MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
-const FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest'];
-const GEMINI_BASE = Deno.env.get('GEMINI_BASE_URL') || 'https://generativelanguage.googleapis.com/v1beta';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-// Vault fallback for keys that are not set as Edge Function secrets. Cached per instance.
-let vaultAt = 0;
+// How Gemini is reached, read again once a minute: Vertex AI with ADC, or a Gemini API key. Vault still holds
+// GEMINI_API_KEY and GEMINI_MODEL for setups that put them there.
+let CFG: GeminiConfig = { mode: 'none' };
+let cfgAt = 0;
 async function loadKeys(admin: SupabaseClient) {
-  if (GEMINI_KEY || Date.now() - vaultAt < 60_000) return;
-  vaultAt = Date.now();
-  const [{ data: key }, { data: model }] = await Promise.all([
-    admin.rpc('app_secret', { p_name: 'GEMINI_API_KEY' }),
-    admin.rpc('app_secret', { p_name: 'GEMINI_MODEL' }),
-  ]);
-  if (typeof key === 'string' && key) GEMINI_KEY = key.trim();
-  if (typeof model === 'string' && model && !Deno.env.get('GEMINI_MODEL')) MODEL = model.trim();
+  if (Date.now() - cfgAt < 60_000) return;
+  cfgAt = Date.now();
+  const read = async (name: string) => {
+    const env = Deno.env.get(name);
+    if (env) return env.trim();
+    if (name !== 'GEMINI_API_KEY' && name !== 'GEMINI_MODEL') return '';
+    const { data } = await admin.rpc('app_secret', { p_name: name });
+    return typeof data === 'string' ? data.trim() : '';
+  };
+  CFG = await geminiConfig(read);
+  if (!Deno.env.get('GEMINI_MODEL')) { const m = await read('GEMINI_MODEL'); if (m) MODEL = m; }
 }
+const aiOn = () => CFG.mode !== 'none';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -33,7 +38,8 @@ const cors = {
 };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 const NL = String.fromCharCode(10);
-const NOT_CONFIGURED = { ok: false, reason: 'not_configured', error: 'AI reading is not switched on yet. Add GEMINI_API_KEY in Supabase Edge Function secrets.' };
+const notConfigured = () => ({ ok: false, reason: 'not_configured', error: CFG.problem
+  || 'AI reading is not switched on yet. Add GOOGLE_APPLICATION_CREDENTIALS_JSON (a Google Cloud service account key with the Vertex AI User role) to the Supabase Edge Function secrets.' });
 
 type Part = { text: string } | { inlineData: { mimeType: string; data: string } };
 
@@ -45,39 +51,35 @@ const resting = new Map<string, number>();
 const noThinking = new Set<string>();
 async function gemini(system: string, parts: Part[], schema: unknown, temperature = 0.1, opts: { thinking?: 'low' } = {}): Promise<{ data: any; model: string }> {
   let lastErr = '';
-  const all = [MODEL, ...FALLBACK_MODELS.filter((m) => m !== MODEL)];
+  const all = [MODEL, ...fallbackModels(CFG).filter((m) => m !== MODEL)];
   const ready = all.filter((m) => (resting.get(m) || 0) < Date.now());
   for (const model of ready.length ? ready : all) {
     let res: Response | null = null;
     for (const think of opts.thinking && !noThinking.has(model) ? [true, false] : [false]) {
       try {
-        res = await fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: system }] },
-            contents: [{ role: 'user', parts }],
-            generationConfig: {
-              responseMimeType: 'application/json', responseSchema: schema, temperature,
-              ...(think ? { thinkingConfig: { thinkingLevel: opts.thinking } } : {}),
-            },
-          }),
-          signal: AbortSignal.timeout(50_000),
-        });
+        res = await generateContent(CFG, model, {
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{ role: 'user', parts }],
+          generationConfig: {
+            responseMimeType: 'application/json', responseSchema: schema, temperature,
+            ...(think ? { thinkingConfig: { thinkingLevel: thinkingLevel(CFG, opts.thinking!) } } : {}),
+          },
+        }, 50_000);
       } catch (e) {
+        if (e instanceof CredentialError) throw e;
         lastErr = `${model} did not answer (${(e as Error).name})`; resting.set(model, Date.now() + 120_000); res = null; break;
       }
       if (think && res.status === 400 && /thinking/i.test(await res.clone().text())) { noThinking.add(model); continue; }
       break;
     }
     if (!res) continue;
+    const refused = accessProblem(CFG, res.status, await res.clone().text());
+    if (refused) throw new CredentialError(refused);
     if (res.status === 404 || res.status === 400 && (await res.clone().text()).includes('not found')) { lastErr = `${model} unavailable`; resting.set(model, Date.now() + 3600_000); continue; }
     if (res.status === 429 || res.status >= 500) {
       const why = await res.text();
       console.warn('gemini', model, res.status, why.slice(0, 400));
-      lastErr = res.status === 429 && /quota|exhaust/i.test(why)
-        ? 'The Gemini key has used up its quota. Turn on billing for it in Google AI Studio, or try again once the quota resets.'
-        : `${model} busy (${res.status})`;
+      lastErr = res.status === 429 && /quota|exhaust/i.test(why) ? quotaMessage(CFG) : `${model} busy (${res.status})`;
       resting.set(model, Date.now() + 120_000); continue;
     }
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
@@ -132,7 +134,7 @@ async function readInvoice(sb: SupabaseClient, admin: SupabaseClient, body: any,
     await sb.from('receipts').update({ status: 'needs_review', ai_error: msg }).eq('id', r.id);
     return json({ ok: false, reason, error: msg });
   };
-  if (!GEMINI_KEY) return fail(NOT_CONFIGURED.error, 'not_configured');
+  if (!aiOn()) return fail(notConfigured().error, 'not_configured');
   if (!r.document_path) return fail('There is no document attached to read.');
 
   const { data: blob, error: dErr } = await sb.storage.from('documents').download(r.document_path);
@@ -225,7 +227,7 @@ Respect the viewer: if can_see_costs is false, never mention costs or margins.
 Nothing is ordered or repriced automatically; drafts always wait for the owner's approval.`;
 
 async function ask(body: any) {
-  if (!GEMINI_KEY) return json(NOT_CONFIGURED);
+  if (!aiOn()) return json(notConfigured());
   const schema = {
     type: 'OBJECT',
     properties: {
@@ -247,7 +249,7 @@ async function ask(body: any) {
 }
 
 async function chat(body: any) {
-  if (!GEMINI_KEY) return json(NOT_CONFIGURED);
+  if (!aiOn()) return json(notConfigured());
   const schema = {
     type: 'OBJECT',
     properties: {
@@ -274,7 +276,7 @@ When the owner asks about an item running low or asks to reorder, set action.typ
 
 // ---------------------------------------------------------------- voice
 async function voice(body: any) {
-  if (!GEMINI_KEY) return json(NOT_CONFIGURED);
+  if (!aiOn()) return json(notConfigured());
   if (!body.audio_base64) return json({ ok: false, error: 'No audio received.' }, 400);
   if (body.audio_base64.length > 14_000_000) return json({ ok: false, error: 'That recording is too long. Keep it under a minute.' }, 413);
   const schema = {
@@ -306,7 +308,7 @@ LOCATIONS: ${JSON.stringify(body.locations || [])}`,
 // Matches the columns of whatever sheet a business uploads to Counta's item fields. The app sends the
 // header row, a few sample rows, the field catalogue for the business's industry and the branch names.
 async function mapColumns(body: any) {
-  if (!GEMINI_KEY) return json(NOT_CONFIGURED);
+  if (!aiOn()) return json(notConfigured());
   const headers: string[] = (body.headers || []).slice(0, 80).map((h: unknown) => String(h ?? '').slice(0, 80));
   if (!headers.length) return json({ ok: false, error: 'No columns to match.' }, 400);
   const samples: string[][] = (body.samples || []).slice(0, 8).map((r: unknown[]) => (r || []).slice(0, 80).map((c) => String(c ?? '').slice(0, 80)));
@@ -355,7 +357,7 @@ INDUSTRY: ${String(body.industry || 'retail')}`,
 // For sheets with no usable columns (one free-text description per row, or a pasted list), Martina reads
 // each line into item fields. Up to 120 lines per call.
 async function extractRows(body: any) {
-  if (!GEMINI_KEY) return json(NOT_CONFIGURED);
+  if (!aiOn()) return json(notConfigured());
   const lines: { row: number; text: string }[] = (body.lines || []).slice(0, 120).map((l: any) => ({ row: Number(l.row) || 0, text: String(l.text || '').slice(0, 400) }));
   if (!lines.length) return json({ ok: false, error: 'No lines to read.' }, 400);
   const attrKeys: string[] = (body.attribute_keys || []).slice(0, 40).map(String);
@@ -421,7 +423,7 @@ async function classifyVat(admin: SupabaseClient, items: VatItem[]): Promise<{ a
   if (url && key) {
     try { return { answers: await numens(url, key, items) }; } catch (e) { error = (e as Error).message; console.warn('numens', error); }
   }
-  if (!GEMINI_KEY) return { answers: [], error: error || 'No tax model is connected (NUMENS_API_URL/NUMENS_API_KEY or GEMINI_API_KEY).' };
+  if (!aiOn()) return { answers: [], error: error || CFG.problem || 'No tax model is connected (NUMENS_API_URL/NUMENS_API_KEY, or Gemini through GOOGLE_APPLICATION_CREDENTIALS_JSON).' };
   const answers: VatAnswer[] = [];
   for (let i = 0; i < items.length; i += 30) {
     const chunk = items.slice(i, i + 30);
@@ -472,7 +474,7 @@ const MAP_SYSTEM = [
   'Reason: one short sentence in plain English.',
 ].join(' ');
 async function mapAccounts(sb: SupabaseClient, body: any) {
-  if (!GEMINI_KEY) return json(NOT_CONFIGURED);
+  if (!aiOn()) return json(notConfigured());
   const { data: g, error } = await sb.rpc('get_books_migration', { p_org: String(body.org_id || '') });
   if (error) return json({ ok: false, error: error.message });
   const mig = g?.migration;
@@ -536,7 +538,19 @@ Deno.serve(async (req) => {
   try {
     await loadKeys(admin);
     switch (body.action) {
-      case 'status': return json({ ok: true, configured: Boolean(GEMINI_KEY), model: MODEL });
+      case 'status': return json({ ok: true, configured: aiOn(), model: MODEL, auth: CFG.mode, location: CFG.mode === 'vertex' ? CFG.location : undefined,
+        problem: CFG.problem });
+      case 'check': {
+        // A one-line request, so the person setting up Vertex AI sees at once whether the credential and the project work.
+        if (!aiOn()) return json(notConfigured());
+        const t0 = Date.now();
+        try {
+          const { data, model } = await gemini('Answer in JSON.', [{ text: 'Reply with ok set to true.' }], { type: 'OBJECT', properties: { ok: S.bool }, required: ['ok'] }, 0);
+          return json({ ok: data?.ok === true, model, auth: CFG.mode, location: CFG.mode === 'vertex' ? CFG.location : undefined, ms: Date.now() - t0 });
+        } catch (e) {
+          return json({ ok: false, reason: 'error', error: (e as Error).message, auth: CFG.mode });
+        }
+      }
       case 'vat_classify_item': {
         // The item must be visible to the caller (row-level security), which proves they belong to its business.
         const { data: it } = await sb.from('items').select('id, org_id, name, category, brand, description, item_type, selling_unit, vat_treatment')

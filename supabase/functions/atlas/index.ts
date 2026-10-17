@@ -11,9 +11,11 @@
 //   { action: 'status' }
 //   { action: 'run', org_id }               -> run the bookkeeper now (people who keep the books)
 //   { action: 'commentary', org_id, from, to } -> CFO commentary for a period (people who can see the financial reports)
-// Needs GEMINI_API_KEY (Edge Function secret or Vault). GEMINI_MODEL is optional.
+// Gemini runs on Vertex AI with Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS_JSON, GOOGLE_CLOUD_PROJECT,
+// GOOGLE_CLOUD_LOCATION; see google.ts), or with GEMINI_API_KEY when no ADC credential is set. GEMINI_MODEL is optional.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { gemini, S } from './gemini.ts';
+import { geminiConfig } from './google.ts';
 import { calibrate, type Ctx, SCHEMA, systemPrompt, userPrompt } from './bookkeeper.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -40,7 +42,7 @@ async function secret(name: string): Promise<string> {
   return v;
 }
 async function geminiCfg() {
-  return { key: await secret('GEMINI_API_KEY'), model: (await secret('GEMINI_MODEL')) || 'gemini-3.8-flash' };
+  return { g: await geminiConfig(secret), model: (await secret('GEMINI_MODEL')) || 'gemini-3.8-flash' };
 }
 async function svc<T = any>(fn: string, args: Record<string, unknown>): Promise<T> {
   const { data, error } = await admin.rpc(fn, args);
@@ -63,10 +65,10 @@ export async function bookkeep(orgId: string) {
   const run = { items: 0, posted: 0, asked: 0, model: '', error: null as string | null };
   try {
     const cfg = await geminiCfg();
-    if (!cfg.key) {
+    if (cfg.g.mode === 'none') {
       // No AI yet: lines older than an hour go to suspense with a question, so nothing sits unexplained.
       run.asked = await svc<number>('svc_suspend_rest', { p_org: orgId });
-      run.error = 'GEMINI_API_KEY is not set';
+      run.error = cfg.g.problem || 'Gemini is not connected (GOOGLE_APPLICATION_CREDENTIALS_JSON is not set)';
       return { org_id: orgId, ...run };
     }
     for (let round = 0; round < 5; round++) {
@@ -121,7 +123,7 @@ const COMMENTARY = {
 
 async function commentary(sb: SupabaseClient, orgId: string, from: string | null, to: string | null) {
   const cfg = await geminiCfg();
-  if (!cfg.key) return { ok: false, reason: 'not_configured', error: 'AI commentary is not switched on yet.' };
+  if (cfg.g.mode === 'none') return { ok: false, reason: 'not_configured', error: cfg.g.problem || 'AI commentary is not switched on yet.' };
   const rep = async (report: string) => {
     const { data, error } = await sb.rpc('accounting_report', { p_org: orgId, p_report: report, p_from: from, p_to: to, p_options: {} });
     if (error) throw new Error(error.message);
@@ -165,7 +167,7 @@ Deno.serve(async (req) => {
     switch (body.action) {
       case 'status': {
         const cfg = await geminiCfg();
-        return json({ ok: true, configured: Boolean(cfg.key), model: cfg.model });
+        return json({ ok: true, configured: cfg.g.mode !== 'none', model: cfg.model, auth: cfg.g.mode, problem: cfg.g.problem });
       }
       case 'run': {
         const { data: m } = await sb.from('members').select('role, p_keep_books').eq('org_id', body.org_id).eq('user_id', u.user.id).eq('status', 'active').maybeSingle();
