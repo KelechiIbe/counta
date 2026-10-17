@@ -10,18 +10,18 @@ function BrandSide() {
     <div className="auth-side">
       <img src="/logo-brand.svg" alt="TaxStreem" style={{ height: 26, filter: 'brightness(0) invert(1)', alignSelf: 'flex-start' }} />
       <div style={{ maxWidth: 460 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.12em', textTransform: 'uppercase', opacity: 0.7 }}>Counta · Inventory</div>
+        <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.12em', textTransform: 'uppercase', opacity: 0.7 }}>Counta · Books, sales and stock</div>
         <div style={{ fontFamily: 'var(--font-brand)', fontSize: 40, fontWeight: 600, lineHeight: 1.12, letterSpacing: '-.02em', marginTop: 14 }}>
-          Stock that keeps its own books.
+          Books that keep themselves.
         </div>
         <div style={{ fontSize: 16, lineHeight: 1.55, opacity: 0.85, marginTop: 16 }}>
-          Photograph a vendor invoice, count a shelf on your phone, approve a reorder. Every movement posts to your ledger with the receipt attached.
+          Sell at the till or by invoice, get paid by transfer, link or QR, and keep stock in step. Atlas posts every sale, bill and bank line to your ledger and asks you only when it is unsure.
         </div>
         <div style={{ display: 'grid', gap: 12, marginTop: 28 }}>
           {[
-            ['camera', 'Typed and handwritten invoices read line by line'],
-            ['shield', 'Staff see what their role allows, nothing more'],
-            ['wifiOff', 'Phone capture keeps working when data drops'],
+            ['receipt', 'Till, invoices and an online shop that follow live stock'],
+            ['card', 'Payments by transfer, link and QR, confirmed for you'],
+            ['sparkles', 'IFRS statements and CFO reports, ready to export'],
           ].map(([ic, t]) => (
             <div key={t} className="row" style={{ gap: 12, fontSize: 14 }}>
               <span style={{ width: 32, height: 32, borderRadius: 10, background: 'rgba(255,255,255,.12)', display: 'grid', placeItems: 'center' }}><Icon name={ic} size={16} color="#fff" /></span>
