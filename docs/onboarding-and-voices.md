@@ -12,7 +12,13 @@ For the code to appear in the email, the Supabase "Confirm signup" email templat
 <p>Or <a href="{{ .ConfirmationURL }}">confirm your email</a> on this device.</p>
 ```
 
-Supabase's built-in email service only sends a few emails an hour; production needs custom SMTP (Authentication, Emails, SMTP settings), for example Resend with the domain already verified for invoices.
+Supabase's built-in email service only sends to members of the Supabase team, a few an hour, so sign-up needs custom SMTP. Set it up in this order, all in the Supabase dashboard:
+
+1. Authentication, Emails, SMTP settings: turn on custom SMTP. Host `smtp.resend.com`, port `465`, username `resend`, password a Resend API key (create one in Resend with sending access only), sender email an address on the domain verified in Resend (the one in `RESEND_FROM`), sender name `Counta`.
+2. Authentication, Emails, Confirm signup: paste the template above.
+3. Authentication, Sign In / Providers, Email: turn on "Confirm email". While it is off, sign-up sends no email and skips the code.
+4. Authentication, Rate Limits: raise the emails-per-hour limit (custom SMTP starts at 30 an hour).
+5. Sign up with a spare address. The code arrives, and the email shows in Resend's Emails log.
 
 ## Onboarding (`/onboarding`)
 
