@@ -6,6 +6,7 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 import { cleanVat, numens, VAT_SCHEMA, VAT_SYSTEM, type VatAnswer, type VatItem, vatPrompt } from './vat.ts';
 import { catalogueText, CIT_MAP_SCHEMA, CIT_MAP_SYSTEM, cleanCitLines, type TbRow, tbText, type TemplateLine } from './cit.ts';
+import { CAC_DOC_SCHEMA, CAC_DOC_SYSTEM, cacDocChecks, type Category, cleanCacDoc, cleanInsight, INSIGHT_SYSTEM, insightPrompt, looseJson } from './kyc.ts';
 import { accessProblem, CredentialError, fallbackModels, type GeminiConfig, geminiConfig, generateContent, quotaMessage, thinkingConfig } from './google.ts';
 
 let MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
@@ -50,7 +51,10 @@ const resting = new Map<string, number>();
 // thinking: 'low' keeps simple structured jobs (matching columns, reading stock lines) quick. A model that
 // does not accept the setting is retried once without it.
 const noThinking = new Set<string>();
-async function gemini(system: string, parts: Part[], schema: unknown, temperature = 0.1, opts: { thinking?: 'low'; timeoutMs?: number } = {}): Promise<{ data: any; model: string }> {
+// search: true lets Gemini search Google (grounding); the answer then comes as JSON text, since older models do not
+// combine a response schema with tools, and the sources come back as grounding.
+async function gemini(system: string, parts: Part[], schema: unknown, temperature = 0.1,
+  opts: { thinking?: 'low'; timeoutMs?: number; search?: boolean } = {}): Promise<{ data: any; model: string; grounding?: any }> {
   let lastErr = '';
   const all = [MODEL, ...fallbackModels(CFG).filter((m) => m !== MODEL)];
   const ready = all.filter((m) => (resting.get(m) || 0) < Date.now());
@@ -63,9 +67,10 @@ async function gemini(system: string, parts: Part[], schema: unknown, temperatur
           contents: [{ role: 'user', parts }],
           generationConfig: {
             // Gemini 3 and later loop or lose accuracy below their default temperature, so it is only set for older models.
-            responseMimeType: 'application/json', responseSchema: schema, ...(/^gemini-[12]\./.test(model) ? { temperature } : {}),
+            ...(opts.search ? {} : { responseMimeType: 'application/json', responseSchema: schema }), ...(/^gemini-[12]\./.test(model) ? { temperature } : {}),
             ...(think ? { thinkingConfig: thinkingConfig(CFG, model, opts.thinking!) } : {}),
           },
+          ...(opts.search ? { tools: [{ googleSearch: {} }] } : {}),
         }, opts.timeoutMs || 50_000);
       } catch (e) {
         if (e instanceof CredentialError) throw e;
@@ -88,6 +93,7 @@ async function gemini(system: string, parts: Part[], schema: unknown, temperatur
     const body = await res.json();
     const text = body?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || '';
     if (!text) throw new Error('Gemini returned no content' + (body?.promptFeedback?.blockReason ? ` (${body.promptFeedback.blockReason})` : ''));
+    if (opts.search) return { data: looseJson(text), model, grounding: body?.candidates?.[0]?.groundingMetadata || null };
     return { data: JSON.parse(text), model };
   }
   throw new Error(lastErr || 'No Gemini model available');
@@ -636,6 +642,57 @@ async function citMap(sb: SupabaseClient, body: any) {
     checks: (after?.computation?.checks || []).filter((c: any) => ['pbt_ties_to_afs', 'revenue_ties_to_pl', 'sfp_ties_to_accounts', 'figures_missing'].includes(c.id)) });
 }
 
+// ---------------------------------------------------------------- onboarding
+// What the web says about the business on the person's profile (their own draft, or the business they own).
+async function businessInsights(sb: SupabaseClient, admin: SupabaseClient, body: any, userId: string) {
+  if (!aiOn()) return json(notConfigured());
+  const orgId = body.org_id ? String(body.org_id) : null;
+  const { data: k, error } = await sb.rpc('kyc_draft', orgId ? { p_org: orgId } : {});
+  if (error) return json({ ok: false, error: error.message });
+  if (!k?.business?.name) return json({ ok: false, error: 'Find the business first.' });
+  const { data: allowed } = await admin.rpc('svc_kyc_take', { p_user: userId, p_kind: 'web' });
+  if (!allowed) return json({ ok: false, reason: 'limit', error: 'Counta has looked the business up online a few times today already.' });
+  const { data: cats } = await sb.from('business_categories').select('id, label, kind').order('sort');
+  const list = (cats || []) as Category[];
+  let found: any; let model = '';
+  try {
+    const r = await gemini(INSIGHT_SYSTEM, [{ text: insightPrompt(k.business, list) }], null, 0.3, { search: true, timeoutMs: 60_000 });
+    found = cleanInsight(r.data, list, r.grounding); model = r.model;
+  } catch (e) {
+    if (e instanceof CredentialError) throw e;
+    return json({ ok: false, reason: 'error', error: 'The web search did not finish. Carry on without it.' });
+  }
+  const { data: kyc, error: e2 } = await admin.rpc('svc_kyc_store', { p_user: userId, p_part: 'web', p_data: { ...found, model }, p_org: orgId });
+  if (e2) return json({ ok: false, error: e2.message });
+  return json({ ok: true, kyc, insights: found });
+}
+
+// The CAC document the owner added (kyc_doc), read and compared with the CAC record.
+async function readCacDocument(sb: SupabaseClient, admin: SupabaseClient, body: any, userId: string) {
+  if (!aiOn()) return json(notConfigured());
+  const orgId = String(body.org_id || '');
+  const { data: k, error } = await sb.rpc('kyc_draft', { p_org: orgId });
+  if (error) return json({ ok: false, error: error.message });
+  const path = String(k?.doc?.path || '');
+  if (!path || path.split('/')[0] !== orgId) return json({ ok: false, error: 'Add the CAC document first.' });
+  const { data: allowed } = await admin.rpc('svc_kyc_take', { p_user: userId, p_kind: 'document' });
+  if (!allowed) return json({ ok: false, reason: 'limit', error: 'Counta has read a few documents for you today already. Try again tomorrow.' });
+  // Downloaded as the person: only the owner may read the CAC folder.
+  const { data: blob, error: dErr } = await sb.storage.from('documents').download(path);
+  if (dErr || !blob) return json({ ok: false, error: 'Could not open the document.' });
+  if (blob.size > 15_000_000) return json({ ok: false, error: 'The document is larger than 15 MB. Upload just the status report pages.' });
+  const mime = blob.type && blob.type !== 'application/octet-stream' ? blob.type : path.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+  if (!/^(application\/pdf|image\/(jpeg|png|webp))$/.test(mime)) return json({ ok: false, error: 'Upload the document as a PDF or a picture.' });
+  const { data, model } = await gemini(CAC_DOC_SYSTEM, [{ text: `The person added this as: ${k.doc.kind}.` },
+    { inlineData: { mimeType: mime, data: encodeBase64(new Uint8Array(await blob.arrayBuffer())) } }], CAC_DOC_SCHEMA, 0.1, { timeoutMs: 90_000 });
+  const extract = cleanCacDoc(data);
+  const checks = cacDocChecks(extract, k.business, String(k.doc.kind || 'other'));
+  const { data: kyc, error: e2 } = await admin.rpc('svc_kyc_store', { p_user: userId, p_part: 'doc',
+    p_data: { extract, checks, model, read_at: new Date().toISOString() }, p_org: orgId });
+  if (e2) return json({ ok: false, error: e2.message });
+  return json({ ok: true, kyc, extract, checks });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
@@ -700,6 +757,8 @@ Deno.serve(async (req) => {
       case 'read_statement': return await readStatement(body);
       case 'map_accounts': return await mapAccounts(sb, body);
       case 'cit_map': return await citMap(sb, body);
+      case 'business_insights': return await businessInsights(sb, admin, body, u.user.id);
+      case 'read_cac_document': return await readCacDocument(sb, admin, body, u.user.id);
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }
   } catch (e) {

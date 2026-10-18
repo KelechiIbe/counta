@@ -12,6 +12,7 @@ import { Alert, Field, Modal, ModalHead, Spinner } from '../../components/ui';
 import { taxIdError } from '../../lib/taxid';
 import { COUNTRIES, isExport } from '../../lib/countries';
 import { InvoiceDoc, PrintPortal, type DocData } from '../../components/InvoiceDoc';
+import { announce as speakAnnouncement } from '../../lib/speech';
 
 export const docUrl = (token: string) => `${window.location.origin}/p/${token}`;
 
@@ -115,22 +116,9 @@ function NewCustomerInline({ name, onDone }: { name: string; onDone: (c: Custome
 }
 
 // ---------------------------------------------------------------- spoken confirmation
-export function announce(text: string) {
-  try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.connect(g); g.connect(ctx.destination);
-    o.frequency.setValueAtTime(880, ctx.currentTime); o.frequency.setValueAtTime(1320, ctx.currentTime + 0.12);
-    g.gain.setValueAtTime(0.15, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
-    o.start(); o.stop(ctx.currentTime + 0.36);
-  } catch { /* no audio */ }
-  try {
-    const u = new SpeechSynthesisUtterance(text);
-    const voices = window.speechSynthesis.getVoices();
-    u.voice = voices.find((v) => /en-NG/i.test(v.lang)) || voices.find((v) => /en-GB/i.test(v.lang)) || null;
-    u.lang = u.voice?.lang || 'en-NG'; u.rate = 1;
-    window.speechSynthesis.cancel(); setTimeout(() => window.speechSynthesis.speak(u), 380);
-  } catch { /* no voice */ }
+// "Payment received", in the business's chosen Nigerian voice (see lib/speech.ts), or the phone's voice as a fallback.
+async function sayEvent(kind: 'payment_received' | 'sale_recorded', payload: Record<string, unknown>, fallback: string) {
+  await speakAnnouncement(kind, payload, fallback);
 }
 export const nairaWords = (n: number) => `${Math.round(n).toLocaleString('en-NG')} naira`;
 
@@ -142,6 +130,7 @@ export function PayWait({ request, saleNumber, onPaid, onClose, onCancelSale }: 
   const [qr, setQr] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const toast = useToast();
+  const { orgId } = useSession();
   const done = useRef(false);
   // Ask Flutterwave (or the partner rail) for the account, link or QR if the database only opened the request.
   useEffect(() => {
@@ -171,7 +160,8 @@ export function PayWait({ request, saleNumber, onPaid, onClose, onCancelSale }: 
   useEffect(() => {
     if (r.status === 'paid' && !done.current) {
       done.current = true;
-      announce(`Payment received. ${nairaWords(Number(r.paid_amount || r.amount))}${r.payer ? ` from ${r.payer}` : ''}.`);
+      void sayEvent('payment_received', { org_id: orgId, request_id: r.id },
+        `Payment received. ${nairaWords(Number(r.paid_amount || r.amount))}${r.payer ? ` from ${r.payer}` : ''}.`);
       onPaid(r);
     }
   }, [r.status]); // eslint-disable-line react-hooks/exhaustive-deps

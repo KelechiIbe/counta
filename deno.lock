@@ -11,6 +11,7 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@elevenlabs/client@1.26.0",
         "npm:@mono.co/connect.js@2.2.0",
         "npm:@supabase/supabase-js@^2.118.0",
         "npm:@tanstack/react-query@^5.104.3",

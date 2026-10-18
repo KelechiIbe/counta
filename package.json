@@ -11,6 +11,7 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@elevenlabs/client": "1.26.0",
     "@mono.co/connect.js": "2.2.0",
     "@supabase/supabase-js": "^2.118.0",
     "@tanstack/react-query": "^5.104.3",

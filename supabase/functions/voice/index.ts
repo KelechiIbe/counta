@@ -1,23 +1,36 @@
-// Counta voice: Martina places phone calls through ElevenLabs Agents.
+// Counta voice, through ElevenLabs: Nigerian voices that announce payments and sales, Martina the onboarding guide, and
+// the phone calls Martina places (vendor orders, reminders, onboarding follow-ups).
 //
 // Signed-in callers (Authorization: Bearer <user JWT>):
-//   { action: 'status' }                         -> is calling switched on, which number calls out
-//   { action: 'call_vendor', po_id }              -> phones the vendor on a purchase order
-//   { action: 'call_member', member_id, topic }   -> phones a team member about waiting work
-//   { action: 'sync', call_id }                   -> refreshes one call from ElevenLabs
+//   { action: 'status' }                               -> is calling switched on, which number calls out
+//   { action: 'voices' }                               -> the Nigerian voices to choose from (filled from the voice library on first use)
+//   { action: 'speak', kind, org_id?, ... }            -> an announcement as audio, in the business's voice and language:
+//        payment_received {org_id, request_id} | sale_recorded {org_id, item_id, qty, amount} | payment_demo {org_id}
+//        | preview {voice_id, lang}
+//   { action: 'guide_token', text? }                   -> a signed token (or, for typing only, a signed URL) to talk to Martina from
+//                                                         the web app, with her opening line and what she knows about the person's progress
+//   { action: 'call_vendor', po_id }                   -> phones the vendor on a purchase order
+//   { action: 'call_member', member_id, topic }        -> phones a team member about waiting work
+//   { action: 'sync', call_id }                        -> refreshes one call from ElevenLabs
 // Database cron (header x-counta-hook: <PUSH_HOOK_SECRET>):
-//   { action: 'sync_pending' }                    -> refreshes every call still in progress
+//   { action: 'sync_pending' }                         -> refreshes every call still in progress
+//   { action: 'guide_followups' }                      -> phones the people who asked Martina to call when they stopped mid-setup
+//   { action: 'refresh_voices' }                       -> reloads the Nigerian voices
 //
-// Needs ELEVENLABS_API_KEY (Edge Function secret or Supabase Vault) and a phone number connected
-// to the ElevenLabs account (Twilio or SIP trunk). ELEVENLABS_PHONE_NUMBER_ID picks one number
-// when there are several; ELEVENLABS_VOICE_ID sets Martina's voice.
+// Secrets: ELEVENLABS_API_KEY (Edge Function secret or Vault). Optional: ELEVENLABS_VOICE_IDS (comma-separated voice ids to
+// offer instead of searching the voice library for Nigerian voices), ELEVENLABS_VOICE_ID (Martina's default voice),
+// ELEVENLABS_TTS_MODEL (announcements; default eleven_flash_v2_5), ELEVENLABS_PHONE_NUMBER_ID (the number calls come from
+// when there are several). ELEVENLABS_BASE_URL is for tests.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
+import { FOLLOWUP_DATA, FOLLOWUP_PROMPT, firstMessage, GUIDE_PROMPT, GUIDE_TOOLS, stepLabel, toolConfig, whatWeKnow } from './guide.ts';
+import { cacheable, phrase, shortName } from './phrases.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const XI = 'https://api.elevenlabs.io';
-const AGENT_VERSION = 1;
+const XI = (Deno.env.get('ELEVENLABS_BASE_URL') || 'https://api.elevenlabs.io').replace(/\/$/, '');
+const AGENT_VERSION = 2;
 const admin = createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false } });
 
 const cors = {
@@ -27,30 +40,166 @@ const cors = {
 };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 const NOT_CONFIGURED = 'Phone calls are not switched on yet. Add the ElevenLabs API key and connect a phone number in ElevenLabs.';
+const VOICE_OFF = 'Nigerian voices are not switched on yet. Add the ElevenLabs API key to the Supabase Edge Function secrets.';
 
+const secrets = new Map<string, { v: string; at: number }>();
 async function secret(name: string): Promise<string> {
   const env = Deno.env.get(name);
   if (env) return env.trim();
+  const hit = secrets.get(name);
+  if (hit && Date.now() - hit.at < 60_000) return hit.v;
   const { data } = await admin.rpc('app_secret', { p_name: name });
-  return typeof data === 'string' ? data.trim() : '';
+  const v = typeof data === 'string' ? data.trim() : '';
+  secrets.set(name, { v, at: Date.now() });
+  return v;
 }
+function sameSecret(a: string, b: string) {
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+  let d = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) d |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return d === 0;
+}
+async function sha256(s: string) {
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
+  return Array.from(h).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+function hashNum(s: string) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 100000; return h; }
+const VOICE_ID = /^[A-Za-z0-9]{8,40}$/;
 
 class NotConfigured extends Error {}
 
-async function xi(path: string, init: RequestInit = {}): Promise<any> {
+async function xiFetch(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
   const key = await secret('ELEVENLABS_API_KEY');
   if (!key) throw new NotConfigured(NOT_CONFIGURED);
-  const res = await fetch(XI + path, { ...init, headers: { 'xi-api-key': key, 'Content-Type': 'application/json', ...(init.headers || {}) } });
+  return await fetch(XI + path, { ...init, headers: { 'xi-api-key': key, 'Content-Type': 'application/json', ...(init.headers || {}) }, signal: AbortSignal.timeout(timeoutMs) });
+}
+async function xiError(res: Response) {
   const text = await res.text();
   let body: any = text;
   try { body = JSON.parse(text); } catch { /* plain text */ }
-  if (!res.ok) {
-    const detail = typeof body === 'string' ? body : body?.detail?.message || body?.detail?.[0]?.msg || JSON.stringify(body);
-    const err = new Error(`ElevenLabs ${res.status}: ${String(detail).slice(0, 300)}`) as Error & { status?: number };
-    err.status = res.status;
-    throw err;
+  const detail = typeof body === 'string' ? body : body?.detail?.message || body?.detail?.[0]?.msg || JSON.stringify(body);
+  const err = new Error(`ElevenLabs ${res.status}: ${String(detail).slice(0, 300)}`) as Error & { status?: number };
+  err.status = res.status;
+  return err;
+}
+async function xi(path: string, init: RequestInit = {}): Promise<any> {
+  const res = await xiFetch(path, init);
+  if (!res.ok) throw await xiError(res);
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+// ------------------------------------------------------------------ voices
+// The voices on offer: the ones pinned in ELEVENLABS_VOICE_IDS, or the most used Nigerian voices in the ElevenLabs voice
+// library (three female, three male), added to the account so they can speak.
+let refreshedAt = 0;
+async function refreshVoices() {
+  refreshedAt = Date.now();
+  const pinned = (await secret('ELEVENLABS_VOICE_IDS')).split(/[\s,]+/).filter((x) => VOICE_ID.test(x)).slice(0, 12);
+  const rows: Record<string, unknown>[] = [];
+  if (pinned.length) {
+    for (const [i, id] of pinned.entries()) {
+      const v = await xi(`/v1/voices/${id}`);
+      rows.push({ voice_id: id, name: shortName(v?.name), gender: v?.labels?.gender ?? null, age: v?.labels?.age ?? null,
+        accent: v?.labels?.accent ?? null, description: String(v?.description || v?.labels?.description || '').slice(0, 200) || null,
+        preview_url: v?.preview_url ?? null, source: 'pinned', owner_id: null, sort: i + 1, active: true });
+    }
+  } else {
+    const { data: have } = await admin.from('tts_voices').select('voice_id, owner_id');
+    for (const [g, gender] of ['female', 'male'].entries()) {
+      const q = new URLSearchParams({ accent: 'nigerian', language: 'en', gender, sort: 'usage_character_count_1y', page_size: '12',
+        include_custom_rates: 'false', include_live_moderated: 'false' });
+      const list = await xi(`/v1/shared-voices?${q}`);
+      const voices = (Array.isArray(list?.voices) ? list.voices : []).filter((v: any) => VOICE_ID.test(String(v?.voice_id || '')) && v?.public_owner_id);
+      for (const [i, v] of voices.slice(0, 3).entries()) {
+        // A library voice speaks for the account only once it is added; adding returns the id it speaks under.
+        let id = (have || []).find((h) => h.owner_id === v.public_owner_id && h.voice_id === v.voice_id)?.voice_id as string | undefined;
+        if (!id) {
+          const added = await xi(`/v1/voices/add/${encodeURIComponent(v.public_owner_id)}/${encodeURIComponent(v.voice_id)}`,
+            { method: 'POST', body: JSON.stringify({ new_name: `Counta ${shortName(v.name)}` }) });
+          id = String(added?.voice_id || v.voice_id);
+        }
+        if (!VOICE_ID.test(id)) continue;
+        rows.push({ voice_id: id, name: shortName(v.name), gender, age: v.age ?? null, accent: v.accent ?? 'nigerian',
+          description: String(v.description || v.descriptive || '').slice(0, 200) || null, preview_url: v.preview_url ?? null,
+          source: 'library', owner_id: v.public_owner_id, sort: g * 10 + i + 1, active: true });
+      }
+    }
   }
-  return body;
+  if (!rows.length) return { added: 0, voices: 0 };
+  const now = new Date().toISOString();
+  const { error } = await admin.from('tts_voices').upsert(rows.map((r) => ({ ...r, updated_at: now })), { onConflict: 'voice_id' });
+  if (error) throw new Error(error.message);
+  // Voices no longer offered stay on record (a business may still use one) but are not offered to new choices.
+  await admin.from('tts_voices').update({ active: false, updated_at: now }).not('voice_id', 'in', `(${rows.map((r) => r.voice_id).join(',')})`);
+  return { added: rows.length, voices: rows.length };
+}
+
+async function activeVoices() {
+  const { data } = await admin.from('tts_voices').select('voice_id, name, gender, age, accent, description, sort').eq('active', true).order('sort');
+  return data || [];
+}
+// Martina's voice when a business has not chosen one: ELEVENLABS_VOICE_ID, else the first Nigerian voice.
+async function defaultVoice(): Promise<string> {
+  const pinned = await secret('ELEVENLABS_VOICE_ID');
+  if (VOICE_ID.test(pinned)) return pinned;
+  return String((await activeVoices())[0]?.voice_id || '');
+}
+
+// ------------------------------------------------------------------ speech
+const take = async (subject: string, chars: number, cached: boolean) =>
+  Boolean((await admin.rpc('svc_tts_take', { p_subject: subject, p_chars: chars, p_cached: cached })).data);
+
+async function speak(sb: SupabaseClient, userId: string, body: any) {
+  if (!(await secret('ELEVENLABS_API_KEY'))) return { ok: false, reason: 'not_configured', error: VOICE_OFF };
+  const kind = String(body.kind || '');
+  let text = '', voice = '', subject = '';
+  let lang: 'en' | 'pcm' = 'en';
+  if (kind === 'preview') {
+    voice = String(body.voice_id || '');
+    const { data: v } = await admin.from('tts_voices').select('voice_id, name').eq('voice_id', voice).eq('active', true).maybeSingle();
+    if (!v) return { ok: false, error: 'Choose one of the voices on the list.' };
+    lang = body.lang === 'pcm' ? 'pcm' : 'en';
+    text = phrase('preview', lang, {}, { voiceName: v.name });
+    subject = `user:${userId}`;
+  } else if (['payment_received', 'sale_recorded', 'payment_demo'].includes(kind)) {
+    const p: Record<string, unknown> = kind === 'payment_received' ? { request_id: body.request_id }
+      : kind === 'sale_recorded' ? { item_id: body.item_id, qty: body.qty, amount: body.amount } : {};
+    // Checks the caller belongs to the business and builds the facts from its own records.
+    const { data: say, error } = await sb.rpc('voice_say', { p_org: body.org_id, p_kind: kind, p });
+    if (error) return { ok: false, error: error.message };
+    if (!say?.enabled) return { ok: true, enabled: false };
+    voice = say.voice_id && VOICE_ID.test(say.voice_id) ? say.voice_id : await defaultVoice();
+    lang = say.lang === 'pcm' ? 'pcm' : 'en';
+    text = phrase(kind, lang, say.vars || {}, { business: say.business });
+    subject = `org:${body.org_id}`;
+  } else {
+    return { ok: false, error: 'Unknown announcement.' };
+  }
+  if (!voice) return { ok: false, reason: 'no_voice', error: 'No Nigerian voice is set up yet.', text, lang };
+  const model = (await secret('ELEVENLABS_TTS_MODEL')) || 'eleven_flash_v2_5';
+  const keep = cacheable(kind);
+  const path = keep ? `tts/${await sha256(`${model}|${voice}|${text}`)}.mp3` : '';
+  if (keep) {
+    const { data: blob } = await admin.storage.from('voice-cache').download(path);
+    if (blob && blob.size > 0) {
+      if (!(await take(subject, text.length, true))) return { ok: false, reason: 'limit', error: 'Counta has spoken a lot today.', text, lang };
+      return { ok: true, enabled: true, text, lang, voice_id: voice, mime: 'audio/mpeg', audio: encodeBase64(new Uint8Array(await blob.arrayBuffer())), cached: true };
+    }
+  }
+  if (!(await take(subject, text.length, false))) return { ok: false, reason: 'limit', error: 'Counta has spoken a lot today.', text, lang };
+  const res = await xiFetch(`/v1/text-to-speech/${voice}?output_format=mp3_44100_64`, {
+    method: 'POST', headers: { accept: 'audio/mpeg' },
+    body: JSON.stringify({ text, model_id: model, voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.15, speed: 1 } }),
+  }, 20_000);
+  if (!res.ok) {
+    const err = await xiError(res);
+    console.warn('tts', err.message);
+    return { ok: false, reason: 'error', error: 'The voice did not answer just now.', text, lang };
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (keep) await admin.storage.from('voice-cache').upload(path, bytes, { contentType: 'audio/mpeg', upsert: true }).catch(() => null);
+  return { ok: true, enabled: true, text, lang, voice_id: voice, mime: 'audio/mpeg', audio: encodeBase64(bytes), cached: false };
 }
 
 // ------------------------------------------------------------------ agents
@@ -59,7 +208,8 @@ You are an AI assistant. Say so if anyone asks, and never pretend to be a person
 Never ask for or discuss bank details, card numbers, passwords or one-time codes. If payment comes up, say the owner will follow up.
 If the person is busy or asks you to call back, ask for a good time, thank them and end the call.`;
 
-const AGENTS: Record<string, { name: string; prompt: string; first: string; maxSecs: number; data: Record<string, unknown>; criteria: unknown[] }> = {
+type Agent = { name: string; prompt: string; first: string; maxSecs: number; data: Record<string, unknown>; criteria: unknown[]; web?: boolean; temperature?: number };
+const AGENTS: Record<string, Agent> = {
   vendor_order: {
     name: 'Counta · vendor orders',
     first: 'Good day. This is Martina, an automated assistant calling for {{business_name}} with a stock order. Am I speaking with {{vendor_name}}?',
@@ -112,29 +262,83 @@ ${RULES}`,
     },
     criteria: [{ id: 'reminder_heard', name: 'Reminder heard', type: 'prompt', conversation_goal_prompt: 'Did the person hear and understand what is waiting for them?' }],
   },
+  guide_followup: {
+    name: 'Counta · onboarding follow-up',
+    first: 'Hello {{first_name}}, this is Martina from Counta. You asked me to give you a quick call to help you finish setting up. Is now a good time?',
+    maxSecs: 240,
+    prompt: FOLLOWUP_PROMPT,
+    data: FOLLOWUP_DATA,
+    criteria: [{ id: 'helped', name: 'Helped', type: 'prompt', conversation_goal_prompt: 'Did the person agree to finish setting up Counta, or get an answer that helps them finish?' }],
+  },
+  guide: {
+    name: 'Counta · Martina onboarding guide',
+    first: 'Hi! I am Martina, your Counta guide. What is your business called?',
+    maxSecs: 1500,
+    prompt: GUIDE_PROMPT,
+    temperature: 0.6,
+    web: true,
+    data: {
+      finished_profile: { type: 'boolean', description: 'True if the business profile was submitted in this conversation.' },
+      sticking_point: { type: 'string', description: 'Anything that confused or blocked the person, in one sentence. Empty if nothing.' },
+    },
+    criteria: [{ id: 'progress', name: 'Progress made', type: 'prompt', conversation_goal_prompt: 'Did the person complete at least one onboarding step in this conversation?' }],
+  },
 };
 
-function hashNum(s: string) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 100000; return h; }
+// The guide's tools live in the ElevenLabs workspace; each is created once and updated when its definition changes.
+async function ensureTools(): Promise<string[]> {
+  const { data: rows } = await admin.from('voice_tools').select('*');
+  const ids: string[] = [];
+  for (const t of GUIDE_TOOLS) {
+    const cfg = toolConfig(t);
+    const version = hashNum(JSON.stringify(cfg));
+    const row = (rows || []).find((r) => r.name === t.name);
+    if (row && row.version === version) { ids.push(row.tool_id); continue; }
+    let id: string | null = null;
+    if (row) {
+      try { await xi(`/v1/convai/tools/${row.tool_id}`, { method: 'PATCH', body: JSON.stringify({ tool_config: cfg }) }); id = row.tool_id; } catch (e) {
+        if ((e as any).status !== 404) throw e;
+      }
+    }
+    if (!id) id = String((await xi('/v1/convai/tools', { method: 'POST', body: JSON.stringify({ tool_config: cfg }) })).id);
+    await admin.from('voice_tools').upsert({ name: t.name, tool_id: id, version, updated_at: new Date().toISOString() });
+    ids.push(id);
+  }
+  return ids;
+}
 
-function agentBody(kind: string, voiceId: string) {
+function agentBody(kind: string, voiceId: string, toolIds: string[] = []) {
   const a = AGENTS[kind];
   return {
     name: a.name,
     tags: ['counta'],
     conversation_config: {
-      agent: { first_message: a.first, language: 'en', prompt: { prompt: a.prompt, temperature: 0.3 } },
+      agent: { first_message: a.first, language: 'en',
+        prompt: { prompt: a.prompt, temperature: a.temperature ?? 0.3, ...(toolIds.length ? { tool_ids: toolIds } : {}) } },
       conversation: { max_duration_seconds: a.maxSecs },
       ...(voiceId ? { tts: { voice_id: voiceId } } : {}),
     },
-    platform_settings: { data_collection: a.data, evaluation: { criteria: a.criteria } },
+    platform_settings: {
+      data_collection: a.data,
+      evaluation: { criteria: a.criteria },
+      // Each conversation may use the business's own voice; the guide also gets its opening line and may run as text.
+      overrides: { conversation_config_override: { tts: { voice_id: true },
+        ...(a.web || kind === 'guide_followup' ? { agent: { first_message: true } } : {}),
+        ...(a.web ? { conversation: { text_only: true } } : {}) } },
+      // The guide is only started with a token from this function; recordings are not kept and transcripts go after 30 days.
+      ...(a.web ? { auth: { enable_auth: true } } : {}),
+      privacy: { record_voice: false, retention_days: 30 },
+    },
   };
 }
 
 async function ensureAgent(kind: string): Promise<string> {
-  const voiceId = await secret('ELEVENLABS_VOICE_ID');
-  const version = AGENT_VERSION * 100000 + hashNum(voiceId);
+  const voiceId = await defaultVoice();
+  const toolIds = AGENTS[kind].web ? await ensureTools() : [];
+  const bodyObj = agentBody(kind, voiceId, toolIds);
+  const body = JSON.stringify(bodyObj);
+  const version = AGENT_VERSION * 100000 + hashNum(body);
   const { data: row } = await admin.from('voice_agents').select('*').eq('kind', kind).maybeSingle();
-  const body = JSON.stringify(agentBody(kind, voiceId));
   if (row && row.version === version) return row.agent_id;
   if (row) {
     try {
@@ -158,7 +362,8 @@ async function phoneNumber(): Promise<any> {
   const nums: any[] = Array.isArray(list) ? list : list?.phone_numbers || [];
   const num = (wanted && nums.find((n) => n.phone_number_id === wanted))
     || nums.find((n) => n.provider === 'twilio' || n.provider === 'sip_trunk') || nums[0] || null;
-  phoneCache = { at: Date.now(), num };
+  // Only a number found is remembered, so a number connected a minute ago is seen at once.
+  phoneCache = num ? { at: Date.now(), num } : null;
   return num;
 }
 
@@ -170,15 +375,26 @@ async function ready(): Promise<{ ok: true; num: any } | { ok: false; error: str
 }
 
 // ------------------------------------------------------------------ calls
-async function place(kind: 'vendor_order' | 'reminder', prep: { call_id: string; to_number: string; variables: Record<string, unknown> }, num: any) {
+// The business's chosen voice, when it has one, so its calls sound like its announcements.
+async function businessVoice(orgId: string | null | undefined): Promise<string | null> {
+  if (!orgId) return null;
+  const { data } = await admin.from('orgs').select('voice_id').eq('id', orgId).maybeSingle();
+  return data?.voice_id && VOICE_ID.test(data.voice_id) ? data.voice_id : null;
+}
+
+type Kind = 'vendor_order' | 'reminder' | 'guide_followup';
+async function place(kind: Kind, prep: { call_id: string; to_number: string; variables: Record<string, unknown>; voice_id?: string | null }, num: any) {
   try {
     const agentId = await ensureAgent(kind);
     const path = num.provider === 'sip_trunk' ? '/v1/convai/sip-trunk/outbound-call' : '/v1/convai/twilio/outbound-call';
+    const { data: call } = await admin.from('voice_calls').select('org_id').eq('id', prep.call_id).maybeSingle();
+    const voice = prep.voice_id && VOICE_ID.test(prep.voice_id) ? prep.voice_id : await businessVoice(call?.org_id);
     const r = await xi(path, {
       method: 'POST',
       body: JSON.stringify({
         agent_id: agentId, agent_phone_number_id: num.phone_number_id, to_number: prep.to_number,
-        conversation_initiation_client_data: { dynamic_variables: prep.variables },
+        conversation_initiation_client_data: { dynamic_variables: prep.variables,
+          ...(voice ? { conversation_config_override: { tts: { voice_id: voice } } } : {}) },
       }),
     });
     if (r?.success === false || !r?.conversation_id) {
@@ -236,6 +452,61 @@ async function syncCall(call: any) {
   return status;
 }
 
+// The people who asked Martina to call when they stopped part-way, within the hours the database allows.
+async function guideFollowups() {
+  const r = await ready();
+  if (!r.ok) return { ok: false, reason: 'not_configured', error: r.error };
+  const { data: due, error } = await admin.rpc('svc_guide_followups_due', { p_limit: 10 });
+  if (error) return { ok: false, error: error.message };
+  const out: unknown[] = [];
+  for (const d of (due as any[]) || []) out.push(await place('guide_followup', d, r.num));
+  return { ok: true, placed: out };
+}
+
+// ------------------------------------------------------------------ the guide
+const lagosToday = () => new Date(Date.now() + 3600_000).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+// Voice runs over WebRTC with a conversation token; typing only (no microphone, or the person prefers it) over a
+// websocket with a signed URL. Both expire within minutes and only start this agent.
+async function guideToken(sb: SupabaseClient, userId: string, textOnly = false, orgId: string | null = null) {
+  if (!(await secret('ELEVENLABS_API_KEY'))) return { ok: false, reason: 'not_configured', error: VOICE_OFF };
+  // The business the person has open (they must belong to it), else the newest one they own.
+  const { data: g, error } = await sb.rpc('guide_state', orgId ? { p_org: orgId } : {});
+  if (error) return { ok: false, error: error.message };
+  const { data: k } = await sb.rpc('kyc_draft', g?.org?.id && g.org.is_owner ? { p_org: g.org.id } : {});
+  const { data: session } = await admin.rpc('svc_guide_session', { p_user: userId });
+  if (!session) return { ok: false, reason: 'limit', error: 'You have talked with Martina a lot today. Carry on by typing, or come back tomorrow.' };
+  const agentId = await ensureAgent('guide');
+  const t = textOnly
+    ? await xi(`/v1/convai/conversation/get-signed-url?${new URLSearchParams({ agent_id: agentId })}`)
+    : await xi(`/v1/convai/conversation/token?${new URLSearchParams({ agent_id: agentId, participant_name: userId })}`);
+  if (textOnly ? !t?.signed_url : !t?.token) return { ok: false, error: 'Martina is not available just now. Try again in a minute.' };
+  if (t.conversation_id) await admin.rpc('svc_guide_session_set', { p_session: session, p_conversation: String(t.conversation_id) });
+  const lang = g?.language === 'pcm' ? 'pcm' : 'en';
+  const voice = g?.org?.voice_id && VOICE_ID.test(g.org.voice_id) ? g.org.voice_id : await defaultVoice();
+  const next = String(g?.next || '');
+  const phase = (g?.steps || []).find((s: any) => s.id === next)?.phase;
+  const dynamic_variables = {
+    first_name: String(g?.first_name || '').slice(0, 40) || 'friend',
+    business_name: String(g?.org?.name || k?.business?.name || 'not found yet').slice(0, 120),
+    stage: g?.completed ? 'all done' : phase === 'first_steps' ? 'first steps in Counta' : 'setting up the business profile',
+    next_step: next ? stepLabel(next, 'en') : 'nothing left',
+    steps_done: Number(g?.done || 0),
+    steps_total: Number(g?.total || 0),
+    language_style: lang === 'pcm' ? 'pidgin' : 'english',
+    returning: g?.marks?.intro_heard || Number(g?.done || 0) > 0 ? 'yes' : 'no',
+    what_we_know: whatWeKnow(k),
+    today: lagosToday(),
+  };
+  return {
+    ok: true, ...(textOnly ? { signed_url: t.signed_url } : { token: t.token }), conversation_id: t.conversation_id || null, agent_id: agentId,
+    session_id: session, language: lang, text_only: textOnly,
+    dynamic_variables,
+    overrides: { agent: { firstMessage: firstMessage(g, lang) }, ...(voice && !textOnly ? { tts: { voiceId: voice } } : {}),
+      ...(textOnly ? { conversation: { textOnly: true } } : {}) },
+  };
+}
+
 // ------------------------------------------------------------------ handler
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -245,7 +516,10 @@ Deno.serve(async (req) => {
   try {
     const hook = req.headers.get('x-counta-hook');
     if (hook) {
-      if (hook !== (await secret('PUSH_HOOK_SECRET'))) return json({ ok: false, error: 'Not allowed.' }, 401);
+      const expected = await secret('PUSH_HOOK_SECRET');
+      if (!expected || !sameSecret(hook, expected)) return json({ ok: false, error: 'Not allowed.' }, 401);
+      if (body.action === 'guide_followups') return json(await guideFollowups());
+      if (body.action === 'refresh_voices') return json({ ok: true, ...(await refreshVoices()) });
       if (body.action !== 'sync_pending') return json({ ok: false, error: 'Unknown action.' }, 400);
       const since = new Date(Date.now() - 3 * 3600_000).toISOString();
       const { data: calls } = await admin.from('voice_calls').select('*').in('status', ['queued', 'ringing', 'in_progress', 'processing']).gte('created_at', since).limit(20);
@@ -261,14 +535,27 @@ Deno.serve(async (req) => {
     switch (body.action) {
       case 'status': {
         const key = Boolean(await secret('ELEVENLABS_API_KEY'));
-        if (!key) return json({ ok: true, configured: false, reason: 'no_key', message: NOT_CONFIGURED });
+        if (!key) return json({ ok: true, configured: false, voices: false, reason: 'no_key', message: NOT_CONFIGURED });
         try {
           const num = await phoneNumber();
-          return json({ ok: true, configured: Boolean(num), reason: num ? null : 'no_number', phone: num ? { label: num.label, number: num.phone_number, provider: num.provider } : null });
+          return json({ ok: true, configured: Boolean(num), voices: true, reason: num ? null : 'no_number', phone: num ? { label: num.label, number: num.phone_number, provider: num.provider } : null });
         } catch (e) {
-          return json({ ok: true, configured: false, reason: 'error', message: (e as Error).message });
+          return json({ ok: true, configured: false, voices: true, reason: 'error', message: (e as Error).message });
         }
       }
+      case 'voices': {
+        if (!(await secret('ELEVENLABS_API_KEY'))) return json({ ok: true, configured: false, voices: [] });
+        let voices = await activeVoices();
+        // The first time anyone asks, the Nigerian voices are fetched from the voice library (at most every ten minutes).
+        if (!voices.length && Date.now() - refreshedAt > 10 * 60_000) {
+          try { await refreshVoices(); voices = await activeVoices(); } catch (e) { console.warn('voices', (e as Error).message); }
+        }
+        return json({ ok: true, configured: true, voices });
+      }
+      case 'speak':
+        return json(await speak(sb, u.user.id, body));
+      case 'guide_token':
+        return json(await guideToken(sb, u.user.id, body.text === true, typeof body.org_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.org_id) ? body.org_id : null));
       case 'call_vendor': {
         const r = await ready();
         if (!r.ok) return json({ ok: false, reason: 'not_configured', error: r.error });
@@ -295,6 +582,7 @@ Deno.serve(async (req) => {
     }
   } catch (e) {
     if (e instanceof NotConfigured) return json({ ok: false, reason: 'not_configured', error: e.message });
+    console.error(e);
     return json({ ok: false, error: (e as Error).message }, 500);
   }
 });

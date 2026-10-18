@@ -14,6 +14,8 @@ import { INDUSTRIES, industryOf } from '../lib/industries';
 import { disablePush, enablePush, usePwaState } from '../lib/pwa';
 import { BooksSection, MessagesSection, TaxStreemSection } from './SettingsBooks';
 import { BrandingSection } from './SettingsBranding';
+import { useVoiceSettings, VoicePicker } from '../guide/VoicePicker';
+import { saveVoice } from '../lib/onboard';
 
 function Section({ id, title, sub, children }: { id?: string; title: string; sub?: string; children: ReactNode }) {
   return (
@@ -21,6 +23,34 @@ function Section({ id, title, sub, children }: { id?: string; title: string; sub
       <div><Label>{title}</Label>{sub && <div className="muted" style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>{sub}</div>}</div>
       <div className="stack" style={{ gap: 14, minWidth: 0 }}>{children}</div>
     </div>
+  );
+}
+
+// The Nigerian voice that says "payment received" and reads back voice sales, in English or Pidgin.
+function VoiceSection() {
+  const { orgId } = useSession();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const vs = useVoiceSettings(orgId);
+  const [busy, setBusy] = useState(false);
+  const s = vs.data;
+  async function events(key: string, on: boolean) {
+    if (!orgId) return;
+    setBusy(true);
+    try { await saveVoice(orgId, { events: { [key]: on } }); await qc.invalidateQueries({ queryKey: ['voice-settings'] }); toast(on ? 'Spoken' : 'Not spoken'); }
+    catch (e) { toast((e as Error).message, 'err'); } finally { setBusy(false); }
+  }
+  return (
+    <Section id="voice" title="Payment voice" sub="Real Nigerian voices announce payments and read back sales recorded by voice. Without a connection, the device's own voice speaks.">
+      <VoicePicker compact />
+      {s && (
+        <div className="stack" style={{ gap: 8 }}>
+          <label className="check"><input type="checkbox" checked={s.events?.payment_received !== false} disabled={!s.can_edit || busy} onChange={(e) => events('payment_received', e.target.checked)} />Say "payment received" when a transfer, link or QR payment lands</label>
+          <label className="check"><input type="checkbox" checked={s.events?.sale_recorded !== false} disabled={!s.can_edit || busy} onChange={(e) => events('sale_recorded', e.target.checked)} />Read back sales recorded by voice on the phone app</label>
+          {!s.can_edit && <div className="faint" style={{ fontSize: 12 }}>Only the owner or a manager changes the voice.</div>}
+        </div>
+      )}
+    </Section>
   );
 }
 
@@ -202,6 +232,7 @@ export default function Settings() {
       </Section>
       <TaxStreemSection />
       <NotificationsSection />
+      <VoiceSection />
       <CallsSection owner={!!owner} />
       <Section title="Phone app" sub="For the people who handle stock. Works offline and syncs in order when data returns.">
         <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>Open <b>{window.location.host}</b> on the phone. On Android, Chrome offers <b>Install</b>; on iPhone, tap Share in Safari and choose <b>Add to Home Screen</b>. Staff sign in with the email you invited and land on the phone screens for scanning, blind counts, invoice photos and voice entry. The full app, with approvals and reports, is one tap away and fits the phone too.</div>
