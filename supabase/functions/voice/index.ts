@@ -7,8 +7,8 @@
 //   { action: 'speak', kind, org_id?, ... }            -> an announcement as audio, in the business's voice and language:
 //        payment_received {org_id, request_id} | sale_recorded {org_id, item_id, qty, amount} | payment_demo {org_id}
 //        | preview {voice_id, lang}
-//   { action: 'guide_token' }                          -> a signed token to talk to Martina from the web app, with her opening line
-//                                                         and what she knows about the person's progress
+//   { action: 'guide_token', text? }                   -> a signed token (or, for typing only, a signed URL) to talk to Martina from
+//                                                         the web app, with her opening line and what she knows about the person's progress
 //   { action: 'call_vendor', po_id }                   -> phones the vendor on a purchase order
 //   { action: 'call_member', member_id, topic }        -> phones a team member about waiting work
 //   { action: 'sync', call_id }                        -> refreshes one call from ElevenLabs
@@ -466,16 +466,21 @@ async function guideFollowups() {
 // ------------------------------------------------------------------ the guide
 const lagosToday = () => new Date(Date.now() + 3600_000).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
-async function guideToken(sb: SupabaseClient, userId: string) {
+// Voice runs over WebRTC with a conversation token; typing only (no microphone, or the person prefers it) over a
+// websocket with a signed URL. Both expire within minutes and only start this agent.
+async function guideToken(sb: SupabaseClient, userId: string, textOnly = false, orgId: string | null = null) {
   if (!(await secret('ELEVENLABS_API_KEY'))) return { ok: false, reason: 'not_configured', error: VOICE_OFF };
-  const { data: g, error } = await sb.rpc('guide_state', {});
+  // The business the person has open (they must belong to it), else the newest one they own.
+  const { data: g, error } = await sb.rpc('guide_state', orgId ? { p_org: orgId } : {});
   if (error) return { ok: false, error: error.message };
   const { data: k } = await sb.rpc('kyc_draft', g?.org?.id && g.org.is_owner ? { p_org: g.org.id } : {});
   const { data: session } = await admin.rpc('svc_guide_session', { p_user: userId });
   if (!session) return { ok: false, reason: 'limit', error: 'You have talked with Martina a lot today. Carry on by typing, or come back tomorrow.' };
   const agentId = await ensureAgent('guide');
-  const t = await xi(`/v1/convai/conversation/token?${new URLSearchParams({ agent_id: agentId, participant_name: userId })}`);
-  if (!t?.token) return { ok: false, error: 'Martina is not available just now. Try again in a minute.' };
+  const t = textOnly
+    ? await xi(`/v1/convai/conversation/get-signed-url?${new URLSearchParams({ agent_id: agentId })}`)
+    : await xi(`/v1/convai/conversation/token?${new URLSearchParams({ agent_id: agentId, participant_name: userId })}`);
+  if (textOnly ? !t?.signed_url : !t?.token) return { ok: false, error: 'Martina is not available just now. Try again in a minute.' };
   if (t.conversation_id) await admin.rpc('svc_guide_session_set', { p_session: session, p_conversation: String(t.conversation_id) });
   const lang = g?.language === 'pcm' ? 'pcm' : 'en';
   const voice = g?.org?.voice_id && VOICE_ID.test(g.org.voice_id) ? g.org.voice_id : await defaultVoice();
@@ -494,9 +499,11 @@ async function guideToken(sb: SupabaseClient, userId: string) {
     today: lagosToday(),
   };
   return {
-    ok: true, token: t.token, conversation_id: t.conversation_id || null, agent_id: agentId, session_id: session, language: lang,
+    ok: true, ...(textOnly ? { signed_url: t.signed_url } : { token: t.token }), conversation_id: t.conversation_id || null, agent_id: agentId,
+    session_id: session, language: lang, text_only: textOnly,
     dynamic_variables,
-    overrides: { agent: { firstMessage: firstMessage(g, lang) }, ...(voice ? { tts: { voiceId: voice } } : {}) },
+    overrides: { agent: { firstMessage: firstMessage(g, lang) }, ...(voice && !textOnly ? { tts: { voiceId: voice } } : {}),
+      ...(textOnly ? { conversation: { textOnly: true } } : {}) },
   };
 }
 
@@ -548,7 +555,7 @@ Deno.serve(async (req) => {
       case 'speak':
         return json(await speak(sb, u.user.id, body));
       case 'guide_token':
-        return json(await guideToken(sb, u.user.id));
+        return json(await guideToken(sb, u.user.id, body.text === true, typeof body.org_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.org_id) ? body.org_id : null));
       case 'call_vendor': {
         const r = await ready();
         if (!r.ok) return json({ ok: false, reason: 'not_configured', error: r.error });

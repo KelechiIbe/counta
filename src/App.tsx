@@ -6,7 +6,8 @@ import { refreshPushSubscription, store } from './lib/pwa';
 import { Spinner } from './components/ui';
 import AppShell from './shell/AppShell';
 import { AuthPage, UpdatePasswordPage } from './pages/auth/Auth';
-import Onboarding from './pages/Onboarding';
+import { GuideProvider } from './guide/GuideProvider';
+import { GuideDock } from './guide/GuideDock';
 import Overview from './pages/inventory/Overview';
 
 const Items = lazy(() => import('./pages/inventory/Items'));
@@ -21,6 +22,7 @@ const Production = lazy(() => import('./pages/inventory/Production'));
 const MonthEnd = lazy(() => import('./pages/inventory/MonthEnd'));
 const Migrate = lazy(() => import('./pages/inventory/Migrate'));
 const Assistant = lazy(() => import('./pages/Assistant'));
+const Onboard = lazy(() => import('./pages/onboarding/Onboard'));
 const Settings = lazy(() => import('./pages/Settings'));
 
 const MobileApp = lazy(() => import('./mobile/MobileApp'));
@@ -114,14 +116,15 @@ function DeviceHooks() {
 
 export default function App() {
   return (
-    <>
+    <GuideProvider>
     <DeviceHooks />
+    <GuideDock />
     <Routes>
       <Route path="/login" element={<AuthPage mode="login" />} />
       <Route path="/signup" element={<AuthPage mode="signup" />} />
       <Route path="/reset" element={<AuthPage mode="reset" />} />
       <Route path="/update-password" element={<UpdatePasswordPage />} />
-      <Route path="/onboarding" element={<RequireAuth needOrg={false}><Onboarding /></RequireAuth>} />
+      <Route path="/onboarding" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><Onboard /></Suspense></RequireAuth>} />
       <Route path="/p/:token" element={<Suspense fallback={<Loading />}><PublicDoc /></Suspense>} />
       <Route path="/shop/:slug" element={<Suspense fallback={<Loading />}><ShopPage /></Suspense>} />
       <Route path="/sso" element={<Suspense fallback={<Loading />}><Sso /></Suspense>} />
@@ -168,6 +171,6 @@ export default function App() {
       <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
-    </>
+    </GuideProvider>
   );
 }

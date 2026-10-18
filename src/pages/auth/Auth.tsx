@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase, cleanError } from '../../lib/supabase';
 import { useSession } from '../../state/session';
@@ -41,19 +41,25 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
   const nav = useNavigate();
   const [name, setName] = useState('');
   const [email, setEmail] = useState(params.get('email') || '');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
+  // After sign-up: the six-digit code from the confirmation email (the link in it works too).
+  const [codeFor, setCodeFor] = useState<string | null>(null);
   const next = params.get('next') || '/';
 
-  if (ready && session && mode !== 'reset') return <Navigate to={next} replace />;
+  if (ready && session && mode !== 'reset') return <Navigate to={mode === 'signup' ? '/onboarding' : next} replace />;
+  if (codeFor) return <CodeStep email={codeFor} onBack={() => setCodeFor(null)} onDone={async () => { await refreshMemberships().catch(() => []); nav('/onboarding', { replace: true }); }} />;
 
   async function submit(e: FormEvent) {
     e.preventDefault(); setErr(null);
     if (!/^\S+@\S+\.\S+$/.test(email.trim())) { setErr('Enter a valid email address.'); return; }
     if (mode !== 'reset' && password.length < 8) { setErr('Use at least 8 characters for the password.'); return; }
     if (mode === 'signup' && !name.trim()) { setErr('Enter your name.'); return; }
+    const tel = phone.replace(/[\s()-]/g, '');
+    if (mode === 'signup' && tel && !/^(\+?234|0)[789][01]\d{8}$/.test(tel)) { setErr('Enter a Nigerian mobile number, for example 0803 123 4567, or leave it blank.'); return; }
     setBusy(true);
     try {
       if (mode === 'login') {
@@ -64,11 +70,11 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
       } else if (mode === 'signup') {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(), password,
-          options: { data: { full_name: name.trim() }, emailRedirectTo: window.location.origin + '/onboarding' },
+          options: { data: { full_name: name.trim(), ...(tel ? { phone: tel } : {}) }, emailRedirectTo: window.location.origin + '/onboarding' },
         });
         if (error) throw error;
         if (data.session) nav('/onboarding', { replace: true });
-        else setSent('We sent a confirmation link to ' + email.trim() + '. Open it on this device to finish setting up.');
+        else setCodeFor(email.trim());
       } else {
         const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin + '/update-password' });
         if (error) throw error;
@@ -91,7 +97,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
             <h1 style={{ fontFamily: 'var(--font-brand)', fontSize: 28, fontWeight: 600, letterSpacing: '-.01em', margin: 0 }}>{title}</h1>
             <div className="muted" style={{ fontSize: 14, marginTop: 6, lineHeight: 1.5 }}>
               {mode === 'login' ? 'Owners and staff use the same sign-in. Your role decides what you see.'
-                : mode === 'signup' ? 'Start with your own business or explore a sample shop first.'
+                : mode === 'signup' ? 'One minute here, then Martina, your guide, sets up your business with you. By voice if you like.'
                 : 'We will email you a link to choose a new password.'}
             </div>
           </div>
@@ -103,6 +109,11 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
                 <Field label="Your name" req><input className="input" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" placeholder="e.g. Kelechi Ibe" /></Field>
               )}
               <Field label="Email" req><input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="you@business.com" /></Field>
+              {mode === 'signup' && (
+                <Field label="Mobile number" hint="Optional. Only used if you ask Martina, your guide, to call you.">
+                  <input className="input" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" placeholder="0803 123 4567" inputMode="tel" />
+                </Field>
+              )}
               {mode !== 'reset' && (
                 <Field label="Password" req hint={mode === 'signup' ? 'At least 8 characters.' : undefined}>
                   <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
@@ -124,6 +135,57 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
           {mode === 'signup' && (
             <div className="hint">Joining a team? Sign up with the email your manager added, and you will land straight in their business.</div>
           )}
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// The code from the confirmation email. Supabase's "Confirm signup" email carries both the code ({{ .Token }}) and the link.
+function CodeStep({ email, onBack, onDone }: { email: string; onBack: () => void; onDone: () => Promise<void> }) {
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [wait, setWait] = useState(45);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => { const t = window.setInterval(() => setWait((w) => (w > 0 ? w - 1 : 0)), 1000); return () => window.clearInterval(t); }, []);
+  async function verify(v = code) {
+    const token = v.replace(/\D/g, '');
+    if (token.length !== 6) { setErr('Enter the six digits from the email.'); return; }
+    setBusy(true); setErr(null);
+    const { error } = await supabase.auth.verifyOtp({ email, token, type: 'signup' });
+    if (error) { setBusy(false); setErr(/expired|invalid/i.test(error.message) ? 'That code has expired or is not right. Check the latest email, or send a new code.' : cleanError(error)); return; }
+    await onDone();
+  }
+  async function resend() {
+    setErr(null); setNote(null);
+    const { error } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: window.location.origin + '/onboarding' } });
+    if (error) setErr(cleanError(error)); else { setNote('A new code is on its way.'); setWait(45); }
+  }
+  return (
+    <div className="auth-wrap">
+      <BrandSide />
+      <div className="auth-form">
+        <form className="auth-card" onSubmit={(e) => { e.preventDefault(); void verify(); }} noValidate>
+          <img src="/logo-brand.svg" alt="TaxStreem" style={{ height: 22, alignSelf: 'flex-start', marginBottom: 12 }} />
+          <div>
+            <h1 style={{ fontFamily: 'var(--font-brand)', fontSize: 28, fontWeight: 600, letterSpacing: '-.01em', margin: 0 }}>Check your email</h1>
+            <div className="muted" style={{ fontSize: 14, marginTop: 6, lineHeight: 1.5 }}>We sent a six-digit code to <b>{email}</b>. Type it here, or tap the link in the email.</div>
+          </div>
+          <Field label="Code" req>
+            <input className="input" value={code} autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={7} placeholder="123456" aria-label="Six-digit code"
+              style={{ fontSize: 26, letterSpacing: '.4em', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}
+              onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 6); setCode(v); if (v.length === 6) void verify(v); }} />
+          </Field>
+          {err && <Alert kind="red" icon="alert">{err}</Alert>}
+          {note && <Alert kind="green" icon="mail">{note}</Alert>}
+          <button className="btn btn-primary btn-block" disabled={busy || code.length !== 6} style={{ padding: '12px 16px', boxShadow: 'var(--shadow-cta)' }}>{busy && <Spinner small />}Confirm and continue</button>
+          <div style={{ fontSize: 14, color: '#4B5563', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <button type="button" className="link" onClick={onBack} style={{ border: 0, background: 'none', padding: 0, cursor: 'pointer', color: 'var(--primary)' }}>Wrong email?</button>
+            {wait > 0 ? <span className="faint">New code in {wait}s</span>
+              : <button type="button" className="link" onClick={resend} style={{ border: 0, background: 'none', padding: 0, cursor: 'pointer', color: 'var(--primary)' }}>Send a new code</button>}
+          </div>
+          <div className="hint">Not in your inbox? Check Spam or Promotions. The code works for an hour.</div>
         </form>
       </div>
     </div>

@@ -7,6 +7,7 @@ import { useNeedsAction } from '../../shell/needsAction';
 import { Icon } from '../../components/Icon';
 import { Empty, SkeletonRows } from '../../components/ui';
 import { StatusChip } from '../sell/common';
+import { GuideChecklist } from './GuideChecklist';
 
 export default function Home() {
   const { data: inv } = useInventory();
@@ -49,6 +50,7 @@ export default function Home() {
           {can(inv, 'keep_books') && <button className="btn btn-secondary btn-sm" onClick={() => nav('/accounting/banking')}><Icon name="upload" size={14} />Bank statement</button>}
         </div>
       </div>
+      <GuideChecklist />
       {money && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))', gap: 12 }}>
           {ov.isLoading ? <SkeletonRows n={3} /> : tiles.map(([l, v, to, s]) => (

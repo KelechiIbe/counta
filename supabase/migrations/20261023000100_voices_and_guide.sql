@@ -360,14 +360,26 @@ begin
     'submitted_at', k.submitted_at, 'updated_at', k.updated_at);
 end $$;
 
--- The person's profile (or the business's, for its owner).
+-- The person's profile (or the business's, for its owner). Reading never starts one: without an open draft it is the
+-- profile they submitted last (so the score shows after submitting), or an empty one until they find their business.
 create or replace function public.kyc_draft(p_org uuid default null) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare v_uid uuid := auth.uid(); k public.kyc_profiles;
 begin
   if v_uid is null then raise exception 'Sign in first.' using errcode = '42501'; end if;
   if p_org is not null and not private.is_owner(p_org) then raise exception 'Only the owner sees the business profile.' using errcode = '42501'; end if;
-  k := private.kyc_row(v_uid, p_org);
+  if p_org is not null then
+    k := private.kyc_row(v_uid, p_org);
+  else
+    select * into k from kyc_profiles where user_id = v_uid and status = 'draft';
+    if not found then
+      select * into k from kyc_profiles where user_id = v_uid and status = 'submitted' and org_id is not null and private.is_owner(org_id)
+      order by submitted_at desc limit 1;
+    end if;
+    if not found then
+      k.status := 'draft'; k.answers := '{}'::jsonb; k.updated_at := now();
+    end if;
+  end if;
   return private.kyc_json(k);
 end $$;
 

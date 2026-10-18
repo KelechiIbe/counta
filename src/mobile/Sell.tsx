@@ -13,6 +13,7 @@ import { BranchChip, MTop, QueueBanner, useM } from './ctx';
 import { Done, ItemSearch, SaleSheet } from './common';
 import { enqueue } from './queue';
 import { toWav } from '../lib/audio';
+import { announce, browserSay } from '../lib/speech';
 
 type Heard = { transcript: string; movement: 'sale' | 'receipt' | 'unknown'; item_id: string | null; qty: number | null; unit_kind?: 'purchase' | 'selling'; location_name?: string | null; confidence: number; readback: string; problem?: string | null };
 
@@ -23,8 +24,10 @@ function pickMime(): string {
   return '';
 }
 const toB64 = (b: Blob) => new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(b); });
-function speak(text: string) {
-  try { const u = new SpeechSynthesisUtterance(text); u.lang = 'en-NG'; u.rate = 1; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); } catch { /* no voice output */ }
+// The sale said back in the business's Nigerian voice; the phone's own voice reads the line when offline.
+function speak(text: string, sale?: { org_id: string; item_id: string; qty: number; amount: number }) {
+  if (sale && navigator.onLine) { void announce('sale_recorded', sale, text, { chime: false }); return; }
+  browserSay(text);
 }
 
 export default function SellScreen() {
@@ -90,7 +93,7 @@ export default function SellScreen() {
     });
     const branch = inv!.locations.find((l) => l.id === hereId)?.name || '';
     const line = heard.readback || `${num(su)} ${pluralUnit(item.selling_unit, su)} of ${item.name} sold at ${branch}, ${N(su * Number(item.price))}.`;
-    speak(line);
+    speak(line, { org_id: orgId!, item_id: item.id, qty: su, amount: su * Number(item.price) });
     setDoneMsg(`"${line}" Stock updated${pending ? '; the owner will review it' : ''}.`);
     setStage('done'); setRetries(0);
   }
