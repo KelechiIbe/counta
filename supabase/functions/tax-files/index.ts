@@ -8,12 +8,16 @@
 //                                           statements as signed links, the fixed-asset declaration and the computation.
 //   { action: 'wht_files', org_id, period: 'YYYY-MM', authority: 'NRS' | 'SIRS:LA' ... }
 //                                        -> the month's WHT schedule on the NRS template (130 rows a file) or the state template.
+//   { action: 'vat_file', org_id, period: 'YYYY-MM' }
+//                                        -> the month's NRS VAT return (Form VAT 002, schedules A to F) and how each line of the
+//                                           form ties to Counta's VAT for the month.
 // Flux settings (edge function secrets): FLUX_URL (base URL) and FLUX_SECRET (shared HMAC secret). Requests carry
 //   x-counta-signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">; Flux reports back on
 //   /functions/v1/taxstreem/flux/cit-status with the same signature (docs/flux-cit-handoff.md).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { type CitPack, fillCit } from './cit.ts';
 import { sha256Hex, template } from './templates.ts';
+import { fillVat, type VatSchedule } from './vat.ts';
 import { nrsFiles, stateFile, type WhtSchedule } from './wht.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -144,6 +148,19 @@ async function whtFiles(sb: SupabaseClient, orgId: string, period: string, autho
   return { ok: true, authority, period, files: out, checks: s.checks };
 }
 
+async function vatFile(sb: SupabaseClient, orgId: string, period: string) {
+  const { data, error } = await sb.rpc('vat_schedule', { p_org: orgId, p_period: `${period}-01` });
+  if (error) throw new UserError(error.message);
+  const s = data as VatSchedule;
+  if (s.blocked) return { ok: false, error: s.checks.filter((c) => c.severity === 'block').map((c) => c.text).join(' '), checks: s.checks };
+  const { bytes, ties, rows } = fillVat(await template('nrs_vat'), s);
+  const path = `${orgId}/tax/vat/${period}/${s.file_name}`;
+  const { error: up } = await admin.storage.from('documents').upload(path, bytes, { contentType: XLSX, upsert: true });
+  if (up) throw new Error(`Could not store ${s.file_name}: ${up.message}`);
+  return { ok: true, period, file_name: s.file_name, url: await signed(path, 1800, s.file_name), ties, rows, checks: s.checks,
+    lines: s.lines, counta: s.counta, difference: s.difference, tolerance: s.tolerance };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
@@ -159,6 +176,11 @@ Deno.serve(async (req) => {
       const period = String(body.period || '').slice(0, 7), authority = String(body.authority || '');
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period) || !/^(NRS|SIRS:[A-Z]{2})$/.test(authority)) return json({ ok: false, error: 'Choose the month and the tax authority.' }, 400);
       return json(await whtFiles(sb, orgId, period, authority));
+    }
+    if (body.action === 'vat_file') {
+      const period = String(body.period || '').slice(0, 7);
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return json({ ok: false, error: 'Choose the month.' }, 400);
+      return json(await vatFile(sb, orgId, period));
     }
     if (!Number.isInteger(year)) return json({ ok: false, error: 'Choose the year.' }, 400);
     switch (body.action) {

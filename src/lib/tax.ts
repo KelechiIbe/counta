@@ -1,7 +1,7 @@
 // Reads and labels for the tax returns: companies income tax by accounting year, VAT by month, and withholding tax (and VAT
 // withheld) by month and tax authority.
 import { useQuery } from '@tanstack/react-query';
-import { rpc } from './supabase';
+import { rpc, supabase } from './supabase';
 import { useSession } from '../state/session';
 
 function useOrgQ<T>(key: unknown[], fn: (org: string) => Promise<T>, enabled = true) {
@@ -19,9 +19,24 @@ export const useWithholding = (from: string, to: string, enabled = true) =>
 export const useWhtReceipts = (filter: Record<string, unknown>, enabled = true) =>
   useOrgQ<any[]>(['wht-receipts', JSON.stringify(filter)], (o) => rpc('wht_receipts', { p_org: o, p: filter }), enabled);
 export const useVendorTax = (vendor: string | null) => useOrgQ<any>(['vendor-tax', vendor], (o) => rpc('vendor_tax_details', { p_org: o, p_vendor: vendor }), !!vendor);
+export const useVatSchedule = (period: string | null) => useOrgQ<any>(['vat-schedule', period], (o) => rpc('vat_schedule', { p_org: o, p_period: period }), !!period);
+export const useCustoms = (from?: string, to?: string) =>
+  useOrgQ<any[]>(['customs', from, to], (o) => rpc('customs_entries_list', { p_org: o, p: { from: from || null, to: to || null } }));
+
+// Nigeria's states and local government areas as the NRS VAT template spells them (static, so read once).
+export type NgPlaces = { states: string[]; lgas: Record<string, string[]> };
+export const useNgPlaces = () => useQuery({ queryKey: ['ng-places'], staleTime: Infinity, gcTime: Infinity, queryFn: () => rpc<NgPlaces>('ng_places') });
+// The NRS VAT return's descriptions of zero-rated and exempt supplies, spelt as the template has them.
+export type NrsLabel = { label: string; treatment: 'zero' | 'exempt' };
+export const useNrsLabels = () => useQuery({ queryKey: ['nrs-labels'], staleTime: Infinity, gcTime: Infinity, queryFn: async () => {
+  const { data, error } = await supabase.from('nrs_vat_labels').select('label, treatment').order('label');
+  if (error) throw error;
+  return (data || []) as NrsLabel[];
+} });
 
 // Everything a tax action can change.
-export const TAX_KEYS = ['cit-years', 'cit-year', 'tax-profile', 'vat-position', 'withholding', 'wht-receipts', 'vendor-tax', 'bills', 'bill', 'fs-pack', 'report', 'ledger', 'inbox'];
+export const TAX_KEYS = ['cit-years', 'cit-year', 'tax-profile', 'vat-position', 'withholding', 'wht-receipts', 'vendor-tax', 'bills', 'bill', 'fs-pack', 'report', 'ledger', 'inbox',
+  'vat-schedule', 'customs', 'customers', 'inv', 'item-nrs'];
 
 export const CIT_STATUS: Record<string, { label: string; tone: string }> = {
   draft: { label: 'Draft', tone: 't-grey' }, approved: { label: 'Approved', tone: 't-blue' }, sent: { label: 'With Flux', tone: 't-amber' },

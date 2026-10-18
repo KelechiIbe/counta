@@ -41,7 +41,7 @@ Webhook in the Meta app (WhatsApp, Configuration): callback URL `https://krtqqhn
 
 ### Templates to submit to Meta
 
-Messages to customers start outside the 24-hour window, so each one uses an approved template. Submit these five in the Utility category, language English. The variables are filled in this order.
+Messages to customers and suppliers start outside the 24-hour window, so each one uses an approved template. Submit these six in the Utility category, language English. The variables are filled in this order.
 
 **counta_document** (5 variables)
 
@@ -81,6 +81,15 @@ Example: Ada, Bright Pharmacy Ltd, ₦12,500.00, INV-0042, was due on 31 Oct 202
 Hello {{1}}, your balance with {{2}} is {{3}}. You can see your statement and pay here: {{4}}
 Sent with Counta.
 ```
+
+**counta_bill_returned** (4 variables), to a supplier whose invoice is sent back unpaid
+
+```
+Hello {{1}}, {{2}} has returned your invoice {{3}} without paying it: {{4}}.
+Sent with Counta.
+```
+
+Example: Bisi, Bright Pharmacy Ltd, BCS-118, your Tax ID is missing. You can get it at taxid.nrs.gov.ng; please send it to us with an invoice that shows it
 
 Meta refuses templates that begin or end with a variable, which is why each one ends with a short line of plain text. If Meta asks for changes, keep the number and order of the variables; the wording around them can change without touching Counta.
 

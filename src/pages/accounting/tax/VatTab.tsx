@@ -8,9 +8,10 @@ import { money, moneyAccounts, today } from '../../../lib/api';
 import { N2, fmtDay } from '../../../lib/format';
 import { addMonths, monthName, monthShort, useVatPosition } from '../../../lib/tax';
 import { Icon } from '../../../components/Icon';
-import { Alert, Empty, Field, Modal, ModalHead, SkeletonRows, Stat } from '../../../components/ui';
+import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Stat } from '../../../components/ui';
 import { ExportMenu, useMeta } from '../../../components/Books';
 import { useTaxRefresh } from './CitTab';
+import { CustomsPanel, VatReturnModal } from './VatReturn';
 
 const STATUS: Record<string, { label: string; tone: string }> = {
   open: { label: 'Not filed', tone: 't-grey' }, filed: { label: 'Filed, to pay', tone: 't-amber' }, paid: { label: 'Filed', tone: 't-green' },
@@ -26,6 +27,8 @@ export default function VatTab() {
   const q = useVatPosition(from + '-01', to + '-01');
   const [open, setOpen] = useState<any>(null);
   const [modal, setModal] = useState<null | { kind: 'file' | 'pay' | 'reopen' | 'charge'; m?: any; charge?: boolean }>(null);
+  const [view, setView] = useState<'months' | 'customs'>('months');
+  const [nrs, setNrs] = useState<string | null>(null);
   const d = q.data;
   const st = d?.status || {};
   const months: any[] = d?.months || [];
@@ -42,21 +45,26 @@ export default function VatTab() {
           </div>
           {(d.expiring || []).length > 0 && <Alert kind="amber" icon="clock">Input VAT credit from {(d.expiring as any[]).map((l) => `${monthShort(l.from)} (${N2(l.amount)})`).join(', ')} lapses five years after it arose. Use it or claim a refund.</Alert>}
           <div className="row wrap" style={{ justifyContent: 'space-between' }}>
+            <Pills value={view} onChange={setView} options={[{ id: 'months', label: 'By month' }, { id: 'customs', label: 'Customs entries' }]} />
+            {view === 'months' && <div className="row wrap" style={{ gap: 8 }}>
             <div className="row"><span className="muted" style={{ fontSize: 14 }}>Twelve months to</span><input className="input input-sm" type="month" value={to} max={today().slice(0, 7)} onChange={(e) => e.target.value && setTo(e.target.value)} style={{ width: 160 }} /></div>
             <ExportMenu name={`VAT ${from} to ${to}`} disabled={!months.length} sheets={() => [{ meta: meta('VAT position', `${monthName(from)} to ${monthName(to)}`),
               cols: [{ key: 'month', label: 'Month' }, { key: 'output', label: 'Output VAT', type: 'money', total: true }, { key: 'input', label: 'Input VAT', type: 'money', total: true },
                 { key: 'wvat_credit', label: 'Withheld by customers', type: 'money', total: true }, { key: 'credit_used', label: 'Credit used', type: 'money', total: true },
                 { key: 'payable', label: 'Payable', type: 'money', total: true }, { key: 'credit_cf', label: 'Credit c/f', type: 'money' }, { key: 'state', label: 'Status' }],
               rows: months.map((m) => ({ ...m, month: monthName(m.period), state: STATUS[m.status]?.label })) as any }]} />
+            </div>}
           </div>
+          {view === 'customs' && <CustomsPanel canEdit={!!d.can_file} />}
+          {view === 'months' && <>
           <div className="card" style={{ overflow: 'auto' }}>
-            <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '120px repeat(5,minmax(100px,1fr)) 120px 150px', minWidth: 980 }}>
+            <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '120px repeat(5,minmax(100px,1fr)) 120px 170px', minWidth: 1000 }}>
               <span>Month</span><span className="right">Output VAT</span><span className="right">Input VAT</span><span className="right">Withheld</span><span className="right">Payable</span><span className="right">Credit c/f</span><span>Status</span><span />
             </div>
             {!months.length ? <div style={{ padding: 20 }}><Empty>No VAT in these months.</Empty></div> : months.map((m) => {
               const s = STATUS[m.status] || STATUS.open;
               return (
-                <div key={m.period} className="tr click" onClick={() => setOpen(m)} style={{ gridTemplateColumns: '120px repeat(5,minmax(100px,1fr)) 120px 150px', minWidth: 980 }}>
+                <div key={m.period} className="tr click" onClick={() => setOpen(m)} style={{ gridTemplateColumns: '120px repeat(5,minmax(100px,1fr)) 120px 170px', minWidth: 1000 }}>
                   <span><b>{monthShort(m.period)}</b>{!m.ended && <span className="faint" style={{ display: 'block', fontSize: 11 }}>running</span>}</span>
                   <span className="right num">{N2(m.output)}</span><span className="right num">{N2(m.input)}</span><span className="right num">{Number(m.wvat_credit) ? N2(m.wvat_credit) : '—'}</span>
                   <span className="right num" style={{ fontWeight: 600, color: Number(m.payable) ? '#C2410C' : undefined }}>{N2(m.payable)}</span>
@@ -64,6 +72,7 @@ export default function VatTab() {
                   <span><span className={'chip ' + s.tone}>{s.label}</span>{m.overdue && <span className="chip t-red" style={{ marginLeft: 4 }}>late</span>}
                     {m.changed_since_filing && <span className="chip t-amber" style={{ marginLeft: 4 }} title="The documents for this month changed after it was filed">changed</span>}</span>
                   <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
+                    <button className="btn btn-ghost btn-xs" title="The NRS VAT return (Form VAT 002) for the month" onClick={() => setNrs(m.period)}><Icon name="download" size={12} />NRS</button>
                     {m.ended && m.status === 'open' && d.can_file && <button className="btn btn-primary btn-xs" onClick={() => setModal({ kind: 'file', m })}>File</button>}
                     {m.status === 'filed' && d.can_pay && <button className="btn btn-primary btn-xs" onClick={() => setModal({ kind: 'pay', m })}>Pay</button>}
                   </span>
@@ -72,10 +81,14 @@ export default function VatTab() {
             })}
           </div>
           <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>A month's return and payment are due on the 21st of the next month. Input VAT on bills is claimed in the month of the bill;
-            what is left over is carried forward and used in later months, oldest first, for up to five years.</div>
+            what is left over is carried forward and used in later months, oldest first, for up to five years. VAT on standard-rated stock written off is taken back
+            in the month it is written off. NRS gives the month's return on the NRS template, ready to upload.</div>
+          </>}
         </>
       )}
-      {open && <MonthModal m={open} canFile={!!d?.can_file} onClose={() => setOpen(null)} onAct={(kind) => { setModal({ kind, m: open }); setOpen(null); }} />}
+      {open && <MonthModal m={open} canFile={!!d?.can_file} onClose={() => setOpen(null)} onAct={(kind) => { setModal({ kind, m: open }); setOpen(null); }}
+        onNrs={() => { setNrs(open.period); setOpen(null); }} />}
+      {nrs && <VatReturnModal period={nrs} onClose={() => setNrs(null)} />}
       {modal?.kind === 'file' && <FileModal m={modal.m} refundable={Number(d?.refundable || 0)} onClose={() => setModal(null)} />}
       {modal?.kind === 'pay' && <PayModal m={modal.m} onClose={() => setModal(null)} />}
       {modal?.kind === 'reopen' && <ReopenModal m={modal.m} onClose={() => setModal(null)} />}
@@ -121,7 +134,7 @@ function Row({ label, value, strong, muted }: { label: string; value: unknown; s
   return <div className="row" style={{ justifyContent: 'space-between', fontWeight: strong ? 700 : undefined, color: muted ? '#6B7280' : undefined }}><span>{label}</span><span className="num">{N2(Number(value || 0))}</span></div>;
 }
 
-function MonthModal({ m, canFile, onClose, onAct }: { m: any; canFile: boolean; onClose: () => void; onAct: (k: 'file' | 'reopen') => void }) {
+function MonthModal({ m, canFile, onClose, onAct, onNrs }: { m: any; canFile: boolean; onClose: () => void; onAct: (k: 'file' | 'reopen') => void; onNrs: () => void }) {
   return (
     <Modal onClose={onClose} width={520}>
       <ModalHead title={`VAT for ${monthName(m.period)}`} sub={`Due ${fmtDay(m.due_date)}${m.filed_at ? ` · filed ${fmtDay(String(m.filed_at).slice(0, 10))}` : ''}${m.journal_ref ? ` · ${m.journal_ref}` : ''}`} onClose={onClose} />
@@ -131,6 +144,8 @@ function MonthModal({ m, canFile, onClose, onAct }: { m: any; canFile: boolean; 
         <Row label="Output VAT" value={m.output} />
         <Row label="Less VAT withheld by customers" value={m.wvat_credit} />
         <Row label={`Less input VAT${Number(m.reverse_charge) ? ` (with ${N2(m.reverse_charge)} self-charged on services from abroad)` : ''}`} value={m.input} />
+        {Number(m.import_vat) > 0 && <Row label="of which VAT paid at customs" value={m.import_vat} muted />}
+        {Number(m.stock_writeoff_vat) > 0 && <Row label="after taking back VAT on stock written off" value={m.stock_writeoff_vat} muted />}
         <Row label="Net for the month" value={m.net} strong />
         <Row label="Credit brought forward" value={m.credit_bf} muted />
         {Number(m.credit_expired) > 0 && <Row label="Credit lapsed (over five years old)" value={m.credit_expired} muted />}
@@ -142,6 +157,7 @@ function MonthModal({ m, canFile, onClose, onAct }: { m: any; canFile: boolean; 
       </div>
       <div className="modal-ft">
         {canFile && ['filed', 'paid'].includes(m.status) && !m.payment_ref && <button className="btn btn-ghost" onClick={() => onAct('reopen')}><Icon name="undo" size={13} />Reopen</button>}
+        <button className="btn btn-secondary" onClick={onNrs}><Icon name="download" size={13} />NRS return</button>
         {canFile && m.ended && m.status === 'open' && <button className="btn btn-primary" onClick={() => onAct('file')}>File this month</button>}
         <button className="btn btn-secondary" onClick={onClose}>Close</button>
       </div>
@@ -166,7 +182,8 @@ function FileModal({ m, refundable, onClose }: { m: any; refundable: number; onC
         {canRefund && <Field label="Claim a refund instead of carrying it forward (optional)" hint={`Credit from the last 12 months qualifies: up to ${N2(Math.min(refundable, Number(m.credit_cf)))}.`}>
           <input className="input num" inputMode="decimal" value={refund} onChange={(e) => setRefund(e.target.value)} placeholder="0.00" /></Field>}
         <Field label="Note (optional)"><input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
-        <div className="faint" style={{ fontSize: 12 }}>Filing freezes the month and clears its output and input VAT into what is payable and the credit carried forward. File the same figures on the NRS portal.</div>
+        {Number(m.stock_writeoff_vat) > 0 && <Row label="VAT on stock written off, to the stock loss account" value={m.stock_writeoff_vat} muted />}
+        <div className="faint" style={{ fontSize: 12 }}>Filing freezes the month and clears its output and input VAT into what is payable and the credit carried forward. Upload the NRS file for the month on the portal.</div>
       </div>
       <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button>
         <button className="btn btn-primary" disabled={busy} onClick={async () => {

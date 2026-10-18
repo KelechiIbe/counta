@@ -18,6 +18,8 @@ import { printLabel, qrSvg } from '../../lib/labels';
 import { supabase, rpc } from '../../lib/supabase';
 import { shrinkImage } from '../../lib/images';
 import { edge } from '../../lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { NrsLabelSelect } from '../../components/Places';
 
 const COLS = 'minmax(240px,2fr) 120px minmax(160px,1.2fr) 100px 100px 90px 110px 110px 24px';
 
@@ -271,6 +273,34 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
 
 
 const VAT_LABEL: Record<string, string> = { standard: 'Standard 7.5%', zero: 'Zero-rated', exempt: 'Exempt' };
+
+// How the NRS VAT return describes a zero-rated or exempt item (its own list; Counta suggests one, a person can choose).
+function NrsLabel({ it, may }: { it: ItemView; may: boolean }) {
+  const { run, busy } = useAction();
+  const q = useQuery({ queryKey: ['item-nrs', it.id, it.vat_treatment], queryFn: async () => {
+    const { data, error } = await supabase.from('items').select('nrs_vat_label, nrs_vat_label_manual').eq('id', it.id).single();
+    if (error) throw error;
+    return data as { nrs_vat_label: string | null; nrs_vat_label_manual: boolean };
+  } });
+  const [edit, setEdit] = useState(false);
+  const label = q.data?.nrs_vat_label || '';
+  const save = async (v: string) => {
+    const r = await run(() => rpc('set_item_nrs_label', { p_item: it.id, p_label: v || null }), { ok: v ? 'NRS description saved' : 'Back to Counta\'s suggestion', invalidate: ['item-nrs', 'vat-schedule'] });
+    if (r !== undefined) setEdit(false);
+  };
+  return (
+    <div style={{ marginTop: 10, fontSize: 13 }}>
+      <div className="mini-label">On the NRS VAT return</div>
+      {edit ? <div className="row wrap" style={{ gap: 6, marginTop: 4 }}><NrsLabelSelect treatment={it.vat_treatment as 'zero' | 'exempt'} value={label} onChange={save} compact />
+          <button className="btn btn-ghost btn-xs" disabled={busy} onClick={() => setEdit(false)}>Cancel</button></div>
+        : <div className="row" style={{ gap: 6, marginTop: 4, alignItems: 'baseline' }}>
+          <span style={{ color: label ? undefined : '#B45309' }}>{label ? label.trim().replace(/;$/, '') : 'No NRS description yet: the return needs one'}</span>
+          {label && <span className="faint" style={{ fontSize: 11 }}>{q.data?.nrs_vat_label_manual ? 'chosen' : 'suggested'}</span>}
+          {may && <button className="btn btn-ghost btn-xs" onClick={() => setEdit(true)}>{label ? 'Change' : 'Choose'}</button>}
+        </div>}
+    </div>
+  );
+}
 const VAT_SOURCE: Record<string, string> = { numens: 'Numens', gemini: 'Numens (testing model)', manual: 'set by hand', import: 'from the import' };
 
 // VAT on the item: what applies at the till, who decided it and why. Below 80% sure, the agent's answer waits for a person.
@@ -303,6 +333,7 @@ function VatCard({ it }: { it: ItemView }) {
           <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{[b.law, b.source && (VAT_SOURCE[b.source] || b.source), b.by, b.at && when(b.at)].filter(Boolean).join(' · ')}</div>
         </div>
       )}
+      {(it.vat_treatment === 'zero' || it.vat_treatment === 'exempt') && <NrsLabel it={it} may={may} />}
       {it.vat_review && (
         <Alert kind="yellow" icon="alert">
           {suggested ? `Numens thinks this is ${VAT_LABEL[suggested].toLowerCase()} but is only ${conf}% sure, so the till still uses ${VAT_LABEL[it.vat_treatment].toLowerCase()}.`

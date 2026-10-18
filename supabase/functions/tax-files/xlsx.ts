@@ -2,13 +2,16 @@
 // formula keeps its text. The cached result of each formula is recomputed (with the template's own formulas) so a reader that
 // takes the stored values sees the same totals Excel shows, and Excel is told to recalculate on opening as well.
 // Handles the formula forms the NRS templates use: cell and range references across sheets, + - * /, &, comparisons,
-// SUM, IF, IFERROR, OR, AND, TRIM, INDEX, MATCH, TODAY, structured table references and shared formulas.
+// SUM, SUMIF, IF, IFERROR, OR, AND, TRIM, INDEX, MATCH, TODAY, structured table references and shared formulas.
+// A large template can be saved lazily: only the sheets written to, and those whose formulas read them, are recomputed
+// (the rest keep the template's own stored values, and may hold formulas this evaluator does not know).
 import { strFromU8, strToU8, unzipSync, zipSync } from 'npm:fflate@0.8.2';
 
 export type Value = number | string | boolean | null;
 type Cell = { addr: string; xml: string; style: string | null; type: string | null; f: string | null; fShared: { si: string; ref?: string } | null; v: string | null; inline: string | null };
-type Sheet = { name: string; path: string; xml: string; cells: Map<string, Cell>; dirty: Map<string, Value>; added: Set<string>; rowAttrs: Map<number, string> };
-type Table = { name: string; sheet: string; ref: string; columns: string[] };
+type Sheet = { name: string; path: string; xml: string; cells: Map<string, Cell>; dirty: Map<string, Value>; added: Set<string>; rowAttrs: Map<number, string>;
+  parsed: boolean; reads: Set<string> | null };
+type Table = { name: string; sheet: string; ref: string; columns: string[]; path: string; header: number; totals: number; grown: boolean };
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const unesc = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
@@ -30,7 +33,11 @@ export class Workbook {
   private stack = new Set<string>();
   private sharedMasters = new Map<string, { sheet: string; addr: string; f: string }>();
 
-  constructor(bytes: Uint8Array) {
+  // lazy: a sheet not written to, and not reading from one that is, keeps its stored values (nothing in it is evaluated, and it
+  // is only parsed when read); a sheet's cells are parsed when first needed.
+  lazy: boolean;
+  constructor(bytes: Uint8Array, opts: { lazy?: boolean } = {}) {
+    this.lazy = !!opts.lazy;
     this.files = unzipSync(bytes);
     this.order = Object.keys(this.files);
     const wb = strFromU8(this.files['xl/workbook.xml']);
@@ -48,8 +55,7 @@ export class Workbook {
       const name = unesc(/\bname="([^"]+)"/.exec(m[1])![1]); const rid = /\br:id="([^"]+)"/.exec(m[1])![1];
       const path = target.get(rid)!;
       const xml = strFromU8(this.files[path]);
-      const sh: Sheet = { name, path, xml, cells: new Map(), dirty: new Map(), added: new Set(), rowAttrs: new Map() };
-      this.parseCells(sh);
+      const sh: Sheet = { name, path, xml, cells: new Map(), dirty: new Map(), added: new Set(), rowAttrs: new Map(), parsed: false, reads: null };
       this.sheets.set(name, sh);
       // Tables on this sheet.
       const relPath = path.replace(/worksheets\/(sheet\d+\.xml)$/, 'worksheets/_rels/$1.rels');
@@ -62,7 +68,10 @@ export class Workbook {
           const tx = strFromU8(this.files[tp]);
           const tname = /<table\b[^>]*\bname="([^"]+)"/.exec(tx)![1]; const ref = /<table\b[^>]*\bref="([^"]+)"/.exec(tx)![1];
           const columns = [...tx.matchAll(/<tableColumn\b[^>]*\bname="([^"]+)"/g)].map((c) => unesc(c[1]));
-          this.tables.set(tname.toLowerCase(), { name: tname, sheet: name, ref, columns });
+          // A table may have no header row (headerRowCount="0"), and may have a totals row.
+          const header = /<table\b[^>]*\bheaderRowCount="0"/.test(tx) ? 0 : 1;
+          const totals = Number(/<table\b[^>]*\btotalsRowCount="(\d+)"/.exec(tx)?.[1] || 0);
+          this.tables.set(tname.toLowerCase(), { name: tname, sheet: name, ref, columns, path: tp, header, totals, grown: false });
         }
       }
     }
@@ -85,7 +94,81 @@ export class Workbook {
     }
   }
 
-  sheet(name: string) { const s = this.sheets.get(name); if (!s) throw new Error(`No sheet ${name}`); return s; }
+  sheet(name: string) {
+    const s = this.sheets.get(name); if (!s) throw new Error(`No sheet ${name}`);
+    if (!s.parsed) { this.parseCells(s); s.parsed = true; }
+    return s;
+  }
+
+  // The sheets a sheet's formulas read (itself included when it has any), from the formula text alone (a table counts as its sheet).
+  private readsOf(sh: Sheet): Set<string> {
+    if (sh.reads) return sh.reads;
+    const out = new Set<string>();
+    for (const m of sh.xml.matchAll(/<f\b[^>]*>([^<]+)<\/f>/g)) {
+      const f = unesc(m[1]);
+      out.add(sh.name);
+      for (const r of f.matchAll(/(?:'((?:[^']|'')+)'|([A-Za-z_][\w.]*))!/g)) { const n = (r[1] ?? r[2]).replace(/''/g, "'"); if (this.sheets.has(n)) out.add(n); }
+      for (const r of f.matchAll(/([A-Za-z_][\w.]*)\[/g)) { const t = this.tables.get(r[1].toLowerCase()); if (t) out.add(t.sheet); }
+    }
+    if ([...sh.xml.matchAll(/<f\b[^>]*\/>/g)].length) out.add(sh.name);
+    return (sh.reads = out);
+  }
+
+  // The sheets whose values can differ from the template's: those written to, and every sheet that reads one of them.
+  private affectedCache: Set<string> | null = null;
+  affected(): Set<string> {
+    if (this.affectedCache) return this.affectedCache;
+    const out = new Set([...this.sheets.values()].filter((s) => s.dirty.size || s.added.size).map((s) => s.name));
+    for (const t of this.tables.values()) if (t.grown) out.add(t.sheet);
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const sh of this.sheets.values()) {
+        if (out.has(sh.name)) continue;
+        if ([...this.readsOf(sh)].some((n) => n !== sh.name && out.has(n))) { out.add(sh.name); changed = true; }
+      }
+    }
+    return (this.affectedCache = out);
+  }
+
+  // A cell's stored value straight from the sheet XML (a formula's cached result), without parsing the sheet.
+  private stored(sheet: string, addr: string): Value {
+    const sh = this.sheets.get(sheet)!;
+    if (sh.parsed) { const c = sh.cells.get(addr); return c ? this.decode(c.type, c.v, c.inline) : null; }
+    const m = new RegExp(`<c\\b[^>]*?\\br="${addr}"([^>]*?)(?:/>|>([\\s\\S]*?)</c>)`).exec(sh.xml);
+    if (!m) return null;
+    const attrs = m[0].slice(0, m[0].indexOf('>')); const body = m[2] || '';
+    const inline = /<is>([\s\S]*?)<\/is>/.exec(body);
+    return this.decode(/\bt="([^"]+)"/.exec(attrs)?.[1] ?? null, /<v>([\s\S]*?)<\/v>/.exec(body)?.[1] ?? null,
+      inline ? unesc([...inline[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((t) => t[1]).join('')) : null);
+  }
+  private decode(type: string | null, v: string | null, inline: string | null): Value {
+    if (inline != null) return inline;
+    if (v == null) return null;
+    if (type === 's') return this.shared[Number(v)] ?? '';
+    if (type === 'str' || type === 'e') return unesc(v);
+    if (type === 'b') return v === '1';
+    const n = Number(v); return Number.isFinite(n) ? n : unesc(v);
+  }
+
+  // The last row of a sheet holding anything (a cell, written or not), so a range down to row 1,000,000 stops there.
+  private lastRows = new Map<string, number>();
+  lastRow(sheet: string): number {
+    const hit = this.lastRows.get(sheet); if (hit != null) return hit;
+    const sh = this.sheet(sheet); let max = 0;
+    for (const a of sh.cells.keys()) { const r = Number(/\d+$/.exec(a)![0]); if (r > max) max = r; }
+    for (const a of sh.dirty.keys()) { const r = Number(/\d+$/.exec(a)![0]); if (r > max) max = r; }
+    this.lastRows.set(sheet, max);
+    return max;
+  }
+
+  // Make a table reach down to a row (the rows below the template's own are added with cloneRow first).
+  growTable(name: string, lastRow: number) {
+    const t = this.tables.get(name.toLowerCase()); if (!t) throw new Error(`No table ${name}`);
+    const [a, b] = t.ref.split(':'); const q = split(b);
+    if (lastRow <= q.row) return;
+    t.ref = `${a}:${colName(q.col)}${lastRow}`; t.grown = true;
+    this.cache.clear(); this.affectedCache = null;
+  }
 
   // The formula of a cell, with a shared formula moved to the cell's own position.
   formula(sheet: string, addr: string): string | null {
@@ -107,12 +190,7 @@ export class Workbook {
     if (sh.dirty.has(addr)) return sh.dirty.get(addr)!;
     const c = sh.cells.get(addr);
     if (!c) return null;
-    if (c.inline != null) return c.inline;
-    if (c.v == null) return null;
-    if (c.type === 's') return this.shared[Number(c.v)] ?? '';
-    if (c.type === 'str' || c.type === 'e') return unesc(c.v);
-    if (c.type === 'b') return c.v === '1';
-    const n = Number(c.v); return Number.isFinite(n) ? n : unesc(c.v);
+    return this.decode(c.type, c.v, c.inline);
   }
 
   // Copy a row's cells (styles, and formulas moved to the new row) to a row the template does not have, so a list can grow
@@ -130,15 +208,16 @@ export class Workbook {
       sh.cells.set(addr, { addr, xml: moved == null ? '' : `<c r="${addr}"><f>${esc(moved)}</f></c>`, style: c.style, type: null, f: moved, fShared: null, v: null, inline: null });
       sh.added.add(addr);
     }
-    this.cache.clear();
+    this.cache.clear(); this.lastRows.delete(sheet); this.affectedCache = null;
   }
 
   set(sheet: string, addr: string, value: Value) {
     const sh = this.sheet(sheet);
     const c = sh.cells.get(addr);
     if (c && (c.f || c.fShared)) throw new Error(`${sheet}!${addr} holds a formula; it is not an input`);
+    if (!sh.dirty.size) this.affectedCache = null;
     sh.dirty.set(addr, value);
-    this.cache.clear();
+    this.cache.clear(); this.lastRows.delete(sheet);
   }
 
   // Value of a cell: a formula is evaluated, anything else read.
@@ -146,6 +225,7 @@ export class Workbook {
     addr = addr.replace(/\$/g, '');
     const key = sheet + '!' + addr;
     if (this.cache.has(key)) return this.cache.get(key)!;
+    if (this.lazy && !this.affected().has(sheet)) { const v = this.stored(sheet, addr); this.cache.set(key, v); return v; }
     const f = this.sheet(sheet).dirty.has(addr) ? null : this.formula(sheet, addr);
     let v: Value;
     if (f == null) v = this.raw(sheet, addr);
@@ -223,9 +303,18 @@ export class Workbook {
     return `<c r="${addr}"${style} t="inlineStr"><is><t xml:space="preserve">${esc(val)}</t></is></c>`;
   }
 
-  save(): Uint8Array {
+  save(opts: { level?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 } = {}): Uint8Array {
     let addedFormulas = false;
-    for (const sh of this.sheets.values()) {
+    // Lazily, only the sheets whose values can have changed are rewritten.
+    const render = this.lazy ? this.affected() : null;
+    for (const t of this.tables.values()) {
+      if (!t.grown) continue;
+      this.files[t.path] = strToU8(strFromU8(this.files[t.path]).replace(/(<table\b[^>]*\bref=")[^"]+(")/, `$1${t.ref}$2`)
+        .replace(/(<autoFilter\b[^>]*\bref=")[^"]+(")/, `$1${t.ref}$2`));
+    }
+    for (const name of this.sheets.keys()) {
+      if (render && !render.has(name)) continue;
+      const sh = this.sheet(name);
       const hasFormula = [...sh.cells.values()].some((c) => c.f || c.fShared);
       if (!sh.dirty.size && !hasFormula && !sh.added.size) continue;
       this.files[sh.path] = strToU8(this.render(sh));
@@ -247,7 +336,7 @@ export class Workbook {
     this.files['xl/workbook.xml'] = strToU8(wb);
     const out: Record<string, Uint8Array> = {};
     for (const k of this.order) out[k] = this.files[k];
-    return zipSync(out, { level: 6 });
+    return zipSync(out, { level: opts.level ?? 6 });
   }
 }
 
@@ -389,15 +478,17 @@ class Evaluator {
     const parts = inner.startsWith('[') ? [...inner.matchAll(/\[([^\]]*)\]/g)].map((x) => x[1]) : [inner];
     const colPart = parts.find((x) => !x.startsWith('#'));
     const thisRow = parts.some((x) => x.toLowerCase() === '#this row');
-    const rowFrom = thisRow ? split(this.at).row : p.row + 1, rowTo = thisRow ? split(this.at).row : q.row;
+    const rowFrom = thisRow ? split(this.at).row : p.row + tb.header, rowTo = thisRow ? split(this.at).row : q.row - tb.totals;
     if (!colPart) return { sheet: tb.sheet, c1: p.col, r1: rowFrom, c2: q.col, r2: rowTo };
     const ci = tb.columns.findIndex((c) => c.toLowerCase() === colPart.replace(/'(.)/g, '$1').toLowerCase());
     if (ci < 0) throw new Error(`No column ${colPart} in ${tb.name}`);
     return { sheet: tb.sheet, c1: p.col + ci, r1: rowFrom, c2: p.col + ci, r2: rowTo };
   }
+  // Rows below the last one holding anything are blank, so a range stops there.
   private values(r: Range): Value[] {
     const out: Value[] = [];
-    for (let row = r.r1; row <= r.r2; row++) for (let c = r.c1; c <= r.c2; c++) out.push(this.wb.value(r.sheet, colName(c) + row));
+    const last = Math.min(r.r2, this.wb.lastRow(r.sheet));
+    for (let row = r.r1; row <= last; row++) for (let c = r.c1; c <= r.c2; c++) out.push(this.wb.value(r.sheet, colName(c) + row));
     return out;
   }
   private call(name: string, args: Node[]): EV {
@@ -409,6 +500,22 @@ class Evaluator {
           const v = this.ev(a);
           if (isRange(v)) for (const x of this.values(v)) { if (typeof x === 'string' && x.startsWith('#')) this.scalar(x); if (typeof x === 'number') s += x; }
           else s += num(this.scalar(v));
+        }
+        return s;
+      }
+      case 'SUMIF': {
+        // SUMIF(range, criteria, [sum_range]): Excel takes the sum range from its top-left cell at the size of the range.
+        const r = this.ev(args[0]); if (!isRange(r)) throw new Error('SUMIF needs a range');
+        const want = S(1);
+        let sr = r;
+        if (args.length > 2) { const x = this.ev(args[2]); if (!isRange(x)) throw new Error('SUMIF needs a sum range'); sr = { sheet: x.sheet, c1: x.c1, r1: x.r1, c2: x.c1 + (r.c2 - r.c1), r2: x.r1 + (r.r2 - r.r1) }; }
+        const test = criteria(want);
+        const last = Math.min(r.r2, this.wb.lastRow(r.sheet));
+        let s = 0;
+        for (let row = r.r1; row <= last; row++) for (let c = r.c1; c <= r.c2; c++) {
+          if (!test(this.wb.value(r.sheet, colName(c) + row))) continue;
+          const v = this.wb.value(sr.sheet, colName(sr.c1 + (c - r.c1)) + (sr.r1 + (row - r.r1)));
+          if (typeof v === 'number') s += v;
         }
         return s;
       }
@@ -457,6 +564,22 @@ export function setToday(day: string | null) { todayOverride = day; }
 function today() { return todayOverride ?? new Date().toISOString().slice(0, 10); }
 
 function isRange(v: EV): v is Range { return !!v && typeof v === 'object' && 'sheet' in v; }
+
+// A SUMIF/COUNTIF criterion: a number or text to match, or a comparison such as ">0" or "<>x" (no wildcards).
+function criteria(want: Value): (v: Value) => boolean {
+  if (typeof want === 'number' || typeof want === 'boolean') return (v) => v != null && v !== '' && compare('=', typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : v, want);
+  const s = str(want);
+  const m = /^(<=|>=|<>|=|<|>)(.*)$/.exec(s);
+  const op = m ? m[1] : '='; const rhs = m ? m[2] : s;
+  const n = Number(rhs);
+  const target: Value = rhs.trim() !== '' && Number.isFinite(n) ? n : rhs;
+  return (v) => {
+    if (op === '=' && rhs === '') return v == null || v === '';
+    if (v == null || v === '') return op === '<>' ? rhs !== '' : false;
+    if (typeof target === 'number' && typeof v !== 'number') { const x = Number(v); if (!Number.isFinite(x)) return op === '<>'; return compare(op, x, target); }
+    return compare(op, v, target);
+  };
+}
 function num(v: Value): number {
   if (v == null || v === '') return 0;
   if (typeof v === 'boolean') return v ? 1 : 0;

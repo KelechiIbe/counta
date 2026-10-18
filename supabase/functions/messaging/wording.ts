@@ -71,6 +71,18 @@ export function wording(m: Msg) {
         wa: { name: 'counta_statement', params: [first(p.customer_name), biz, naira(p.balance), p.link || (m.org?.phone ? `Call ${m.org.phone}` : biz)] },
       };
     }
+    case 'bill_returned': {
+      // A supplier's invoice sent back unpaid: no Tax ID, no address for the state revenue service, or another reason.
+      const why = p.reason === 'missing_tin' ? 'your Tax ID is missing. You can get it at taxid.nrs.gov.ng; please send it to us with an invoice that shows it'
+        : p.reason === 'missing_state' ? 'we need your business address to know which state revenue service receives the withholding tax; please send it with an invoice that shows it'
+        : String(p.note || '').replace(/\s+/g, ' ').slice(0, 300);
+      return {
+        heading: `Invoice ${p.number} returned`,
+        lines: [`${biz} has returned your invoice ${p.number} for ${naira(total)} without paying it.`, ...String(p.note || '').split(/\n+/)],
+        button: '', link: '',
+        wa: { name: 'counta_bill_returned', params: [first(p.customer_name), biz, p.number, why] },
+      };
+    }
     default:
       return { heading: m.subject || biz, lines: [String(p.body || '')], button: p.link ? 'Open' : '', link: p.link, wa: null };
   }

@@ -3,8 +3,9 @@
   "meta": {
     "config_id": "ng-cit-cita-legacy-engine",
     "version": "0.9.0",
-    "status": "draft_pending_signoff",
+    "status": "approved",
     "drafted_by": "Counta (for TaxStreem tax-legal sign-off)",
+    "signed_off_by": "TaxStreem (Kelechi Ibe), 18 October 2026: flags L-A to L-G agreed",
     "governing_law": "Companies Income Tax Act Cap C21 LFN 2004 as amended by the Finance Acts 2019, 2020, 2021 and 2023; Tertiary Education Trust Fund (Establishment, etc.) Act 2011 as amended",
     "currency": "NGN",
     "applies_to_yoa": 2025,

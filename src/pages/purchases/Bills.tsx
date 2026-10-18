@@ -13,10 +13,10 @@ import { taxIdError } from '../../lib/taxid';
 import { ExportMenu, useMeta } from '../../components/Books';
 import type { RCol } from '../../lib/reports';
 import { StatusChip } from '../sell/common';
-import { authorityLabel, pct } from '../../lib/tax';
+import { authorityLabel, pct, useTaxProfile } from '../../lib/tax';
 import { CreditsList, UseCredits, VendorCreditModal } from './VendorCredits';
 
-type Tab = 'all' | 'draft' | 'unpaid' | 'overdue' | 'paid' | 'credits';
+type Tab = 'all' | 'draft' | 'unpaid' | 'overdue' | 'paid' | 'credits' | 'returned';
 
 export default function Bills() {
   const { data: inv } = useInventory();
@@ -29,12 +29,13 @@ export default function Bills() {
   const open = params.get('open');
   const rows = useMemo(() => (bills.data?.bills || []).filter((b) =>
     (tab === 'all' || (tab === 'draft' && b.status === 'draft') || (tab === 'unpaid' && ['approved', 'partially_paid'].includes(b.status))
-      || (tab === 'overdue' && Number(b.overdue_days) > 0) || (tab === 'paid' && b.status === 'paid'))
+      || (tab === 'overdue' && Number(b.overdue_days) > 0) || (tab === 'paid' && b.status === 'paid') || (tab === 'returned' && !!(b as any).returned_reason))
     && (!q.trim() || `${b.number} ${b.vendor_name} ${b.vendor_ref || ''}`.toLowerCase().includes(q.trim().toLowerCase()))), [bills.data, tab, q]);
   if (!inv) return null;
   const all = bills.data?.bills || [];
   const owed = all.filter((b) => ['approved', 'partially_paid'].includes(b.status)).reduce((a, b) => a + Number(b.balance), 0);
   const overdue = all.filter((b) => Number(b.overdue_days) > 0).reduce((a, b) => a + Number(b.balance), 0);
+  const returned = all.filter((b) => (b as any).returned_reason).length;
   const cols: RCol[] = [{ key: 'number', label: 'Bill' }, { key: 'vendor_name', label: 'Vendor' }, { key: 'vendor_ref', label: 'Their invoice' }, { key: 'bill_date', label: 'Date', type: 'date' },
     { key: 'due_date', label: 'Due', type: 'date' }, { key: 'status', label: 'Status' }, { key: 'subtotal', label: 'Before VAT', type: 'money', total: true }, { key: 'vat_total', label: 'VAT', type: 'money', total: true },
     { key: 'total', label: 'Total', type: 'money', total: true }, { key: 'wht_expected', label: 'WHT', type: 'money', total: true }, { key: 'balance', label: 'Balance', type: 'money', total: true }];
@@ -46,7 +47,8 @@ export default function Bills() {
         <div className="card card-pad"><div className="label">To approve</div><div style={{ fontSize: 26, fontWeight: 700, marginTop: 6 }}>{all.filter((b) => b.status === 'draft').length}</div></div>
       </div>
       <div className="row wrap" style={{ justifyContent: 'space-between' }}>
-        <Pills value={tab} onChange={setTab} options={[{ id: 'unpaid', label: 'To pay' }, { id: 'draft', label: 'To approve', count: all.filter((b) => b.status === 'draft').length || undefined }, { id: 'overdue', label: 'Overdue' }, { id: 'paid', label: 'Paid' }, { id: 'all', label: 'All' }, { id: 'credits', label: 'Credit notes' }]} />
+        <Pills value={tab} onChange={setTab} options={[{ id: 'unpaid', label: 'To pay' }, { id: 'draft', label: 'To approve', count: all.filter((b) => b.status === 'draft').length || undefined }, { id: 'overdue', label: 'Overdue' }, { id: 'paid', label: 'Paid' },
+          ...(returned || tab === 'returned' ? [{ id: 'returned' as Tab, label: 'Sent back', count: returned || undefined }] : []), { id: 'all', label: 'All' }, { id: 'credits', label: 'Credit notes' }]} />
         <div className="row wrap">
           <ExportMenu name={`${inv.org.name} bills ${today()}`} disabled={!rows.length} sheets={() => [{ meta: meta('Bills', `As at ${fmtDay(today())}`), cols, rows: rows as any }]} />
           {(can(inv, 'keep_books') || can(inv, 'approve_pos')) && <button className="btn btn-primary btn-sm" onClick={() => setEditing('new')}><Icon name="plus" size={14} color="#fff" />Bill</button>}
@@ -63,7 +65,7 @@ export default function Bills() {
               <span><b>{b.number}</b><span className="faint" style={{ display: 'block', fontSize: 11 }}>{b.source === 'receipt' ? 'from stock' : b.source === 'prism' ? 'from Prism' : b.source === 'ai' ? 'read by AI' : ''}</span></span>
               <span className="ellipsis">{b.vendor_name}{b.vendor_ref ? <span className="faint" style={{ fontSize: 12 }}> · {b.vendor_ref}</span> : null}</span>
               <span className="muted">{fmtDay(b.bill_date)}</span>
-              <span><StatusChip s={b.status} />{Number(b.in_progress) > 0 && <span className="chip t-amber" style={{ marginLeft: 4 }}>paying</span>}</span>
+              <span><StatusChip s={(b as any).returned_reason ? 'returned' : b.status} />{Number(b.in_progress) > 0 && <span className="chip t-amber" style={{ marginLeft: 4 }}>paying</span>}</span>
               <span className="right num">{N2(b.total)}</span>
               <span className="right num" style={{ color: Number(b.balance) ? '#C2410C' : undefined }}>{Number(b.balance) ? N2(b.balance) : '—'}</span>
               <span className="muted" style={{ fontSize: 12, color: Number(b.overdue_days) ? '#DC2626' : undefined }}>{Number(b.overdue_days) ? `${b.overdue_days} days late` : fmtDay(b.due_date)}</span>
@@ -86,8 +88,11 @@ function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: a
   const [pay, setPay] = useState(false);
   const [voiding, setVoiding] = useState(false);
   const [crediting, setCrediting] = useState(false);
+  const [sendBack, setSendBack] = useState<string | null>(null);
+  const [noTin, setNoTin] = useState(false);
   const [reason, setReason] = useState('');
   const b = bill.data;
+  const flags = b?.tax_flags || {};
   const refresh = () => Promise.all(['bill', 'bills', 'inbox', 'payments', 'assets'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
   async function act(fn: () => Promise<any>, ok: string) {
     try { await fn(); toast(ok); await refresh(); } catch (e) { toast((e as Error).message, 'err'); }
@@ -95,13 +100,23 @@ function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: a
   return (
     <Drawer onClose={onClose} width={640}>
       <div className="drawer-hd"><div className="grow">
-        <div className="row" style={{ gap: 8 }}><div className="drawer-title">{b ? `${b.number} · ${b.vendor?.name || ''}` : 'Loading…'}</div>{b && <StatusChip s={b.status} />}</div>
+        <div className="row" style={{ gap: 8 }}><div className="drawer-title">{b ? `${b.number} · ${b.vendor?.name || ''}` : 'Loading…'}</div>{b && <StatusChip s={b.returned_reason ? 'returned' : b.status} />}</div>
         {b && <div className="muted" style={{ fontSize: 13 }}>{b.vendor_ref ? `Their invoice ${b.vendor_ref} · ` : ''}{fmtDay(b.bill_date)} · due {fmtDay(b.due_date)}{b.journal_ref ? ` · ${b.journal_ref}` : ''}</div>}
       </div><button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button></div>
       <div className="drawer-body stack" style={{ gap: 14 }}>
         {!b ? <Spinner /> : (
           <>
             {b.status === 'draft' && <Alert kind="grey" icon="pencil">{b.source === 'prism' ? 'Sent from Prism. ' : b.source === 'ai' ? 'Read by AI. ' : ''}Check it and approve it to put it in the books.</Alert>}
+            {b.returned_reason && <Returned b={b} canKeep={can(inv, 'keep_books')} onReopen={() => act(() => rpc('reopen_bill', { p_bill: b.id }), `${b.number} is a draft again`)} />}
+            {flags.missing_state && ['draft', 'approved', 'partially_paid'].includes(b.status) && (
+              <MissingState b={b} canKeep={can(inv, 'keep_books')} onSendBack={() => setSendBack('missing_state')} onDone={refresh} />
+            )}
+            {flags.missing_tin && ['draft', 'approved'].includes(b.status) && (
+              <Alert kind="amber" icon="alert">
+                {b.vendor?.name} has no Tax ID, so the withholding tax is doubled to {N2(b.wht_expected)}. Send the bill back for the Tax ID, or keep it and withhold at the double rate.
+                {flags.can_return && can(inv, 'keep_books') && <div style={{ marginTop: 8 }}><button className="btn btn-secondary btn-xs" onClick={() => setSendBack('missing_tin')}><Icon name="undo" size={12} />Send back for the Tax ID</button></div>}
+              </Alert>
+            )}
             <div className="card" style={{ overflow: 'hidden', borderRadius: 12 }}>
               {(b.lines || []).map((l: any) => (
                 <div key={l.id} className="tr" style={{ gridTemplateColumns: 'minmax(0,1fr) 120px', padding: '9px 14px' }}>
@@ -139,8 +154,10 @@ function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: a
             {(b.assets || []).length > 0 && <Alert kind="blue" icon="info">{b.assets.length} fixed asset{b.assets.length === 1 ? '' : 's'} from this bill wait in Fixed assets to be confirmed.</Alert>}
             <div className="row wrap">
               {b.status === 'draft' && <button className="btn btn-secondary btn-sm" onClick={() => onEdit(b.id)}><Icon name="pencil" size={14} />Edit</button>}
-              {b.status === 'draft' && can(inv, 'keep_books') && <button className="btn btn-primary btn-sm" onClick={() => act(() => rpc('approve_bill', { p_bill: b.id }), `${b.number} approved and in the books`)}>Approve</button>}
-              {['approved', 'partially_paid'].includes(b.status) && can(inv, 'make_payments') && <button className="btn btn-primary btn-sm" onClick={() => setPay(true)}><Icon name="send" size={14} color="#fff" />Pay</button>}
+              {b.status === 'draft' && can(inv, 'keep_books') && <button className="btn btn-primary btn-sm" disabled={!!flags.missing_state} title={flags.missing_state ? 'Add the supplier\'s state first' : undefined}
+                onClick={() => (flags.missing_tin ? setNoTin(true) : act(() => rpc('approve_bill', { p_bill: b.id }), `${b.number} approved and in the books`))}>Approve</button>}
+              {['approved', 'partially_paid'].includes(b.status) && can(inv, 'make_payments') && <button className="btn btn-primary btn-sm" disabled={!!flags.missing_state} title={flags.missing_state ? 'Add the supplier\'s state first' : undefined} onClick={() => setPay(true)}><Icon name="send" size={14} color="#fff" />Pay</button>}
+              {flags.can_return && can(inv, 'keep_books') && !flags.missing_tin && !flags.missing_state && <button className="btn btn-ghost btn-sm" onClick={() => setSendBack('other')}><Icon name="undo" size={14} />Send back</button>}
               {['approved', 'partially_paid', 'paid'].includes(b.status) && can(inv, 'keep_books') && <button className="btn btn-secondary btn-sm" onClick={() => setCrediting(true)}><Icon name="undo" size={14} />Credit note</button>}
               {['draft', 'approved'].includes(b.status) && can(inv, 'keep_books') && <button className="btn btn-ghost btn-sm" onClick={() => setVoiding(true)}>Void</button>}
             </div>
@@ -150,8 +167,102 @@ function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: a
         )}
       </div>
       {pay && b && <PayBill bill={b} onClose={() => setPay(false)} onDone={refresh} />}
+      {sendBack && b && <SendBack b={b} reason={sendBack} onClose={() => setSendBack(null)} onDone={refresh} />}
+      {noTin && b && (
+        <Modal onClose={() => setNoTin(false)} width={480}>
+          <ModalHead title={`${b.vendor?.name} has no Tax ID`} sub={b.number} onClose={() => setNoTin(false)} />
+          <div className="modal-body stack" style={{ gap: 10, fontSize: 14 }}>
+            <div>Without a Tax ID the withholding tax on this bill is doubled: <b className="num">{N2(b.wht_expected)}</b> instead of <b className="num">{N2(Number(b.wht_expected) / 2)}</b>.</div>
+            <div className="muted" style={{ fontSize: 13 }}>Send the bill back and the supplier is told to get the Tax ID at taxid.nrs.gov.ng. Or approve it now and withhold at the double rate.</div>
+          </div>
+          <div className="modal-ft">
+            <button className="btn btn-secondary" onClick={() => { setNoTin(false); setSendBack('missing_tin'); }}><Icon name="undo" size={14} />Send back for the Tax ID</button>
+            <button className="btn btn-primary" onClick={async () => { setNoTin(false); await act(() => rpc('approve_bill', { p_bill: b.id }), `${b.number} approved, WHT at the double rate`); }}>Approve at the double rate</button>
+          </div>
+        </Modal>
+      )}
       {crediting && b && <VendorCreditModal bill={b} onClose={() => setCrediting(false)} />}
     </Drawer>
+  );
+}
+
+const RETURN_REASON: Record<string, string> = { missing_tin: 'No Tax ID', missing_state: 'No address for the state revenue service', other: 'Another reason' };
+
+// A bill sent back to the supplier: why, what they were told and how, and opening it again once they answer.
+function Returned({ b, canKeep, onReopen }: { b: any; canKeep: boolean; onReopen: () => void }) {
+  const msg = (b.messages || []).filter((m: any) => m.template === 'bill_returned').at(-1);
+  return (
+    <Alert kind="red" icon="undo">
+      <b>Sent back to the supplier</b> {when(b.returned_at)}{b.returned_by_name ? ` by ${b.returned_by_name}` : ''}: {RETURN_REASON[b.returned_reason] || b.returned_reason}.
+      {msg ? ` ${msg.channel === 'email' ? 'Emailed' : 'Sent by WhatsApp'} to ${msg.to}${msg.status === 'failed' ? `, but it did not go: ${msg.error || 'failed'}` : msg.status === 'queued' ? ', waiting to send' : ''}.` : ' Not sent from Counta.'}
+      {b.returned_note && <div className="faint" style={{ fontSize: 12, marginTop: 6, whiteSpace: 'pre-wrap' }}>{b.returned_note}</div>}
+      {canKeep && <div style={{ marginTop: 8 }}><button className="btn btn-secondary btn-xs" onClick={onReopen}>Open it again</button></div>}
+    </Alert>
+  );
+}
+
+// WHT for a business name, sole trader, partnership or individual goes to its state's revenue service, so the bill waits
+// for the state (TaxStreem sign-off W-2): add it here, or send the bill back to ask for the address.
+function MissingState({ b, canKeep, onSendBack, onDone }: { b: any; canKeep: boolean; onSendBack: () => void; onDone: () => void }) {
+  const { orgId } = useSession();
+  const toast = useToast();
+  const prof = useTaxProfile();
+  const [state, setState] = useState('');
+  const [busy, setBusy] = useState(false);
+  const states: string[] = (prof.data?.authorities || []).filter((a: any) => a.state).map((a: any) => a.state);
+  return (
+    <Alert kind="amber" icon="alert">
+      {b.vendor?.name}'s withholding tax goes to the revenue service of its state, and its state is not known. Add it, or send the bill back to ask for the address.
+      <div className="row wrap" style={{ marginTop: 8, gap: 6 }}>
+        <select className="input input-sm" style={{ width: 180 }} value={state} onChange={(e) => setState(e.target.value)} aria-label="Supplier's state"><option value="">Choose the state</option>{states.map((x) => <option key={x} value={x}>{x}</option>)}</select>
+        <button className="btn btn-secondary btn-xs" disabled={!state || busy} onClick={async () => {
+          setBusy(true);
+          try { await rpc('save_vendor_details', { p_org: orgId, p_vendor: b.vendor_id, p_patch: { state } }); toast(`${b.vendor?.name} is in ${state}`); await onDone(); }
+          catch (e) { toast((e as Error).message, 'err'); }
+          setBusy(false);
+        }}>Save the state</button>
+        {b.tax_flags?.can_return && canKeep && <button className="btn btn-ghost btn-xs" onClick={onSendBack}><Icon name="undo" size={12} />Send back for the address</button>}
+      </div>
+    </Alert>
+  );
+}
+
+// Sending a bill back: the reason, the note the supplier reads, and how it goes.
+function SendBack({ b, reason: first, onClose, onDone }: { b: any; reason: string; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const v = b.vendor || {};
+  const [reason, setReason] = useState(first);
+  const [note, setNote] = useState(b.return_notes?.[first] || '');
+  const [send, setSend] = useState<'email' | 'whatsapp' | ''>(v.email ? 'email' : v.phone ? 'whatsapp' : '');
+  const [to, setTo] = useState(v.email || v.phone || '');
+  const [busy, setBusy] = useState(false);
+  function pick(r: string) { setReason(r); setNote(b.return_notes?.[r] || (r === 'other' ? '' : note)); }
+  async function go() {
+    setBusy(true);
+    try {
+      await rpc('return_bill', { p_bill: b.id, p: { reason, note, send: send || null, to: send ? to : null } });
+      toast(send ? `${b.number} sent back; the note is on its way to ${v.name}` : `${b.number} sent back`); await onDone(); onClose();
+    } catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(false);
+  }
+  return (
+    <Modal onClose={onClose} width={560}>
+      <ModalHead title={`Send ${b.number} back to ${v.name}`} sub={`${b.vendor_ref ? `Their invoice ${b.vendor_ref} · ` : ""}${N2(b.total)}`} onClose={onClose} />
+      <div className="modal-body stack" style={{ gap: 10 }}>
+        <Field label="Why"><select className="input" value={reason} onChange={(e) => pick(e.target.value)}>
+          <option value="missing_tin">No Tax ID</option><option value="missing_state">No address for the state revenue service</option><option value="other">Another reason</option></select></Field>
+        <Field label="What the supplier reads"><textarea className="input" style={{ minHeight: 110 }} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 10 }}>
+          <Field label="Send it by"><select className="input" value={send} onChange={(e) => { const s = e.target.value as any; setSend(s); setTo(s === 'email' ? v.email || '' : s === 'whatsapp' ? v.phone || '' : ''); }}>
+            <option value="email">Email</option><option value="whatsapp">WhatsApp</option><option value="">I'll send it myself</option></select></Field>
+          {send ? <Field label={send === 'email' ? 'Email address' : 'WhatsApp number'}><input className="input" value={to} onChange={(e) => setTo(e.target.value)} inputMode={send === 'email' ? 'email' : 'tel'} /></Field>
+            : <Field label="Copy the note"><button className="btn btn-secondary btn-sm" onClick={() => { navigator.clipboard?.writeText(note).then(() => toast('Copied'), () => toast('Select the note and copy it', 'err')); }}><Icon name="copy" size={13} />Copy</button></Field>}
+        </div>
+        <div className="faint" style={{ fontSize: 12 }}>The bill leaves the books as a void bill does{b.source === 'prism' ? ', and Prism sees why when it checks the bill' : ''}. Open it again when the supplier answers.</div>
+      </div>
+      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy || note.trim().length < 3 || (!!send && !to.trim())} onClick={go}>{send ? 'Send back' : 'Send back without a message'}</button></div>
+    </Modal>
   );
 }
 

@@ -9,6 +9,7 @@ import { moveItem, moveQty, typeLabel, typeTone } from '../../lib/ledger';
 import { PERMS, type Location, type Member, type Perm } from '../../lib/types';
 import { Icon } from '../../components/Icon';
 import { Alert, Chip, Field, Label, Modal, ModalHead, SkeletonRows } from '../../components/ui';
+import { StateLga } from '../../components/Places';
 import TransferModal from '../../components/TransferModal';
 import { ReminderCallModal } from '../../components/Calls';
 
@@ -49,7 +50,7 @@ export default function Locations() {
                 <div className="row"><Icon name="pin" size={18} color="#0072F5" /><div style={{ fontSize: 16, fontWeight: 600 }}>{l.name}</div>{l.is_main && <span className="chip t-blue">Main</span>}</div>
                 {owner && <button className="x-btn" onClick={() => setBranch(l)} aria-label={'Edit ' + l.name}><Icon name="pencil" size={15} color="#9CA3AF" /></button>}
               </div>
-              <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{l.address || l.code}</div>
+              <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{[l.address || l.code, [l.lga, l.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}{!l.state && <span style={{ color: '#B45309' }}> · add its state</span>}</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginTop: 16 }}>
                 <div><div className="mini-label">Stock value</div><div style={{ fontSize: 20, fontWeight: 600, marginTop: 4, letterSpacing: '-.01em' }}>{costs ? K(value) : '—'}</div></div>
                 <div><div className="mini-label">Items</div><div style={{ fontSize: 20, fontWeight: 600, marginTop: 4 }}>{n}</div></div>
@@ -192,6 +193,7 @@ function BranchModal({ branch, onClose }: { branch: Location | null; onClose: ()
   const { run, busy } = useAction();
   const [name, setName] = useState(branch?.name || '');
   const [address, setAddress] = useState(branch?.address || '');
+  const [place, setPlace] = useState({ state: branch?.state || '', lga: branch?.lga || '' });
   const [err, setErr] = useState<string | null>(null);
   async function save() {
     if (!name.trim()) { setErr('Enter the branch name.'); return; }
@@ -199,8 +201,8 @@ function BranchModal({ branch, onClose }: { branch: Location | null; onClose: ()
     let code = base; let i = 2;
     while (!branch && inv?.locations.some((l) => l.code === code)) code = base + i++;
     const r = await run(() => branch
-      ? must(supabase.from('locations').update({ name: name.trim(), address: address.trim() || null }).eq('id', branch.id).select().single())
-      : must(supabase.from('locations').insert({ org_id: orgId, name: name.trim(), code, address: address.trim() || null, is_main: false }).select().single()),
+      ? must(supabase.from('locations').update({ name: name.trim(), address: address.trim() || null, state: place.state || null, lga: place.lga || null }).eq('id', branch.id).select().single())
+      : must(supabase.from('locations').insert({ org_id: orgId, name: name.trim(), code, address: address.trim() || null, is_main: false, state: place.state || null, lga: place.lga || null }).select().single()),
     { ok: branch ? 'Branch updated' : `${name.trim()} added`, invalidate: ['inv'] });
     if (r) onClose();
   }
@@ -210,6 +212,7 @@ function BranchModal({ branch, onClose }: { branch: Location | null; onClose: ()
       <div className="modal-body">
         <Field label="Branch name" req><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ikeja" /></Field>
         <Field label="Address"><input className="input" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street, area" /></Field>
+        <StateLga state={place.state} lga={place.lga} onChange={(state, lga) => setPlace({ state, lga })} />
         {err && <Alert kind="red" icon="alert">{err}</Alert>}
         {!branch && <div className="hint">Stock at the new branch starts at zero. Move stock in with a transfer or receive straight into it.</div>}
       </div>

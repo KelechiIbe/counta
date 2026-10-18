@@ -75,7 +75,7 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
   const tinErr = taxIdError(f.tin, vendor.tin);
   const corporate = f.entity_type ? !!ENTITY_TYPES.find((e) => e.id === f.entity_type)?.corporate : !vendor.is_individual;
   const goesTo = f.wht_exempt || f.entity_type === 'government' ? 'No WHT: exempt' : corporate || !f.resident ? 'WHT goes to the NRS'
-    : `WHT goes to the ${f.state ? f.state + ' state' : 'state'} revenue service${f.state ? '' : ' of their state (yours, until you add theirs)'}`;
+    : f.state ? `WHT goes to the ${f.state} state revenue service` : 'WHT goes to the revenue service of their state, so add the state before their bills are approved or paid';
   async function save() {
     if (tinErr) { toast(tinErr, 'err'); return; }
     if (f.nin && !/^\d{11}$/.test(f.nin.replace(/\D/g, ''))) { toast('A NIN has 11 digits.', 'err'); return; }
@@ -121,7 +121,7 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
               <label className="check"><input type="checkbox" checked={f.connected_person} onChange={(e) => setF({ ...f, connected_person: e.target.checked })} />A connected person (related company, director or shareholder)</label>
             </div>
             <div className="faint" style={{ fontSize: 12 }}>{goesTo}.{!f.resident && !f.digital_supplier ? ' VAT on services they supply is self-charged at 7.5% and paid to the NRS by the 14th.' : ''}
-              {tax.data?.wht_profile?.state_assumed && f.resident && !corporate ? ' Their state is not known, so your own is assumed.' : ''}</div>
+              {tax.data?.state_needed && !f.state ? ' Without it, send their bills back to ask for the address.' : ''}</div>
             <Field label="Their bills usually go to"><select className="input" value={f.default_account} onChange={(e) => setF({ ...f, default_account: e.target.value })}><option value="">No default</option>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select></Field>
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="Bank"><select className="input" value={f.bank_code} onChange={(e) => setF({ ...f, bank_code: e.target.value, account_name: '' })}><option value="">Choose</option>{banks.map((b) => <option key={b.code} value={b.code}>{b.name}</option>)}</select></Field>

@@ -35,8 +35,8 @@ create policy tax_rulebooks_read on public.tax_rulebooks for select to authentic
 insert into public.tax_rulebooks (id, config_id, version, regime, yoa_from, yoa_to, status, config, approved_by, approved_at, note) values
   ('ng-cit-devlevy-engine@1.0.0', 'ng-cit-devlevy-engine', '1.0.0', 'NTA_2025', 2026, null, 'approved', $rb${"$schema": "https://taxstreem.dev/schemas/cit-config-v1.json", "meta": {"config_id": "ng-cit-devlevy-engine", "version": "1.0.0", "governing_law": "Nigeria Tax Act, 2025 (Act No. 7)", "gazette_date": "2025-06-26", "commencement_date": "2026-01-01", "applies_from_yoa": 2026, "filing_channel": "NRS Rev360 Self-Service Portal (IT Excel template)", "currency": "NGN", "description": "Canonical computation config: PBT -> CIT + Development Levy. The engine MUST select a rule set by year of assessment (YOA): YOA < 2026 uses the repealed CITA/TET/CGT regime (not in this config); YOA >= 2026 uses this config.", "rule_set_selector": {"field": "year_of_assessment", "branches": [{"when": "yoa < 2026", "engine": "LEGACY_CITA_TET_CGT", "note": "Out of scope for this config."}, {"when": "yoa >= 2026", "engine": "NTA_2025", "note": "This config."}]}}, "company_classification": {"description": "Run first. Gates CIT rate, Development Levy applicability, and ETR top-up.", "thresholds": {"small_company_turnover_max_ngn": 100000000, "small_company_fixed_assets_max_ngn": 250000000, "etr_turnover_trigger_ngn": 50000000000, "etr_mne_group_turnover_trigger_eur": 750000000}, "classes": {"SMALL": {"rule": "grossTurnover <= small_company_turnover_max_ngn AND totalFixedAssets <= small_company_fixed_assets_max_ngn", "logic": "AND", "statute": "s.202 (interpretation)", "cit_rate": 0.0, "subject_to_development_levy": false, "note": "Both conditions must hold. Still files a full return."}, "REGULAR": {"rule": "resident company that is not SMALL", "statute": "s.56(b)", "cit_rate": 0.3, "subject_to_development_levy": true}, "NON_RESIDENT": {"rule": "non-resident company taxed under s.17/s.18", "statute": "s.59(1)", "cit_basis": "source/PE/deemed-profit (out of scope for v1)", "subject_to_development_levy": false}}, "etr_in_scope": {"description": "Independent flag layered on top of class. Triggers s.57 15% minimum effective-tax-rate top-up.", "rule": "(isMNEConstituentEntity AND groupTurnoverEUR >= etr_mne_group_turnover_trigger_eur) OR (annualTurnoverNGN >= etr_turnover_trigger_ngn)", "statute": "s.57(2)", "carve_outs": ["Approved activities of a free-zone enterprise are excluded EXCEPT sales into the customs territory or where the entity is an MNE constituent under s.57(2)(a). [s.57(3)]"]}}, "cit_rates": {"description": "Applied to TOTAL PROFITS. Keep keyed by YOA + commencement order.", "statute": "s.56", "by_class": {"SMALL": 0.0, "REGULAR": 0.3, "NON_RESIDENT": null}, "future_rate_change": {"planned_rate": 0.25, "trigger": "Presidential order on the advice of the National Economic Council", "effective_date": null, "note": "Not yet effective. Do not hardcode 30%; resolve rate by YOA against the commencement order."}}, "development_levy": {"description": "Applied to ASSESSABLE PROFITS (Stage D), NOT total profits. Consolidates former TET/NITDA/NASENI/etc.", "statute": "s.59", "rate": 0.04, "base": "ASSESSABLE_PROFIT", "applies_when": "companyClass == 'REGULAR' AND NOT isNonResident AND NOT isHydrocarbonAssessableProfit", "exclusions": ["Small companies [s.59(1)]", "Non-resident companies [s.59(1)]", "Assessable profits computed for hydrocarbon tax [s.59(4)]"], "note": "Capital allowances and loss relief do NOT reduce this base. A company can owe NGN 0 CIT and still owe Development Levy."}, "etr_topup": {"description": "Domestic minimum top-up to a 15% effective tax rate. Only for etr_in_scope companies.", "statute": "s.57", "minimum_rate": 0.15, "net_income": {"formula": "PBT - frankedInvestmentIncome - unrealisedGainsLosses", "statute": "s.57(1)(c)", "life_insurer_adjustment": "Also exclude policyholders' gross income and investment income (s.57 proviso)."}, "covered_taxes": {"formula": "CIT + petroleumProfitTax + hydrocarbonTax + developmentLevy + prioritySectorTaxCredit", "statute": "s.57(1)(b)", "components": ["companies_income_tax", "petroleum_profit_tax", "hydrocarbon_tax", "development_levy", "priority_sector_tax_credit"]}, "topup_formula": "etr = coveredTaxes / netIncome ; topup = (etrInScope AND netIncome > 0 AND etr < 0.15) ? (0.15 * netIncome - coveredTaxes) : 0"}, "general_minimum_tax": {"exists": false, "note": "The legacy CITA turnover-based minimum tax is NOT carried into NTA 2025 for YOA 2026+. Functional floors are: SMALL @ 0%, 15% ETR (s.57), and sector-specific floors (e.g. s.18(6) 2% gross-revenue floor for non-resident shipping/air)."}, "capital_allowances": {"description": "Replace accounting depreciation. Reduce CIT only (via total profits); never reduce Development Levy.", "statute": "First Schedule, Part I", "single_flat_annual_rate": true, "no_initial_allowance_split": true, "no_two_thirds_restriction": true, "notional_retention_pct": 0.01, "notional_retention_note": "Record 1% of QCE for statistics until disposal (First Sched. para 6(a)); notional, does not change allowance claimable.", "table_I": {"statute": "First Schedule, para 6, Table I", "classes": [{"class": 1, "rate": 0.1, "qce_types": ["BUILDING", "AGRICULTURAL", "MAST", "INTANGIBLE_ASSETS", "HEAVY_TRANSPORTATION"]}, {"class": 2, "rate": 0.2, "qce_types": ["PLANT", "AGRICULTURAL_EQUIPMENT", "FURNITURE_AND_FITTINGS", "MINING", "OTHER_EQUIPMENT"]}, {"class": 3, "rate": 0.25, "qce_types": ["MOTOR_VEHICLE", "SOFTWARE", "OTHER_CAPITAL"]}]}, "category_to_class_map": {"description": "Maps Rev360 config!K2:K16 PPE/asset categories and common asset descriptions to a statutory class.", "Building Industrial": 1, "Building Non-Industrial": 1, "Agricultural plants expenditure": 1, "research and development expenditure": 1, "Housing estate expenditure": 1, "Plants (excluding Furniture and fittings)": 2, "Furnitures & Fittings expenditure": 2, "Plantation equipments expenditure": 2, "Construction Plants expenditure (excluding furniture & fittings)": 2, "ranching and plantation": 2, "Public Transport motor vehicles": 3, "Motor vehicles expenditure": 3, "software": 3, "Land": null, "Others": 2, "_land_note": "Land is not depreciable / not QCE on its own; exclude from capital allowances. Allocate building/works component to class 1."}, "rules": [{"id": "in_use_at_period_end", "rule": "Allowance only if at end of basis period the company OWNS the asset AND used it for the trade.", "statute": "1st Sched. para 6,7"}, {"id": "qualifying_expenditure", "rule": "Acquisition + refurbishment/improvement cost bringing asset to first use.", "statute": "1st Sched. para 1"}, {"id": "vat_duty_bar", "rule": "QCE disqualified if VAT due but not charged, or import duty/levy not paid on the asset.", "statute": "s.27(2)(b); 1st Sched. para 14"}, {"id": "priority_sector_certificate", "rule": "Priority-sector companies need Industrial Inspectorate certificate of acceptance for the QCE.", "statute": "s.27(2)(a)"}, {"id": "partial_use_proration", "rule": "Pro-rate allowance to the taxable-use portion where asset only partly used to generate assessable profit.", "statute": "s.27(3)"}, {"id": "de_minimis_no_proration", "rule": "Do NOT pro-rate where non-taxable income is < 10% of total income.", "threshold_pct": 0.1, "statute": "s.27(4)"}, {"id": "short_basis_period", "rule": "Pro-rate the allowance where the basis period is < 1 year (by days/365).", "statute": "1st Sched. para 6(b)"}, {"id": "hire_purchase_finance_lease", "rule": "Hirer/lessee treated as owner; QCE limited to instalments paid excluding interest; lessor gets no allowance.", "statute": "1st Sched. para 2,15"}, {"id": "operating_lease", "rule": "Lessor/owner claims the allowance as if used in its own trade.", "statute": "1st Sched. para 15(1)"}, {"id": "carry_forward_unused", "rule": "Unutilised allowance carries forward to succeeding years until fully utilised.", "statute": "1st Sched. para 20,22(3)"}, {"id": "order_of_deduction", "rule": "CA subtracted from remainder of assessable profit AFTER loss relief.", "statute": "1st Sched. para 22"}], "per_asset_pseudocode": "class=mapCategoryToClass(asset.category); rate=table_I[class].rate; qce=asset.cost (ex disallowed FX/duty); residue=qce - cumulativeAllowanceClaimed; annual=min(rate*qce, residue - notional_retention_pct*qce); if basisPeriodDays<365: annual*=basisPeriodDays/365; if assetPartlyUsed AND nonTaxableIncomePct>=0.10: annual*=taxableUsePct; capitalAllowanceYOA += asset.inUseAtPeriodEnd ? annual : 0"}, "loss_relief": {"description": "Reduces CIT only (applied to assessable profit before capital allowances).", "statute": "s.27(6)", "rules": {"direction": "CARRY_FORWARD_ONLY", "carry_back": false, "time_limit_years": null, "time_limit_note": "No cap; carry forward until fully recouped (legacy 4-year limit removed).", "same_trade_ring_fence": true, "aggregate_cap_equals_loss": true, "digital_asset_ring_fence": true, "order": "Deduct loss BEFORE capital allowances", "order_statute": "s.27(1); 1st Sched. para 22(2)"}}, "interest_restriction": {"description": "Thin-cap / EBITDA rule. Excess connected-person interest is an add-back.", "statute": "Third Schedule", "ebitda_cap_pct": 0.3, "ebitda_formula": "PBT + interestExpense + depreciation + amortisation (accounting basis)", "excess_formula": "excessInterest = max(0, connectedPersonInterest - 0.30 * EBITDA)", "treatment": "Add back excessInterest; carry forward up to 5 YOA.", "carry_forward_years": 5, "exemption": "Does NOT apply to a Nigerian subsidiary of a foreign bank or insurer (Third Sched. para 3)."}, "computation_pipeline": {"description": "Ordered stages A-K. starting_point and base outputs are critical.", "starting_point": "PROFIT_BEFORE_TAX", "stages": [{"id": "A", "name": "Profit Before Tax (PBT)", "op": "input", "source": "INCOME_STATEMENT!E763", "ref": "audited P&L before income-tax charge"}, {"id": "B", "name": "Add disallowable expenses / add-backs", "op": "add", "source": "sum(add_backs)", "statute": "s.21 + specific"}, {"id": "C", "name": "Deduct non-taxable income / tax-only deductions", "op": "subtract", "source": "sum(deductions)", "statute": "s.20, s.4 exemptions"}, {"id": "D", "name": "ASSESSABLE PROFIT", "op": "result", "formula": "A + B - C", "is_base_for": ["development_levy"], "statute": "s.22"}, {"id": "E1", "name": "Deduct loss relief brought forward", "op": "subtract", "source": "min(lossBfSameTrade, max(0, assessableProfit))", "statute": "s.27(6)"}, {"id": "E2", "name": "Deduct capital allowances (current + b/f)", "op": "subtract", "source": "min(capitalAllowanceTotal, remainderAfterLoss)", "statute": "First Schedule"}, {"id": "F", "name": "Add net chargeable gains for the YOA", "op": "add", "source": "net_chargeable_gains", "statute": "s.33-55, s.27(1)"}, {"id": "G", "name": "TOTAL PROFITS", "op": "result", "formula": "max(0, D - E1 - E2 + F)", "is_base_for": ["cit"], "statute": "s.27(1)"}, {"id": "H", "name": "CIT", "op": "charge", "formula": "G * cit_rate(class, yoa)", "statute": "s.56"}, {"id": "I", "name": "Development Levy", "op": "charge", "formula": "applies ? D * 0.04 : 0", "statute": "s.59"}, {"id": "J", "name": "ETR top-up", "op": "charge", "formula": "etr_topup (s.57)", "statute": "s.57"}, {"id": "K", "name": "Total liability", "op": "result", "formula": "H + I + J + sectorMinima"}], "tax_charge_addback_convention": {"description": "Lock one convention. Mixing double-counts/under-counts tax.", "selected": "START_FROM_PBT", "START_FROM_PBT": "Do NOT add back the income-tax provision (already below PBT). 'Taxes on profit or income' add-back = 0.", "START_FROM_PAT": "Rev360 template apparent design (PROFIT_ADJUSTMENT!D11 -> E765 = PAT). MUST add back full accounting tax charge (E764) to climb to PBT.", "statute": "s.21(e)"}}, "add_backs": {"description": "Disallowable expenses. Maps to PROFIT_ADJUSTMENT rows 13-35.", "items": [{"id": "depreciation_amortisation", "label": "Depreciation & amortisation", "statute": "s.21(g)", "rev360_row": 13}, {"id": "expenses_exempt_income", "label": "Expenses related to exempt income", "statute": "s.21(j)", "rev360_row": 14}, {"id": "donations_disallowed", "label": "Donations (to the extent not allowed)", "statute": "s.20(1), s.21", "rev360_row": 15}, {"id": "unrealised_fx_loss", "label": "Unrealised foreign-exchange loss", "statute": "s.21(g)", "rev360_row": 16}, {"id": "loss_on_disposal_fixed_assets", "label": "Loss on disposal of fixed assets", "statute": "s.21(b)", "rev360_row": 17}, {"id": "entertainment_disallowed", "label": "Entertainment expenses (to the extent not allowed)", "statute": "s.20(1)", "rev360_row": 18}, {"id": "capital_repaid_withdrawn", "label": "Capital repaid/withdrawn", "statute": "s.21(a)", "rev360_row": 19}, {"id": "capital_nature_expenses", "label": "Expenses of capital nature", "statute": "s.21(b)", "rev360_row": 20}, {"id": "assets_not_for_trade", "label": "Expenditure on assets not used for the purpose of trade", "statute": "s.21(c)", "rev360_row": 21}, {"id": "sum_recoverable_insurance", "label": "Sum recoverable under an insurance or contract of indemnity", "statute": "s.21(d)", "rev360_row": 22}, {"id": "taxes_on_profit_income", "label": "Taxes on profit or incomes", "statute": "s.21(e)", "rev360_row": 23, "note": "Only add back if starting from PAT. See computation_pipeline.tax_charge_addback_convention."}, {"id": "unapproved_pension", "label": "Payment to unapproved retirement fund/scheme", "statute": "s.21(f)", "rev360_row": 24}, {"id": "reserved_out_of_profits", "label": "Sums reserved out of profits", "statute": "s.21(h)", "rev360_row": 25}, {"id": "tp_contravention", "label": "Related-party payments contravening Transfer Pricing Regulations", "statute": "s.21(i)", "rev360_row": 26}, {"id": "expense_deriving_exempt_income", "label": "Expense incurred deriving exempt income", "statute": "s.21(j)", "rev360_row": 27}, {"id": "deductible_for_chargeable_gains", "label": "Expense allowable in determining chargeable gains", "statute": "s.21(k)", "rev360_row": 28}, {"id": "penalty_fine", "label": "Penalty or fine imposed under any law", "statute": "s.21(l)", "rev360_row": 29}, {"id": "vat_duty_uncharged_expense", "label": "Expenses liable to VAT/import duty but not charged or paid", "statute": "s.21(p)", "rev360_row": 30}, {"id": "securities_lending_compensating", "label": "Compensating payments (securities lending) qualifying as dividend/interest", "statute": "s.21(n),(o)", "rev360_row": 31}, {"id": "tax_penalty_borne_for_another", "label": "Tax or penalty borne on behalf of another person", "statute": "s.21(m)", "rev360_row": null}, {"id": "other_disallowable", "label": "Other disallowable expenses (free-text: description + amount)", "statute": "s.21", "rev360_row": 32}], "computed_not_prelisted": [{"id": "excess_connected_interest", "label": "Excess connected-party interest (> 30% EBITDA)", "statute": "Third Schedule", "see": "interest_restriction", "rev360_row": "use 'Other disallowable' with description"}, {"id": "general_provisions", "label": "General (non-specific) provisions e.g. general doubtful-debt provision", "statute": "s.20(1)(h)", "note": "Only specific/GAAP-justified doubtful debts allowed."}, {"id": "fx_naira_equivalent_excess", "label": "Excess over Naira equivalent at official CBN rate for foreign-currency expense", "statute": "s.20(4)"}]}, "deductions": {"description": "Non-taxable income removed / tax-only deductions added. Maps to PROFIT_ADJUSTMENT rows 40-49.", "items": [{"id": "profit_on_disposal_fixed_assets", "label": "Profit on disposal of fixed assets", "statute": "s.21(b), Part VIII", "rev360_row": 40, "note": "Capital; dealt with under chargeable gains."}, {"id": "franked_investment_income", "label": "Franked investment income (dividends already taxed)", "statute": "s.8, s.57(1)(c)", "rev360_row": 41, "note": "Also excluded from ETR net income."}, {"id": "unrealised_gains", "label": "Unrealised FX / fair-value gains", "statute": "general", "rev360_row": 42}, {"id": "other_non_taxable_income", "label": "Other non-taxable income (free-text: description + amount)", "statute": "s.4 exemptions", "rev360_row": 43}], "non_taxable_income_linkage": {"rule": "If non-taxable revenue present (INCOME_STATEMENT!D631 > 0) THEN 'Expenses Relating To Non-taxable revenue' (INCOME_STATEMENT!D641) MUST be populated.", "statute": "s.21(j)", "enforced_by": "CHECK_BEFORE_UPLOAD progress gate (will not reach 100% otherwise)."}}, "chargeable_gains": {"description": "CGT repealed; chargeable gains folded into income tax and taxed at the company's CIT rate (no separate 10% CGT).", "statute": "s.27(1), Part VIII (s.33-55)", "gain_formula": "disposalConsideration - allowableCostBase (acquisition + enhancement + disposal costs)", "gain_statute": "s.39, s.40", "basis": "Net chargeable gains over chargeable assets disposed in the basis period (s.26(3))", "rev360_source": "Chargeable Assets Disposal Return (portal computes and posts to income-tax computation).", "in_development_levy_base": false, "in_development_levy_base_note": "FLAG G-B: s.59 levies on 'assessable profits'; s.27 separates gains. Default excluded; confirm with NRS guidance. Configurable.", "selected_exemptions": [{"statute": "s.51", "label": "Principal private residence"}, {"statute": "s.52", "label": "Personal chattels"}, {"statute": "s.53", "label": "Up to 2 private-use motor vehicles per YOA"}, {"statute": "s.54", "label": "Gifts where no consideration passes"}, {"statute": "s.55", "label": "Assets held in trust for charities"}]}, "validation_rules": {"description": "Hard rules that BLOCK upload/submission until satisfied.", "rules": [{"id": "progress_100", "severity": "block", "rule": "CHECK_BEFORE_UPLOAD progress must equal 100%.", "source": "Rev360 manual"}, {"id": "revenue_ties_to_pl", "severity": "block", "rule": "Revenue declared must equal revenue in audited P&L."}, {"id": "sfp_ties_to_accounts", "severity": "block", "rule": "STATEMENT_OF_FINANCIAL_POSITION balances must equal audited balances."}, {"id": "no_expense_lumping", "severity": "block", "rule": "Each expense on its own line item; reject single-bucket 'Other expenses' lumping."}, {"id": "non_taxable_income_pairing", "severity": "block", "rule": "If INCOME_STATEMENT!D631 > 0 then INCOME_STATEMENT!D641 (related expenses) must be populated."}, {"id": "do_not_edit_formulas", "severity": "block", "rule": "Populate input cells only; do not alter embedded template formulas."}, {"id": "afs_attached_and_ties", "severity": "block", "rule": "Audited FS PDF attached (auditor report, P&L, SFP, cash flows, changes in equity, notes, capital-allowance schedule) and ties to template."}, {"id": "yoa_set", "severity": "block", "rule": "USER_INPUT!D7 (ASSESSMENT YEAR) set; selects rule set (see meta.rule_set_selector)."}, {"id": "sector_revenue_block", "severity": "warn", "rule": "Revenue entered against the correct sector block (one of 19 in config!C2:C20)."}, {"id": "small_company_still_files", "severity": "info", "rule": "SMALL companies still file a full return despite 0% CIT and no levy."}], "do_not_use_as_tax_rates": {"fields": "CHECK_BEFORE_UPLOAD percentages (0.28, 0.27, 0.25, 0.16, 0.04)", "rule": "These are completion-bar weights, NOT tax rates. Never feed into tax math."}}, "rev360_mapping": {"description": "Input/output contract. Emit data in this shape; never alter formulas.", "workbook": "CIT IT Excel template", "sheets": {"USER_INPUT": {"assessment_year_cell": "D7"}, "INCOME_STATEMENT": {"operating_profit_before_tax": "E763", "taxation_charge": "E764", "profit_after_tax": "E765", "operating_income": "E639", "administrative_expenses": "E640", "finance_cost_ex_interest": "E762", "total_revenue": "E526", "non_taxable_revenue": "D631", "expenses_relating_to_non_taxable_revenue": "D641", "depreciation_factory": "D593", "depreciation_admin": "D654"}, "PROFIT_ADJUSTMENT": {"profit_before_tax_ref": "D11", "profit_before_tax_points_to": "INCOME_STATEMENT!E765", "flag": "FLAG G-D: D11 points at E765 (PAT), not PBT. See computation_pipeline.tax_charge_addback_convention.", "addbacks_rows": "13-35", "total_addbacks": "D36", "deductions_rows": "40-49", "total_deductions": "D50"}, "STATEMENT_OF_FINANCIAL_POSITION": {"role": "assets/liabilities/equity; must tie to audited accounts"}, "CHECK_BEFORE_UPLOAD": {"completion_target": "D17 = 100%", "remaining": "D18"}, "config": {"sectors": "C2:C20 (19 sectors)", "ppe_categories": "K2:K16 (15 capital-allowance categories)", "income_statement_codes": "T/U columns", "cit_type": "AP2 = REGULAR"}}, "portal_workflow": ["Login", "Self Tax Filing", "Taxes Due", "select earliest CIT form", "File Now", "Fixed Assets Declaration (date, category, description, cost, depreciation)", "MNE disclosure (group turnover EUR)", "CFC disclosure", "download IT template", "complete offline", "upload", "Preview computation", "upload audited FS", "tick declaration", "Submit Return", "save acknowledgment"]}, "configurable_flags": {"description": "Items requiring tax-legal sign-off before go-live (rule book section 13). Defaults reflect the best statutory reading; make each configurable and reconcile against the live Rev360 preview.", "flags": {"development_levy_base_before_capital_allowances": {"default": true, "ref": "FLAG A", "note": "true => levy on assessable profit BEFORE capital allowances and loss relief (s.59 read with s.27)."}, "chargeable_gains_in_development_levy_base": {"default": false, "ref": "FLAG B", "note": "false => gains excluded from levy base; enter only at total-profits stage."}, "use_legacy_balancing_charge_allowance": {"default": false, "ref": "FLAG C", "note": "false => use residue + chargeable-gains path on disposal; terms absent from the Act."}, "tax_charge_addback_start_point": {"default": "START_FROM_PBT", "ref": "FLAG D", "enum": ["START_FROM_PBT", "START_FROM_PAT"]}, "treat_check_before_upload_pct_as_progress_only": {"default": true, "ref": "FLAG E", "note": "true => never treat 0.28/0.27/0.25/0.16/0.04 as tax rates."}, "rule_set_by_yoa": {"default": true, "ref": "FLAG F", "note": "true => branch engine by YOA (pre-2026 legacy; 2026+ NTA 2025)."}, "cit_rate_resolved_by_commencement_order": {"default": true, "ref": "FLAG G", "note": "true => 30% until a Presidential order sets 25%; do not hardcode."}, "etr_turnover_threshold_ngn": {"default": 50000000000, "ref": "FLAG H", "note": "NRS may raise by regulation (s.57(4)). EUR->NGN conversion convention for the EUR750m group test must be defined."}}}, "out_of_scope_sector_overrides": {"description": "Override the standard chain; gate behind sector flags before coding. v1 targets the regular resident company.", "regimes": [{"id": "petroleum", "statute": "Ch.3 s.65-88; 1st Sched. Part II"}, {"id": "insurance", "statute": "s.61"}, {"id": "lottery_gaming", "statute": "s.62"}, {"id": "collective_investment_scheme", "statute": "s.63"}, {"id": "mining", "statute": "s.64"}, {"id": "export_processing_free_zone", "statute": "s.60; 2nd Sched."}, {"id": "non_resident_deemed_profit", "statute": "s.17, s.18 (2% gross-revenue floor for shipping/air)"}, {"id": "economic_development_incentive_priority_sector", "statute": "s.165-166, s.27(5)"}, {"id": "real_estate_investment_company", "statute": "s.20(1)(k)"}]}, "worked_example": {"description": "Regular company, YOA 2026. Illustrates the two distinct bases.", "classification": "REGULAR (turnover NGN 2,000,000,000 > 100m; fixed assets 400m; not MNE; turnover < 50bn => not ETR_IN_SCOPE)", "lines": {"A_pbt": 300000000, "B_addbacks_total": 110000000, "B_detail": {"depreciation_amortisation": 80000000, "loss_on_disposal_fixed_asset": 3000000, "donations_disallowed": 5000000, "penalties_fines": 2000000, "general_provision": 10000000, "unrealised_fx_loss": 4000000, "excess_connected_interest": 6000000}, "C_deductions_total": 25000000, "C_detail": {"profit_on_disposal_fixed_assets": 8000000, "franked_investment_income": 12000000, "unrealised_gains": 5000000}, "D_assessable_profit": 385000000, "E1_loss_relief_bf": 20000000, "remainder_after_loss": 365000000, "E2_capital_allowances": 95000000, "remainder_after_allowances": 270000000, "F_net_chargeable_gains": 6000000, "G_total_profits": 276000000, "H_cit": 82800000, "I_development_levy": 15400000, "J_etr_topup": 0, "K_total_liability": 98200000}, "small_company_contrast": {"classification": "SMALL (turnover NGN 90,000,000; fixed assets 200,000,000)", "cit": 0, "development_levy": 0, "note": "Still files a full return."}}, "statutory_index": {"imposition_chargeability": "s.3-5", "nigerian_company_dividends": "s.6-10", "deductions_allowed": "s.20", "deductions_not_allowed": "s.21", "assessable_profits_basis_period": "s.22-25", "total_profits_of_companies": "s.27", "chargeable_gains": "s.33-55", "cit_rates": "s.56", "effective_tax_rate": "s.57", "development_levy": "s.59", "specialised_trades": "s.60-64", "petroleum_hydrocarbon": "s.65-88", "capital_allowances": "First Schedule Part I (Table I)", "interest_restriction": "Third Schedule", "individual_rates": "Fourth Schedule", "small_company_definition": "s.202", "commencement": "enacting clause (1 January 2026)"}}$rb$::jsonb,
    'TaxStreem', '2026-10-18', 'Supplied by TaxStreem (Kelechi Ibe), 18 October 2026.'),
-  ('ng-cit-cita-legacy-engine@0.9.0', 'ng-cit-cita-legacy-engine', '0.9.0', 'LEGACY_CITA', null, 2025, 'draft', $rb${"$schema": "https://taxstreem.dev/schemas/cit-config-v1.json", "meta": {"config_id": "ng-cit-cita-legacy-engine", "version": "0.9.0", "status": "draft_pending_signoff", "drafted_by": "Counta (for TaxStreem tax-legal sign-off)", "governing_law": "Companies Income Tax Act Cap C21 LFN 2004 as amended by the Finance Acts 2019, 2020, 2021 and 2023; Tertiary Education Trust Fund (Establishment, etc.) Act 2011 as amended", "currency": "NGN", "applies_to_yoa": 2025, "accounting_years_covered": "Accounts for years ending in 2024 or earlier (year of assessment = accounting year + 1). Counta prepares returns from 2023 accounts (YOA 2024); earlier years are used only to roll capital allowance tax values forward.", "description": "Pre-NTA regime: CIT by company size, tertiary education tax, minimum tax, CITA capital allowances (initial + annual, two-thirds restriction, NGN10 retention). The engine selects this rule set when YOA <= 2025 (meta.rule_set_selector of the NTA config).", "filing_channel": "NRS Rev360 Self-Service Portal (IT Excel template; same template version as YOA 2026)"}, "company_classification": {"description": "Run first. Gates the CIT rate, tertiary education tax and minimum tax.", "statute": "CITA s.40(1) and s.105 as amended by Finance Act 2019", "measure": "Gross turnover of the accounting year (revenue in the profit or loss account, before cost of sales)", "classes": {"SMALL": {"turnover_max_ngn": 25000000, "cit_rate": 0.0, "tertiary_education_tax": false, "minimum_tax": false, "note": "Gross turnover of NGN25m or less. Still files a full return."}, "MEDIUM": {"turnover_min_exclusive_ngn": 25000000, "turnover_max_exclusive_ngn": 100000000, "cit_rate": 0.2, "tertiary_education_tax": true, "minimum_tax": true}, "LARGE": {"turnover_min_ngn": 100000000, "cit_rate": 0.3, "tertiary_education_tax": true, "minimum_tax": true}}, "professional_services_exclusion": false, "professional_services_note": "The professional-services exclusion is an NTA 2025 (s.202) rule; under CITA a professional firm is classified on turnover like any other company."}, "tertiary_education_tax": {"statute": "TETFund Act 2011 s.1(2), as amended by Finance Act 2021 (2.5%) and Finance Act 2023 (3%)", "rate_by_yoa": {"2021": 0.02, "2022": 0.025, "2023": 0.03, "2024": 0.03, "2025": 0.03}, "base": "ASSESSABLE_PROFIT", "base_note": "Assessable profit as defined by CITA s.30: adjusted profit after balancing charges, before loss relief and before capital allowances.", "exempt_small_companies": true, "exempt_small_companies_note": "Finance Act 2021 took small companies out of the tax.", "signoff_flag": "FLAG L-A: confirm the base (before loss relief and capital allowances)."}, "minimum_tax": {"statute": "CITA s.33 as amended by Finance Acts 2019 and 2020", "rate": 0.005, "base": "GROSS_TURNOVER_LESS_FRANKED_INVESTMENT_INCOME", "applies_when": "Total profits give no tax, or tax lower than the minimum tax: CIT payable = max(CIT computed, minimum tax).", "rate_history": [{"returns_due_from": "2020-01-01", "returns_due_to": "2021-12-31", "rate": 0.0025, "note": "COVID relief (Finance Act 2020)."}], "exemptions": [{"id": "small_company", "rule": "Gross turnover of NGN25m or less (Finance Act 2019)."}, {"id": "first_four_years", "rule": "First four calendar years from commencement of business (uses the incorporation date when no commencement date is recorded)."}, {"id": "agricultural_trade", "rule": "Company carrying on agricultural trade or business."}, {"id": "imported_equity", "rule": "At least 25% of share capital imported (paid in foreign currency)."}], "signoff_flag": "FLAG L-B: confirm the exemption list and that medium companies pay minimum tax."}, "cit_rates": {"statute": "CITA s.40(1)", "by_class": {"SMALL": 0.0, "MEDIUM": 0.2, "LARGE": 0.3}, "applies_to": "TOTAL_PROFITS"}, "capital_allowances": {"statute": "CITA Second Schedule (Tables I and II), paras 7-24", "method": "INITIAL_PLUS_ANNUAL", "description": "Initial allowance in the year the asset is first in use; annual allowance each year on cost less initial allowance (straight line), from the first year, until NGN10 is left. Both need the asset owned and in use for the trade at the end of the basis period.", "retention_ngn": 10, "retention_note": "NGN10 stays in the tax value of each asset until disposal (para 24).", "categories": {"Building Industrial": {"initial": 0.15, "annual": 0.1}, "Building Non-Industrial": {"initial": 0.15, "annual": 0.1}, "Plants (excluding Furniture and fittings)": {"initial": 0.5, "annual": 0.25}, "Agricultural plants expenditure": {"initial": 0.95, "annual": 0.0}, "Furnitures & Fittings expenditure": {"initial": 0.25, "annual": 0.2}, "Public Transport motor vehicles": {"initial": 0.95, "annual": 0.0}, "Motor vehicles expenditure": {"initial": 0.5, "annual": 0.25}, "Plantation equipments expenditure": {"initial": 0.95, "annual": 0.0}, "Construction Plants expenditure (excluding furniture & fittings)": {"initial": 0.5, "annual": 0.0}, "research and development expenditure": {"initial": 0.95, "annual": 0.0}, "Housing estate expenditure": {"initial": 0.5, "annual": 0.25}, "ranching and plantation": {"initial": 0.3, "annual": 0.5}, "software": {"initial": 0.5, "annual": 0.25, "note": "No software class in the Second Schedule; treated as plant. FLAG L-C."}, "Others": {"initial": 0.5, "annual": 0.25, "note": "Treated as plant. FLAG L-C."}, "Land": null}, "investment_allowance": {"statute": "CITA s.32", "rate": 0.1, "categories": ["Plants (excluding Furniture and fittings)", "Agricultural plants expenditure", "Plantation equipments expenditure", "Construction Plants expenditure (excluding furniture & fittings)"], "note": "10% of the cost of plant and equipment in the year first used; does not reduce the tax value. FLAG L-D: confirm it is still claimed and on which categories."}, "restriction": {"statute": "CITA s.31 / Second Schedule para 24(8)", "fraction_of_assessable_profit": 0.6667, "exact_fraction": "2/3", "exempt_sectors": ["MANUFACTURING", "AGRICULTURE, FORESTRY & FISHING"], "note": "Allowances used in a year cannot exceed two-thirds of assessable profit, except for manufacturing and agro-allied companies. Unused allowances carry forward without time limit. FLAG L-E: confirm the cap is on assessable profit before loss relief."}, "balancing_adjustments": {"statute": "CITA Second Schedule paras 12-14", "balancing_charge": "min(proceeds - tax value, allowances claimed) when proceeds exceed tax value; added to assessable profit", "balancing_allowance": "tax value - proceeds when proceeds are below tax value; added to the year's allowances", "chargeable_gain_note": "Any gain above original cost is a chargeable gain under the Capital Gains Tax Act (10%, separate return), not part of CIT."}, "rules": [{"id": "in_use_at_period_end", "rule": "Allowance only if the asset is owned and in use for the trade at the end of the basis period."}, {"id": "land_excluded", "rule": "Land is not qualifying expenditure."}, {"id": "carry_forward_unused", "rule": "Unused allowances carry forward indefinitely."}, {"id": "order_of_deduction", "rule": "Loss relief first, then capital allowances (within the two-thirds cap)."}]}, "loss_relief": {"statute": "CITA s.31(1)(b) as amended", "rules": {"direction": "CARRY_FORWARD_ONLY", "time_limit_years": null, "time_limit_note": "No time limit for companies (the four-year limit for insurers was removed by Finance Act 2021).", "same_trade_ring_fence": true, "order": "Deduct loss BEFORE capital allowances"}}, "interest_restriction": {"statute": "CITA s.24(2) proviso as inserted by Finance Act 2019", "applies_to": "Interest paid to a foreign connected person", "ebitda_cap_pct": 0.3, "ebitda_formula": "PBT + interestExpense + depreciation + amortisation (accounting basis)", "excess_formula": "excessInterest = max(0, connectedForeignInterest - 0.30 * EBITDA)", "carry_forward_years": 5, "exemption": "Does not apply to a Nigerian subsidiary of a foreign bank or insurer."}, "computation_pipeline": {"starting_point": "PROFIT_BEFORE_TAX", "stages": [{"id": "A", "name": "Profit before tax", "source": "INCOME_STATEMENT!E115"}, {"id": "B", "name": "Add disallowable expenses", "source": "PROFIT_ADJUSTMENT!E33"}, {"id": "C", "name": "Deduct non-taxable income", "source": "PROFIT_ADJUSTMENT!E41"}, {"id": "D", "name": "Adjusted profit", "formula": "A + B - C"}, {"id": "D2", "name": "Add balancing charges", "source": "capital allowance schedule"}, {"id": "AP", "name": "ASSESSABLE PROFIT", "formula": "D + D2", "is_base_for": ["tertiary_education_tax"]}, {"id": "E1", "name": "Loss relief brought forward", "formula": "min(lossBf, max(0, AP))"}, {"id": "E2", "name": "Capital allowances used", "formula": "min(CA available, cap (2/3 of AP unless exempt sector), AP - E1)"}, {"id": "G", "name": "TOTAL PROFITS", "formula": "max(0, AP - E1 - E2)", "is_base_for": ["cit"]}, {"id": "H", "name": "CIT", "formula": "G * cit_rate(class)"}, {"id": "MT", "name": "Minimum tax", "formula": "applies ? rate * (turnover - FII) : 0"}, {"id": "H2", "name": "CIT payable", "formula": "minimumTaxApplies ? max(H, MT) : H"}, {"id": "I", "name": "Tertiary education tax", "formula": "class <> SMALL ? rate(yoa) * max(0, AP) : 0"}, {"id": "K", "name": "Total liability", "formula": "H2 + I"}], "tax_charge_addback_convention": {"selected": "START_FROM_PBT", "note": "The template starts from profit before tax (PROFIT_ADJUSTMENT!E11 = INCOME_STATEMENT!E115), so the tax charge is not added back."}}, "add_backs": {"description": "Same template rows as the NTA config (PROFIT_ADJUSTMENT rows 13-32). Statutory basis is CITA s.27 (deductions not allowed) and s.24 (allowable deductions).", "donations": {"statute": "CITA s.25 and Fifth Schedule", "rule": "Donations to listed bodies allowed up to 10% of total profits before the donation; the rest, and donations to unlisted bodies, are added back.", "cap_pct": 0.1}, "general_provisions": {"statute": "CITA s.24(d)", "rule": "Only specific bad debts are deductible; general provisions are added back."}, "depreciation": {"statute": "CITA s.27", "rule": "Depreciation and amortisation are added back; capital allowances are given instead."}}, "deductions": {"description": "Same template rows as the NTA config (PROFIT_ADJUSTMENT rows 36-40).", "chargeable_gains": "Profit on disposal of fixed assets and investments is removed from CIT; any chargeable gain goes to the separate capital gains tax return (10%)."}, "out_of_scope_v1": [{"id": "commencement_cessation", "statute": "CITA s.29(3)-(4)", "note": "First, second and third years of a new business and the last years of a ceasing business use special basis periods. Counta flags these years for manual review."}, {"id": "excess_dividend_tax", "statute": "CITA s.19 as amended by Finance Act 2019"}, {"id": "police_trust_fund_levy", "statute": "Nigeria Police Trust Fund (Establishment) Act 2019, 0.005% of net profit", "note": "Separate levy, not in the CIT template."}, {"id": "nitda_levy", "statute": "NITDA Act 2007 s.12, 1% of profit before tax for specified companies", "note": "Separate levy."}, {"id": "naseni_levy", "statute": "NASENI Act 2023, 0.25% of profit before tax for specified sectors", "note": "Separate levy."}, {"id": "capital_gains_tax", "statute": "Capital Gains Tax Act, 10%", "note": "Separate return."}, {"id": "petroleum_insurance_special_regimes", "note": "As in the NTA config."}], "signoff_flags": {"L-A": "Tertiary education tax base: assessable profit before loss relief and capital allowances.", "L-B": "Minimum tax: 0.5% of turnover less franked investment income; applies to medium and large companies; exemption list as above.", "L-C": "Software and 'Others' categories treated as plant (50% initial, 25% annual).", "L-D": "Investment allowance of 10% on plant and equipment categories.", "L-E": "Two-thirds cap measured on assessable profit before loss relief; manufacturing and agro-allied exempt.", "L-F": "TET exempts small companies (Finance Act 2021)."}}$rb$::jsonb,
-   null, null, 'Drafted by Counta from CITA as amended; awaiting TaxStreem tax-legal sign-off.')
+  ('ng-cit-cita-legacy-engine@0.9.0', 'ng-cit-cita-legacy-engine', '0.9.0', 'LEGACY_CITA', null, 2025, 'approved', $rb${"$schema": "https://taxstreem.dev/schemas/cit-config-v1.json", "meta": {"config_id": "ng-cit-cita-legacy-engine", "version": "0.9.0", "status": "approved", "drafted_by": "Counta (for TaxStreem tax-legal sign-off)", "signed_off_by": "TaxStreem (Kelechi Ibe), 18 October 2026: flags L-A to L-G agreed", "governing_law": "Companies Income Tax Act Cap C21 LFN 2004 as amended by the Finance Acts 2019, 2020, 2021 and 2023; Tertiary Education Trust Fund (Establishment, etc.) Act 2011 as amended", "currency": "NGN", "applies_to_yoa": 2025, "accounting_years_covered": "Accounts for years ending in 2024 or earlier (year of assessment = accounting year + 1). Counta prepares returns from 2023 accounts (YOA 2024); earlier years are used only to roll capital allowance tax values forward.", "description": "Pre-NTA regime: CIT by company size, tertiary education tax, minimum tax, CITA capital allowances (initial + annual, two-thirds restriction, NGN10 retention). The engine selects this rule set when YOA <= 2025 (meta.rule_set_selector of the NTA config).", "filing_channel": "NRS Rev360 Self-Service Portal (IT Excel template; same template version as YOA 2026)"}, "company_classification": {"description": "Run first. Gates the CIT rate, tertiary education tax and minimum tax.", "statute": "CITA s.40(1) and s.105 as amended by Finance Act 2019", "measure": "Gross turnover of the accounting year (revenue in the profit or loss account, before cost of sales)", "classes": {"SMALL": {"turnover_max_ngn": 25000000, "cit_rate": 0.0, "tertiary_education_tax": false, "minimum_tax": false, "note": "Gross turnover of NGN25m or less. Still files a full return."}, "MEDIUM": {"turnover_min_exclusive_ngn": 25000000, "turnover_max_exclusive_ngn": 100000000, "cit_rate": 0.2, "tertiary_education_tax": true, "minimum_tax": true}, "LARGE": {"turnover_min_ngn": 100000000, "cit_rate": 0.3, "tertiary_education_tax": true, "minimum_tax": true}}, "professional_services_exclusion": false, "professional_services_note": "The professional-services exclusion is an NTA 2025 (s.202) rule; under CITA a professional firm is classified on turnover like any other company."}, "tertiary_education_tax": {"statute": "TETFund Act 2011 s.1(2), as amended by Finance Act 2021 (2.5%) and Finance Act 2023 (3%)", "rate_by_yoa": {"2021": 0.02, "2022": 0.025, "2023": 0.03, "2024": 0.03, "2025": 0.03}, "base": "ASSESSABLE_PROFIT", "base_note": "Assessable profit as defined by CITA s.30: adjusted profit after balancing charges, before loss relief and before capital allowances.", "exempt_small_companies": true, "exempt_small_companies_note": "Finance Act 2021 took small companies out of the tax.", "signoff_flag": "FLAG L-A: confirm the base (before loss relief and capital allowances)."}, "minimum_tax": {"statute": "CITA s.33 as amended by Finance Acts 2019 and 2020", "rate": 0.005, "base": "GROSS_TURNOVER_LESS_FRANKED_INVESTMENT_INCOME", "applies_when": "Total profits give no tax, or tax lower than the minimum tax: CIT payable = max(CIT computed, minimum tax).", "rate_history": [{"returns_due_from": "2020-01-01", "returns_due_to": "2021-12-31", "rate": 0.0025, "note": "COVID relief (Finance Act 2020)."}], "exemptions": [{"id": "small_company", "rule": "Gross turnover of NGN25m or less (Finance Act 2019)."}, {"id": "first_four_years", "rule": "First four calendar years from commencement of business (uses the incorporation date when no commencement date is recorded)."}, {"id": "agricultural_trade", "rule": "Company carrying on agricultural trade or business."}, {"id": "imported_equity", "rule": "At least 25% of share capital imported (paid in foreign currency)."}], "signoff_flag": "FLAG L-B: confirm the exemption list and that medium companies pay minimum tax."}, "cit_rates": {"statute": "CITA s.40(1)", "by_class": {"SMALL": 0.0, "MEDIUM": 0.2, "LARGE": 0.3}, "applies_to": "TOTAL_PROFITS"}, "capital_allowances": {"statute": "CITA Second Schedule (Tables I and II), paras 7-24", "method": "INITIAL_PLUS_ANNUAL", "description": "Initial allowance in the year the asset is first in use; annual allowance each year on cost less initial allowance (straight line), from the first year, until NGN10 is left. Both need the asset owned and in use for the trade at the end of the basis period.", "retention_ngn": 10, "retention_note": "NGN10 stays in the tax value of each asset until disposal (para 24).", "categories": {"Building Industrial": {"initial": 0.15, "annual": 0.1}, "Building Non-Industrial": {"initial": 0.15, "annual": 0.1}, "Plants (excluding Furniture and fittings)": {"initial": 0.5, "annual": 0.25}, "Agricultural plants expenditure": {"initial": 0.95, "annual": 0.0}, "Furnitures & Fittings expenditure": {"initial": 0.25, "annual": 0.2}, "Public Transport motor vehicles": {"initial": 0.95, "annual": 0.0}, "Motor vehicles expenditure": {"initial": 0.5, "annual": 0.25}, "Plantation equipments expenditure": {"initial": 0.95, "annual": 0.0}, "Construction Plants expenditure (excluding furniture & fittings)": {"initial": 0.5, "annual": 0.0}, "research and development expenditure": {"initial": 0.95, "annual": 0.0}, "Housing estate expenditure": {"initial": 0.5, "annual": 0.25}, "ranching and plantation": {"initial": 0.3, "annual": 0.5}, "software": {"initial": 0.5, "annual": 0.25, "note": "No software class in the Second Schedule; treated as plant. FLAG L-C."}, "Others": {"initial": 0.5, "annual": 0.25, "note": "Treated as plant. FLAG L-C."}, "Land": null}, "investment_allowance": {"statute": "CITA s.32", "rate": 0.1, "categories": ["Plants (excluding Furniture and fittings)", "Agricultural plants expenditure", "Plantation equipments expenditure", "Construction Plants expenditure (excluding furniture & fittings)"], "note": "10% of the cost of plant and equipment in the year first used; does not reduce the tax value. FLAG L-D: confirm it is still claimed and on which categories."}, "restriction": {"statute": "CITA s.31 / Second Schedule para 24(8)", "fraction_of_assessable_profit": 0.6667, "exact_fraction": "2/3", "exempt_sectors": ["MANUFACTURING", "AGRICULTURE, FORESTRY & FISHING"], "note": "Allowances used in a year cannot exceed two-thirds of assessable profit, except for manufacturing and agro-allied companies. Unused allowances carry forward without time limit. FLAG L-E: confirm the cap is on assessable profit before loss relief."}, "balancing_adjustments": {"statute": "CITA Second Schedule paras 12-14", "balancing_charge": "min(proceeds - tax value, allowances claimed) when proceeds exceed tax value; added to assessable profit", "balancing_allowance": "tax value - proceeds when proceeds are below tax value; added to the year's allowances", "chargeable_gain_note": "Any gain above original cost is a chargeable gain under the Capital Gains Tax Act (10%, separate return), not part of CIT."}, "rules": [{"id": "in_use_at_period_end", "rule": "Allowance only if the asset is owned and in use for the trade at the end of the basis period."}, {"id": "land_excluded", "rule": "Land is not qualifying expenditure."}, {"id": "carry_forward_unused", "rule": "Unused allowances carry forward indefinitely."}, {"id": "order_of_deduction", "rule": "Loss relief first, then capital allowances (within the two-thirds cap)."}]}, "loss_relief": {"statute": "CITA s.31(1)(b) as amended", "rules": {"direction": "CARRY_FORWARD_ONLY", "time_limit_years": null, "time_limit_note": "No time limit for companies (the four-year limit for insurers was removed by Finance Act 2021).", "same_trade_ring_fence": true, "order": "Deduct loss BEFORE capital allowances"}}, "interest_restriction": {"statute": "CITA s.24(2) proviso as inserted by Finance Act 2019", "applies_to": "Interest paid to a foreign connected person", "ebitda_cap_pct": 0.3, "ebitda_formula": "PBT + interestExpense + depreciation + amortisation (accounting basis)", "excess_formula": "excessInterest = max(0, connectedForeignInterest - 0.30 * EBITDA)", "carry_forward_years": 5, "exemption": "Does not apply to a Nigerian subsidiary of a foreign bank or insurer."}, "computation_pipeline": {"starting_point": "PROFIT_BEFORE_TAX", "stages": [{"id": "A", "name": "Profit before tax", "source": "INCOME_STATEMENT!E115"}, {"id": "B", "name": "Add disallowable expenses", "source": "PROFIT_ADJUSTMENT!E33"}, {"id": "C", "name": "Deduct non-taxable income", "source": "PROFIT_ADJUSTMENT!E41"}, {"id": "D", "name": "Adjusted profit", "formula": "A + B - C"}, {"id": "D2", "name": "Add balancing charges", "source": "capital allowance schedule"}, {"id": "AP", "name": "ASSESSABLE PROFIT", "formula": "D + D2", "is_base_for": ["tertiary_education_tax"]}, {"id": "E1", "name": "Loss relief brought forward", "formula": "min(lossBf, max(0, AP))"}, {"id": "E2", "name": "Capital allowances used", "formula": "min(CA available, cap (2/3 of AP unless exempt sector), AP - E1)"}, {"id": "G", "name": "TOTAL PROFITS", "formula": "max(0, AP - E1 - E2)", "is_base_for": ["cit"]}, {"id": "H", "name": "CIT", "formula": "G * cit_rate(class)"}, {"id": "MT", "name": "Minimum tax", "formula": "applies ? rate * (turnover - FII) : 0"}, {"id": "H2", "name": "CIT payable", "formula": "minimumTaxApplies ? max(H, MT) : H"}, {"id": "I", "name": "Tertiary education tax", "formula": "class <> SMALL ? rate(yoa) * max(0, AP) : 0"}, {"id": "K", "name": "Total liability", "formula": "H2 + I"}], "tax_charge_addback_convention": {"selected": "START_FROM_PBT", "note": "The template starts from profit before tax (PROFIT_ADJUSTMENT!E11 = INCOME_STATEMENT!E115), so the tax charge is not added back."}}, "add_backs": {"description": "Same template rows as the NTA config (PROFIT_ADJUSTMENT rows 13-32). Statutory basis is CITA s.27 (deductions not allowed) and s.24 (allowable deductions).", "donations": {"statute": "CITA s.25 and Fifth Schedule", "rule": "Donations to listed bodies allowed up to 10% of total profits before the donation; the rest, and donations to unlisted bodies, are added back.", "cap_pct": 0.1}, "general_provisions": {"statute": "CITA s.24(d)", "rule": "Only specific bad debts are deductible; general provisions are added back."}, "depreciation": {"statute": "CITA s.27", "rule": "Depreciation and amortisation are added back; capital allowances are given instead."}}, "deductions": {"description": "Same template rows as the NTA config (PROFIT_ADJUSTMENT rows 36-40).", "chargeable_gains": "Profit on disposal of fixed assets and investments is removed from CIT; any chargeable gain goes to the separate capital gains tax return (10%)."}, "out_of_scope_v1": [{"id": "commencement_cessation", "statute": "CITA s.29(3)-(4)", "note": "First, second and third years of a new business and the last years of a ceasing business use special basis periods. Counta flags these years for manual review."}, {"id": "excess_dividend_tax", "statute": "CITA s.19 as amended by Finance Act 2019"}, {"id": "police_trust_fund_levy", "statute": "Nigeria Police Trust Fund (Establishment) Act 2019, 0.005% of net profit", "note": "Separate levy, not in the CIT template."}, {"id": "nitda_levy", "statute": "NITDA Act 2007 s.12, 1% of profit before tax for specified companies", "note": "Separate levy."}, {"id": "naseni_levy", "statute": "NASENI Act 2023, 0.25% of profit before tax for specified sectors", "note": "Separate levy."}, {"id": "capital_gains_tax", "statute": "Capital Gains Tax Act, 10%", "note": "Separate return."}, {"id": "petroleum_insurance_special_regimes", "note": "As in the NTA config."}], "signoff_flags": {"L-A": "Tertiary education tax base: assessable profit before loss relief and capital allowances.", "L-B": "Minimum tax: 0.5% of turnover less franked investment income; applies to medium and large companies; exemption list as above.", "L-C": "Software and 'Others' categories treated as plant (50% initial, 25% annual).", "L-D": "Investment allowance of 10% on plant and equipment categories.", "L-E": "Two-thirds cap measured on assessable profit before loss relief; manufacturing and agro-allied exempt.", "L-F": "TET exempts small companies (Finance Act 2021)."}}$rb$::jsonb,
+   'TaxStreem', '2026-10-18', 'Drafted by Counta from CITA as amended; signed off by TaxStreem (Kelechi Ibe), 18 October 2026, flags L-A to L-G agreed.')
 on conflict (id) do update set config = excluded.config, status = case when public.tax_rulebooks.status = 'approved' then public.tax_rulebooks.status else excluded.status end,
   yoa_from = excluded.yoa_from, yoa_to = excluded.yoa_to, note = excluded.note;
 
@@ -2132,6 +2132,23 @@ alter table public.bills add column if not exists wvat_withheld numeric(16,2) no
 alter table public.bills add column if not exists reverse_charge_vat numeric(16,2) not null default 0;
 alter table public.bills add column if not exists wht_note text;
 
+-- A bill sent back to the supplier (no Tax ID, no state for the state revenue service, or another reason). It leaves the books
+-- as a void bill does, keeping the reason and the note the supplier was sent; one sent back unpaid can be opened again.
+alter table public.bills add column if not exists returned_reason text check (returned_reason in ('missing_tin', 'missing_state', 'other'));
+alter table public.bills add column if not exists returned_note text;
+alter table public.bills add column if not exists returned_at timestamptz;
+alter table public.bills add column if not exists returned_by uuid references public.members(id) on delete set null;
+create index if not exists bills_returned_by_fk on public.bills(returned_by);
+
+-- Messages to suppliers: a bill sent back, by email or WhatsApp.
+alter table public.messages add column if not exists vendor_id uuid references public.vendors(id) on delete set null;
+alter table public.messages add column if not exists bill_id uuid references public.bills(id) on delete set null;
+create index if not exists messages_vendor_fk on public.messages(vendor_id);
+create index if not exists messages_bill_fk on public.messages(bill_id);
+alter table public.messages drop constraint if exists messages_template_check;
+alter table public.messages add constraint messages_template_check
+  check (template in ('document', 'reminder', 'receipt', 'statement', 'order', 'custom', 'bill_returned'));
+
 alter table public.bill_payments add column if not exists wvat numeric(16,2) not null default 0 check (wvat >= 0);
 do $$
 declare c record;
@@ -2180,7 +2197,7 @@ create table if not exists public.wht_deductions (
   doubled boolean not null default false,
   amount numeric(16,2) not null check (amount >= 0),
   authority text references public.tax_authorities(code),
-  state_assumed boolean not null default false,
+  state_missing boolean not null default false,
   deducted_on date not null,
   period date not null,
   due_date date not null,
@@ -2267,14 +2284,69 @@ create index if not exists vat_periods_payment_fk on public.vat_periods(payment_
 alter table public.vat_periods enable row level security;
 drop policy if exists vat_periods_read on public.vat_periods;
 create policy vat_periods_read on public.vat_periods for select to authenticated using ((select private.can_handle_money(org_id)));
+-- What a filed month's input VAT was made of, for the NRS return: VAT paid at customs, and VAT taken back on stock written off.
+alter table public.vat_periods add column if not exists import_vat numeric(16,2) not null default 0;
+alter table public.vat_periods add column if not exists stock_writeoff_vat numeric(16,2) not null default 0;
+
+-- Goods imported: the customs entry behind the VAT paid at the port (schedule D of the NRS VAT return). The import VAT is input
+-- VAT (Dr 1402) paid from a money account, or already in the books from a bank line. Duty and clearing charges go on the
+-- stock receipt as landed costs; here they are only the part of the VAT base the customs assessment used.
+create table if not exists public.customs_entries (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.orgs(id) on delete cascade,
+  number text not null,
+  entry_date date not null,
+  importer text,
+  description text not null,
+  hs_code text,
+  vessel text,
+  country text,
+  form_m text,
+  bill_of_lading text,
+  quantity numeric(18,3),
+  currency text not null default 'USD',
+  invoice_value numeric(18,2) not null check (invoice_value > 0),
+  fx_rate numeric(18,6) not null check (fx_rate > 0),
+  value_ngn numeric(18,2) not null check (value_ngn > 0),
+  other_charges numeric(18,2) not null default 0 check (other_charges >= 0),
+  vat_base numeric(18,2) not null check (vat_base > 0),
+  import_vat numeric(18,2) not null check (import_vat >= 0),
+  vendor_id uuid references public.vendors(id) on delete set null,
+  receipt_id uuid references public.receipts(id) on delete set null,
+  bank_account_id uuid references public.bank_accounts(id) on delete set null,
+  paid_at timestamptz,
+  reference text,
+  journal_id uuid references public.journals(id) on delete set null,
+  paid_in_journal_id uuid references public.journals(id) on delete set null,
+  document_path text,
+  notes text,
+  status text not null default 'posted' check (status in ('posted', 'void')),
+  created_by uuid references public.members(id) on delete set null,
+  created_at timestamptz not null default now(),
+  voided_by uuid references public.members(id) on delete set null,
+  voided_at timestamptz,
+  void_reason text,
+  unique (org_id, number)
+);
+create index if not exists customs_entries_org_date on public.customs_entries(org_id, entry_date);
+create index if not exists customs_entries_vendor_fk on public.customs_entries(vendor_id);
+create index if not exists customs_entries_receipt_fk on public.customs_entries(receipt_id);
+create index if not exists customs_entries_bank_fk on public.customs_entries(bank_account_id);
+create index if not exists customs_entries_journal_fk on public.customs_entries(journal_id);
+create index if not exists customs_entries_paid_in_fk on public.customs_entries(paid_in_journal_id);
+create index if not exists customs_entries_created_by_fk on public.customs_entries(created_by);
+create index if not exists customs_entries_voided_by_fk on public.customs_entries(voided_by);
+alter table public.customs_entries enable row level security;
+drop policy if exists customs_entries_read on public.customs_entries;
+create policy customs_entries_read on public.customs_entries for select to authenticated using ((select private.can_handle_money(org_id)));
 
 -- ---------------------------------------------------------------------------
 -- Who a supplier is for withholding tax
 -- ---------------------------------------------------------------------------
 -- corporate: Ltd, Plc, LLP, Ltd/Gte (and NGOs and government bodies, which are incorporated); not corporate: business names,
 -- sole traders, partnerships, LPs and individuals. The NRS schedule names the supplier by Tax ID, RC number or NIN; anything
--- other than a Tax ID doubles the rate. state: the supplier's state service (from its state, else its address), else the
--- business's own state, marked as assumed.
+-- other than a Tax ID doubles the rate. state: the supplier's state service, from its state or else its address. It is never
+-- assumed (TaxStreem sign-off W-2): a bill whose WHT goes to a state service waits for the supplier's state, or goes back.
 create or replace function private.vendor_wht_profile(p_vendor uuid) returns jsonb
 language sql stable security definer set search_path = public, private as $$
   select jsonb_build_object(
@@ -2285,13 +2357,12 @@ language sql stable security definer set search_path = public, private as $$
     'beneficiary_number', coalesce(nullif(trim(v.tin), ''), nullif(trim(v.rc_number), ''), nullif(trim(v.nin), '')),
     'has_tin', nullif(trim(v.tin), '') is not null,
     'exempt', coalesce(v.wht_exempt, false) or v.entity_type = 'government',
-    'state', coalesce(st.own, st.org), 'state_assumed', st.own is null and st.org is not null)
+    'state', st.own, 'state_missing', st.own is null)
   from vendors v
   cross join lateral (select case when v.entity_type in ('company', 'plc', 'llp', 'ltd_gte', 'ngo', 'government') then true
                                   when v.entity_type in ('business_name', 'sole_proprietor', 'partnership', 'lp', 'individual') then false
                                   else not coalesce(v.is_individual, false) end corporate) c
-  cross join lateral (select coalesce(private.state_code(v.state), private.state_code(v.address), private.state_code(v.location)) own,
-                             (select private.state_code(coalesce(o.registered_office, o.address)) from orgs o where o.id = v.org_id) org) st
+  cross join lateral (select coalesce(private.state_code(v.state), private.state_code(v.address), private.state_code(v.location)) own) st
   where v.id = p_vendor
 $$;
 
@@ -2333,7 +2404,7 @@ $$;
 create or replace function private.bill_wht(p_bill uuid) returns public.bills
 language plpgsql security definer set search_path = public, private as $$
 declare b public.bills; o public.orgs; v public.vendors; pf jsonb; l record; v_cat text; r public.wht_rates; v_rate numeric; v_base numeric; v_wht numeric;
-  v_small boolean := false; v_notes text[] := '{}'; v_rc numeric; v_month numeric; v_note text; v_doubled boolean := false;
+  v_small boolean := false; v_notes text[] := '{}'; v_rc numeric; v_month numeric; v_note text; v_doubled boolean := false; v_no_state boolean := false;
 begin
   select * into b from bills where id = p_bill for update;
   select * into o from orgs where id = b.org_id;
@@ -2369,6 +2440,9 @@ begin
     end if;
     if v_small and v_rate > 0 and v_cat <> 'compensation' then v_rate := 0; v_note := 'Within the ₦2 million monthly limit for a small business'; end if;
     v_wht := round(v_base * v_rate, 2);
+    if v_wht > 0 and (pf->>'state_missing')::boolean and (v_cat = 'compensation' or (not (pf->>'corporate')::boolean and (pf->>'resident')::boolean)) then
+      v_no_state := true;
+    end if;
     -- VAT self-charged on services bought from a supplier abroad (goods pay VAT at the port).
     v_rc := case when not (pf->>'resident')::boolean and not v.digital_supplier and l.vat = 0 and l.vat_treatment not in ('exempt', 'zero')
                    and l.account_code !~ '^(12|15)' then round(l.net * 0.075, 2) else 0 end;
@@ -2378,6 +2452,7 @@ begin
     if v_note is not null and not v_note = any(v_notes) then v_notes := v_notes || v_note; end if;
   end loop;
   if v_doubled then v_notes := array['No Tax ID: the rate is doubled'] || v_notes; end if;
+  if v_no_state then v_notes := array['The supplier''s state is not known, and its WHT goes to a state revenue service'] || v_notes; end if;
   update bills set
     wht_expected = (select coalesce(sum(wht), 0) from bill_lines where bill_id = b.id),
     wht_rate = case when subtotal > 0 then least(round((select coalesce(sum(wht), 0) from bill_lines where bill_id = b.id) / subtotal, 4), 0.99) else 0 end,
@@ -2387,6 +2462,23 @@ begin
   where id = b.id returning * into b;
   return b;
 end $$;
+
+-- What needs the user before a bill goes ahead: a supplier without a Tax ID (the WHT is doubled unless the bill goes back for
+-- it), a supplier whose WHT goes to a state revenue service with no state known (the bill cannot be approved or paid until it
+-- is added, or it goes back for the address), and whether the bill can still go back.
+create or replace function private.bill_tax_flags(p_bill uuid) returns jsonb
+language sql stable security definer set search_path = public, private as $$
+  select jsonb_build_object(
+    'missing_tin', not (pf->>'has_tin')::boolean and exists (select 1 from bill_lines l where l.bill_id = b.id and l.wht > 0
+      and coalesce(l.wht_category, b.wht_category, '') <> 'compensation'),
+    'missing_state', (pf->>'state_missing')::boolean and exists (select 1 from bill_lines l where l.bill_id = b.id and l.wht > 0
+      and (coalesce(l.wht_category, b.wht_category, '') = 'compensation' or (not (pf->>'corporate')::boolean and (pf->>'resident')::boolean))),
+    'can_return', b.status in ('draft', 'approved') and b.source <> 'receipt'
+      and not exists (select 1 from bill_payments p where p.bill_id = b.id and p.status in ('paid', 'processing'))
+      and not exists (select 1 from fixed_assets a where a.bill_id = b.id and a.status = 'active'))
+  from bills b cross join lateral (select private.vendor_wht_profile(b.vendor_id) pf) x
+  where b.id = p_bill
+$$;
 
 -- What a payment of p_gross keeps back: WHT and withholding VAT in proportion to what it settles, the rest when it settles
 -- the bill.
@@ -2508,6 +2600,9 @@ begin
   select * into b from bills where id = p_bill for update;
   if b.journal_id is not null then return b; end if;
   select name into v_vendor from vendors where id = b.vendor_id;
+  if coalesce((private.bill_tax_flags(b.id)->>'missing_state')::boolean, false) then
+    raise exception 'Add the state of % first: the withholding tax on % goes to its state revenue service. Or send the bill back to ask for the address.', v_vendor, b.number;
+  end if;
   for l in select * from bill_lines where bill_id = b.id order by line_no loop
     v_jl := v_jl || jsonb_build_array(jsonb_build_object('code', l.account_code, 'debit', l.net + case when l.vat_recoverable then 0 else l.vat end,
       'location_id', l.location_id, 'memo', l.description, 'doc_type', 'bill', 'doc_id', b.id));
@@ -2580,6 +2675,9 @@ begin
   v_wht := greatest(round(coalesce(private.num(p->>'wht'), (v_split->>'wht')::numeric), 2), 0);
   v_wvat := greatest(round(coalesce(private.num(p->>'wvat'), (v_split->>'wvat')::numeric), 2), 0);
   if v_wht + v_wvat >= v_gross then raise exception 'What is withheld cannot be the whole payment.'; end if;
+  if v_wht > 0 and coalesce((private.bill_tax_flags(b.id)->>'missing_state')::boolean, false) then
+    raise exception 'Add the state of % first: the withholding tax on % goes to its state revenue service.', v.name, b.number;
+  end if;
   v_net := v_gross - v_wht - v_wvat;
   v_at := least(coalesce(nullif(p->>'paid_at', '')::timestamptz, now()), now());
   v_jl := jsonb_build_array(
@@ -2678,7 +2776,7 @@ end $$;
 create or replace function private.sync_wht_deductions() returns trigger
 language plpgsql security definer set search_path = public, private as $$
 declare b public.bills; v public.vendors; pf jsonb; v_day date; v_status text; x record; v_tot numeric; v_left numeric; v_left_base numeric; v_n int; v_i int := 0;
-  v_amt numeric; v_base numeric; v_auth text; v_desc text; v_assumed boolean;
+  v_amt numeric; v_base numeric; v_auth text; v_desc text;
 begin
   if new.status in ('failed', 'reversed') then
     update wht_deductions set status = 'void' where bill_payment_id = new.id and status in ('pending', 'deducted');
@@ -2704,11 +2802,11 @@ begin
       v_base := round(new.gross * b.subtotal / nullif(b.total, 0), 2);
       v_auth := case when (pf->>'corporate')::boolean or not (pf->>'resident')::boolean then 'NRS' else pf->>'state' end;
       insert into wht_deductions (org_id, kind, bill_id, bill_payment_id, vendor_id, category, nrs_code, description, recipient_type, resident, beneficiary_type,
-        beneficiary_number, base, rate, doubled, amount, authority, state_assumed, deducted_on, period, due_date, status, receipt_no)
+        beneficiary_number, base, rate, doubled, amount, authority, state_missing, deducted_on, period, due_date, status, receipt_no)
       values (b.org_id, 'wht', b.id, new.id, v.id, coalesce(nullif(b.wht_category, 'none'), 'services'), (select nrs_code from wht_rates where code = coalesce(nullif(b.wht_category, 'none'), 'services')),
         left(v_desc || ': ' || (select string_agg(description, '; ' order by line_no) from bill_lines where bill_id = b.id), 300), pf->>'recipient_type',
         (pf->>'resident')::boolean, pf->>'beneficiary_type', pf->>'beneficiary_number', v_base, round(new.wht / nullif(v_base, 0), 4), false, new.wht, v_auth,
-        v_auth <> 'NRS' and coalesce((pf->>'state_assumed')::boolean, false), v_day, date_trunc('month', v_day)::date,
+        v_auth is null, v_day, date_trunc('month', v_day)::date,
         private.wht_due('wht', v_auth, b.wht_category, v_day), v_status, 'WHT-' || lpad(private.next_no(b.org_id, 'WHTR', 1)::text, 5, '0'));
     else
       -- Spread over the bill's kinds of transaction by their share of the bill's WHT; the last takes the pennies.
@@ -2724,10 +2822,10 @@ begin
         v_auth := case when x.cat = 'compensation' then pf->>'state'
                        when (pf->>'corporate')::boolean or not (pf->>'resident')::boolean then 'NRS' else pf->>'state' end;
         insert into wht_deductions (org_id, kind, bill_id, bill_payment_id, vendor_id, category, nrs_code, description, recipient_type, resident, beneficiary_type,
-          beneficiary_number, base, rate, doubled, amount, authority, state_assumed, deducted_on, period, due_date, status, receipt_no)
+          beneficiary_number, base, rate, doubled, amount, authority, state_missing, deducted_on, period, due_date, status, receipt_no)
         values (b.org_id, 'wht', b.id, new.id, v.id, x.cat, (select nrs_code from wht_rates where code = x.cat), left(v_desc || ': ' || x.descr, 300),
           pf->>'recipient_type', (pf->>'resident')::boolean, pf->>'beneficiary_type', pf->>'beneficiary_number', v_base, x.rate,
-          not (pf->>'has_tin')::boolean and x.cat <> 'compensation', v_amt, v_auth, v_auth <> 'NRS' and coalesce((pf->>'state_assumed')::boolean, false),
+          not (pf->>'has_tin')::boolean and x.cat <> 'compensation', v_amt, v_auth, v_auth is null,
           v_day, date_trunc('month', v_day)::date, private.wht_due('wht', v_auth, x.cat, v_day), v_status,
           'WHT-' || lpad(private.next_no(b.org_id, 'WHTR', 1)::text, 5, '0'));
       end loop;
@@ -3192,6 +3290,10 @@ begin
         v_purpose := 'vendor';
         -- What pay_bill keeps back for this gross: WHT for the WHT column; withholding VAT on top.
         if v_gross is not null then v_wht := v_gross - v_amt - coalesce((private.bill_withholding(b.id, v_gross)->>'wvat')::numeric, 0); end if;
+        -- A supplier whose WHT goes to a state revenue service needs its state first (TaxStreem sign-off W-2).
+        if coalesce((private.bill_tax_flags(b.id)->>'missing_state')::boolean, false) then
+          v_err := v_err || format('Add the state of %s before paying %s: its withholding tax goes to that state''s revenue service.', v.name, b.number);
+        end if;
       end if;
     end if;
   elsif v_supplier is not null then
@@ -3222,12 +3324,56 @@ begin
     'amount', v_amt, 'gross', v_gross, 'wht', v_wht, 'wvat', case when v_kind = 'bill' and v_gross is not null then (private.bill_withholding(b.id, v_gross)->>'wvat')::numeric else 0 end, 'fee', case when v_amt is not null then private.transfer_fee(v_amt) end,
     'bill_id', b.id, 'bill_number', b.number, 'vendor_id', v.id, 'vendor_name', v.name, 'account', v_code, 'purpose', v_purpose, 'lines', v_lines);
 end $$;
+-- The bills list (from 20261018000400), saying which void bills went back to the supplier.
+create or replace function public.get_bills(p_org uuid, p_filter jsonb default '{}'::jsonb) returns jsonb
+language plpgsql stable security definer set search_path = public, private as $$
+declare m public.members; v_today date;
+begin
+  m := private.require(p_org, null);
+  if not (private.can_handle_money(p_org) or private.perm_of(m, 'approve_pos')) then raise exception 'Your role does not see bills.' using errcode = '42501'; end if;
+  v_today := private.local_day(p_org, now());
+  return jsonb_build_object(
+    'bills', (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'number', b.number, 'vendor_id', b.vendor_id, 'vendor_name', v.name, 'vendor_ref', b.vendor_ref,
+        'source', b.source, 'bill_date', b.bill_date, 'due_date', b.due_date, 'status', b.status, 'subtotal', b.subtotal, 'vat_total', b.vat_total, 'total', b.total,
+        'wht_expected', b.wht_expected, 'amount_paid', b.amount_paid, 'balance', case when b.status in ('approved', 'partially_paid') then b.total - b.amount_paid else 0 end,
+        'in_progress', (select coalesce(sum(gross), 0) from bill_payments where bill_id = b.id and status = 'processing'),
+        'overdue_days', case when b.status in ('approved', 'partially_paid') then greatest(v_today - b.due_date, 0) end, 'created_at', b.created_at,
+        'ai_confidence', b.ai_confidence, 'returned_reason', b.returned_reason) order by b.created_at desc), '[]'::jsonb)
+      from bills b join vendors v on v.id = b.vendor_id
+      where b.org_id = p_org and (nullif(p_filter->>'status', '') is null or b.status = any(string_to_array(p_filter->>'status', ',')))
+        and (nullif(p_filter->>'vendor_id', '') is null or b.vendor_id = (p_filter->>'vendor_id')::uuid)
+        and (nullif(p_filter->>'from', '') is null or b.bill_date >= (p_filter->>'from')::date)
+        and (nullif(p_filter->>'to', '') is null or b.bill_date <= (p_filter->>'to')::date)),
+    'vendors', (select coalesce(jsonb_agg(jsonb_build_object('id', v.id, 'name', v.name, 'tin', v.tin, 'is_individual', v.is_individual, 'wht_category', v.wht_category,
+        'bank_code', v.bank_code, 'bank_name', v.bank_name, 'account_number', v.account_number, 'account_name', v.account_name, 'credit_days', v.credit_days,
+        'vat_registered', v.vat_registered, 'balance', private.vendor_balance(p_org, v.id), 'phone', v.phone, 'email', v.email, 'address', v.address,
+        'default_account', v.default_account) order by v.name), '[]'::jsonb) from vendors v where v.org_id = p_org),
+    'wht_rates', (select jsonb_agg(to_jsonb(r) order by r.sort) from wht_rates r),
+    'asset_classes', (select jsonb_agg(to_jsonb(a) order by a.cost_account) from asset_classes a),
+    'unassigned_payables', (select coalesce(sum(credit - debit), 0) from journal_lines where org_id = p_org and account_code in ('2101', '2102') and party_id is null));
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- VAT: the month's figures, credits carried forward, returns filed and paid
 -- ---------------------------------------------------------------------------
--- A month's VAT from the documents: output VAT on sales (less credit notes), input VAT on bills, stock receipts and VAT
--- self-charged on services from abroad (less suppliers' credit notes), and VAT customers withheld (credited in the return).
+-- Standard-rated stock written off (broken, expired, stolen, quarantined or otherwise lost: posted to the stock loss account)
+-- between two days, at cost. Its input VAT is taken back in the VAT return (sub-schedule C1 of the NRS return).
+create or replace function private.vat_stock_writeoffs(p_org uuid, p_from date, p_to date)
+returns table (movement_id uuid, item_id uuid, item_name text, reason text, movement_type text, day date, cost numeric)
+language sql stable security definer set search_path = public, private as $$
+  select mv.id, mv.item_id, i.name, coalesce(nullif(mv.reason, ''), case mv.type when 'quarantine' then 'Expired' when 'write_off' then 'Written off' else 'Other' end),
+    mv.type, private.local_day(mv.org_id, mv.recorded_at), round(-mv.value, 2)
+  from movements mv join items i on i.id = mv.item_id
+  where mv.org_id = p_org and mv.value < 0 and mv.journal_id is not null and i.vat_treatment = 'standard'
+    and mv.recorded_at >= (p_from::timestamp - interval '1 day') and mv.recorded_at < (p_to::timestamp + interval '2 days')
+    and private.local_day(mv.org_id, mv.recorded_at) between p_from and p_to
+    and exists (select 1 from journal_lines jl where jl.journal_id = mv.journal_id and jl.debit > 0
+      and (jl.account_code = private.acct(p_org, 'stock_loss') or jl.account_code like private.acct(p_org, 'stock_loss') || '-%'))
+$$;
+
+-- A month's VAT from the documents: output VAT on sales (less credit notes); input VAT on bills, stock receipts, VAT
+-- self-charged on services from abroad and VAT paid at customs, less suppliers' credit notes and the VAT on standard-rated
+-- stock written off; and VAT customers withheld (credited in the return).
 create or replace function private.vat_month(p_org uuid, p_month date) returns jsonb
 language sql stable security definer set search_path = public, private as $$
   with b as (select date_trunc('month', p_month)::date f, (date_trunc('month', p_month) + interval '1 month' - interval '1 day')::date t),
@@ -3244,10 +3390,13 @@ language sql stable security definer set search_path = public, private as $$
          where org_id = p_org and status = 'posted' and private.local_day(org_id, coalesce(posted_at, created_at)) between b.f and b.t),
   vc as (select coalesce(sum(vat_total), 0) vat from vendor_credits, b where org_id = p_org and status <> 'void' and journal_id is not null and credit_date between b.f and b.t),
   wv as (select coalesce(sum(amount), 0) vat from collections, b where org_id = p_org and method = 'wvat_credit' and status = 'confirmed' and journal_id is not null
-           and private.local_day(org_id, received_at) between b.f and b.t)
-  select jsonb_build_object('period', b.f, 'output', round(so.vat, 2), 'input', round(bi.vat + bi.rc + rc.vat - vc.vat, 2), 'reverse_charge', round(bi.rc, 2),
+           and private.local_day(org_id, received_at) between b.f and b.t),
+  im as (select coalesce(sum(import_vat), 0) vat from customs_entries, b where org_id = p_org and status = 'posted' and entry_date between b.f and b.t),
+  wo as (select coalesce(round(sum(x.cost) * 0.075, 2), 0) vat from b, private.vat_stock_writeoffs(p_org, b.f, b.t) x)
+  select jsonb_build_object('period', b.f, 'output', round(so.vat, 2), 'input', round(bi.vat + bi.rc + rc.vat - vc.vat + im.vat - wo.vat, 2), 'reverse_charge', round(bi.rc, 2),
+    'import_vat', round(im.vat, 2), 'stock_writeoff_vat', wo.vat,
     'wvat_credit', round(wv.vat, 2), 'standard_sales', so.std, 'zero_rated_sales', so.zero, 'exempt_sales', so.exempt)
-  from b, so, bi, rc, vc, wv
+  from b, so, bi, rc, vc, wv, im, wo
 $$;
 
 -- Month by month up to p_to: what is payable, and the input VAT credit carried forward in layers by the month it arose (used
@@ -3266,6 +3415,7 @@ begin
     select * into vp from vat_periods where org_id = p_org and period = mth;
     v_live := private.vat_month(p_org, mth);
     f := case when vp.period is not null then jsonb_build_object('period', mth, 'output', vp.output_vat, 'input', vp.input_vat, 'wvat_credit', vp.wvat_credit,
+      'import_vat', vp.import_vat, 'stock_writeoff_vat', vp.stock_writeoff_vat,
       'reverse_charge', v_live->'reverse_charge', 'standard_sales', v_live->'standard_sales', 'zero_rated_sales', v_live->'zero_rated_sales',
       'exempt_sales', v_live->'exempt_sales') else v_live end;
     v_bf := (select coalesce(sum((l->>'amount')::numeric), 0) from jsonb_array_elements(layers) l);
@@ -3411,6 +3561,8 @@ begin
     jsonb_build_object('code', private.acct(p_org, 'vat_withheld_by_customers'), 'credit', (x->>'wvat_credit')::numeric, 'memo', 'VAT withheld by customers, credited'),
     jsonb_build_object('code', private.acct(p_org, 'input_vat'), 'credit', (x->>'input')::numeric + (x->>'credit_used')::numeric - (x->>'new_credit')::numeric,
       'memo', 'Input VAT claimed' || case when (x->>'credit_used')::numeric > 0 then ', with ' || private.naira((x->>'credit_used')::numeric) || ' brought forward' else '' end),
+    jsonb_build_object('code', private.acct(p_org, 'stock_loss'), 'debit', coalesce((x->>'stock_writeoff_vat')::numeric, 0), 'memo', 'Input VAT taken back on stock written off'),
+    jsonb_build_object('code', private.acct(p_org, 'input_vat'), 'credit', coalesce((x->>'stock_writeoff_vat')::numeric, 0), 'memo', 'Input VAT on stock written off'),
     jsonb_build_object('code', '6512', 'debit', (x->>'credit_expired')::numeric, 'memo', 'Input VAT credit more than five years old'),
     jsonb_build_object('code', private.acct(p_org, 'input_vat'), 'credit', (x->>'credit_expired')::numeric, 'memo', 'Input VAT credit lapsed'),
     jsonb_build_object('code', '1404', 'debit', v_refund, 'memo', 'VAT refund claimed from the NRS'),
@@ -3419,9 +3571,10 @@ begin
     j := private.post_entry(p_org, 'VAT return for ' || to_char(v_period, 'FMMonth YYYY'), 'vat_return', null, m.id, m.id, v_jl, private.posting_time(p_org, v_end),
       jsonb_build_object('evidence', jsonb_build_array(jsonb_build_object('type', 'vat_return', 'period', v_period, 'payable', x->'payable', 'by', m.display_name))));
   end if;
-  insert into vat_periods (org_id, period, output_vat, input_vat, wvat_credit, credit_bf, credit_used, credit_expired, payable, new_credit, refund_claimed, credit_cf,
-    layers, status, filed_at, filed_by, journal_id, notes)
-  values (p_org, v_period, (x->>'output')::numeric, (x->>'input')::numeric, (x->>'wvat_credit')::numeric, (x->>'credit_bf')::numeric, (x->>'credit_used')::numeric,
+  insert into vat_periods (org_id, period, output_vat, input_vat, wvat_credit, import_vat, stock_writeoff_vat, credit_bf, credit_used, credit_expired, payable, new_credit,
+    refund_claimed, credit_cf, layers, status, filed_at, filed_by, journal_id, notes)
+  values (p_org, v_period, (x->>'output')::numeric, (x->>'input')::numeric, (x->>'wvat_credit')::numeric, coalesce((x->>'import_vat')::numeric, 0),
+    coalesce((x->>'stock_writeoff_vat')::numeric, 0), (x->>'credit_bf')::numeric, (x->>'credit_used')::numeric,
     (x->>'credit_expired')::numeric, (x->>'payable')::numeric, (x->>'new_credit')::numeric, v_refund, (x->>'credit_cf')::numeric - v_refund, x->'layers',
     case when (x->>'payable')::numeric = 0 then 'paid' else 'filed' end, now(), m.id, j.id, nullif(trim(p->>'notes'), ''));
   return public.vat_position(p_org, jsonb_build_object('from', v_period, 'to', v_period));
@@ -3510,9 +3663,12 @@ language sql stable security definer set search_path = public, private as $$
           where org_id = p_org and status <> 'void' and journal_id is not null and credit_date between p_from and p_to),
   wv as (select coalesce(sum(amount), 0) vat from collections where org_id = p_org and method = 'wvat_credit' and status = 'confirmed' and journal_id is not null
            and private.local_day(org_id, received_at) between p_from and p_to),
+  im as (select coalesce(sum(import_vat), 0) vat, coalesce(sum(vat_base), 0) base from customs_entries
+         where org_id = p_org and status = 'posted' and entry_date between p_from and p_to),
+  wo as (select coalesce(round(sum(cost) * 0.075, 2), 0) vat, coalesce(sum(cost), 0) base from private.vat_stock_writeoffs(p_org, p_from, p_to)),
   led as (select coalesce(sum(mv.cr - mv.dr) filter (where mv.code = '2201'), 0) out_ledger, coalesce(sum(mv.dr - mv.cr) filter (where mv.code = '1402'), 0) in_ledger
           from (select l.account_code code, sum(l.debit) dr, sum(l.credit) cr from journal_lines l join journals j on j.id = l.journal_id
-                where l.org_id = p_org and j.entry_date between p_from and p_to and j.source_type in ('sale', 'bill', 'receipt') group by 1) mv)
+                where l.org_id = p_org and j.entry_date between p_from and p_to and j.source_type in ('sale', 'bill', 'receipt', 'customs_entry') group by 1) mv)
   select jsonb_build_array(
     private.fr('Output VAT', null, null, 'heading', 0),
     private.fr('Standard-rated supplies, status 0 (7.5%)', so.std, null, 'line', 1),
@@ -3524,15 +3680,18 @@ language sql stable security definer set search_path = public, private as $$
     private.fr('Purchases and expenses on bills (taxable value ' || to_char(bi.base, 'FM999,999,999,990.00') || ')', bi.vat, null, 'line', 1),
     private.fr('VAT self-charged on services from abroad (value ' || to_char(bi.rc_base, 'FM999,999,999,990.00') || ')', bi.rc, null, 'line', 1),
     private.fr('Stock received (taxable value ' || to_char(rc.base, 'FM999,999,999,990.00') || ')', rc.vat, null, 'line', 1),
+    private.fr('VAT paid at customs on imports (value ' || to_char(im.base, 'FM999,999,999,990.00') || ')', im.vat, null, 'line', 1),
     private.fr('Less credit notes from suppliers (taxable value ' || to_char(vcr.base, 'FM999,999,999,990.00') || ')', -vcr.vat, null, 'line', 1),
-    private.fr('Input VAT recoverable', bi.vat + bi.rc + rc.vat - vcr.vat, null, 'subtotal', 0),
+    private.fr('Less VAT on standard-rated stock written off (cost ' || to_char(wo.base, 'FM999,999,999,990.00') || ')', -wo.vat, null, 'line', 1),
+    private.fr('Input VAT recoverable', bi.vat + bi.rc + rc.vat + im.vat - vcr.vat - wo.vat, null, 'subtotal', 0),
     private.fr('VAT withheld by customers (credited)', wv.vat, null, 'line', 0),
-    private.fr('VAT payable / (credit) for the period, before credit brought forward', so.vat - bi.vat - bi.rc - rc.vat + vcr.vat - wv.vat, null, 'total', 0),
+    private.fr('VAT payable / (credit) for the period, before credit brought forward', so.vat - bi.vat - bi.rc - rc.vat - im.vat + vcr.vat + wo.vat - wv.vat, null, 'total', 0),
     private.fr('Ledger check', null, null, 'heading', 0),
     private.fr('Output VAT in the ledger (2201) from sales', led.out_ledger, null, 'line', 1),
-    private.fr('Input VAT in the ledger (1402) from bills, receipts and supplier credit notes', led.in_ledger, null, 'line', 1),
-    private.fr('Difference to explain', (so.vat - led.out_ledger) - (bi.vat + bi.rc + rc.vat - vcr.vat - led.in_ledger), null, 'subtotal', 0))
-  from so, bi, rc, vcr, wv, led
+    private.fr('Input VAT in the ledger (1402) from bills, receipts, customs and supplier credit notes', led.in_ledger, null, 'line', 1),
+    private.fr('Difference to explain', (so.vat - led.out_ledger) - (bi.vat + bi.rc + rc.vat + im.vat - vcr.vat - led.in_ledger), null, 'subtotal', 0,
+      case when wo.vat <> 0 then 'The VAT on stock written off leaves 1402 when the month is filed.' end))
+  from so, bi, rc, vcr, wv, im, wo, led
 $$;
 
 -- Items the AI classified under the earlier lists are checked again against the rule book (choices people made stay).
@@ -3588,6 +3747,10 @@ begin
   if not found then raise exception 'Vendor not found.'; end if;
   -- Draft bills from the supplier follow the change.
   perform private.bill_wht(b.id) from bills b where b.vendor_id = v.id and b.status = 'draft';
+  -- WHT already deducted while the supplier's state was not known goes to its state service now that it is.
+  update wht_deductions d set authority = st.code, state_missing = false, due_date = private.wht_due('wht', st.code, d.category, d.deducted_on)
+  from (select private.vendor_wht_profile(v.id)->>'state' code) st
+  where d.vendor_id = v.id and d.kind = 'wht' and d.state_missing and d.authority is null and st.code is not null and d.status in ('pending', 'deducted');
   return to_jsonb(v) || jsonb_build_object('wht_profile', private.vendor_wht_profile(v.id));
 end $$;
 
@@ -3624,16 +3787,35 @@ begin
   return b.id;
 end $$;
 
+-- What the supplier is told, by reason. The note can be changed before it goes; this is where it starts.
+create or replace function private.return_note(p_reason text) returns text
+language sql immutable set search_path = public, private as $$
+  select case p_reason
+    when 'missing_tin' then 'Your Tax ID is not on your invoice or in our records. Without it we must deduct withholding tax at twice the normal rate. '
+      || 'Please send us your Tax ID and an invoice that shows it. You can get your Tax ID at taxid.nrs.gov.ng: individuals with their NIN, '
+      || 'businesses with their CAC registration number.'
+    when 'missing_state' then 'We need your business address before we can pay this invoice. The withholding tax we deduct from your payment goes to '
+      || 'the revenue service of the state where your business is, and we cannot tell which state that is. Please send us your address and an '
+      || 'invoice that shows it.'
+    else null end
+$$;
+
 create or replace function private.bill_json(p_bill uuid) returns jsonb
 language sql stable security definer set search_path = public, private as $$
   select to_jsonb(b) || jsonb_build_object(
     'vendor', (select jsonb_build_object('id', v.id, 'name', v.name, 'tin', v.tin, 'is_individual', v.is_individual, 'bank_code', v.bank_code, 'bank_name', v.bank_name,
         'account_number', v.account_number, 'account_name', v.account_name, 'wht_category', v.wht_category, 'entity_type', v.entity_type, 'resident', v.resident,
         'state', v.state, 'rc_number', v.rc_number, 'nin', v.nin, 'is_manufacturer', v.is_manufacturer, 'wht_exempt', v.wht_exempt,
+        'email', v.email, 'phone', v.phone, 'address', v.address,
         'wht_profile', private.vendor_wht_profile(v.id)) from vendors v where v.id = b.vendor_id),
     'balance', case when b.status in ('approved', 'partially_paid') then b.total - b.amount_paid else 0 end,
     'in_progress', (select coalesce(sum(gross), 0) from bill_payments where bill_id = b.id and status = 'processing'),
     'to_withhold', case when b.status in ('approved', 'partially_paid') then private.bill_withholding(b.id, b.total - b.amount_paid) end,
+    'tax_flags', private.bill_tax_flags(b.id),
+    'return_notes', jsonb_build_object('missing_tin', private.return_note('missing_tin'), 'missing_state', private.return_note('missing_state')),
+    'messages', (select coalesce(jsonb_agg(jsonb_build_object('id', mg.id, 'template', mg.template, 'channel', mg.channel, 'to', mg.to_address, 'status', mg.status,
+        'error', mg.error, 'created_at', mg.created_at) order by mg.created_at), '[]'::jsonb) from messages mg where mg.bill_id = b.id),
+    'returned_by_name', (select display_name from members where id = b.returned_by),
     'overdue_days', case when b.status in ('approved', 'partially_paid') then greatest(private.local_day(b.org_id, now()) - b.due_date, 0) end,
     'lines', (select coalesce(jsonb_agg(to_jsonb(l) - 'org_id' || jsonb_build_object('account_name', private.account_name(b.org_id, l.account_code),
         'creditable', private.bill_line_creditable(l.id), 'wht_category_effective', coalesce(l.wht_category, b.wht_category)) order by l.line_no), '[]'::jsonb)
@@ -3900,12 +4082,12 @@ language sql stable security definer set search_path = public, private as $$
         'beneficiary_number', d.beneficiary_number, 'address', d.vaddress, 'transaction_date', d.deducted_on, 'description', d.description, 'amount', d.base,
         'transaction_type', d.nrs_code, 'recipient_type', d.recipient_type, 'resident_type', case when d.resident then 'RESIDENT' else 'NON_RESIDENT' end,
         'rate', d.rate, 'wht', d.amount, 'invoice', coalesce(d.vendor_ref, d.bnumber), 'invoice_amount', d.bsubtotal + d.bvat, 'category', d.category,
-        'receipt_no', d.receipt_no, 'status', d.status, 'state_assumed', d.state_assumed) order by d.deducted_on, d.vname) from d), '[]'::jsonb),
+        'receipt_no', d.receipt_no, 'status', d.status, 'state_missing', d.state_missing) order by d.deducted_on, d.vname) from d), '[]'::jsonb),
     'total', (select coalesce(sum(amount), 0) from d), 'outstanding', (select coalesce(sum(amount), 0) from d where status = 'deducted'),
     'checks', coalesce((select jsonb_agg(x) from (
         select jsonb_build_object('severity', 'block', 'text', vname || ' has no Tax ID, RC number or NIN; the schedule needs one of them.') x from d where beneficiary_type is null
         union all
-        select jsonb_build_object('severity', 'warn', 'text', 'The state of ' || vname || ' is not known; this assumes your own state. Add it to the supplier.') from d where state_assumed
+        select jsonb_build_object('severity', 'block', 'text', 'The state of ' || vname || ' is not known, so its WHT has no state revenue service yet. Add the supplier''s state.') from d where state_missing
         union all
         select jsonb_build_object('severity', 'warn', 'text', vname || ': no NRS transaction type for ' || coalesce(category, 'this deduction') || '.') from d
           where p_kind = 'wht' and p_authority = 'NRS' and nrs_code is null) y), '[]'::jsonb))
@@ -3936,7 +4118,7 @@ begin
         'authority_name', a.name, 'short_name', a.short_name, 'deductions', count(*), 'deducted', sum(d.amount),
         'remitted', coalesce(sum(d.amount) filter (where d.status = 'remitted'), 0), 'outstanding', coalesce(sum(d.amount) filter (where d.status = 'deducted'), 0),
         'pending', coalesce(sum(d.amount) filter (where d.status = 'pending'), 0), 'due_date', min(d.due_date),
-        'overdue', bool_or(d.status = 'deducted' and d.due_date < v_today), 'state_assumed', bool_or(d.state_assumed),
+        'overdue', bool_or(d.status = 'deducted' and d.due_date < v_today), 'state_missing', bool_or(d.state_missing),
         'missing_id', bool_or(d.beneficiary_type is null and d.kind = 'wht')) g
       from wht_deductions d left join tax_authorities a on a.code = d.authority
       where d.org_id = p_org and d.status <> 'void' and d.period between date_trunc('month', v_from)::date and v_to
@@ -3988,12 +4170,364 @@ begin
     'is_individual', v.is_individual, 'resident', coalesce(v.resident, true), 'country', coalesce(v.country, 'NG'), 'state', v.state, 'address', v.address,
     'wht_category', v.wht_category, 'is_manufacturer', coalesce(v.is_manufacturer, false), 'wht_exempt', coalesce(v.wht_exempt, false),
     'digital_supplier', coalesce(v.digital_supplier, false), 'connected_person', coalesce(v.connected_person, false), 'vat_registered', v.vat_registered,
-    'wht_profile', pf || jsonb_build_object('authority', v_auth, 'authority_name', (select coalesce(short_name, name) from tax_authorities where code = v_auth)),
+    'wht_profile', pf || jsonb_build_object('authority', v_auth, 'authority_name', (select coalesce(short_name, name) from tax_authorities where code = v_auth),
+      'state_needed', v_auth is null),
     'wht_withheld', (select coalesce(sum(amount), 0) from wht_deductions where vendor_id = v.id and kind = 'wht' and status in ('deducted', 'remitted')));
 end $$;
 
--- Customers: as before, and whether the customer is a withholding VAT agent (a bank, a telecom, an oil company, a government
--- body...) that keeps the VAT on our invoices and pays it to the NRS for us. Only a manager, an accountant or the owner sets it.
+-- ---------------------------------------------------------------------------
+-- Sending a bill back to the supplier (TaxStreem sign-off W-1 and W-2)
+-- ---------------------------------------------------------------------------
+-- p: {reason: missing_tin|missing_state|other, note (what the supplier reads; required for other), send: email|whatsapp|null, to}.
+-- The bill leaves the books as a void bill does. The note goes to the supplier by email or WhatsApp when asked, and a bill that
+-- came from Prism shows the reason and the note on its status there.
+create or replace function public.return_bill(p_bill uuid, p jsonb) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare b public.bills; v public.vendors; m public.members; v_reason text := coalesce(nullif(p->>'reason', ''), 'other'); v_note text;
+  v_send text := nullif(p->>'send', ''); v_to text; msg public.messages; v_ref text; v_label text;
+begin
+  select * into b from bills where id = p_bill for update;
+  if not found then raise exception 'Bill not found.'; end if;
+  m := private.require(b.org_id, 'keep_books');
+  if v_reason not in ('missing_tin', 'missing_state', 'other') then raise exception 'Say why the bill goes back.'; end if;
+  if b.status not in ('draft', 'approved') then raise exception '% is %. Only a bill not yet paid goes back to the supplier.', b.number, replace(b.status, '_', ' '); end if;
+  if b.source = 'receipt' then
+    raise exception '% came from a stock receipt, so the goods are in. Add the Tax ID or the state to the supplier instead.', b.number;
+  end if;
+  if exists (select 1 from bill_payments where bill_id = b.id and status in ('paid', 'processing')) then
+    raise exception '% has payments. Ask the supplier for a credit note instead.', b.number;
+  end if;
+  if exists (select 1 from fixed_assets where bill_id = b.id and status = 'active') then raise exception 'An asset from % is in use.', b.number; end if;
+  select * into v from vendors where id = b.vendor_id;
+  v_note := coalesce(nullif(trim(p->>'note'), ''), private.return_note(v_reason));
+  if v_note is null then raise exception 'Write what the supplier should know.'; end if;
+  v_ref := coalesce(nullif(b.vendor_ref, ''), b.number);
+  v_label := case v_reason when 'missing_tin' then 'no Tax ID' when 'missing_state' then 'no address for the state revenue service' else 'see the note' end;
+  -- Out of the books first, as a void bill.
+  if b.journal_id is not null then
+    perform private.reverse_entry(b.journal_id, m.id, 'Bill ' || b.number || ' sent back to ' || v.name || ': ' || v_label, null);
+    update fixed_assets set status = 'rejected', notes = concat_ws(' · ', notes, 'Bill sent back') where bill_id = b.id and status = 'pending_confirmation';
+  end if;
+  update bills set status = 'void', voided_by = m.id, voided_at = now(), void_reason = 'Sent back to the supplier: ' || v_label,
+    returned_reason = v_reason, returned_note = left(v_note, 2000), returned_at = now(), returned_by = m.id
+  where id = b.id;
+  if v_send is not null then
+    if v_send not in ('email', 'whatsapp') then raise exception 'Send it by email or WhatsApp.'; end if;
+    v_to := coalesce(nullif(trim(p->>'to'), ''), case when v_send = 'email' then v.email else v.phone end);
+    if v_to is null or (v_send = 'whatsapp' and length(coalesce(private.clean_phone(v_to), '')) < 11)
+       or (v_send = 'email' and v_to !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$') then
+      raise exception 'Add % for %, or send the note yourself.', case when v_send = 'email' then 'an email address' else 'a WhatsApp number' end, v.name;
+    end if;
+    msg := private.queue_message(b.org_id, v_send, v_to, 'bill_returned', 'Invoice ' || v_ref || ' returned',
+      jsonb_build_object('customer_name', v.name, 'business', (select name from orgs where id = b.org_id), 'number', v_ref, 'total', b.total,
+        'reason', v_reason, 'note', left(v_note, 2000)), null, null, m.id);
+    update messages set vendor_id = v.id, bill_id = b.id where id = msg.id;
+  end if;
+  return private.bill_json(b.id);
+end $$;
+
+-- A bill sent back comes back as a draft when the supplier answers (the Tax ID or the state added to the supplier, or a
+-- corrected invoice): its WHT is worked out again and it is approved as any draft.
+create or replace function public.reopen_bill(p_bill uuid) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare b public.bills; m public.members;
+begin
+  select * into b from bills where id = p_bill for update;
+  if not found then raise exception 'Bill not found.'; end if;
+  m := private.require(b.org_id, 'keep_books');
+  if b.status <> 'void' or b.returned_reason is null then raise exception 'Only a bill sent back to the supplier opens again.'; end if;
+  -- Anything posted was reversed when it went back; approving it again posts it afresh.
+  delete from wht_deductions where bill_id = b.id and kind = 'reverse_charge' and status = 'void';
+  update bills set status = 'draft', journal_id = null, approved_by = null, approved_at = null, voided_by = null, voided_at = null, void_reason = null,
+    returned_reason = null, returned_note = null, returned_at = null, returned_by = null,
+    notes = concat_ws(' · ', notes, 'Sent back to the supplier on ' || to_char(private.local_day(b.org_id, b.returned_at), 'DD Mon YYYY') || ' and opened again')
+  where id = b.id;
+  perform private.bill_wht(b.id);
+  return private.bill_json(b.id);
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- What the NRS VAT return (Form VAT 002 and its schedules A to F) needs
+-- ---------------------------------------------------------------------------
+-- Decisions (TaxStreem, 18 Oct 2026): place of consumption is the customer's state and LGA, else the branch's; walk-in and
+-- till sales are one row per product per branch; input VAT is claimed on purchases less stock written off (the write-offs
+-- go on sub-schedule C1 and their VAT is taken back); opening and closing stock are left blank; the zero-rated part of
+-- purchases is apportioned by the month's zero-rated share of VATable sales.
+
+-- States and local government areas exactly as the NRS template lists them (its hidden Config2 sheet).
+create table if not exists public.ng_lgas (
+  state text not null,
+  lga text not null,
+  sort int not null,
+  primary key (state, lga)
+);
+alter table public.ng_lgas enable row level security;
+drop policy if exists ng_lgas_read on public.ng_lgas;
+create policy ng_lgas_read on public.ng_lgas for select to authenticated using (true);
+insert into public.ng_lgas (state, lga, sort) values
+  ('Abia','Aba North',1), ('Abia','Aba South',2), ('Abia','Arochukwu',3), ('Abia','Bende',4), ('Abia','Ikwuano',5), ('Abia','Isiala Ngwa North',6),
+  ('Abia','Isiala Ngwa South',7), ('Abia','Isuikwuato',8), ('Abia','Obi Ngwa',9), ('Abia','Ohafia',10), ('Abia','Osisioma',11), ('Abia','Ugwunagbo',12),
+  ('Abia','Ukwa East',13), ('Abia','Ukwa West',14), ('Abia','Umuahia North',15), ('Abia','Umuahia South',16), ('Abia','Umu Nneochi',17), ('Adamawa','Demsa',18),
+  ('Adamawa','Fufure',19), ('Adamawa','Ganye',20), ('Adamawa','Gayuk',21), ('Adamawa','Gombi',22), ('Adamawa','Grie',23), ('Adamawa','Hong',24),
+  ('Adamawa','Jada',25), ('Adamawa','Lamurde',26), ('Adamawa','Madagali',27), ('Adamawa','Maiha',28), ('Adamawa','Mayo Belwa',29), ('Adamawa','Michika',30),
+  ('Adamawa','Mubi North',31), ('Adamawa','Mubi South',32), ('Adamawa','Numan',33), ('Adamawa','Shelleng',34), ('Adamawa','Song',35), ('Adamawa','Toungo',36),
+  ('Adamawa','Yola North',37), ('Adamawa','Yola South',38), ('Akwa Ibom','Abak',39), ('Akwa Ibom','Eastern Obolo',40), ('Akwa Ibom','Eket',41), ('Akwa Ibom','Esit Eket',42),
+  ('Akwa Ibom','Essien Udim',43), ('Akwa Ibom','Etim Ekpo',44), ('Akwa Ibom','Etinan',45), ('Akwa Ibom','Ibeno',46), ('Akwa Ibom','Ibesikpo Asutan',47), ('Akwa Ibom','Ibiono-Ibom',48),
+  ('Akwa Ibom','Ika',49), ('Akwa Ibom','Ikono',50), ('Akwa Ibom','Ikot Abasi',51), ('Akwa Ibom','Ikot Ekpene',52), ('Akwa Ibom','Ini',53), ('Akwa Ibom','Itu',54),
+  ('Akwa Ibom','Mbo',55), ('Akwa Ibom','Mkpat-Enin',56), ('Akwa Ibom','Nsit-Atai',57), ('Akwa Ibom','Nsit-Ibom',58), ('Akwa Ibom','Nsit-Ubium',59), ('Akwa Ibom','Obot Akara',60),
+  ('Akwa Ibom','Okobo',61), ('Akwa Ibom','Onna',62), ('Akwa Ibom','Oron',63), ('Akwa Ibom','Oruk Anam',64), ('Akwa Ibom','Udung-Uko',65), ('Akwa Ibom','Ukanafun',66),
+  ('Akwa Ibom','Uruan',67), ('Akwa Ibom','Urue-Offong/Oruko',68), ('Akwa Ibom','Uyo',69), ('Anambra','Aguata',70), ('Anambra','Anambra East',71), ('Anambra','Anambra West',72),
+  ('Anambra','Anaocha',73), ('Anambra','Awka North',74), ('Anambra','Awka South',75), ('Anambra','Ayamelum',76), ('Anambra','Dunukofia',77), ('Anambra','Ekwusigo',78),
+  ('Anambra','Idemili North',79), ('Anambra','Idemili South',80), ('Anambra','Ihiala',81), ('Anambra','Njikoka',82), ('Anambra','Nnewi North',83), ('Anambra','Nnewi South',84),
+  ('Anambra','Ogbaru',85), ('Anambra','Onitsha North',86), ('Anambra','Onitsha South',87), ('Anambra','Orumba North',88), ('Anambra','Orumba South',89), ('Anambra','Oyi',90),
+  ('Bauchi','Alkaleri',91), ('Bauchi','Bauchi',92), ('Bauchi','Bogoro',93), ('Bauchi','Damban',94), ('Bauchi','Darazo',95), ('Bauchi','Dass',96),
+  ('Bauchi','Gamawa',97), ('Bauchi','Ganjuwa',98), ('Bauchi','Giade',99), ('Bauchi','Itas/Gadau',100), ('Bauchi','Jama''are',101), ('Bauchi','Katagum',102),
+  ('Bauchi','Kirfi',103), ('Bauchi','Misau',104), ('Bauchi','Ningi',105), ('Bauchi','Shira',106), ('Bauchi','Tafawa Balewa',107), ('Bauchi','Toro',108),
+  ('Bauchi','Warji',109), ('Bauchi','Zaki',110), ('Bayelsa','Brass',111), ('Bayelsa','Ekeremor',112), ('Bayelsa','Kolokuma/Opokuma',113), ('Bayelsa','Nembe',114),
+  ('Bayelsa','Ogbia',115), ('Bayelsa','Sagbama',116), ('Bayelsa','Southern Ijaw',117), ('Bayelsa','Yenagoa',118), ('Benue','Agatu',119), ('Benue','Apa',120),
+  ('Benue','Ado',121), ('Benue','Buruku',122), ('Benue','Gboko',123), ('Benue','Guma',124), ('Benue','Gwer East',125), ('Benue','Gwer West',126),
+  ('Benue','Katsina-Ala',127), ('Benue','Konshisha',128), ('Benue','Kwande',129), ('Benue','Logo',130), ('Benue','Makurdi',131), ('Benue','Obi',132),
+  ('Benue','Ogbadibo',133), ('Benue','Ohimini',134), ('Benue','Oju',135), ('Benue','Okpokwu',136), ('Benue','Oturkpo',137), ('Benue','Tarka',138),
+  ('Benue','Ukum',139), ('Benue','Ushongo',140), ('Benue','Vandeikya',141), ('Borno','Abadam',142), ('Borno','Askira/Uba',143), ('Borno','Bama',144),
+  ('Borno','Bayo',145), ('Borno','Biu',146), ('Borno','Chibok',147), ('Borno','Damboa',148), ('Borno','Dikwa',149), ('Borno','Gubio',150),
+  ('Borno','Guzamala',151), ('Borno','Gwoza',152), ('Borno','Hawul',153), ('Borno','Jere',154), ('Borno','Kaga',155), ('Borno','Kala/Balge',156),
+  ('Borno','Konduga',157), ('Borno','Kukawa',158), ('Borno','Kwaya Kusar',159), ('Borno','Mafa',160), ('Borno','Magumeri',161), ('Borno','Maiduguri',162),
+  ('Borno','Marte',163), ('Borno','Mobbar',164), ('Borno','Monguno',165), ('Borno','Ngala',166), ('Borno','Nganzai',167), ('Borno','Shani',168),
+  ('Cross River','Abi',169), ('Cross River','Akamkpa',170), ('Cross River','Akpabuyo',171), ('Cross River','Bakassi',172), ('Cross River','Bekwarra',173), ('Cross River','Biase',174),
+  ('Cross River','Boki',175), ('Cross River','Calabar Municipal',176), ('Cross River','Calabar South',177), ('Cross River','Etung',178), ('Cross River','Ikom',179), ('Cross River','Obanliku',180),
+  ('Cross River','Obubra',181), ('Cross River','Obudu',182), ('Cross River','Odukpani',183), ('Cross River','Ogoja',184), ('Cross River','Yakuur',185), ('Cross River','Yala',186),
+  ('Delta','Aniocha North',187), ('Delta','Aniocha South',188), ('Delta','Bomadi',189), ('Delta','Burutu',190), ('Delta','Ethiope East',191), ('Delta','Ethiope West',192),
+  ('Delta','Ika North East',193), ('Delta','Ika South',194), ('Delta','Isoko North',195), ('Delta','Isoko South',196), ('Delta','Ndokwa East',197), ('Delta','Ndokwa West',198),
+  ('Delta','Okpe',199), ('Delta','Oshimili North',200), ('Delta','Oshimili South',201), ('Delta','Patani',202), ('Delta','Sapele',203), ('Delta','Udu',204),
+  ('Delta','Ughelli North',205), ('Delta','Ughelli South',206), ('Delta','Ukwuani',207), ('Delta','Uvwie',208), ('Delta','Warri North',209), ('Delta','Warri South',210),
+  ('Delta','Warri South West',211), ('Ebonyi','Abakaliki',212), ('Ebonyi','Afikpo North',213), ('Ebonyi','Afikpo South',214), ('Ebonyi','Ebonyi',215), ('Ebonyi','Ezza North',216),
+  ('Ebonyi','Ezza South',217), ('Ebonyi','Ikwo',218), ('Ebonyi','Ishielu',219), ('Ebonyi','Ivo',220), ('Ebonyi','Izzi',221), ('Ebonyi','Ohaozara',222),
+  ('Ebonyi','Ohaukwu',223), ('Ebonyi','Onicha',224), ('Edo','Akoko-Edo',225), ('Edo','Egor',226), ('Edo','Esan Central',227), ('Edo','Esan North-East',228),
+  ('Edo','Esan South-East',229), ('Edo','Esan West',230), ('Edo','Etsako Central',231), ('Edo','Etsako East',232), ('Edo','Etsako West',233), ('Edo','Igueben',234),
+  ('Edo','Ikpoba Okha',235), ('Edo','Orhionmwon',236), ('Edo','Oredo',237), ('Edo','Ovia North-East',238), ('Edo','Ovia South-West',239), ('Edo','Owan East',240),
+  ('Edo','Owan West',241), ('Edo','Uhunmwonde',242), ('Ekiti','Ado Ekiti',243), ('Ekiti','Efon',244), ('Ekiti','Ekiti East',245), ('Ekiti','Ekiti South-West',246),
+  ('Ekiti','Ekiti West',247), ('Ekiti','Emure',248), ('Ekiti','Gbonyin',249), ('Ekiti','Ido Osi',250), ('Ekiti','Ijero',251), ('Ekiti','Ikere',252),
+  ('Ekiti','Ikole',253), ('Ekiti','Ilejemeje',254), ('Ekiti','Irepodun/Ifelodun',255), ('Ekiti','Ise/Orun',256), ('Ekiti','Moba',257), ('Ekiti','Oye',258),
+  ('Enugu','Aninri',259), ('Enugu','Awgu',260), ('Enugu','Enugu East',261), ('Enugu','Enugu North',262), ('Enugu','Enugu South',263), ('Enugu','Ezeagu',264),
+  ('Enugu','Igbo Etiti',265), ('Enugu','Igbo Eze North',266), ('Enugu','Igbo Eze South',267), ('Enugu','Isi Uzo',268), ('Enugu','Nkanu East',269), ('Enugu','Nkanu West',270),
+  ('Enugu','Nsukka',271), ('Enugu','Oji River',272), ('Enugu','Udenu',273), ('Enugu','Udi',274), ('Enugu','Uzo Uwani',275), ('FCT','Abaji',276),
+  ('FCT','Bwari',277), ('FCT','Gwagwalada',278), ('FCT','Kuje',279), ('FCT','Kwali',280), ('FCT','Municipal Area Council',281), ('Gombe','Akko',282),
+  ('Gombe','Balanga',283), ('Gombe','Billiri',284), ('Gombe','Dukku',285), ('Gombe','Funakaye',286), ('Gombe','Gombe',287), ('Gombe','Kaltungo',288),
+  ('Gombe','Kwami',289), ('Gombe','Nafada',290), ('Gombe','Shongom',291), ('Gombe','Yamaltu/Deba',292), ('Imo','Aboh Mbaise',293), ('Imo','Ahiazu Mbaise',294),
+  ('Imo','Ehime Mbano',295), ('Imo','Ezinihitte',296), ('Imo','Ideato North',297), ('Imo','Ideato South',298), ('Imo','Ihitte/Uboma',299), ('Imo','Ikeduru',300),
+  ('Imo','Isiala Mbano',301), ('Imo','Isu',302), ('Imo','Mbaitoli',303), ('Imo','Ngor Okpala',304), ('Imo','Njaba',305), ('Imo','Nkwerre',306),
+  ('Imo','Nwangele',307), ('Imo','Obowo',308), ('Imo','Oguta',309), ('Imo','Ohaji/Egbema',310), ('Imo','Okigwe',311), ('Imo','Orlu',312),
+  ('Imo','Orsu',313), ('Imo','Oru East',314), ('Imo','Oru West',315), ('Imo','Owerri Municipal',316), ('Imo','Owerri North',317), ('Imo','Owerri West',318),
+  ('Imo','Unuimo',319), ('Jigawa','Auyo',320), ('Jigawa','Babura',321), ('Jigawa','Biriniwa',322), ('Jigawa','Birnin Kudu',323), ('Jigawa','Buji',324),
+  ('Jigawa','Dutse',325), ('Jigawa','Gagarawa',326), ('Jigawa','Garki',327), ('Jigawa','Gumel',328), ('Jigawa','Guri',329), ('Jigawa','Gwaram',330),
+  ('Jigawa','Gwiwa',331), ('Jigawa','Hadejia',332), ('Jigawa','Jahun',333), ('Jigawa','Kafin Hausa',334), ('Jigawa','Kazaure',335), ('Jigawa','Kiri Kasama',336),
+  ('Jigawa','Kiyawa',337), ('Jigawa','Kaugama',338), ('Jigawa','Maigatari',339), ('Jigawa','Malam Madori',340), ('Jigawa','Miga',341), ('Jigawa','Ringim',342),
+  ('Jigawa','Roni',343), ('Jigawa','Sule Tankarkar',344), ('Jigawa','Taura',345), ('Jigawa','Yankwashi',346), ('Kaduna','Birnin Gwari',347), ('Kaduna','Chikun',348),
+  ('Kaduna','Giwa',349), ('Kaduna','Igabi',350), ('Kaduna','Ikara',351), ('Kaduna','Jaba',352), ('Kaduna','Jema''a',353), ('Kaduna','Kachia',354),
+  ('Kaduna','Kaduna North',355), ('Kaduna','Kaduna South',356), ('Kaduna','Kagarko',357), ('Kaduna','Kajuru',358), ('Kaduna','Kaura',359), ('Kaduna','Kauru',360),
+  ('Kaduna','Kubau',361), ('Kaduna','Kudan',362), ('Kaduna','Lere',363), ('Kaduna','Makarfi',364), ('Kaduna','Sabon Gari',365), ('Kaduna','Sanga',366),
+  ('Kaduna','Soba',367), ('Kaduna','Zangon Kataf',368), ('Kaduna','Zaria',369), ('Kano','Ajingi',370), ('Kano','Albasu',371), ('Kano','Bagwai',372),
+  ('Kano','Bebeji',373), ('Kano','Bichi',374), ('Kano','Bunkure',375), ('Kano','Dala',376), ('Kano','Dambatta',377), ('Kano','Dawakin Kudu',378),
+  ('Kano','Dawakin Tofa',379), ('Kano','Doguwa',380), ('Kano','Fagge',381), ('Kano','Gabasawa',382), ('Kano','Garko',383), ('Kano','Garun Mallam',384),
+  ('Kano','Gaya',385), ('Kano','Gezawa',386), ('Kano','Gwale',387), ('Kano','Gwarzo',388), ('Kano','Kabo',389), ('Kano','Kano Municipal',390),
+  ('Kano','Karaye',391), ('Kano','Kibiya',392), ('Kano','Kiru',393), ('Kano','Kumbotso',394), ('Kano','Kunchi',395), ('Kano','Kura',396),
+  ('Kano','Madobi',397), ('Kano','Makoda',398), ('Kano','Minjibir',399), ('Kano','Nasarawa',400), ('Kano','Rano',401), ('Kano','Rimin Gado',402),
+  ('Kano','Rogo',403), ('Kano','Shanono',404), ('Kano','Sumaila',405), ('Kano','Takai',406), ('Kano','Tarauni',407), ('Kano','Tofa',408),
+  ('Kano','Tsanyawa',409), ('Kano','Tudun Wada',410), ('Kano','Ungogo',411), ('Kano','Warawa',412), ('Kano','Wudil',413), ('Katsina','Bakori',414),
+  ('Katsina','Batagarawa',415), ('Katsina','Batsari',416), ('Katsina','Baure',417), ('Katsina','Bindawa',418), ('Katsina','Charanchi',419), ('Katsina','Dandume',420),
+  ('Katsina','Danja',421), ('Katsina','Dan Musa',422), ('Katsina','Daura',423), ('Katsina','Dutsi',424), ('Katsina','Dutsin Ma',425), ('Katsina','Faskari',426),
+  ('Katsina','Funtua',427), ('Katsina','Ingawa',428), ('Katsina','Jibia',429), ('Katsina','Kafur',430), ('Katsina','Kaita',431), ('Katsina','Kankara',432),
+  ('Katsina','Kankia',433), ('Katsina','Katsina',434), ('Katsina','Kurfi',435), ('Katsina','Kusada',436), ('Katsina','Mai''Adua',437), ('Katsina','Malumfashi',438),
+  ('Katsina','Mani',439), ('Katsina','Mashi',440), ('Katsina','Matazu',441), ('Katsina','Musawa',442), ('Katsina','Rimi',443), ('Katsina','Sabuwa',444),
+  ('Katsina','Safana',445), ('Katsina','Sandamu',446), ('Katsina','Zango',447), ('Kebbi','Aleiro',448), ('Kebbi','Arewa Dandi',449), ('Kebbi','Argungu',450),
+  ('Kebbi','Augie',451), ('Kebbi','Bagudo',452), ('Kebbi','Birnin Kebbi',453), ('Kebbi','Bunza',454), ('Kebbi','Dandi',455), ('Kebbi','Fakai',456),
+  ('Kebbi','Gwandu',457), ('Kebbi','Jega',458), ('Kebbi','Kalgo',459), ('Kebbi','Koko/Besse',460), ('Kebbi','Maiyama',461), ('Kebbi','Ngaski',462),
+  ('Kebbi','Sakaba',463), ('Kebbi','Shanga',464), ('Kebbi','Suru',465), ('Kebbi','Wasagu/Danko',466), ('Kebbi','Yauri',467), ('Kebbi','Zuru',468),
+  ('Kogi','Adavi',469), ('Kogi','Ajaokuta',470), ('Kogi','Ankpa',471), ('Kogi','Bassa',472), ('Kogi','Dekina',473), ('Kogi','Ibaji',474),
+  ('Kogi','Idah',475), ('Kogi','Igalamela Odolu',476), ('Kogi','Ijumu',477), ('Kogi','Kabba/Bunu',478), ('Kogi','Kogi',479), ('Kogi','Lokoja',480),
+  ('Kogi','Mopa Muro',481), ('Kogi','Ofu',482), ('Kogi','Ogori/Magongo',483), ('Kogi','Okehi',484), ('Kogi','Okene',485), ('Kogi','Olamaboro',486),
+  ('Kogi','Omala',487), ('Kogi','Yagba East',488), ('Kogi','Yagba West',489), ('Kwara','Asa',490), ('Kwara','Baruten',491), ('Kwara','Edu',492),
+  ('Kwara','Ekiti',493), ('Kwara','Ifelodun',494), ('Kwara','Ilorin East',495), ('Kwara','Ilorin South',496), ('Kwara','Ilorin West',497), ('Kwara','Irepodun',498),
+  ('Kwara','Isin',499), ('Kwara','Kaiama',500), ('Kwara','Moro',501), ('Kwara','Offa',502), ('Kwara','Oke Ero',503), ('Kwara','Oyun',504),
+  ('Kwara','Pategi',505), ('Lagos','Agege',506), ('Lagos','Ajeromi-Ifelodun',507), ('Lagos','Alimosho',508), ('Lagos','Amuwo-Odofin',509), ('Lagos','Apapa',510),
+  ('Lagos','Badagry',511), ('Lagos','Epe',512), ('Lagos','Eti Osa',513), ('Lagos','Ibeju-Lekki',514), ('Lagos','Ifako-Ijaiye',515), ('Lagos','Ikeja',516),
+  ('Lagos','Ikorodu',517), ('Lagos','Kosofe',518), ('Lagos','Lagos Island',519), ('Lagos','Lagos Mainland',520), ('Lagos','Mushin',521), ('Lagos','Ojo',522),
+  ('Lagos','Oshodi-Isolo',523), ('Lagos','Shomolu',524), ('Lagos','Surulere',525), ('Nasarawa','Akwanga',526), ('Nasarawa','Awe',527), ('Nasarawa','Doma',528),
+  ('Nasarawa','Karu',529), ('Nasarawa','Keana',530), ('Nasarawa','Keffi',531), ('Nasarawa','Kokona',532), ('Nasarawa','Lafia',533), ('Nasarawa','Nasarawa',534),
+  ('Nasarawa','Nasarawa Egon',535), ('Nasarawa','Obi',536), ('Nasarawa','Toto',537), ('Nasarawa','Wamba',538), ('Niger','Agaie',539), ('Niger','Agwara',540),
+  ('Niger','Bida',541), ('Niger','Borgu',542), ('Niger','Bosso',543), ('Niger','Chanchaga',544), ('Niger','Edati',545), ('Niger','Gbako',546),
+  ('Niger','Gurara',547), ('Niger','Katcha',548), ('Niger','Kontagora',549), ('Niger','Lapai',550), ('Niger','Lavun',551), ('Niger','Magama',552),
+  ('Niger','Mariga',553), ('Niger','Mashegu',554), ('Niger','Mokwa',555), ('Niger','Moya',556), ('Niger','Paikoro',557), ('Niger','Rafi',558),
+  ('Niger','Rijau',559), ('Niger','Shiroro',560), ('Niger','Suleja',561), ('Niger','Tafa',562), ('Niger','Wushishi',563), ('Ogun','Abeokuta North',564),
+  ('Ogun','Abeokuta South',565), ('Ogun','Ado-Odo/Ota',566), ('Ogun','Egbado North',567), ('Ogun','Egbado South',568), ('Ogun','Ewekoro',569), ('Ogun','Ifo',570),
+  ('Ogun','Ijebu East',571), ('Ogun','Ijebu North',572), ('Ogun','Ijebu North East',573), ('Ogun','Ijebu Ode',574), ('Ogun','Ikenne',575), ('Ogun','Imeko Afon',576),
+  ('Ogun','Ipokia',577), ('Ogun','Obafemi Owode',578), ('Ogun','Odeda',579), ('Ogun','Odogbolu',580), ('Ogun','Ogun Waterside',581), ('Ogun','Remo North',582),
+  ('Ogun','Shagamu',583), ('Ondo','Akoko North-East',584), ('Ondo','Akoko North-West',585), ('Ondo','Akoko South-West',586), ('Ondo','Akoko South-East',587), ('Ondo','Akure North',588),
+  ('Ondo','Akure South',589), ('Ondo','Ese Odo',590), ('Ondo','Idanre',591), ('Ondo','Ifedore',592), ('Ondo','Ilaje',593), ('Ondo','Ile Oluji/Okeigbo',594),
+  ('Ondo','Irele',595), ('Ondo','Odigbo',596), ('Ondo','Okitipupa',597), ('Ondo','Ondo East',598), ('Ondo','Ondo West',599), ('Ondo','Ose',600),
+  ('Ondo','Owo',601), ('Osun','Atakunmosa East',602), ('Osun','Atakunmosa West',603), ('Osun','Aiyedaade',604), ('Osun','Aiyedire',605), ('Osun','Boluwaduro',606),
+  ('Osun','Boripe',607), ('Osun','Ede North',608), ('Osun','Ede South',609), ('Osun','Ife Central',610), ('Osun','Ife East',611), ('Osun','Ife North',612),
+  ('Osun','Ife South',613), ('Osun','Egbedore',614), ('Osun','Ejigbo',615), ('Osun','Ifedayo',616), ('Osun','Ifelodun',617), ('Osun','Ila',618),
+  ('Osun','Ilesa East',619), ('Osun','Ilesa West',620), ('Osun','Irepodun',621), ('Osun','Irewole',622), ('Osun','Isokan',623), ('Osun','Iwo',624),
+  ('Osun','Obokun',625), ('Osun','Odo Otin',626), ('Osun','Ola Oluwa',627), ('Osun','Olorunda',628), ('Osun','Oriade',629), ('Osun','Orolu',630),
+  ('Osun','Osogbo',631), ('Oyo','Afijio',632), ('Oyo','Akinyele',633), ('Oyo','Atiba',634), ('Oyo','Atisbo',635), ('Oyo','Egbeda',636),
+  ('Oyo','Ibadan North',637), ('Oyo','Ibadan North-East',638), ('Oyo','Ibadan North-West',639), ('Oyo','Ibadan South-East',640), ('Oyo','Ibadan South-West',641), ('Oyo','Ibarapa Central',642),
+  ('Oyo','Ibarapa East',643), ('Oyo','Ibarapa North',644), ('Oyo','Ido',645), ('Oyo','Irepo',646), ('Oyo','Iseyin',647), ('Oyo','Itesiwaju',648),
+  ('Oyo','Iwajowa',649), ('Oyo','Kajola',650), ('Oyo','Lagelu',651), ('Oyo','Ogbomosho North',652), ('Oyo','Ogbomosho South',653), ('Oyo','Ogo Oluwa',654),
+  ('Oyo','Olorunsogo',655), ('Oyo','Oluyole',656), ('Oyo','Ona Ara',657), ('Oyo','Orelope',658), ('Oyo','Ori Ire',659), ('Oyo','Oyo',660),
+  ('Oyo','Oyo East',661), ('Oyo','Saki East',662), ('Oyo','Saki West',663), ('Oyo','Surulere',664), ('Plateau','Bokkos',665), ('Plateau','Barkin Ladi',666),
+  ('Plateau','Bassa',667), ('Plateau','Jos East',668), ('Plateau','Jos North',669), ('Plateau','Jos South',670), ('Plateau','Kanam',671), ('Plateau','Kanke',672),
+  ('Plateau','Langtang South',673), ('Plateau','Langtang North',674), ('Plateau','Mangu',675), ('Plateau','Mikang',676), ('Plateau','Pankshin',677), ('Plateau','Qua''an Pan',678),
+  ('Plateau','Riyom',679), ('Plateau','Shendam',680), ('Plateau','Wase',681), ('Rivers','Abua/Odual',682), ('Rivers','Ahoada East',683), ('Rivers','Ahoada West',684),
+  ('Rivers','Akuku-Toru',685), ('Rivers','Andoni',686), ('Rivers','Asari-Toru',687), ('Rivers','Bonny',688), ('Rivers','Degema',689), ('Rivers','Eleme',690),
+  ('Rivers','Emuoha',691), ('Rivers','Etche',692), ('Rivers','Gokana',693), ('Rivers','Ikwerre',694), ('Rivers','Khana',695), ('Rivers','Obio/Akpor',696),
+  ('Rivers','Ogba/Egbema/Ndoni',697), ('Rivers','Ogu/Bolo',698), ('Rivers','Okrika',699), ('Rivers','Omuma',700), ('Rivers','Opobo/Nkoro',701), ('Rivers','Oyigbo',702),
+  ('Rivers','Port Harcourt',703), ('Rivers','Tai',704), ('Sokoto','Binji',705), ('Sokoto','Bodinga',706), ('Sokoto','Dange Shuni',707), ('Sokoto','Gada',708),
+  ('Sokoto','Goronyo',709), ('Sokoto','Gudu',710), ('Sokoto','Gwadabawa',711), ('Sokoto','Illela',712), ('Sokoto','Isa',713), ('Sokoto','Kebbe',714),
+  ('Sokoto','Kware',715), ('Sokoto','Rabah',716), ('Sokoto','Sabon Birni',717), ('Sokoto','Shagari',718), ('Sokoto','Silame',719), ('Sokoto','Sokoto North',720),
+  ('Sokoto','Sokoto South',721), ('Sokoto','Tambuwal',722), ('Sokoto','Tangaza',723), ('Sokoto','Tureta',724), ('Sokoto','Wamako',725), ('Sokoto','Wurno',726),
+  ('Sokoto','Yabo',727), ('Taraba','Ardo Kola',728), ('Taraba','Bali',729), ('Taraba','Donga',730), ('Taraba','Gashaka',731), ('Taraba','Gassol',732),
+  ('Taraba','Ibi',733), ('Taraba','Jalingo',734), ('Taraba','Karim Lamido',735), ('Taraba','Kumi',736), ('Taraba','Lau',737), ('Taraba','Sardauna',738),
+  ('Taraba','Takum',739), ('Taraba','Ussa',740), ('Taraba','Wukari',741), ('Taraba','Yorro',742), ('Taraba','Zing',743), ('Yobe','Bade',744),
+  ('Yobe','Bursari',745), ('Yobe','Damaturu',746), ('Yobe','Fika',747), ('Yobe','Fune',748), ('Yobe','Geidam',749), ('Yobe','Gujba',750),
+  ('Yobe','Gulani',751), ('Yobe','Jakusko',752), ('Yobe','Karasuwa',753), ('Yobe','Machina',754), ('Yobe','Nangere',755), ('Yobe','Nguru',756),
+  ('Yobe','Potiskum',757), ('Yobe','Tarmuwa',758), ('Yobe','Yunusari',759), ('Yobe','Yusufari',760), ('Zamfara','Anka',761), ('Zamfara','Bakura',762),
+  ('Zamfara','Birnin Magaji/Kiyaw',763), ('Zamfara','Bukkuyum',764), ('Zamfara','Bungudu',765), ('Zamfara','Gummi',766), ('Zamfara','Gusau',767), ('Zamfara','Kaura Namoda',768),
+  ('Zamfara','Maradun',769), ('Zamfara','Maru',770), ('Zamfara','Shinkafi',771), ('Zamfara','Talata Mafara',772), ('Zamfara','Chafe',773), ('Zamfara','Zurmi',774)
+on conflict (state, lga) do update set sort = excluded.sort;
+
+-- The NRS descriptions of exempt and zero-rated supplies (the template's Lists sheet), spelt exactly as the template has them,
+-- with the words Counta looks for to suggest one (sort is the order they are tried in).
+create table if not exists public.nrs_vat_labels (
+  label text primary key,
+  treatment text not null check (treatment in ('zero', 'exempt')),
+  sort int not null,
+  keywords text not null default ''
+);
+alter table public.nrs_vat_labels enable row level security;
+drop policy if exists nrs_vat_labels_read on public.nrs_vat_labels;
+create policy nrs_vat_labels_read on public.nrs_vat_labels for select to authenticated using (true);
+insert into public.nrs_vat_labels (label, treatment, sort, keywords) values
+  ('Locally produced animal feeds', 'zero', 1, 'animal feed|poultry feed|fish feed|livestock feed|feeds?\M|layers? mash|growers? mash|chick mash|broiler (starter|finisher)'),
+  ('Locally produced veterinary medicine', 'zero', 2, 'veterinar|vet medicine|dewormer|acaricide|animal (drug|medicine|vaccine)'),
+  ('Locally produced agricultural chemicals', 'zero', 3, 'pesticide|herbicide|insecticide|fungicide|agro ?chemical|weed ?killer'),
+  ('Fertilizers', 'zero', 4, 'fertili[sz]|npk|urea\M|manure|compost'),
+  ('Agricultural seeds and seedlings', 'zero', 5, 'seedlings?|seeds?\M|cuttings\M|suckers\M'),
+  ('Medical equipment', 'zero', 6, 'medical (equipment|device)|thermometer|glucometer|stethoscope|sphygmomanometer|bp monitor|blood pressure monitor|syringe|needles?\M|catheter|cannula|test (kit|strip)|diagnostic|nebuli[sz]er|oxygen concentrator|surgical|hospital bed'),
+  ('Medical services', 'zero', 7, 'consultation|medical service|clinic|laborator|lab test|x-?ray|ultrasound|scan\M|nursing care|physiotherap|dental|surgery|treatment\M'),
+  ('Medical and pharmaceutical products including medicinal herbal products; ', 'zero', 8, 'drug|pharma|medic|tablets?\M|tabs?\M|capsules?|caps\M|syrup|suspension\M|injection|inj\M|infusion|antibiotic|antimalaria|paracetamol|ibuprofen|amoxicillin|artemether|vitamin|ointment|inhaler|insulin|herbal|bandage|plaster\M|gauze|cotton wool|antiseptic|ors\M|oral rehydration'),
+  ('Educational books and materials', 'zero', 9, 'books?\M|textbook|exercise book|journal|newspaper|magazine|atlas|maps?\M|charts?\M|educational|printed music|workbook'),
+  ('Tuition relating to nursery, primary, secondary or tertiary education', 'zero', 10, 'tuition|school fees?|nursery|primary school|secondary school|university|polytechnic|college fees?|lesson fees?'),
+  ('Electricity generated by generation companies (GENCOs) and supplied to National Grid or Nigeria Bulk Electricity Trading Company (NBET)', 'zero', 11, 'genco|generation compan|nbet|bulk electricity'),
+  ('Electricity transmitted by Transmission Company of Nigeria (TCN) to Electricity Distribution Companies (DISCOs)', 'zero', 12, 'tcn\M|transmission compan|transmitted'),
+  ('Exported services', 'zero', 13, 'exported services?|export of services?'),
+  ('Exported incorporeal property', 'zero', 14, 'incorporeal|intellectual property'),
+  ('Exported goods excluding oil and gas', 'zero', 15, 'exported goods|export of goods'),
+  ('Basic food items', 'zero', 16, 'food|rice\M|beans|garri|gari\M|yam\M|bread|flour|semovita|semolina|cereal|maize|corn\M|wheat|millet|sorghum|oats\M|fonio|cooking oil|vegetable oil|palm oil|groundnut oil|soya|olive oil|coconut|shea butter|fish|meat|beef|goat|chicken|turkey|poultry|eggs?\M|milk|salt\M|water\M|honey|fruit|oranges?\M|banana|plantain|pineapple|mango|apples?\M|vegetable|pepper|tomato|onion|okra|cabbage|carrot|lettuce|ginger|thyme|curry|melon|egusi|ogbono|crayfish|nuts?\M|groundnut|cashew|kola|tiger ?nut|lentil|peas\M|chickpea|tamarind|potato|cassava|cocoyam|starch|fufu|elubo|amala|pap\M|ogi\M|akamu|livestock|cattle|cows?\M|sheep|rams?\M|snail|staple'),
+  ('Locally manufactured sanitary towels, pads and tampoons', 'exempt', 1, 'sanitary|pads?\M|tampon|tampoon'),
+  ('Purchase, hire, rental or lease of tractors, ploughs and other equipment used for agricultural purposes ', 'exempt', 2, 'tractor|plough|plow\M|harrow|ridger|planter\M|harvester|farm equipment|agricultural equipment|irrigation'),
+  ('Shared passenger road-transport service', 'exempt', 3, 'bus fare|transport fare|shared taxi|keke|danfo|passenger transport|road transport|fares?\M'),
+  ('Land or building including interest in land or building', 'exempt', 4, 'land\M|plots?\M|building|house|apartment|flats?\M|rent\M|rental|lease|property|shop space|office space'),
+  ('Government licences', 'exempt', 5, 'licen[cs]e|permit\M|mining lease|oml\M|opl\M'),
+  ('Money or securities including interest in money or securities', 'exempt', 6, 'interest\M|securities|shares?\M|bonds?\M|treasury|loans?\M|forex|money'),
+  ('Military hardwaes, arms, ammunitions and locally manufactured uniforms supplied to armed forces, para-military and other security agencies of a Nigerian government', 'exempt', 7, 'military|arms\M|ammunition|weapon|armou?r'),
+  ('Goods purchased for use in humanitarian donor funded projects', 'exempt', 8, 'humanitarian|donor|relief'),
+  ('Goods or services supplied to a diplomatic mission, diplomat or person recognised under the Diplomatic Immunities and Privileges Act whose activity is in public interest, and not for profit', 'exempt', 9, 'diplomat|embass|high commission|consulate'),
+  ('Plays and Performances Conducted by Educational Institutions as part of Learning', 'exempt', 10, 'school play|performance|drama|recital'),
+  ('Supplies consumed by an approved entity in the export processing or free trade zones', 'exempt', 11, 'free (trade )?zone|ftz\M|epz\M|export processing'),
+  ('Oil and Gas Exports', 'exempt', 12, 'oil and gas export|exported (oil|gas|petroleum)'),
+  ('Crude Petroleum Oil and feed gas for all processed gas', 'exempt', 13, 'crude|feed gas'),
+  ('Include  VAT Suspended items', 'exempt', 14, '')
+on conflict (label) do update set treatment = excluded.treatment, sort = excluded.sort, keywords = excluded.keywords;
+
+-- A state as the NRS template spells it ('FCT', 'Akwa Ibom'), from whatever was typed ('Lagos State', 'FCT Abuja', 'akwa-ibom').
+create or replace function private.ng_state(p text) returns text
+language sql stable set search_path = public, private as $$
+  with k as (select regexp_replace(regexp_replace(lower(coalesce(p, '')), '\m(state|of nigeria|nigeria)\M', '', 'g'), '[^a-z]', '', 'g') k)
+  select case when k.k = '' then null
+    when k.k in ('fct', 'fctabuja', 'abuja', 'abujafct', 'federalcapitalterritory', 'federalcapitalterritoryabuja', 'abujafederalcapitalterritory') then 'FCT'
+    when k.k = 'nassarawa' then 'Nasarawa'
+    else (select s.state from (select distinct state from public.ng_lgas) s where regexp_replace(lower(s.state), '[^a-z]', '', 'g') = k.k) end
+  from k
+$$;
+
+-- The state an address names (as the WHT engine reads it), in the template's spelling.
+create or replace function private.ng_state_of_address(p text) returns text
+language sql stable set search_path = public, private as $$
+  select a.state from public.tax_authorities a where a.code = private.state_code(p)
+$$;
+
+-- A local government area as the template spells it, within its state.
+create or replace function private.ng_lga(p_state text, p_lga text) returns text
+language sql stable set search_path = public, private as $$
+  select l.lga from public.ng_lgas l
+  where l.state = private.ng_state(p_state)
+    and regexp_replace(lower(l.lga), '[^a-z0-9]', '', 'g') = regexp_replace(lower(coalesce(p_lga, '')), '[^a-z0-9]', '', 'g')
+  limit 1
+$$;
+
+-- The state and LGA of a branch or a customer, kept in the template's spelling. A branch must be in a Nigerian state; a
+-- customer's state is kept as typed when Counta does not know it (or the customer is abroad). An LGA must belong to the state;
+-- one left over from an earlier state is cleared.
+alter table public.locations add column if not exists state text;
+alter table public.locations add column if not exists lga text;
+alter table public.customers add column if not exists lga text;
+
+create or replace function private.on_place_saved() returns trigger
+language plpgsql set search_path = public, private as $$
+declare v_state text; v_lga text; v_lga_changed boolean;
+begin
+  if tg_op = 'UPDATE' and new.state is not distinct from old.state and new.lga is not distinct from old.lga then return new; end if;
+  v_lga_changed := tg_op = 'INSERT' or new.lga is distinct from old.lga;
+  new.lga := nullif(trim(new.lga), '');
+  if nullif(trim(new.state), '') is null then
+    if new.lga is not null and v_lga_changed then raise exception 'Choose the state before the local government area.'; end if;
+    new.state := null; new.lga := null; return new;
+  end if;
+  if tg_table_name = 'customers' then
+    -- (a separate statement: a branch has no country column)
+    if coalesce(upper(new.country), 'NG') <> 'NG' then new.lga := null; return new; end if;
+  end if;
+  v_state := private.ng_state(new.state);
+  if v_state is null then
+    if tg_table_name = 'locations' then raise exception '% is not a Nigerian state. Choose one from the list.', trim(new.state); end if;
+    new.state := trim(new.state);
+    if new.lga is not null and v_lga_changed then raise exception 'Choose a Nigerian state from the list before the local government area.'; end if;
+    new.lga := null; return new;
+  end if;
+  new.state := v_state;
+  if new.lga is not null then
+    v_lga := private.ng_lga(v_state, new.lga);
+    if v_lga is null then
+      if v_lga_changed then raise exception '% is not a local government area of %.', new.lga, v_state; end if;
+      new.lga := null;
+    else new.lga := v_lga; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists locations_place on public.locations;
+create trigger locations_place before insert or update of state, lga on public.locations for each row execute function private.on_place_saved();
+drop trigger if exists customers_place on public.customers;
+create trigger customers_place before insert or update of state, lga, country on public.customers for each row execute function private.on_place_saved();
+
+-- Branches start with the state their address names (the main branch, the business's address when it has none of its own).
+-- The local government area is left for the business to choose.
+update public.locations l set state = x.state
+from (select l2.id, coalesce(private.ng_state_of_address(l2.address),
+        case when l2.is_main then private.ng_state_of_address(coalesce(o.registered_office, o.address)) end) state
+      from public.locations l2 join public.orgs o on o.id = l2.org_id where l2.state is null) x
+where l.id = x.id and x.state is not null;
+
+-- States and LGAs for the pickers.
+create or replace function public.ng_places() returns jsonb
+language sql stable security definer set search_path = public, private as $$
+  select jsonb_build_object('states', (select jsonb_agg(state order by state) from (select distinct state from ng_lgas) s),
+    'lgas', (select jsonb_object_agg(state, lgas) from (select state, jsonb_agg(lga order by sort) lgas from ng_lgas group by state) x))
+$$;
+
+-- Customers: as before, with whether the customer is a withholding VAT agent (a bank, a telecom, an oil company, a government
+-- body...) that keeps the VAT on our invoices and pays it to the NRS for us (only a manager, an accountant or the owner sets
+-- it), and the customer's LGA (with the state, the place of consumption on the VAT return).
 create or replace function public.save_customer(p_org uuid, p_customer jsonb) returns uuid
 language plpgsql security definer set search_path = public, private as $$
 declare m public.members; c public.customers; v_country text; v_id uuid; v_agent boolean := (p_customer->>'wvat_agent')::boolean;
@@ -4013,7 +4547,487 @@ begin
   end if;
   v_id := private.upsert_customer(p_org, p_customer, m);
   if v_agent is not null then update customers set wvat_agent = v_agent where id = v_id; end if;
+  if p_customer ? 'lga' then update customers set lga = nullif(trim(p_customer->>'lga'), '') where id = v_id; end if;
   return v_id;
+end $$;
+
+-- ---- The NRS description of an exempt or zero-rated item ----
+alter table public.items add column if not exists nrs_vat_label text;
+alter table public.items add column if not exists nrs_vat_label_manual boolean not null default false;
+alter table public.sale_lines add column if not exists nrs_vat_label text;
+
+-- The description whose words appear in the text (the item's name, category and description, and the reason the tax agent gave).
+create or replace function private.nrs_label_guess(p_treatment text, p_text text) returns text
+language sql stable set search_path = public, private as $$
+  select l.label from public.nrs_vat_labels l
+  where l.treatment = p_treatment and l.keywords <> '' and lower(coalesce(p_text, '')) ~ ('\m(' || l.keywords || ')')
+  order by l.sort limit 1
+$$;
+
+-- An exempt or zero-rated item carries the description the NRS return needs: the one a person chose, else the tax agent's,
+-- else the one its words suggest. A standard-rated item has none.
+create or replace function private.on_item_vat_label() returns trigger
+language plpgsql set search_path = public, private as $$
+begin
+  if coalesce(new.vat_treatment, 'standard') not in ('zero', 'exempt') then
+    new.nrs_vat_label := null; new.nrs_vat_label_manual := false; return new;
+  end if;
+  if new.nrs_vat_label_manual and exists (select 1 from nrs_vat_labels where label = new.nrs_vat_label and treatment = new.vat_treatment) then return new; end if;
+  new.nrs_vat_label_manual := false;
+  new.nrs_vat_label := coalesce(
+    (select label from nrs_vat_labels where label = new.vat_basis->>'nrs_label' and treatment = new.vat_treatment),
+    private.nrs_label_guess(new.vat_treatment, concat_ws(' ', new.name, new.category, new.description, new.vat_basis->>'reason')));
+  return new;
+end $$;
+drop trigger if exists items_nrs_vat_label on public.items;
+create trigger items_nrs_vat_label before insert or update of vat_treatment, nrs_vat_label, nrs_vat_label_manual, vat_basis, name, category, description
+  on public.items for each row execute function private.on_item_vat_label();
+update public.items set nrs_vat_label = null where vat_treatment in ('zero', 'exempt');
+
+-- A person picks the NRS description of an item (null goes back to Counta's suggestion).
+create or replace function public.set_item_nrs_label(p_item uuid, p_label text) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare it public.items; m public.members; v_label text := nullif(p_label, '');
+begin
+  select * into it from items where id = p_item for update;
+  if not found then raise exception 'Item not found.'; end if;
+  m := private.require(it.org_id, null);
+  if not (private.perm_of(m, 'edit_prices') or private.perm_of(m, 'keep_books')) then raise exception 'Only someone who edits prices or keeps the books sets VAT.' using errcode = '42501'; end if;
+  if it.vat_treatment not in ('zero', 'exempt') then raise exception '% is standard-rated, so the VAT return needs no description for it.', it.name; end if;
+  if v_label is not null and not exists (select 1 from nrs_vat_labels where label = v_label and treatment = it.vat_treatment) then
+    raise exception 'Choose one of the NRS descriptions for % supplies.', case it.vat_treatment when 'zero' then 'zero-rated' else 'exempt' end;
+  end if;
+  update items set nrs_vat_label = v_label, nrs_vat_label_manual = v_label is not null where id = it.id returning * into it;
+  return jsonb_build_object('id', it.id, 'nrs_vat_label', it.nrs_vat_label, 'manual', it.nrs_vat_label_manual);
+end $$;
+
+-- The NRS description of one exempt or zero-rated line on a sale (a line typed in, with no item behind it).
+create or replace function public.set_sale_line_nrs_label(p_line uuid, p_label text) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare l public.sale_lines; m public.members; v_label text := nullif(p_label, '');
+begin
+  select * into l from sale_lines where id = p_line for update;
+  if not found then raise exception 'Line not found.'; end if;
+  m := private.require(l.org_id, 'keep_books');
+  if l.vat_treatment not in ('zero', 'exempt') then raise exception 'That line is standard-rated, so it needs no description.'; end if;
+  if v_label is not null and not exists (select 1 from nrs_vat_labels where label = v_label and treatment = l.vat_treatment) then
+    raise exception 'Choose one of the NRS descriptions for % supplies.', case l.vat_treatment when 'zero' then 'zero-rated' else 'exempt' end;
+  end if;
+  update sale_lines set nrs_vat_label = v_label where id = l.id;
+  return jsonb_build_object('id', l.id, 'nrs_vat_label', v_label);
+end $$;
+
+-- The tax agent's answer keeps the NRS description it chose (same as before otherwise).
+-- p: {treatment: 'standard'|'zero'|'exempt', confidence, reason, law, source: 'numens'|'gemini', model, nrs_label}
+create or replace function public.svc_set_item_vat(p_item uuid, p jsonb) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare it public.items; v_conf numeric := least(greatest(coalesce(private.num(p->>'confidence'), 0), 0), 1); v_t text := p->>'treatment'; v_threshold numeric;
+begin
+  select * into it from items where id = p_item for update;
+  if not found then return jsonb_build_object('ok', false); end if;
+  if coalesce(it.vat_basis->>'source', '') = 'manual' then
+    update items set vat_checked_at = now() where id = it.id;
+    return jsonb_build_object('ok', true, 'kept', 'manual');
+  end if;
+  if v_t not in ('standard', 'zero', 'exempt') then
+    update items set vat_checked_at = now(), vat_review = true where id = it.id;
+    return jsonb_build_object('ok', false, 'reason', 'no_answer');
+  end if;
+  select greatest(coalesce(auto_post_threshold, 0.8), 0.8) into v_threshold from orgs where id = it.org_id;
+  update items set vat_basis = jsonb_build_object('source', coalesce(nullif(p->>'source', ''), 'gemini'), 'treatment', v_t, 'reason', left(p->>'reason', 400),
+      'law', left(p->>'law', 120), 'confidence', v_conf, 'model', p->>'model', 'at', now(),
+      'nrs_label', (select label from nrs_vat_labels where label = p->>'nrs_label' and treatment = v_t)),
+    vat_confidence = v_conf, vat_checked_at = now(),
+    vat_treatment = case when v_conf >= v_threshold then v_t else vat_treatment end,
+    vat_review = v_conf < v_threshold
+  where id = it.id;
+  if v_conf < v_threshold then
+    update ai_proposals set status = 'superseded' where org_id = it.org_id and kind = 'item_vat' and source_id = it.id and status = 'pending';
+    insert into ai_proposals (org_id, agent, kind, source_type, source_id, title, question, proposal, confidence, rationale, stage, status, model)
+    values (it.org_id, 'tax', 'item_vat', 'item', it.id, 'VAT on ' || it.name || ': ' || case v_t when 'zero' then 'zero-rated' when 'exempt' then 'exempt' else 'standard 7.5%' end,
+      'Is ' || it.name || ' ' || case v_t when 'zero' then 'zero-rated' when 'exempt' then 'exempt from VAT' else 'charged VAT at 7.5%' end || '?',
+      jsonb_build_object('treatment', v_t, 'law', p->>'law', 'current', it.vat_treatment), v_conf, p->>'reason', 'vat', 'pending', p->>'model');
+  else
+    update ai_proposals set status = 'superseded' where org_id = it.org_id and kind = 'item_vat' and source_id = it.id and status = 'pending';
+  end if;
+  return jsonb_build_object('ok', true, 'applied', v_conf >= v_threshold);
+end $$;
+
+-- ---- Customs entries: goods imported and the VAT paid at the port (schedule D) ----
+-- p: {entry_date, description, hs_code, vessel, country, form_m, bill_of_lading, quantity, currency, invoice_value, fx_rate,
+--     value_ngn (else invoice value x rate), other_charges (duty, levies and charges in the VAT base), import_vat (else 7.5% of
+--     the base), importer, vendor_id, receipt_id, document_path, notes,
+--     and how the VAT was paid: {bank_account_id, paid_at, reference} posts Dr 1402 / Cr the account; {journal_ref} links a
+--     journal already in the books that put it in 1402}.
+create or replace function public.save_customs_entry(p_org uuid, p jsonb) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare m public.members; e public.customs_entries; ba public.bank_accounts; j public.journals; v_day date := nullif(p->>'entry_date', '')::date;
+  v_cur text := upper(coalesce(nullif(trim(p->>'currency'), ''), 'USD')); v_inv numeric := round(private.num(p->>'invoice_value'), 2);
+  v_fx numeric := round(coalesce(private.num(p->>'fx_rate'), case when upper(coalesce(p->>'currency', '')) = 'NGN' then 1 end), 6);
+  v_ngn numeric; v_other numeric := round(coalesce(private.num(p->>'other_charges'), 0), 2); v_base numeric; v_vat numeric; v_at timestamptz;
+  v_paid_in uuid; v_in1402 numeric; v_country text := upper(nullif(trim(p->>'country'), ''));
+begin
+  m := private.require(p_org, 'keep_books');
+  if v_day is null then raise exception 'Enter the date the import VAT was paid.'; end if;
+  if v_day > private.local_day(p_org, now()) then raise exception 'The date cannot be in the future.'; end if;
+  perform private.require_open_day(p_org, v_day);
+  if exists (select 1 from vat_periods where org_id = p_org and period = date_trunc('month', v_day)::date) then
+    raise exception 'The % VAT return is filed. Reopen it first, or date the entry in a month not yet filed.', to_char(v_day, 'FMMonth YYYY');
+  end if;
+  if coalesce(trim(p->>'description'), '') = '' then raise exception 'Describe the goods imported.'; end if;
+  if v_cur !~ '^[A-Z]{3}$' then raise exception 'Enter the currency as a three-letter code, such as USD.'; end if;
+  if v_country is not null and v_country !~ '^[A-Z]{2}$' then raise exception 'Choose the country the goods came from.'; end if;
+  if v_inv is null or v_inv <= 0 then raise exception 'Enter the invoice value of the goods.'; end if;
+  if v_fx is null or v_fx <= 0 then raise exception 'Enter the exchange rate customs used.'; end if;
+  if v_other < 0 then raise exception 'Other charges cannot be negative.'; end if;
+  v_ngn := round(coalesce(private.num(p->>'value_ngn'), v_inv * v_fx), 2);
+  if v_ngn <= 0 then raise exception 'Enter the value of the import in naira.'; end if;
+  v_base := v_ngn + v_other;
+  v_vat := round(coalesce(private.num(p->>'import_vat'), v_base * 0.075), 2);
+  if v_vat < 0 then raise exception 'The import VAT cannot be negative.'; end if;
+  if nullif(p->>'vendor_id', '') is not null and not exists (select 1 from vendors where id = (p->>'vendor_id')::uuid and org_id = p_org) then raise exception 'Supplier not found.'; end if;
+  if nullif(p->>'receipt_id', '') is not null and not exists (select 1 from receipts where id = (p->>'receipt_id')::uuid and org_id = p_org) then raise exception 'Stock receipt not found.'; end if;
+  if nullif(p->>'journal_ref', '') is not null then
+    select * into j from journals where org_id = p_org and ref = trim(p->>'journal_ref');
+    if not found then raise exception 'No entry % in the books.', trim(p->>'journal_ref'); end if;
+    select coalesce(sum(debit - credit), 0) into v_in1402 from journal_lines where journal_id = j.id and account_code = private.acct(p_org, 'input_vat');
+    if v_in1402 < v_vat - 0.005 then
+      raise exception '% puts % in input VAT (%), less than the % paid at customs.', j.ref, private.naira(v_in1402), private.acct(p_org, 'input_vat'), private.naira(v_vat);
+    end if;
+    if exists (select 1 from customs_entries where org_id = p_org and status = 'posted' and (paid_in_journal_id = j.id or journal_id = j.id)) then
+      raise exception '% is already linked to another customs entry.', j.ref;
+    end if;
+    v_paid_in := j.id; j := null;
+  elsif nullif(p->>'bank_account_id', '') is not null then
+    select * into ba from bank_accounts where id = (p->>'bank_account_id')::uuid and org_id = p_org and active;
+    if not found then raise exception 'Choose the account the import VAT was paid from.'; end if;
+    v_at := least(coalesce(nullif(p->>'paid_at', '')::timestamptz, private.posting_time(p_org, v_day)), now());
+  elsif v_vat > 0 then
+    raise exception 'Say how the import VAT was paid: from an account, or by an entry already in the books.';
+  end if;
+  insert into customs_entries (org_id, number, entry_date, importer, description, hs_code, vessel, country, form_m, bill_of_lading, quantity, currency,
+    invoice_value, fx_rate, value_ngn, other_charges, vat_base, import_vat, vendor_id, receipt_id, bank_account_id, paid_at, reference, paid_in_journal_id,
+    document_path, notes, created_by)
+  values (p_org, 'CUS-' || lpad(private.next_no(p_org, 'CUSTOMS', 1)::text, 4, '0'), v_day,
+    coalesce(nullif(trim(p->>'importer'), ''), (select name from orgs where id = p_org)), left(trim(p->>'description'), 300), nullif(trim(p->>'hs_code'), ''),
+    nullif(trim(p->>'vessel'), ''), v_country, nullif(trim(p->>'form_m'), ''), nullif(trim(p->>'bill_of_lading'), ''), round(private.num(p->>'quantity'), 3), v_cur,
+    v_inv, v_fx, v_ngn, v_other, v_base, v_vat, nullif(p->>'vendor_id', '')::uuid, nullif(p->>'receipt_id', '')::uuid, ba.id, v_at,
+    nullif(trim(p->>'reference'), ''), v_paid_in, nullif(p->>'document_path', ''), nullif(trim(p->>'notes'), ''), m.id)
+  returning * into e;
+  if ba.id is not null and v_vat > 0 then
+    j := private.post_entry(p_org, 'Import VAT paid at customs: ' || left(e.description, 120) || coalesce(' (Form M ' || e.form_m || ')', ''), 'customs_entry', e.id, m.id, m.id,
+      jsonb_build_array(jsonb_build_object('code', private.acct(p_org, 'input_vat'), 'debit', v_vat, 'memo', 'Import VAT ' || e.number),
+        jsonb_build_object('code', ba.ledger_code, 'credit', v_vat, 'memo', coalesce(e.reference, 'Import VAT ' || e.number))), v_at,
+      jsonb_build_object('evidence', jsonb_build_array(jsonb_build_object('type', 'customs_entry', 'number', e.number, 'form_m', e.form_m,
+        'bill_of_lading', e.bill_of_lading, 'by', m.display_name))));
+    update customs_entries set journal_id = j.id where id = e.id returning * into e;
+  end if;
+  return private.customs_json(e.id);
+end $$;
+
+create or replace function private.customs_json(p_id uuid) returns jsonb
+language sql stable security definer set search_path = public, private as $$
+  select to_jsonb(e) || jsonb_build_object('vendor_name', (select name from vendors where id = e.vendor_id),
+    'receipt_ref', (select ref from receipts where id = e.receipt_id), 'bank_name', (select name from bank_accounts where id = e.bank_account_id),
+    'journal_ref', (select ref from journals where id = e.journal_id), 'paid_in_ref', (select ref from journals where id = e.paid_in_journal_id),
+    'filed', exists (select 1 from vat_periods where org_id = e.org_id and period = date_trunc('month', e.entry_date)::date))
+  from customs_entries e where e.id = p_id
+$$;
+
+-- p: {from, to} -> the customs entries in those days (all when none are given).
+create or replace function public.customs_entries_list(p_org uuid, p jsonb default '{}'::jsonb) returns jsonb
+language plpgsql stable security definer set search_path = public, private as $$
+declare m public.members;
+begin
+  m := private.require(p_org, null);
+  if not private.can_handle_money(p_org) then raise exception 'Customs entries need See margins, Keep the books or Make payments.' using errcode = '42501'; end if;
+  return (select coalesce(jsonb_agg(private.customs_json(e.id) order by e.entry_date desc, e.number desc), '[]'::jsonb) from customs_entries e
+    where e.org_id = p_org and (nullif(p->>'from', '') is null or e.entry_date >= (p->>'from')::date) and (nullif(p->>'to', '') is null or e.entry_date <= (p->>'to')::date));
+end $$;
+
+-- An entry made in error: its posting is reversed. A month already filed keeps it; reopen the month first.
+create or replace function public.void_customs_entry(p_entry uuid, p_reason text) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare e public.customs_entries; m public.members;
+begin
+  select * into e from customs_entries where id = p_entry for update;
+  if not found then raise exception 'Customs entry not found.'; end if;
+  m := private.require(e.org_id, 'keep_books');
+  if e.status = 'void' then raise exception '% is already void.', e.number; end if;
+  if coalesce(trim(p_reason), '') = '' then raise exception 'Say why the entry is voided.'; end if;
+  if exists (select 1 from vat_periods where org_id = e.org_id and period = date_trunc('month', e.entry_date)::date) then
+    raise exception 'The % VAT return is filed with this entry in it. Reopen the return first.', to_char(e.entry_date, 'FMMonth YYYY');
+  end if;
+  if e.journal_id is not null then perform private.reverse_entry(e.journal_id, m.id, 'Customs entry ' || e.number || ' voided: ' || left(trim(p_reason), 200), null); end if;
+  update customs_entries set status = 'void', voided_by = m.id, voided_at = now(), void_reason = left(trim(p_reason), 300) where id = e.id;
+  return private.customs_json(e.id);
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- The NRS VAT return for a month: the rows of schedules A to F, the form's lines, and how they tie to Counta's VAT
+-- ---------------------------------------------------------------------------
+-- What a purchase was, for schedule C_2: a fixed asset (an asset account), goods (stock, cost of sales, or a supply of goods
+-- for WHT), or a service (everything else).
+create or replace function private.vat_purchase_kind(p_code text, p_wht text) returns text
+language sql immutable set search_path = public, private as $$
+  select case when coalesce(p_code, '') ~ '^1(5[0-4]|6)' then 'fixed_assets'
+    when coalesce(p_code, '') ~ '^(12|5)' or coalesce(p_wht, '') in ('goods', 'ex_imported_goods', 'ex_manufacturer', 'ex_petroleum', 'ex_over_counter') then 'goods'
+    else 'services' end
+$$;
+
+-- A Tax ID the template takes: 13 digits, else nothing.
+create or replace function private.vat_tin(p text) returns text
+language sql immutable set search_path = public, private as $$
+  select case when regexp_replace(coalesce(p, ''), '[^0-9]', '', 'g') ~ '^[0-9]{13}$' then regexp_replace(p, '[^0-9]', '', 'g') end
+$$;
+
+-- Volatile only because it gathers the sale lines in a temporary table (dropped at the end of the transaction).
+create or replace function private.vat_schedule(p_org uuid, p_period date) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare v_f date := date_trunc('month', p_period)::date; v_t date := (date_trunc('month', p_period) + interval '1 month' - interval '1 day')::date;
+  o public.orgs; mn public.locations; a jsonb; b jsonb; c2 jsonb; c2v jsonb; c1 jsonb; d jsonb; e jsonb; f jsonb; checks jsonb := '[]'::jsonb;
+  mo jsonb; vp public.vat_periods; v_zs numeric; v_std numeric; v_zero numeric; l jsonb; v_tol numeric; v_lines int; v_net numeric; v_place_state text;
+  v_e_place text; v_today date := private.local_day(p_org, now()); rw record;
+begin
+  select * into o from orgs where id = p_org;
+  select * into mn from locations where org_id = p_org order by is_main desc, created_at limit 1;
+  mo := private.vat_month(p_org, v_f);
+  select * into vp from vat_periods where org_id = p_org and period = v_f;
+  v_std := (mo->>'standard_sales')::numeric; v_zero := (mo->>'zero_rated_sales')::numeric;
+  v_zs := case when v_std + v_zero > 0 then round(greatest(v_zero, 0) / (v_std + v_zero), 6) else 0 end;
+
+  -- ---- A: every sale line (standard credit notes go to B), by customer, product, VAT status, description and place ----
+  create temp table if not exists vat_a_lines (line_id uuid, item_id uuid, description text, treatment text, label text, cust_key text, cname text, ctin text,
+    product text, cat int, st text, lga text, place_from text, branch_id uuid, branch_name text, customer_id uuid, c_state text, c_lga text, amount numeric) on commit drop;
+  truncate vat_a_lines;
+  insert into vat_a_lines
+  select l.id, coalesce(l.item_id, ol.item_id), coalesce(ol.description, l.description), l.vat_treatment,
+    case when l.vat_treatment = 'standard' then null
+      when l.vat_treatment = 'zero' and s.export then case when coalesce(ol.kind, l.kind) = 'service' or i.item_type = 'service' then 'Exported services' else 'Exported goods excluding oil and gas' end
+      else coalesce(l.nrs_vat_label, ol.nrs_vat_label, i.nrs_vat_label,
+        case when i.id is null then private.nrs_label_guess(l.vat_treatment, coalesce(ol.description, l.description)) end) end,
+    case when w.walk_in then 'walkin:' || coalesce(s.location_id, mn.id)::text else 'c:' || coalesce(s.customer_id::text, lower(coalesce(s.customer_name, ''))) end,
+    case when w.walk_in then 'Walk-in customers' else coalesce(c.name, s.customer_name, 'Customer') end,
+    case when w.walk_in then null else private.vat_tin(coalesce(c.tin, s.customer_tin)) end,
+    left(case when coalesce(ol.kind, l.kind) = 'delivery' then 'Delivery' else coalesce(i.name, nullif(trim(coalesce(ol.description, l.description)), ''), 'Sale') end, 120),
+    case l.vat_treatment when 'exempt' then 1 when 'zero' then 2 else 0 end,
+    case when pc.by_customer then cs.st else br.state end,
+    case when pc.by_customer then private.ng_lga(cs.st, c.lga) else br.lga end,
+    case when pc.by_customer then 'customer' else 'branch' end,
+    br.id, br.name, c.id, c.state, c.lga,
+    case when s.doc_type = 'credit_note' then -l.net else l.net end
+  -- A credit note's line names the line it credits, so it nets against that product.
+  from sales s join sale_lines l on l.sale_id = s.id left join sale_lines ol on ol.id = l.original_line_id
+    left join customers c on c.id = s.customer_id left join items i on i.id = coalesce(l.item_id, ol.item_id)
+    left join locations br on br.id = coalesce(s.location_id, mn.id)
+    cross join lateral (select coalesce(c.is_walk_in, s.customer_id is null and s.channel in ('till', 'voice')) walk_in) w
+    -- The customer's state as chosen, else as its address names it.
+    cross join lateral (select case when c.id is not null and coalesce(upper(c.country), 'NG') = 'NG'
+      then coalesce(private.ng_state(c.state), private.ng_state_of_address(c.address)) end st) cs
+    cross join lateral (select not w.walk_in and not coalesce(s.export, false) and cs.st is not null by_customer) pc
+  where s.org_id = p_org and s.journal_id is not null and s.status <> 'void' and s.channel <> 'import' and s.issue_date between v_f and v_t
+    and not (s.doc_type = 'credit_note' and l.vat_treatment = 'standard') and l.net <> 0;
+
+  select coalesce(jsonb_agg(jsonb_build_object('customer', cname, 'tin', ctin, 'product', product, 'category', cat, 'label', label, 'state', st, 'lga', lga,
+      'amount', amount, 'place_from', place_from) order by cat, cname, product), '[]'::jsonb)
+  into a
+  from (select cust_key, cname, ctin, product, cat, label, st, lga, place_from, round(sum(amount), 2) amount from vat_a_lines
+        group by cust_key, cname, ctin, product, cat, label, st, lga, place_from having round(sum(amount), 2) <> 0) g;
+
+  -- ---- B: credit notes on standard-rated lines, one row each ----
+  select coalesce(jsonb_agg(jsonb_build_object('description', descr, 'tin', ctin, 'customer', cname, 'date', issue_date, 'invoice', inv_no,
+      'invoice_amount', inv_amount, 'adjusted', adjusted) order by issue_date, number), '[]'::jsonb)
+  into b
+  from (select s.number, s.issue_date,
+          left('Credit note ' || s.number || coalesce(' against ' || orig.number, '') || coalesce(': ' || nullif(trim(s.notes), ''), ''), 200) descr,
+          case when coalesce(c.is_walk_in, false) then null else private.vat_tin(coalesce(c.tin, s.customer_tin)) end ctin,
+          case when coalesce(c.is_walk_in, false) then 'Walk-in customers' else coalesce(c.name, s.customer_name, 'Customer') end cname,
+          coalesce(orig.number, s.number) inv_no,
+          round(coalesce((select sum(ol.net) from sale_lines ol where ol.sale_id = orig.id), sum(l.net)), 2) inv_amount,
+          round(sum(l.net), 2) adjusted
+        from sales s join sale_lines l on l.sale_id = s.id left join customers c on c.id = s.customer_id left join sales orig on orig.id = s.original_sale_id
+        where s.org_id = p_org and s.doc_type = 'credit_note' and s.journal_id is not null and s.status <> 'void' and s.channel <> 'import'
+          and s.issue_date between v_f and v_t and l.vat_treatment = 'standard' and l.net <> 0
+        group by s.id, s.number, s.issue_date, s.notes, s.customer_tin, s.customer_name, c.is_walk_in, c.tin, c.name, orig.id, orig.number) x;
+
+  -- ---- C_2: standard-rated purchases whose VAT is claimed, by bill (and stock receipt), as goods, services or fixed assets ----
+  select coalesce(jsonb_object_agg(kind, rows), '{}'::jsonb) into c2
+  from (select kind, jsonb_agg(jsonb_build_object('seller', seller, 'tin', tin, 'description', descr, 'amount', amount, 'ref', ref) order by pday, ref) rows
+        from (select private.vat_purchase_kind(bl.account_code, coalesce(bl.wht_category, x.wht_category)) kind, x.bill_date as pday, x.number as ref,
+                v.name seller, private.vat_tin(v.tin) tin,
+                left(x.number || coalesce(' (their ' || nullif(x.vendor_ref, '') || ')', '') || ': ' || string_agg(distinct coalesce(nullif(trim(bl.description), ''), 'Purchase'), ', '), 200) descr,
+                round(sum(bl.net), 2) amount
+              from bills x join bill_lines bl on bl.bill_id = x.id join vendors v on v.id = x.vendor_id
+              where x.org_id = p_org and x.source not in ('receipt', 'import') and x.journal_id is not null and x.status <> 'void' and x.bill_date between v_f and v_t
+                and bl.vat_recoverable and bl.vat > 0
+              group by 1, x.id, x.bill_date, x.number, x.vendor_ref, v.name, v.tin
+              union all
+              select 'goods', private.local_day(r.org_id, coalesce(r.posted_at, r.created_at)), r.ref, coalesce(v.name, r.vendor_name, 'Supplier'), private.vat_tin(v.tin),
+                left('Stock received ' || r.ref || coalesce(' (their ' || nullif(r.invoice_no, '') || ')', ''), 200), round(r.input_vat / 0.075, 2)
+              from receipts r left join vendors v on v.id = r.vendor_id
+              where r.org_id = p_org and r.status = 'posted' and r.input_vat > 0 and private.local_day(r.org_id, coalesce(r.posted_at, r.created_at)) between v_f and v_t) y
+        group by kind) z;
+  -- Suppliers' credit notes reduce the purchases (the reconciliation column of schedule C).
+  select jsonb_build_object('goods', coalesce(sum(n) filter (where kind = 'goods'), 0), 'services', coalesce(sum(n) filter (where kind = 'services'), 0),
+      'fixed_assets', coalesce(sum(n) filter (where kind = 'fixed_assets'), 0))
+  into c2v
+  from (select private.vat_purchase_kind(cl.account_code, ob.wht_category) kind, -round(cl.net, 2) n
+        from vendor_credits vc join vendor_credit_lines cl on cl.credit_id = vc.id left join bill_lines ob on ob.id = cl.bill_line_id
+        where vc.org_id = p_org and vc.status <> 'void' and vc.journal_id is not null and vc.credit_date between v_f and v_t and cl.vat > 0) q;
+
+  -- ---- C1: standard-rated stock written off (its VAT is taken back), grouped by why ----
+  select coalesce(jsonb_agg(jsonb_build_object('description', descr, 'amount', amount, 'zero', round(amount * v_zs, 2)) order by descr), '[]'::jsonb) into c1
+  from (select case reason when 'Breakage' then 'Damaged or broken stock written off' when 'Expired' then 'Expired stock written off'
+            when 'Theft suspected' then 'Stock lost to theft' when 'Written off' then 'Stock written off' else 'Other stock losses written off' end descr,
+          round(sum(cost), 2) amount
+        from private.vat_stock_writeoffs(p_org, v_f, v_t) group by 1) w;
+
+  -- ---- D: imports, from the customs entries ----
+  select coalesce(jsonb_agg(jsonb_build_object('number', number, 'importer', importer, 'description', left(description || coalesce(' (HS ' || hs_code || ')', ''), 250),
+      'vessel', vessel, 'country', country, 'form_m', form_m, 'bill_of_lading', bill_of_lading, 'quantity', quantity, 'currency', currency, 'invoice_value', invoice_value,
+      'fx_rate', fx_rate, 'value_ngn', value_ngn, 'other_charges', other_charges, 'total_cost', vat_base, 'import_vat', import_vat) order by entry_date, number), '[]'::jsonb)
+  into d
+  from customs_entries where org_id = p_org and status = 'posted' and entry_date between v_f and v_t;
+
+  -- ---- E: VAT self-charged on services (and goods) from suppliers abroad, whose VAT is claimed back ----
+  v_place_state := coalesce(mn.state, private.ng_state_of_address(coalesce(o.registered_office, o.address)));
+  select coalesce(jsonb_agg(jsonb_build_object('name', name, 'tin', tin, 'status', 'Self Charge', 'description', descr,
+      'category', case kind when 'goods' then 'VATable Local Goods Purchased (Relating to VATable purchases)'
+        when 'fixed_assets' then 'VATable Fixed Assets Purchased Locally (Relating to VATable purchases)'
+        else 'VATable Local Services Received (Relating to VATable purchases)' end,
+      'place', case when st = 'FCT' then 'Federal Capital Territory' else st end, 'amount', amount) order by name, descr), '[]'::jsonb)
+  into e
+  from (select v.name, private.vat_tin(v.tin) tin, private.vat_purchase_kind(bl.account_code, coalesce(bl.wht_category, x.wht_category)) kind,
+          coalesce(lb.state, v_place_state) st,
+          left(x.number || ': ' || string_agg(distinct coalesce(nullif(trim(bl.description), ''), 'Service'), ', '), 200) descr, round(sum(bl.net), 2) amount
+        from bills x join bill_lines bl on bl.bill_id = x.id join vendors v on v.id = x.vendor_id left join locations lb on lb.id = bl.location_id
+        where x.org_id = p_org and x.source not in ('receipt', 'import') and x.journal_id is not null and x.status <> 'void' and x.bill_date between v_f and v_t
+          and bl.vat_recoverable and bl.reverse_charge_vat > 0
+        group by v.name, v.tin, 3, 4, x.id, x.number) r;
+
+  -- ---- F: VAT kept by withholding agents (MDAs, banks, oil and gas companies) on what we sold them ----
+  select coalesce(jsonb_agg(jsonb_build_object('agent', agent, 'address', address, 'tin', tin, 'nature', nature, 'date', day, 'invoice', invoice,
+      'currency', 'NGN', 'invoice_value', value, 'fx_rate', 1, 'value_ngn', value, 'vat', vat) order by day, invoice), '[]'::jsonb)
+  into f
+  from (select coalesce(cu.name, s.customer_name, 'Customer') agent, left(concat_ws(', ', nullif(trim(cu.address), ''), nullif(trim(cu.city), ''), nullif(trim(cu.state), '')), 250) address,
+          private.vat_tin(coalesce(cu.tin, s.customer_tin)) tin,
+          case when bool_and(sl.kind = 'service') then 'Supply of services' when bool_or(sl.kind = 'service') then 'Supply of goods and services' else 'Supply of goods' end nature,
+          private.local_day(co.org_id, co.received_at) as day, coalesce(s.number, co.number) as invoice, round(co.amount / 0.075, 2) value, co.amount vat
+        from collections co left join sales s on s.id = co.sale_id left join customers cu on cu.id = co.customer_id left join sale_lines sl on sl.sale_id = s.id
+        where co.org_id = p_org and co.method = 'wvat_credit' and co.status = 'confirmed' and co.journal_id is not null
+          and private.local_day(co.org_id, co.received_at) between v_f and v_t
+        group by co.id, co.org_id, co.received_at, co.number, co.amount, cu.name, cu.address, cu.city, cu.state, cu.tin, s.customer_name, s.customer_tin, s.number) w;
+
+  -- ---- The form's lines, as the template's formulas work them out ----
+  l := jsonb_build_object(
+    '10', (select coalesce(sum((r->>'amount')::numeric), 0) from jsonb_array_elements(a) r),
+    '15', (select coalesce(sum((r->>'amount')::numeric), 0) from jsonb_array_elements(a) r where (r->>'category')::int = 1),
+    '20', (select coalesce(sum((r->>'amount')::numeric), 0) from jsonb_array_elements(a) r where (r->>'category')::int = 2),
+    '22', (select coalesce(sum((r->>'adjusted')::numeric), 0) from jsonb_array_elements(b) r),
+    '40', (select coalesce(sum((r->>'amount')::numeric), 0) from jsonb_each(c2) k, jsonb_array_elements(k.value) r)
+      + coalesce((c2v->>'goods')::numeric, 0) + coalesce((c2v->>'services')::numeric, 0) + coalesce((c2v->>'fixed_assets')::numeric, 0),
+    '45', -(select coalesce(sum((r->>'amount')::numeric), 0) from jsonb_array_elements(c1) r),
+    '85', (select coalesce(sum((r->>'total_cost')::numeric), 0) from jsonb_array_elements(d) r),
+    '105_base', (select coalesce(sum((r->>'amount')::numeric), 0) from jsonb_array_elements(e) r),
+    '110', (select coalesce(sum(round(0.075 * (r->>'value_ngn')::numeric, 10)), 0) from jsonb_array_elements(f) r));
+  l := l || jsonb_build_object('25', (l->>'10')::numeric - (l->>'15')::numeric - (l->>'20')::numeric - (l->>'22')::numeric);
+  l := l || jsonb_build_object('35', round((l->>'25')::numeric * 0.075, 2), '55', round(((l->>'40')::numeric + (l->>'45')::numeric) * 0.075, 2),
+    '90', round((l->>'85')::numeric * 0.075, 2), '105', round((l->>'105_base')::numeric * 0.075, 2));
+  l := l || jsonb_build_object('95', (l->>'55')::numeric + (l->>'90')::numeric);
+  l := l || jsonb_build_object('100', (l->>'35')::numeric - (l->>'95')::numeric);
+  l := l || jsonb_build_object('115', round((l->>'100')::numeric - ((l->>'105')::numeric + (l->>'110')::numeric), 2));
+
+  -- ---- What to fix, and how the return ties to Counta's VAT for the month ----
+  v_net := (mo->>'output')::numeric - (mo->>'wvat_credit')::numeric - (mo->>'input')::numeric;
+  select count(*) into v_lines from vat_a_lines;
+  v_tol := greatest(1, round(0.01 * (v_lines + jsonb_array_length(b) + jsonb_array_length(e) + jsonb_array_length(f)
+    + (select count(*) from jsonb_each(c2) k, jsonb_array_elements(k.value) r)), 2));
+  if v_t >= v_today then
+    checks := checks || jsonb_build_object('severity', 'info', 'code', 'month_open', 'text', 'The month has not ended, so these figures can still change.');
+  end if;
+  if vp.period is not null and (abs((mo->>'output')::numeric - vp.output_vat) >= 0.01 or abs((mo->>'input')::numeric - vp.input_vat) >= 0.01
+     or abs((mo->>'wvat_credit')::numeric - vp.wvat_credit) >= 0.01) then
+    checks := checks || jsonb_build_object('severity', 'warn', 'code', 'changed_since_filing',
+      'text', 'Documents for this month changed after the return was filed. The file shows the books as they are now; reopen the return to file the change.');
+  end if;
+  -- Places.
+  for rw in select branch_id, branch_name, bool_or(st is null) no_state, bool_or(st is not null and lga is null) no_lga, count(*) n
+           from vat_a_lines where place_from = 'branch' group by branch_id, branch_name having bool_or(st is null) or bool_or(lga is null) loop
+    checks := checks || jsonb_build_object('severity', 'warn', 'code', case when rw.no_state then 'branch_state' else 'branch_lga' end,
+      'text', case when rw.branch_id is null then 'The business has no branch with a state. Add the state and local government area of the main branch.'
+        else 'Add the ' || case when rw.no_state then 'state and local government area' else 'local government area' end || ' of ' || rw.branch_name
+          || ': its sales (and those of customers whose state is not known) are placed there.' end,
+      'fix', jsonb_build_object('kind', 'branch', 'id', rw.branch_id, 'name', rw.branch_name));
+  end loop;
+  for rw in select customer_id, max(cname) cname, max(st) st from vat_a_lines where place_from = 'customer' and lga is null and customer_id is not null group by customer_id
+           order by 2 limit 50 loop
+    checks := checks || jsonb_build_object('severity', 'warn', 'code', 'customer_lga', 'text', 'Add the local government area of ' || rw.cname || ' (' || rw.st || ').',
+      'fix', jsonb_build_object('kind', 'customer', 'id', rw.customer_id, 'name', rw.cname, 'state', rw.st));
+  end loop;
+  for rw in select customer_id, max(cname) cname, max(c_state) c_state from vat_a_lines
+           where place_from = 'branch' and customer_id is not null and nullif(trim(c_state), '') is not null and private.ng_state(c_state) is null
+             and not cust_key like 'walkin:%'
+             and exists (select 1 from customers cc where cc.id = customer_id and coalesce(upper(cc.country), 'NG') = 'NG')
+           group by customer_id order by 2 limit 20 loop
+    checks := checks || jsonb_build_object('severity', 'info', 'code', 'customer_state', 'text', rw.cname || '''s state "' || rw.c_state
+      || '" is not a Nigerian state Counta knows, so the branch''s state is used. Choose it from the list if the customer is in Nigeria.',
+      'fix', jsonb_build_object('kind', 'customer', 'id', rw.customer_id, 'name', rw.cname));
+  end loop;
+  -- Descriptions of exempt and zero-rated supplies.
+  for rw in select item_id, coalesce(max(i.name), max(vl.description)) name, max(vl.treatment) treatment, min(vl.line_id::text)::uuid line_id, sum(vl.amount) amount
+           from vat_a_lines vl left join items i on i.id = vl.item_id where vl.cat in (1, 2) and vl.label is null
+           group by vl.item_id, case when vl.item_id is null then vl.line_id end order by 2 limit 50 loop
+    checks := checks || jsonb_build_object('severity', 'warn', 'code', 'label',
+      'text', 'Choose the NRS description for ' || rw.name || ' (' || case rw.treatment when 'zero' then 'zero-rated' else 'exempt' end || ', '
+        || private.naira(rw.amount) || '). The template takes only its own list.',
+      'fix', case when rw.item_id is not null then jsonb_build_object('kind', 'item', 'id', rw.item_id, 'name', rw.name, 'treatment', rw.treatment)
+        else jsonb_build_object('kind', 'line', 'id', rw.line_id, 'name', rw.name, 'treatment', rw.treatment) end);
+  end loop;
+  if exists (select 1 from jsonb_array_elements(a) r where (r->>'amount')::numeric < 0) then
+    checks := checks || jsonb_build_object('severity', 'warn', 'code', 'negative_row',
+      'text', 'Credit notes on exempt or zero-rated sales are more than the sales they net against for some rows. Those rows go in as negative amounts, which the portal may refuse.');
+  end if;
+  -- What the template holds.
+  if jsonb_array_length(a) > 9973 then
+    checks := checks || jsonb_build_object('severity', 'block', 'code', 'too_many_a', 'text', 'Schedule A holds 9,973 rows and this month has ' || jsonb_array_length(a) || '.');
+  end if;
+  if jsonb_array_length(e) > 37 then
+    checks := checks || jsonb_build_object('severity', 'block', 'code', 'too_many_e', 'text', 'Schedule E holds 37 rows and this month has ' || jsonb_array_length(e) || ' bills with VAT self-charged.');
+  end if;
+  if jsonb_array_length(f) > 2299 then
+    checks := checks || jsonb_build_object('severity', 'block', 'code', 'too_many_f', 'text', 'Schedule F holds 2,299 rows and this month has ' || jsonb_array_length(f) || '.');
+  end if;
+  if exists (select 1 from customs_entries where org_id = p_org and status = 'posted' and entry_date between v_f and v_t and abs(import_vat - round(vat_base * 0.075, 2)) >= 1) then
+    checks := checks || jsonb_build_object('severity', 'info', 'code', 'import_vat', 'text', 'The template takes import VAT as 7.5% of the total cost of each import; '
+      || 'some customs entries paid a different amount, so line 90 differs from what was paid.');
+  end if;
+  if abs((l->>'115')::numeric - v_net) > v_tol then
+    checks := checks || jsonb_build_object('severity', 'warn', 'code', 'tie',
+      'text', 'The return comes to ' || private.naira((l->>'115')::numeric) || ' (line 115) and Counta''s VAT for the month to ' || private.naira(v_net)
+        || '. The template works VAT out on totals, Counta line by line; a gap of more than ' || private.naira(v_tol) || ' needs a look.');
+  end if;
+
+  return jsonb_build_object('period', v_f, 'to', v_t,
+    'org', jsonb_build_object('name', o.name, 'tin', o.tin, 'tax_id', private.vat_tin(o.tin), 'state', v_place_state),
+    'file_name', to_char(v_f, 'YYYY') || '_' || coalesce(private.vat_tin(o.tin), regexp_replace(coalesce(o.tin, 'NO-TAX-ID'), '[^0-9A-Za-z-]', '', 'g')) || '_VAT_'
+      || extract(month from v_f)::int || '.xlsx',
+    'a', a, 'b', b, 'c2', jsonb_build_object('goods', coalesce(c2->'goods', '[]'::jsonb), 'services', coalesce(c2->'services', '[]'::jsonb),
+      'fixed_assets', coalesce(c2->'fixed_assets', '[]'::jsonb)), 'c_variance', c2v, 'zero_share', v_zs,
+    'c1', c1, 'd', d, 'e', e, 'f', f, 'lines', l,
+    'counta', mo || jsonb_build_object('net', v_net, 'filed', vp.period is not null, 'status', coalesce(vp.status, 'open')),
+    'tolerance', v_tol, 'difference', round((l->>'115')::numeric - v_net, 2),
+    'checks', checks, 'blocked', exists (select 1 from jsonb_array_elements(checks) c where c->>'severity' = 'block'));
+end $$;
+
+-- p_period: any day of the month.
+create or replace function public.vat_schedule(p_org uuid, p_period date) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare m public.members;
+begin
+  m := private.require(p_org, null);
+  if not private.can_handle_money(p_org) then raise exception 'VAT returns need See margins, Keep the books or Make payments.' using errcode = '42501'; end if;
+  if p_period is null then raise exception 'Choose the month.'; end if;
+  return private.vat_schedule(p_org, p_period);
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -4024,27 +5038,37 @@ revoke execute on function public.approve_cit_year(uuid, int),
   public.cit_pack(uuid, int),
   public.cit_year(uuid, int),
   public.cit_years(uuid),
+  public.customs_entries_list(uuid, jsonb),
   public.file_vat_return(uuid, date, jsonb),
+  public.get_bills(uuid, jsonb),
+  public.ng_places(),
   public.pay_bill(uuid, jsonb),
   public.post_tax_charge(uuid, date, date),
   public.record_payment(uuid, jsonb),
   public.record_vat_payment(uuid, date, jsonb),
   public.record_wht_remittance(uuid, jsonb),
+  public.reopen_bill(uuid),
   public.reopen_cit_year(uuid, int, text),
   public.reopen_vat_return(uuid, date, text),
   public.resolve_proposal(uuid, jsonb),
+  public.return_bill(uuid, jsonb),
   public.save_cit_year(uuid, int, jsonb),
   public.save_customer(uuid, jsonb),
+  public.save_customs_entry(uuid, jsonb),
   public.save_tax_asset(uuid, jsonb),
   public.save_tax_profile(uuid, jsonb),
   public.save_tax_settings(uuid, date, jsonb),
   public.save_vendor_details(uuid, uuid, jsonb),
   public.set_asset_tax(uuid, jsonb),
+  public.set_item_nrs_label(uuid, text),
+  public.set_sale_line_nrs_label(uuid, text),
   public.set_vat_charging(uuid, jsonb),
   public.tax_profile(uuid),
   public.vat_position(uuid, jsonb),
+  public.vat_schedule(uuid, date),
   public.vat_status(uuid),
   public.vendor_tax_details(uuid, uuid),
+  public.void_customs_entry(uuid, text),
   public.wht_receipts(uuid, jsonb),
   public.wht_schedule(uuid, date, text, text),
   public.withholding_overview(uuid, jsonb)
@@ -4054,39 +5078,52 @@ grant execute on function public.approve_cit_year(uuid, int),
   public.cit_pack(uuid, int),
   public.cit_year(uuid, int),
   public.cit_years(uuid),
+  public.customs_entries_list(uuid, jsonb),
   public.file_vat_return(uuid, date, jsonb),
+  public.get_bills(uuid, jsonb),
+  public.ng_places(),
   public.pay_bill(uuid, jsonb),
   public.post_tax_charge(uuid, date, date),
   public.record_payment(uuid, jsonb),
   public.record_vat_payment(uuid, date, jsonb),
   public.record_wht_remittance(uuid, jsonb),
+  public.reopen_bill(uuid),
   public.reopen_cit_year(uuid, int, text),
   public.reopen_vat_return(uuid, date, text),
   public.resolve_proposal(uuid, jsonb),
+  public.return_bill(uuid, jsonb),
   public.save_cit_year(uuid, int, jsonb),
   public.save_customer(uuid, jsonb),
+  public.save_customs_entry(uuid, jsonb),
   public.save_tax_asset(uuid, jsonb),
   public.save_tax_profile(uuid, jsonb),
   public.save_tax_settings(uuid, date, jsonb),
   public.save_vendor_details(uuid, uuid, jsonb),
   public.set_asset_tax(uuid, jsonb),
+  public.set_item_nrs_label(uuid, text),
+  public.set_sale_line_nrs_label(uuid, text),
   public.set_vat_charging(uuid, jsonb),
   public.tax_profile(uuid),
   public.vat_position(uuid, jsonb),
+  public.vat_schedule(uuid, date),
   public.vat_status(uuid),
   public.vendor_tax_details(uuid, uuid),
+  public.void_customs_entry(uuid, text),
   public.wht_receipts(uuid, jsonb),
   public.wht_schedule(uuid, date, text, text),
   public.withholding_overview(uuid, jsonb)
   to authenticated;
 revoke execute on function public.svc_cit_flux_update(uuid, int, jsonb),
-  public.svc_cit_pack(uuid, int)
+  public.svc_cit_pack(uuid, int),
+  public.svc_set_item_vat(uuid, jsonb)
   from public, anon, authenticated;
 grant execute on function public.svc_cit_flux_update(uuid, int, jsonb),
-  public.svc_cit_pack(uuid, int)
+  public.svc_cit_pack(uuid, int),
+  public.svc_set_item_vat(uuid, jsonb)
   to service_role;
 revoke execute on function private.bill_from_receipt(uuid),
   private.bill_json(uuid),
+  private.bill_tax_flags(uuid),
   private.bill_wht(uuid),
   private.bill_withholding(uuid, numeric),
   private.book_customer_withholding(uuid, uuid, uuid, jsonb, timestamptz, public.members),
@@ -4112,7 +5149,14 @@ revoke execute on function private.bill_from_receipt(uuid),
   private.cit_year_of(uuid, date),
   private.cit_yoa(int),
   private.customer_short_split(uuid, numeric, numeric),
+  private.customs_json(uuid),
   private.match_bank_line(uuid),
+  private.ng_lga(text, text),
+  private.ng_state(text),
+  private.ng_state_of_address(text),
+  private.nrs_label_guess(text, text),
+  private.on_item_vat_label(),
+  private.on_place_saved(),
   private.post_bill(uuid, public.members),
   private.post_collection(uuid, public.members),
   private.rb(jsonb, variadic text[]),
@@ -4120,6 +5164,7 @@ revoke execute on function private.bill_from_receipt(uuid),
   private.rbn(jsonb, variadic text[]),
   private.record_bill_payment(uuid, uuid, numeric, numeric, timestamptz, text, public.members, text),
   private.refresh_bill(uuid),
+  private.return_note(text),
   private.rev360_asset_code(text),
   private.rev360_category(text),
   private.rulebook(int),
@@ -4129,9 +5174,13 @@ revoke execute on function private.bill_from_receipt(uuid),
   private.use_vendor_credit(uuid, uuid, numeric, public.members),
   private.vat_chain(uuid, date),
   private.vat_month(uuid, date),
+  private.vat_purchase_kind(text, text),
   private.vat_rows(uuid, date, date),
+  private.vat_schedule(uuid, date),
   private.vat_small_status(uuid),
+  private.vat_stock_writeoffs(uuid, date, date),
   private.vat_threshold_tick(),
+  private.vat_tin(text),
   private.vendor_wht_profile(uuid),
   private.void_bill_deductions(),
   private.wht_due(text, text, text, date),

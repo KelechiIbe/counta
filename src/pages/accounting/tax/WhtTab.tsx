@@ -54,7 +54,7 @@ export default function WhtTab() {
                   <div key={`${g.period}${g.kind}${g.authority}`} className="tr click" onClick={() => setSched(g)} style={{ gridTemplateColumns: '110px 90px minmax(150px,1.2fr) 70px repeat(3,110px) 120px', minWidth: 900 }}>
                     <b>{monthShort(g.period)}</b>
                     <span className={'chip ' + (g.kind === 'wht' ? 't-blue' : 't-purple')} style={{ justifySelf: 'start' }}>{g.kind === 'wht' ? 'WHT' : 'VAT'}</span>
-                    <span className="ellipsis" title={g.authority_name}>{authorityLabel(g.authority, authorities)}{g.state_assumed && <span className="faint" title="Some suppliers have no state; your own was assumed"> · state assumed</span>}</span>
+                    <span className="ellipsis" title={g.authority_name}>{g.authority ? authorityLabel(g.authority, authorities) : <span style={{ color: '#DC2626' }}>State not known · add the suppliers' states</span>}</span>
                     <span className="right num">{g.deductions}</span>
                     <span className="right num">{N2(g.deducted)}</span>
                     <span className="right num">{Number(g.remitted) ? N2(g.remitted) : '—'}</span>
@@ -115,7 +115,7 @@ function ScheduleModal({ g, authorities, onClose, onPay }: { g: any; authorities
   const title = `${g.kind === 'wht' ? 'WHT' : 'Withholding VAT'} for ${monthName(g.period)}`;
   return (
     <Modal onClose={onClose} width={860}>
-      <ModalHead title={title} sub={`${authorityLabel(g.authority, authorities)} · due ${fmtDay(s?.due_date || g.due_date)}`} onClose={onClose} />
+      <ModalHead title={title} sub={g.authority ? `${authorityLabel(g.authority, authorities)} · due ${fmtDay(s?.due_date || g.due_date)}` : 'State not known: these suppliers need a state before the WHT has somewhere to go'} onClose={onClose} />
       <div className="modal-body stack" style={{ gap: 10 }}>
         {err ? <Alert kind="yellow" icon="shield">{err}</Alert> : !s ? <Spinner /> : (
           <>
@@ -142,12 +142,12 @@ function ScheduleModal({ g, authorities, onClose, onPay }: { g: any; authorities
         )}
       </div>
       <div className="modal-ft">
-        {s && g.kind === 'wht' && <button className="btn btn-secondary" disabled={busy || !!blocks.length || !rows.length} onClick={download}>{busy ? <Spinner small /> : <Icon name="download" size={14} />}{g.authority === 'NRS' ? 'NRS template' : 'State template'}</button>}
+        {s && g.kind === 'wht' && g.authority && <button className="btn btn-secondary" disabled={busy || !!blocks.length || !rows.length} onClick={download}>{busy ? <Spinner small /> : <Icon name="download" size={14} />}{g.authority === 'NRS' ? 'NRS template' : 'State template'}</button>}
         {s && g.kind !== 'wht' && <ExportMenu name={`Withholding VAT ${g.period.slice(0, 7)}`} disabled={!rows.length} sheets={() => [{ meta: meta(title, 'Paid to the NRS'),
           cols: [{ key: 'beneficiary_name', label: 'Supplier' }, { key: 'beneficiary_number', label: 'Tax ID' }, { key: 'address', label: 'Address' }, { key: 'invoice', label: 'Invoice' },
             { key: 'transaction_date', label: 'Date', type: 'date' }, { key: 'amount', label: 'Amount', type: 'money', total: true }, { key: 'wht', label: 'VAT', type: 'money', total: true }],
           rows: rows as any }]} />}
-        {Number(g.outstanding) > 0 && <button className="btn btn-primary" disabled={!s} onClick={onPay}>Record payment</button>}
+        {Number(g.outstanding) > 0 && g.authority && <button className="btn btn-primary" disabled={!s} onClick={onPay}>Record payment</button>}
         <button className="btn btn-ghost" onClick={onClose}>Close</button>
       </div>
     </Modal>

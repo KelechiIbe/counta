@@ -532,7 +532,7 @@ async function applyVat(admin: SupabaseClient, items: VatItem[]) {
     const a = byId.get(it.id);
     // No answer for an item the model was shown: a person decides (the item is flagged for review).
     const { data } = await admin.rpc('svc_set_item_vat', { p_item: it.id, p: a ? { treatment: a.treatment, confidence: a.confidence, reason: a.reason, law: a.law,
-      source: a.source, model: a.model } : { treatment: null } });
+      source: a.source, model: a.model, nrs_label: a.nrs_label ?? null } : { treatment: null } });
     results.push({ id: it.id, name: it.name, treatment: a?.treatment ?? null, confidence: a?.confidence ?? 0, applied: Boolean(data?.applied), kept: data?.kept });
   }
   return { ok: true, checked: results.length, results };

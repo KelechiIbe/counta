@@ -68,7 +68,8 @@ async function prism(path: string, raw: string, sig: string | null) {
     return json({ ok: true, duplicate: data.duplicate, bill: { id: b.id, number: b.number, status: b.status, total: b.total, wht_expected: b.wht_expected } });
   }
   if (path.endsWith('/bill-status')) {
-    const { data: b } = await admin.from('bills').select('id, number, status, total, amount_paid, wht_withheld, due_date')
+    // A bill sent back to the supplier is void here, with the reason and the note the supplier was sent.
+    const { data: b } = await admin.from('bills').select('id, number, status, total, amount_paid, wht_withheld, due_date, returned_reason, returned_note, returned_at')
       .eq('org_id', org.id).eq('source', 'prism').eq('external_ref', String(body.prism_id || '')).maybeSingle();
     if (!b) return json({ ok: false, error: 'Bill not found.' }, 404);
     return json({ ok: true, bill: b });
