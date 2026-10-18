@@ -176,7 +176,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
   .content { padding: 16px 16px 40px; }
 }
 @media (max-width: 760px) {
-  .auth-wrap { grid-template-columns: 1fr; }
+  .auth-wrap { grid-template-columns: minmax(0, 1fr); }
   .auth-side { display: none; }
   .page-title { font-size: 21px; }
   .drawer { top: 0; right: 0; bottom: 0; max-width: 100%; border-radius: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }

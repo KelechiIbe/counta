@@ -84,7 +84,7 @@ export default function Onboard() {
             <button className={lang === 'pcm' ? 'on' : ''} onClick={() => setLang('pcm')}>Pidgin</button>
           </div>
           {screen !== 'welcome' && g.status === 'idle' && (
-            <button className="btn btn-secondary btn-sm" onClick={() => talk()} title="Talk to Martina"><Icon name="mic" size={14} />Talk</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => talk()} title="Talk to Martina" aria-label="Talk to Martina"><Icon name="mic" size={14} /><span className="ob-talk-label">Talk</span></button>
           )}
           <button className="btn btn-ghost btn-sm" onClick={signOut} title="Sign out"><Icon name="logout" size={16} /></button>
         </div>
