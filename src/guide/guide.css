@@ -94,7 +94,13 @@
 .ob-acct { font-size: 30px; font-weight: 700; letter-spacing: .08em; font-variant-numeric: tabular-nums; }
 .g-confetti { position: fixed; inset: 0; pointer-events: none; z-index: 200; }
 @media (max-width: 700px) {
-  .ob-top { padding: 14px 16px; }
+  /* The progress bar takes its own line and Talk keeps only its microphone, so the bar fits a 360px phone. */
+  .ob-top { padding: 12px 16px; flex-wrap: wrap; row-gap: 10px; }
+  .ob-progress { order: 3; flex-basis: 100%; max-width: none; }
+  .ob-talk-label { display: none; }
+  .ob-top > img { height: 18px !important; }
+  .ob-top .seg button { padding: 6px 9px; }
+  .ob-top .btn-sm { padding-left: 9px; padding-right: 9px; }
   .ob-h1 { font-size: 25px; }
   .ob-card { padding: 16px; border-radius: 18px; }
   .ob-fact { grid-template-columns: 1fr; gap: 2px; }
