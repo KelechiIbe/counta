@@ -80,7 +80,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   const toast = useToast();
   const qc = useQueryClient();
   const [tab, setTab] = useState<'details' | 'statement' | 'documents'>(customer ? 'statement' : 'details');
-  const [f, setF] = useState({ name: '', phone: '', email: '', address: '', tin: '', kind: 'business', credit_limit: '', terms_days: '', price_list_id: '', whatsapp_opt_in: true,
+  const [f, setF] = useState({ name: '', phone: '', email: '', address: '', tin: '', kind: 'business', credit_limit: '', terms_days: '', price_list_id: '', whatsapp_opt_in: true, wvat_agent: false,
     city: '', state: '', country: 'NG', contact_person: '', cc_emails: '' });
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState<'pay' | 'refund' | null>(null);
@@ -88,7 +88,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   const [range, setRange] = useState({ from: '', to: today() });
   useEffect(() => {
     if (customer) setF({ name: customer.name, phone: customer.phone || '', email: customer.email || '', address: customer.address || '', tin: customer.tin || '', kind: customer.kind || 'business',
-      credit_limit: String(Number(customer.credit_limit) || ''), terms_days: String(customer.terms_days || ''), price_list_id: customer.price_list_id || '', whatsapp_opt_in: customer.whatsapp_opt_in,
+      credit_limit: String(Number(customer.credit_limit) || ''), terms_days: String(customer.terms_days || ''), price_list_id: customer.price_list_id || '', whatsapp_opt_in: customer.whatsapp_opt_in, wvat_agent: !!(customer as any).wvat_agent,
       city: customer.city || '', state: customer.state || '', country: customer.country || 'NG', contact_person: customer.contact_person || '', cc_emails: (customer.cc_emails || []).join(', ') });
   }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const statement = useQuery({ queryKey: ['statement', customer?.id, range.from, range.to], enabled: !!customer && tab === 'statement',
@@ -106,7 +106,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
       await rpc('save_customer', { p_org: orgId, p_customer: { id: customer?.id || null, name: f.name, phone: f.phone || null, email: f.email || null, address: f.address || null, tin: f.tin || null,
         kind: f.kind, price_list_id: f.price_list_id || null, whatsapp_opt_in: f.whatsapp_opt_in, city: f.city || null, state: f.state || null, country: f.country || 'NG',
         contact_person: f.contact_person || null, cc_emails: f.cc_emails.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean),
-        ...(canCredit ? { credit_limit: money(f.credit_limit) ?? 0, terms_days: Number(f.terms_days) || 0 } : {}) } });
+        ...(canCredit ? { credit_limit: money(f.credit_limit) ?? 0, terms_days: Number(f.terms_days) || 0, wvat_agent: f.wvat_agent } : {}) } });
       toast('Customer saved'); await qc.invalidateQueries({ queryKey: ['customers'] }); if (!customer) onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
@@ -151,6 +151,8 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
               <Field label="Payment terms (days)"><input className="input" inputMode="numeric" disabled={!canCredit} value={f.terms_days} onChange={(e) => set('terms_days', e.target.value)} /></Field>
             </div>
             <label className="check"><input type="checkbox" checked={f.whatsapp_opt_in} onChange={(e) => set('whatsapp_opt_in', e.target.checked)} />Send receipts and reminders by WhatsApp</label>
+            {f.kind === 'business' && <label className="check" title={canCredit ? undefined : 'Set by a manager or the bookkeeper.'}><input type="checkbox" disabled={!canCredit} checked={f.wvat_agent} onChange={(e) => set('wvat_agent', e.target.checked)} />
+              A withholding VAT agent (a bank, telecom, oil company or government body): it keeps the VAT on our invoices and pays it to the NRS for us</label>}
             <div><button className="btn btn-primary" disabled={busy || !f.name.trim()} onClick={save}>Save customer</button></div>
           </div>
         )}

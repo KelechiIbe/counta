@@ -21,7 +21,7 @@ const TITLES: Record<string, string> = {
   '/sell/till': 'Till', '/sell/sales': 'Sales', '/sell/customers': 'Customers', '/sell/orders': 'Orders & deliveries', '/sell/price-lists': 'Price lists', '/sell/shop': 'Online shop',
   '/payments': 'Payments', '/purchases/bills': 'Bills', '/purchases/vendors': 'Vendors',
   '/accounting/inbox': 'Books inbox', '/accounting/banking': 'Banking & reconciliation', '/accounting/statements': 'Financial statements',
-  '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close',
+  '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close', '/accounting/tax': 'Tax returns',
   '/accounting/journals': 'Journals', '/accounting/migrate': 'Move your books', '/assistant': 'AI Assistant', '/settings': 'Settings',
 };
 export const titleFor = (path: string) => TITLES[path] || TITLES[Object.keys(TITLES).filter((k) => path.startsWith(k + '/')).sort((x, y) => y.length - x.length)[0]] || 'Counta';
@@ -149,7 +149,7 @@ function Sidebar({ open, onClose, rail, onRail }: { open: boolean; onClose: () =
         <Group to="/accounting/inbox" label="Accounting" icon="book" active={p.startsWith('/accounting')} onClose={onClose} rail={rail} show={money}
           subs={[['/accounting/inbox', 'Books inbox', questions], ['/accounting/banking', 'Banking'], ['/accounting/statements', 'Financial statements'],
             ['/accounting/ledgers', 'Ledgers & reports'], ['/accounting/cfo', 'CFO pack'], ['/accounting/journals', 'Journals'], ['/accounting/assets', 'Fixed assets', Number(ib?.assets_to_confirm || 0)],
-            ['/accounting/close', 'Period close'], ['/accounting/migrate', 'Move your books']]} />
+            ['/accounting/tax', 'Tax returns'], ['/accounting/close', 'Period close'], ['/accounting/migrate', 'Move your books']]} />
         {external('Taxes', 'landmark')}
         {link('/assistant', 'AI Assistant', 'sparkles')}
       </nav>

@@ -379,7 +379,7 @@ export function RecordPayment({ sale, onClose, onDone }: { sale: Sale; onClose: 
   const { data: inv } = useInventory();
   const toast = useToast();
   const qc = useQueryClient();
-  const [f, setF] = useState({ amount: String(Number(sale.balance) || ''), method: 'transfer', reference: '', bank_account_id: '', wht_amount: '', received_at: new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' }) });
+  const [f, setF] = useState({ amount: String(Number(sale.balance) || ''), method: 'transfer', reference: '', bank_account_id: '', wht_amount: '', wvat_amount: '', received_at: new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' }) });
   const [accounts, setAccounts] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const canConfirm = can(inv, 'keep_books') || can(inv, 'approve_adjustments');
@@ -390,7 +390,7 @@ export function RecordPayment({ sale, onClose, onDone }: { sale: Sale; onClose: 
     setBusy(true);
     try {
       await rpc('record_payment', { p_org: orgId, p_payment: { sale_id: sale.id, amount: Number(f.amount) || 0, method: f.method, confirmed: confirm,
-        reference: f.reference || null, bank_account_id: f.bank_account_id || null, wht_amount: Number(f.wht_amount) || 0, received_at: f.received_at } });
+        reference: f.reference || null, bank_account_id: f.bank_account_id || null, wht_amount: Number(f.wht_amount) || 0, wvat_amount: Number(f.wvat_amount) || 0, received_at: f.received_at } });
       toast('Payment recorded');
       await Promise.all(['sale', 'sales', 'customers', 'inbox'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
       onDone?.(); onClose();
@@ -429,9 +429,11 @@ export function RecordPayment({ sale, onClose, onDone }: { sale: Sale; onClose: 
           <Field label="Reference"><input className="input" value={f.reference} onChange={(e) => set('reference', e.target.value)} placeholder="Bank reference" /></Field>
           <Field label="WHT deducted by the customer" hint="Keep the credit note; it is your tax credit."><input className="input" inputMode="decimal" value={f.wht_amount} onChange={(e) => set('wht_amount', e.target.value)} placeholder="0.00" /></Field>
         </div>
+        {Number((sale as any).vat_total) > 0 && <Field label="VAT withheld by the customer" hint={`Only when the customer is a withholding VAT agent (a bank, telecom, oil company or government body). It is credited in your VAT return; up to ${N2((sale as any).vat_total)}.`}>
+          <input className="input" inputMode="decimal" value={f.wvat_amount} onChange={(e) => set('wvat_amount', e.target.value)} placeholder="0.00" style={{ maxWidth: 220 }} /></Field>}
         {canConfirm && f.method !== 'cash' && <label className="check"><input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} />I can see this money in the account: confirm it now</label>}
       </div>
-      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || !(Number(f.amount) > 0 || Number(f.wht_amount) > 0) || (confirm && !f.bank_account_id)} onClick={save}>Record payment</button></div>
+      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || !(Number(f.amount) > 0 || Number(f.wht_amount) > 0 || Number(f.wvat_amount) > 0) || (confirm && !f.bank_account_id)} onClick={save}>Record payment</button></div>
     </Modal>
   );
 }

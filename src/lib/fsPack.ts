@@ -141,8 +141,11 @@ export function buildPack(pack: any, signersOverride?: { name: string; role: str
     const set = tc.extra?.settings || {};
     const flags: { level: string; text: string }[] = tc.extra?.flags || [];
     const taxCols: PCol[] = [lineCol, { key: 'basis', label: 'Basis', type: 'text' }, money('current', `${cur}\n₦`)];
-    const intro: Block[] = [{ t: 'para', text: `Companies income tax computation under the Nigeria Tax Act 2025, from the statement of profit or loss ${periodText}. `
-      + `Each adjustment shows where its figure comes from. ${fig.small_company ? 'The company is a small company (turnover and fixed assets within the limits), so no companies income tax or development levy is charged.' : ''}`.trim() }];
+    const legacy = fig.regime === 'LEGACY_CITA';
+    const small = !fig.small_company ? '' : legacy ? 'The company is a small company (turnover up to ₦25 million), so no companies income tax or tertiary education tax is charged.'
+      : 'The company is a small company (turnover and fixed assets within the limits), so no companies income tax or development levy is charged.';
+    const intro: Block[] = [{ t: 'para', text: `Companies income tax computation under the ${fig.law || (legacy ? 'Companies Income Tax Act' : 'Nigeria Tax Act 2025')}, from the statement of profit or loss ${periodText}. `
+      + `Each adjustment shows where its figure comes from. ${small}`.trim() }];
     const posted: Block[] = set.posted_ref ? [{ t: 'para', text: `The charge was posted to the accounts in ${set.posted_ref}.` }] : [];
     const notes: Block[] = flags.length ? [{ t: 'heading', level: 3, text: 'Points to check' }, ...flags.map((f) => ({ t: 'para', text: f.text } as Block))] : [];
     add({ key: 'tax_computation', group: 'tax', title: 'Tax computation', subtitle: periodText.replace(/^f/, 'F'),
@@ -156,9 +159,14 @@ export function buildPack(pack: any, signersOverride?: { name: string; role: str
     const assets: any[] = ca.extra?.assets || [];
     const assetRows = assets.map((a) => ({ ...a, line: `${a.number} ${a.name} (in use ${SHORT(a.in_use)})`, rate_pct: a.rate != null ? Number(a.rate) * 100 : null, _style: 'line', _indent: 0 }));
     const months = Number(ca.extra?.months || 12);
+    const caText = ca.extra?.regime === 'LEGACY_CITA'
+      ? 'Initial allowance in the year an asset is first used and annual allowances on the rest, at the Second Schedule rates of the Companies Income Tax Act, '
+        + 'for assets owned and in use at the end of the period, with ₦10 kept on each asset until it is sold. Allowances used in a year are limited to two-thirds of assessable profit '
+        + '(not for manufacturing and agro-allied companies); what is not used carries forward.'
+      : `Annual allowances on cost at the First Schedule rates, a full year for each asset owned and in use at the end of the period${months < 12 ? `, shared for a period of ${months} months` : ''}, `
+        + `with ${Math.round(Number(ca.extra?.retention ?? 0.01) * 100)}% of cost kept until the asset is sold. Assets in use before the period have had one year's allowance for each earlier year end.`;
     add({ key: 'capital_allowances', group: 'tax', title: 'Capital allowances', subtitle: periodText.replace(/^f/, 'F'), wide: true, blocks: [
-      { t: 'para', text: `Annual allowances on cost at the First Schedule rates, a full year for each asset owned and in use at the end of the period${months < 12 ? `, shared for a period of ${months} months` : ''}, `
-        + `with ${Math.round(Number(ca.extra?.retention || 0.01) * 100)}% of cost kept until the asset is sold. Assets in use before the period have had one year's allowance for each earlier year end.` },
+      { t: 'para', text: caText },
       ...statementBlocks(ca.rows || [], cls),
       ...(assetRows.length ? [{ t: 'heading', level: 3, text: 'Asset by asset' } as Block, ...statementBlocks(assetRows, [{ ...cls[0], label: 'Asset' }, ...cls.slice(1)])] : []),
     ] });

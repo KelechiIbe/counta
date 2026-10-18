@@ -9,6 +9,11 @@
 //   POST /taxstreem/prism/bills         body { org_id: <TaxStreem business id>, bill: {...} }
 //   POST /taxstreem/prism/bill-status   body { org_id, prism_id }
 //   Header: x-taxstreem-signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">
+//
+// Flux (TaxStreem's filing engine) reporting on a companies income tax return Counta sent it (docs/flux-cit-handoff.md):
+//   POST /taxstreem/flux/cit-status     body { counta_org_id, accounting_year, status: processing|sent|filed|rejected, ref,
+//                                              message, acknowledgement_ref, filed_at, rev360_computation }
+//   Header: x-counta-signature, the same scheme signed with FLUX_SECRET.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { SsoError, verifyBody, verifySsoToken } from './sso.ts';
 
@@ -18,7 +23,7 @@ const admin = createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: fals
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-taxstreem-signature',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-taxstreem-signature, x-counta-signature',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -71,12 +76,30 @@ async function prism(path: string, raw: string, sig: string | null) {
   return json({ ok: false, error: 'Unknown path.' }, 404);
 }
 
+async function flux(raw: string, sig: string | null) {
+  if (!(await verifyBody(raw, sig, Deno.env.get('FLUX_SECRET') || ''))) return json({ ok: false, error: 'Bad signature.' }, 401);
+  let body: any;
+  try { body = JSON.parse(raw); } catch { return json({ ok: false, error: 'Invalid JSON.' }, 400); }
+  const org = String(body.counta_org_id || ''), year = Number(body.accounting_year);
+  if (!/^[0-9a-f-]{36}$/i.test(org) || !Number.isInteger(year)) return json({ ok: false, error: 'counta_org_id and accounting_year are required.' }, 400);
+  const status = String(body.status || '');
+  if (!['processing', 'sent', 'filed', 'rejected'].includes(status)) return json({ ok: false, error: 'status must be processing, sent, filed or rejected.' }, 400);
+  const p: Record<string, unknown> = { flux_status: status };
+  if (status !== 'processing') p.status = status;
+  for (const k of ['ref', 'message', 'acknowledgement_ref', 'filed_at']) if (body[k] != null && body[k] !== '') p[k] = String(body[k]);
+  if (body.rev360_computation && typeof body.rev360_computation === 'object') p.rev360_computation = body.rev360_computation;
+  const { data, error } = await admin.rpc('svc_cit_flux_update', { p_org: org, p_year: year, p });
+  if (error) return json({ ok: false, error: error.message }, 422);
+  return json({ ok: true, status: data.status, flux_status: status });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
   const path = new URL(req.url).pathname.replace(/\/$/, '');
   try {
     if (/\/prism\/(bills|bill-status)$/.test(path)) return await prism(path, await req.text(), req.headers.get('x-taxstreem-signature'));
+    if (/\/flux\/cit-status$/.test(path)) return await flux(await req.text(), req.headers.get('x-counta-signature'));
     let body: any;
     try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
     if (body.action === 'sso') return json(await sso(String(body.token || '')));

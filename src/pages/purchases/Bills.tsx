@@ -13,6 +13,7 @@ import { taxIdError } from '../../lib/taxid';
 import { ExportMenu, useMeta } from '../../components/Books';
 import type { RCol } from '../../lib/reports';
 import { StatusChip } from '../sell/common';
+import { authorityLabel, pct } from '../../lib/tax';
 import { CreditsList, UseCredits, VendorCreditModal } from './VendorCredits';
 
 type Tab = 'all' | 'draft' | 'unpaid' | 'overdue' | 'paid' | 'credits';
@@ -70,14 +71,14 @@ export default function Bills() {
           ))}
         </div>
       </div>}
-      {open && <BillDrawer id={open} onClose={() => setParams({})} onEdit={(id) => setEditing(id)} />}
+      {open && <BillDrawer id={open} whtRates={bills.data?.wht_rates || []} onClose={() => setParams({})} onEdit={(id) => setEditing(id)} />}
       {editing && <BillEditor id={editing === 'new' ? null : editing} vendors={bills.data?.vendors || []} whtRates={bills.data?.wht_rates || []} assetClasses={bills.data?.asset_classes || []}
         onClose={() => setEditing(null)} onSaved={(id) => { setEditing(null); setParams({ open: id }); }} />}
     </div>
   );
 }
 
-function BillDrawer({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (id: string) => void }) {
+function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: any[]; onClose: () => void; onEdit: (id: string) => void }) {
   const { data: inv } = useInventory();
   const bill = useBill(id);
   const toast = useToast();
@@ -104,7 +105,9 @@ function BillDrawer({ id, onClose, onEdit }: { id: string; onClose: () => void; 
             <div className="card" style={{ overflow: 'hidden', borderRadius: 12 }}>
               {(b.lines || []).map((l: any) => (
                 <div key={l.id} className="tr" style={{ gridTemplateColumns: 'minmax(0,1fr) 120px', padding: '9px 14px' }}>
-                  <span style={{ minWidth: 0 }}>{l.description}<span className="faint" style={{ display: 'block', fontSize: 12 }}>{l.account_code} {l.account_name} · {Number(l.qty)} × {N2(l.unit_cost)}{l.vat_treatment === 'standard' ? ` · VAT ${N2(l.vat)}${l.vat_recoverable ? '' : ' (not recoverable)'}` : l.vat_treatment === 'none' ? '' : ` · ${l.vat_treatment}`}</span></span>
+                  <span style={{ minWidth: 0 }}>{l.description}<span className="faint" style={{ display: 'block', fontSize: 12 }}>{l.account_code} {l.account_name} · {Number(l.qty)} × {N2(l.unit_cost)}{l.vat_treatment === 'standard' ? ` · VAT ${N2(l.vat)}${l.vat_recoverable ? '' : ' (not recoverable)'}` : l.vat_treatment === 'none' ? '' : ` · ${l.vat_treatment}`}
+                    {Number(l.wht) > 0 ? ` · WHT ${pct(l.wht_rate)} ${N2(l.wht)}${l.wht_category_effective && l.wht_category_effective !== b.wht_category ? ` (${whtRates.find((w) => w.code === l.wht_category_effective)?.name || l.wht_category_effective})` : ''}` : ''}
+                    {Number(l.reverse_charge_vat) > 0 ? ` · VAT self-charged ${N2(l.reverse_charge_vat)}` : ''}</span></span>
                   <span className="right num">{N2(l.gross)}</span>
                 </div>
               ))}
@@ -112,14 +115,22 @@ function BillDrawer({ id, onClose, onEdit }: { id: string; onClose: () => void; 
                 <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Before VAT</span><span className="num">{N2(b.subtotal)}</span></div>
                 <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">VAT</span><span className="num">{N2(b.vat_total)}</span></div>
                 <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700 }}><span>Total</span><span className="num">{N2(b.total)}</span></div>
-                <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Withholding tax ({(Number(b.wht_rate) * 100).toFixed(1)}%, {b.wht_category})</span><span className="num">{N2(b.wht_expected)}</span></div>
+                <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Withholding tax{b.wht_category && b.wht_category !== 'none' ? ` (${whtRates.find((w) => w.code === b.wht_category)?.name || b.wht_category})` : ''}</span><span className="num">{N2(b.wht_expected)}</span></div>
+                {b.wht_note && <div className="faint" style={{ fontSize: 12, marginTop: -2 }}>{b.wht_note}</div>}
+                {Number(b.wvat_expected) > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">VAT we withhold as an agent <span className="faint">(to the NRS by the 14th)</span></span><span className="num">{N2(b.wvat_expected)}</span></div>}
+                {Number(b.reverse_charge_vat) > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">VAT self-charged on services from abroad <span className="faint">(paid to the NRS, claimed back as input VAT)</span></span><span className="num">{N2(b.reverse_charge_vat)}</span></div>}
                 {Number(b.amount_paid) > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Paid</span><span className="num">{N2(b.amount_paid)}</span></div>}
                 {Number(b.balance) > 0 && <div className="row" style={{ justifyContent: 'space-between', color: '#C2410C', fontWeight: 600 }}><span>Still owed</span><span className="num">{N2(b.balance)}</span></div>}
               </div>
             </div>
             {(b.payments || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Payments</div>{b.payments.map((p: any) => (
               <div key={p.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{p.method === 'wallet' ? 'From the wallet' : p.method === 'bank' ? 'From the bank' : p.method} · {when(p.paid_at)}{p.reference ? ` · ${p.reference}` : ''}</span>
-                <span className="row" style={{ gap: 6 }}><StatusChip s={p.status} /><span className="num">{N2(p.net)} + WHT {N2(p.wht)}</span></span></div>
+                <span className="row" style={{ gap: 6 }}><StatusChip s={p.status} /><span className="num">{N2(p.net)} + WHT {N2(p.wht)}{Number(p.wvat) > 0 ? ` + VAT ${N2(p.wvat)}` : ''}</span></span></div>
+            ))}</div>}
+            {(b.deductions || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Withheld</div>{b.deductions.map((x: any) => (
+              <div key={x.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}>
+                <span>{x.kind === 'wht' ? `WHT ${pct(x.rate)}` : x.kind === 'wvat' ? 'VAT withheld' : 'VAT self-charged'} · {x.authority_name || authorityLabel(x.authority)}{x.receipt_no ? ` · receipt ${x.receipt_no}` : ''}</span>
+                <span className="row" style={{ gap: 6 }}><span className={'chip ' + (x.status === 'remitted' ? 't-green' : x.status === 'pending' ? 't-grey' : 't-amber')}>{x.status === 'remitted' ? 'paid over' : x.status === 'pending' ? 'on payment' : `due ${fmtDay(x.due_date)}`}</span><span className="num">{N2(x.amount)}</span></span></div>
             ))}</div>}
             {(b.credit_notes || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Credit notes</div>{b.credit_notes.map((c: any) => (
               <div key={c.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{c.number}{c.vendor_ref ? ` (their ${c.vendor_ref})` : ''} · {fmtDay(c.credit_date)} · {c.reason}</span><span className="num">{N2(c.total)}</span></div>
@@ -163,7 +174,14 @@ function PayBill({ bill, onClose, onDone }: { bill: any; onClose: () => void; on
     edge<{ account_name: string }>('payments', { action: 'resolve_account', account_number: f.account_number, bank_code: f.bank_code }).then((r) => r.account_name && setF((x) => ({ ...x, account_name: r.account_name })));
   }, [f.account_number, f.bank_code, f.method]); // eslint-disable-line react-hooks/exhaustive-deps
   const gross = money(f.amount) || 0;
-  const wht = gross >= due - 0.004 ? Number(bill.wht_expected) - Number(bill.wht_withheld || 0) : Number(bill.wht_expected) * gross / Number(bill.total || 1);
+  // What the payment keeps back, as the database will: in proportion to what it settles, the rest when it settles the bill.
+  const tw = bill.to_withhold || {};
+  const full = gross >= due - 0.004;
+  const share = (expected: number, left: number) => (full ? left : Math.min(Math.round(expected * gross / Number(bill.total || 1) * 100) / 100, left));
+  const wht = share(Number(bill.wht_expected || 0), Number(tw.wht_left ?? bill.wht_expected ?? 0));
+  const wvat = share(Number(bill.wvat_expected || 0), Number(tw.wvat_left ?? bill.wvat_expected ?? 0));
+  const pf = v.wht_profile || {};
+  const whtTo = pf.corporate !== false || pf.resident === false ? 'pay to the NRS by the 21st' : 'pay to the state revenue service by the 30th';
   async function go() {
     setBusy(true);
     try {
@@ -185,9 +203,11 @@ function PayBill({ bill, onClose, onDone }: { bill: any; onClose: () => void; on
         <Field label="Pay from"><select className="input" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}><option value="wallet">The business wallet (sent now)</option><option value="bank">Our bank (already paid)</option><option value="cash">Cash</option></select></Field>
         <Field label="Amount of the bill this settles"><input className="input" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
         <div className="row" style={{ justifyContent: 'space-between', background: '#FAFAFA', borderRadius: 10, padding: 10, fontSize: 13 }}>
-          <span>Withholding tax kept back <span className="faint">(pay to NRS by the 21st)</span></span><b className="num">{N2(wht)}</b>
+          <span>Withholding tax kept back <span className="faint">({whtTo})</span></span><b className="num">{N2(wht)}</b>
         </div>
-        <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700 }}><span>The supplier receives</span><span className="num">{N2(gross - wht)}</span></div>
+        {wvat > 0 && <div className="row" style={{ justifyContent: 'space-between', background: '#FAFAFA', borderRadius: 10, padding: 10, fontSize: 13 }}>
+          <span>VAT kept back as a withholding VAT agent <span className="faint">(pay to the NRS by the 14th)</span></span><b className="num">{N2(wvat)}</b></div>}
+        <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700 }}><span>The supplier receives</span><span className="num">{N2(gross - wht - wvat)}</span></div>
         {f.method === 'wallet' ? (
           <>
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -204,12 +224,12 @@ function PayBill({ bill, onClose, onDone }: { bill: any; onClose: () => void; on
           </>
         )}
       </div>
-      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || gross <= 0 || (f.method === 'wallet' ? !f.account_name || !f.bank_code : !f.bank_account_id)} onClick={go}>{f.method === 'wallet' ? `Send ${N2(gross - wht)}` : 'Record payment'}</button></div>
+      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || gross <= 0 || (f.method === 'wallet' ? !f.account_name || !f.bank_code : !f.bank_account_id)} onClick={go}>{f.method === 'wallet' ? `Send ${N2(gross - wht - wvat)}` : 'Record payment'}</button></div>
     </Modal>
   );
 }
 
-interface BLine { key: string; description: string; account_code: string; qty: string; unit_cost: string; vat_treatment: string; vat_recoverable: boolean; asset_life_months: string }
+interface BLine { key: string; description: string; account_code: string; qty: string; unit_cost: string; vat_treatment: string; vat_recoverable: boolean; asset_life_months: string; wht_category: string }
 
 function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: { id: string | null; vendors: any[]; whtRates: any[]; assetClasses: any[]; onClose: () => void; onSaved: (id: string) => void }) {
   const { orgId } = useSession();
@@ -219,7 +239,7 @@ function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: {
   const chart = useChart();
   const [vendor, setVendor] = useState({ id: '', name: '', tin: '' });
   const [f, setF] = useState({ vendor_ref: '', bill_date: today(), due_date: '', vat_charged: true, prices_include_vat: false, wht_category: '', notes: '' });
-  const [lines, setLines] = useState<BLine[]>([{ key: crypto.randomUUID(), description: '', account_code: '', qty: '1', unit_cost: '', vat_treatment: 'standard', vat_recoverable: true, asset_life_months: '' }]);
+  const [lines, setLines] = useState<BLine[]>([{ key: crypto.randomUUID(), description: '', account_code: '', qty: '1', unit_cost: '', vat_treatment: 'standard', vat_recoverable: true, asset_life_months: '', wht_category: '' }]);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     const b = existing.data;
@@ -227,7 +247,8 @@ function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: {
     setVendor({ id: b.vendor_id, name: b.vendor?.name || '', tin: b.vendor?.tin || '' });
     setF({ vendor_ref: b.vendor_ref || '', bill_date: b.bill_date, due_date: b.due_date || '', vat_charged: b.vat_charged, prices_include_vat: b.prices_include_vat, wht_category: b.wht_category || '', notes: b.notes || '' });
     setLines((b.lines || []).map((l: any) => ({ key: l.id, description: l.description, account_code: l.account_code, qty: String(Number(l.qty)), unit_cost: String(Number(l.unit_cost)),
-      vat_treatment: l.vat_treatment === 'none' ? 'standard' : l.vat_treatment, vat_recoverable: l.vat_recoverable, asset_life_months: l.asset_life_months ? String(l.asset_life_months) : '' })));
+      vat_treatment: l.vat_treatment === 'none' ? 'standard' : l.vat_treatment, vat_recoverable: l.vat_recoverable, asset_life_months: l.asset_life_months ? String(l.asset_life_months) : '',
+      wht_category: l.wht_category && l.wht_category !== b.wht_category ? l.wht_category : '' })));
   }, [existing.data?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const accounts = (chart.data?.accounts || []).filter((a: any) => !a.is_group && a.active && (/^[56]/.test(a.code) || /^(120[1-6]|15[0-2]|160)/.test(a.code)));
   const assetCodes = new Set(assetClasses.map((c) => c.cost_account));
@@ -241,7 +262,8 @@ function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: {
       const r = await rpc<any>('save_bill', { p_org: orgId, p_bill: { id: id || null, vendor_id: vendor.id || null, vendor: vendor.id ? undefined : { name: vendor.name, tin: vendor.tin || null },
         ...f, due_date: f.due_date || null, wht_category: f.wht_category || null,
         lines: lines.filter((l) => l.description || l.unit_cost).map((l) => ({ description: l.description, account_code: l.account_code, qty: Number(l.qty) || 1, unit_cost: money(l.unit_cost),
-          vat_treatment: l.vat_treatment, vat_recoverable: l.vat_recoverable, asset_life_months: assetCodes.has(l.account_code) ? Number(l.asset_life_months) || null : null })) } });
+          vat_treatment: l.vat_treatment, vat_recoverable: l.vat_recoverable, asset_life_months: assetCodes.has(l.account_code) ? Number(l.asset_life_months) || null : null,
+          wht_category: l.wht_category || null })) } });
       toast('Bill saved'); await qc.invalidateQueries({ queryKey: ['bills'] }); await qc.invalidateQueries({ queryKey: ['bill'] });
       onSaved(r?.id || id!);
     } catch (e) { toast((e as Error).message, 'err'); }
@@ -263,7 +285,7 @@ function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: {
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr', gap: 12 }}>
           <Field label="Bill date"><input className="input" type="date" value={f.bill_date} onChange={(e) => setF({ ...f, bill_date: e.target.value })} /></Field>
           <Field label="Due"><input className="input" type="date" value={f.due_date} onChange={(e) => setF({ ...f, due_date: e.target.value })} /></Field>
-          <Field label="Withholding tax"><select className="input" value={f.wht_category} onChange={(e) => setF({ ...f, wht_category: e.target.value })}><option value="">The vendor's usual</option>{whtRates.map((w) => <option key={w.code} value={w.code}>{w.name} · {(Number(w.rate_company) * 100).toFixed(0)}%</option>)}</select></Field>
+          <Field label="Withholding tax" hint="The rate follows the supplier: company or not, in Nigeria or abroad, with a Tax ID or not."><select className="input" value={f.wht_category} onChange={(e) => setF({ ...f, wht_category: e.target.value })}><option value="">The vendor's usual</option>{whtRates.map((w) => <option key={w.code} value={w.code}>{w.name}{w.code === 'none' || w.exemption ? '' : ` · ${pct(w.rate_corp_res ?? w.rate_company)} for a company`}</option>)}</select></Field>
         </div>
         <div className="row wrap" style={{ gap: 16 }}>
           <label className="check"><input type="checkbox" checked={f.vat_charged} onChange={(e) => setF({ ...f, vat_charged: e.target.checked })} />The vendor charged VAT</label>
@@ -277,6 +299,8 @@ function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: {
               <span className="stack" style={{ gap: 4 }}>
                 <select className="input input-sm" value={l.account_code} onChange={(e) => upd(l.key, { account_code: e.target.value })}><option value="">Choose the account</option>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select>
                 {assetCodes.has(l.account_code) && <input className="input input-sm" inputMode="numeric" placeholder={`Useful life in months (default ${assetClasses.find((c) => c.cost_account === l.account_code)?.default_life_months || '—'})`} value={l.asset_life_months} onChange={(e) => upd(l.key, { asset_life_months: e.target.value })} />}
+                <select className="input input-sm" value={l.wht_category} onChange={(e) => upd(l.key, { wht_category: e.target.value })} aria-label="Withholding tax on this line" style={{ color: l.wht_category ? undefined : '#6B7280' }}>
+                  <option value="">WHT as the bill</option>{whtRates.filter((w) => w.code !== 'none').map((w) => <option key={w.code} value={w.code}>WHT: {w.name}</option>)}</select>
               </span>
               <input className="input input-sm num" inputMode="decimal" value={l.qty} onChange={(e) => upd(l.key, { qty: e.target.value })} aria-label="Quantity" />
               <input className="input input-sm num" inputMode="decimal" value={l.unit_cost} onChange={(e) => upd(l.key, { unit_cost: e.target.value })} aria-label="Unit cost" />
@@ -287,7 +311,7 @@ function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: {
               <button className="btn btn-ghost btn-xs" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label="Remove line"><Icon name="trash" size={13} /></button>
             </div>
           ))}
-          <div style={{ padding: 12 }}><button className="btn btn-secondary btn-sm" onClick={() => setLines((ls) => [...ls, { key: crypto.randomUUID(), description: '', account_code: '', qty: '1', unit_cost: '', vat_treatment: 'standard', vat_recoverable: true, asset_life_months: '' }])}><Icon name="plus" size={13} />Line</button></div>
+          <div style={{ padding: 12 }}><button className="btn btn-secondary btn-sm" onClick={() => setLines((ls) => [...ls, { key: crypto.randomUUID(), description: '', account_code: '', qty: '1', unit_cost: '', vat_treatment: 'standard', vat_recoverable: true, asset_life_months: '', wht_category: '' }])}><Icon name="plus" size={13} />Line</button></div>
         </div>
         <div className="row" style={{ justifyContent: 'flex-end', fontWeight: 600 }}>Lines {N2(net)}{f.vat_charged && !f.prices_include_vat ? ' + VAT' : ''}</div>
         <Field label="Notes"><input className="input" value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>

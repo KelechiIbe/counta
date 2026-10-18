@@ -43,6 +43,7 @@ const Cfo = lazy(() => import('./pages/accounting/Cfo'));
 const Journals = lazy(() => import('./pages/accounting/Journals'));
 const Assets = lazy(() => import('./pages/accounting/Assets'));
 const Close = lazy(() => import('./pages/accounting/Close'));
+const Tax = lazy(() => import('./pages/accounting/Tax'));
 const PublicDoc = lazy(() => import('./pages/public/Public').then((m) => ({ default: m.PublicDoc })));
 const ShopPage = lazy(() => import('./pages/public/Public').then((m) => ({ default: m.ShopPage })));
 const Sso = lazy(() => import('./pages/public/Sso'));
@@ -147,6 +148,7 @@ export default function App() {
         <Route path="/accounting/journals" element={<Journals />} />
         <Route path="/accounting/assets" element={<Assets />} />
         <Route path="/accounting/close" element={<Close />} />
+        <Route path="/accounting/tax" element={<Tax />} />
         <Route path="/inventory" element={<Overview />} />
         <Route path="/inventory/items" element={<Items />} />
         <Route path="/inventory/receive" element={<Receive />} />

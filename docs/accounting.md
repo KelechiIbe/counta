@@ -79,7 +79,13 @@ Codes below are the defaults. Amounts are net of VAT unless marked.
 | | allowance on stock with nothing sent back | | 5103 Purchase Returns |
 | Supplier credit used on another bill | `use_vendor_credit` | no journal (both sides in 2101); the bill's WHT falls with it | |
 | Supplier refund of a credit | `refund_vendor_credit` | the bank account | 2101 |
-| Tax charge | `post_tax_charge` | 7501 companies income tax, 7505 minimum tax top-up, 7502 development levy | 2208, 2209 |
+| Tax charge | `post_tax_charge` | 7501 companies income tax (or minimum tax), 7505 minimum effective tax top-up, 7502 development levy (2025 accounts on) or tertiary education tax (2023 and 2024) | 2208, 2209 |
+| Bill from a supplier abroad, services | `post_bill` | 1402 VAT self-charged at 7.5% (the cost line instead when not recoverable) | 2211 |
+| Bill paid, with withholding | `pay_bill` and the payment paths | 2101 gross | bank net; 2202 WHT; 2211 VAT withheld as a withholding VAT agent |
+| VAT a customer withheld | `record_payment` (`wvat_amount`), bank matching | 1405 | 1101 |
+| VAT return filed | `file_vat_return` | 2201 output VAT less what is payable; 6512 credit over five years old; 1404 refund claimed | 1405 VAT withheld by customers; 1402 input VAT claimed and credit used, less new credit; 1402 lapsed and refunded credit |
+| VAT paid | `record_vat_payment` | 2201 | the bank |
+| WHT or withholding VAT paid over | `record_wht_remittance` | 2202 (WHT) or 2211 (withholding and self-charged VAT) | the bank |
 
 Nothing posts into a closed period. A journal or movement dated on or before the last closed day, such as a phone sale that synced late, moves to the first open day with a note. See `month-end-close.md`.
 

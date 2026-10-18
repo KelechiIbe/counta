@@ -1,8 +1,9 @@
 // Financial statements under IFRS (or IFRS for SMEs), laid out the way they are signed: corporate information, the
 // directors' report, the statement of directors' responsibilities, the four primary statements, the notes, the
 // statement of value added and the five-year summary, with the tax computation and capital allowance schedule under the
-// Nigeria Tax Act 2025. The full set exports to Word, PDF and Excel, ready to sign.
+// Nigeria Tax Act 2025 (or the Companies Income Tax Act for earlier years). The full set exports to Word, PDF and Excel, ready to sign.
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
@@ -165,8 +166,7 @@ function BlockView({ b }: { b: Block }) {
   );
 }
 
-// ---------------------------------------------------------------- the tax computation, with what only the business can tell it
-interface Adj { label: string; amount: string; kind: 'add' | 'deduct'; reason: string }
+// ---------------------------------------------------------------- the tax computation (worked on in Tax returns), and posting its charge
 function TaxPanel({ section, pack, period, canEdit }: { section: PSection; pack: any; period: Period; canEdit: boolean }) {
   const { orgId } = useSession();
   const toast = useToast();
@@ -174,33 +174,17 @@ function TaxPanel({ section, pack, period, canEdit }: { section: PSection; pack:
   const tc = pack?.tax_computation?.extra || {};
   const st = tc.settings || {};
   const fig = tc.figures || {};
-  const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ professional_services: false, losses_bf: '', unabsorbed_ca_bf: '', notes: '' });
-  const [adj, setAdj] = useState<Adj[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
-  useEffect(() => {
-    setF({ professional_services: !!st.professional_services, losses_bf: Number(st.losses_bf) ? String(st.losses_bf) : '', unabsorbed_ca_bf: Number(st.unabsorbed_ca_bf) ? String(st.unabsorbed_ca_bf) : '', notes: st.notes || '' });
-    setAdj((st.adjustments || []).map((a: any) => ({ label: a.label, amount: String(a.amount), kind: a.kind === 'deduct' ? 'deduct' : 'add', reason: a.reason })));
-  }, [pack?.generated_at]); // eslint-disable-line react-hooks/exhaustive-deps
-  const refresh = () => Promise.all(['fs-pack', 'report', 'ledger'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
-  async function save() {
-    setBusy('save');
-    try {
-      await rpc('save_tax_settings', { p_org: orgId, p_period_end: period.to, p: { professional_services: f.professional_services, losses_bf: Number(f.losses_bf.replace(/,/g, '')) || 0,
-        unabsorbed_ca_bf: Number(f.unabsorbed_ca_bf.replace(/,/g, '')) || 0, notes: f.notes, adjustments: adj.filter((a) => a.label.trim() || a.amount.trim())
-          .map((a) => ({ ...a, amount: Number(String(a.amount).replace(/,/g, '')) || 0 })) } });
-      toast('Tax computation updated'); await refresh(); setOpen(false);
-    } catch (e) { toast((e as Error).message, 'err'); }
-    setBusy(null);
-  }
+  const [busy, setBusy] = useState(false);
+  const refresh = () => Promise.all(['fs-pack', 'report', 'ledger', 'cit-years', 'cit-year'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
   async function post() {
-    setBusy('post');
+    setBusy(true);
     try {
       const r = await rpc<any>('post_tax_charge', { p_org: orgId, p_from: period.from, p_to: period.to });
       toast(r.journal_ref ? `Tax charge posted in ${r.journal_ref}` : 'No tax to charge for this period'); await refresh();
     } catch (e) { toast((e as Error).message, 'err'); }
-    setBusy(null);
+    setBusy(false);
   }
+  const legacy = fig.regime === 'LEGACY_CITA';
   const charge = Number(fig.cit || 0) + Number(fig.levy || 0) + Number(fig.topup || 0);
   const inBooks = Number(fig.tax_in_accounts || 0);
   const N = (v: unknown) => Number(v || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -214,49 +198,19 @@ function TaxPanel({ section, pack, period, canEdit }: { section: PSection; pack:
             <div><div className="faint" style={{ fontSize: 12 }}>Payable after WHT credits</div><div style={{ fontWeight: 700, fontSize: 18 }} className="num">₦{N(fig.payable)}</div></div>
             <div><div className="faint" style={{ fontSize: 12 }}>In the accounts</div><div style={{ fontWeight: 700, fontSize: 18, color: Math.abs(charge - inBooks) >= 1 ? '#B45309' : undefined }} className="num">₦{N(inBooks)}</div></div>
           </div>
-          {canEdit && <div className="row wrap">
-            <button className="btn btn-secondary btn-sm" onClick={() => setOpen(true)}><Icon name="pencil" size={14} />Adjustments and losses</button>
-            <button className="btn btn-primary btn-sm" disabled={!!busy || !fig.company} onClick={post}>{busy === 'post' ? 'Posting…' : st.posted_ref ? 'Post again' : 'Post the tax charge'}</button>
-          </div>}
+          <div className="row wrap">
+            {fig.year && <Link className="btn btn-secondary btn-sm" to={`/accounting/tax?year=${fig.year}`}><Icon name="pencil" size={14} />{canEdit ? 'Adjustments, losses and the return' : 'Open the tax return'}</Link>}
+            {canEdit && <button className="btn btn-primary btn-sm" disabled={busy || !fig.company} onClick={post}>{busy ? 'Posting…' : st.posted_ref ? 'Post again' : 'Post the tax charge'}</button>}
+          </div>
         </div>
         <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>
-          {st.posted_ref ? `Posted in ${st.posted_ref} for the period to ${fmtDay(st.posted_to)}. Posting again replaces it. ` : 'Posting puts companies income tax (7501 to 2208) and the development levy (7502 to 2209) in the accounts on the last day of the period. '}
-          Rates come from the Nigeria Tax Act 2025 rule book in Counta; your adjustments print with their reasons.
+          {st.posted_ref ? `Posted in ${st.posted_ref} for the period to ${fmtDay(st.posted_to)}. Posting again replaces it. `
+            : `Posting puts companies income tax (7501 to 2208) and the ${legacy ? 'tertiary education tax' : 'development levy'} (7502 to 2209) in the accounts on the last day of the period. `}
+          {fig.year ? `This is the ${fig.year} return (year of assessment ${fig.yoa}) under the ${fig.law || (legacy ? 'Companies Income Tax Act' : 'Nigeria Tax Act 2025')}. ` : ''}
+          Adjustments, losses brought forward and capital allowances are kept with the return in Tax returns; each prints with its reason.
         </div>
       </div>
       <SectionView s={section} />
-      {open && (
-        <Drawer onClose={() => setOpen(false)} width={680}>
-          <div className="drawer-hd"><div className="grow"><div className="drawer-title">What the computation needs from you</div>
-            <div className="muted" style={{ fontSize: 13 }}>For the financial year ending {st.year_end || period.to}. Everything else comes from the ledger.</div></div>
-            <button className="x-btn" onClick={() => setOpen(false)} aria-label="Close"><Icon name="x" size={18} /></button></div>
-          <div className="drawer-body stack" style={{ gap: 14 }}>
-            <label className="check"><input type="checkbox" checked={f.professional_services} onChange={(e) => setF({ ...f, professional_services: e.target.checked })} />
-              The company provides professional services (law, accounting, consulting and the like), so it is never a small company</label>
-            <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <Field label="Tax losses brought forward" hint="From last year's computation. Used against this year's profit first."><input className="input num" inputMode="decimal" value={f.losses_bf} onChange={(e) => setF({ ...f, losses_bf: e.target.value })} /></Field>
-              <Field label="Unabsorbed capital allowances brought forward"><input className="input num" inputMode="decimal" value={f.unabsorbed_ca_bf} onChange={(e) => setF({ ...f, unabsorbed_ca_bf: e.target.value })} /></Field>
-            </div>
-            <div className="stack" style={{ gap: 8 }}>
-              <div className="row" style={{ justifyContent: 'space-between' }}><div className="label">Other adjustments</div>
-                <button className="btn btn-secondary btn-xs" onClick={() => setAdj([...adj, { label: '', amount: '', kind: 'add', reason: '' }])}><Icon name="plus" size={12} />Add</button></div>
-              {!adj.length && <div className="faint" style={{ fontSize: 13 }}>Expenses not wholly for the business, exempt income, or anything the rule book adds. Each needs a reason, which prints on the computation.</div>}
-              {adj.map((a, i) => (
-                <div key={i} className="card" style={{ padding: 10, borderRadius: 10, display: 'grid', gridTemplateColumns: '1.4fr 120px 130px 32px', gap: 8 }}>
-                  <input className="input input-sm" placeholder="What it is" value={a.label} onChange={(e) => setAdj(adj.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
-                  <input className="input input-sm num" inputMode="decimal" placeholder="Amount" value={a.amount} onChange={(e) => setAdj(adj.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
-                  <select className="input input-sm" value={a.kind} onChange={(e) => setAdj(adj.map((x, j) => (j === i ? { ...x, kind: e.target.value as Adj['kind'] } : x)))}>
-                    <option value="add">Add back</option><option value="deduct">Deduct</option></select>
-                  <button className="x-btn" aria-label="Remove" onClick={() => setAdj(adj.filter((_, j) => j !== i))}><Icon name="x" size={14} /></button>
-                  <input className="input input-sm" style={{ gridColumn: '1 / -1' }} placeholder="Reason (prints on the computation)" value={a.reason} onChange={(e) => setAdj(adj.map((x, j) => (j === i ? { ...x, reason: e.target.value } : x)))} />
-                </div>
-              ))}
-            </div>
-            <Field label="Notes for whoever prepares the return"><textarea className="input" style={{ minHeight: 60 }} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
-          </div>
-          <div className="drawer-ft"><button className="btn btn-primary" disabled={!!busy} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save and recompute'}</button><button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button></div>
-        </Drawer>
-      )}
     </div>
   );
 }

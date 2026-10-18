@@ -126,10 +126,15 @@ export function InvoiceDoc({ d, template, style, fixed }: { d: DocData; template
       </tbody>
     </table>
   );
+  // An exempt supply carries no VAT line and says so (VAT rule book, exempt supplies, rule 2).
+  const exemptLines = d.lines.filter((l) => l.vat_treatment === 'exempt');
+  const allExempt = d.lines.length > 0 && exemptLines.length === d.lines.length;
+  const exemptNote = !exemptLines.length ? null : allExempt ? 'This supply is exempted from VAT.'
+    : `This supply is exempted from VAT: ${exemptLines.slice(0, 3).map((l) => l.description).join(', ')}${exemptLines.length > 3 ? ` and ${exemptLines.length - 3} more` : ''}.`;
   const totals = (
     <div className="inv-totals">
       <div className="inv-tr"><span>{d.prices_include_vat ? 'Total before VAT' : 'Subtotal'}</span><span>{money(d.subtotal)}</span></div>
-      <div className="inv-tr"><span>VAT{Number(d.vat_total) > 0 ? ' at 7.5%' : ''}{d.prices_include_vat ? ' (included)' : ''}</span><span>{money(d.vat_total)}</span></div>
+      {!allExempt && <div className="inv-tr"><span>VAT{Number(d.vat_total) > 0 ? ' at 7.5%' : ''}{d.prices_include_vat ? ' (included)' : ''}</span><span>{money(d.vat_total)}</span></div>}
       <div className="inv-tr inv-total"><span>Total (NGN)</span><span>₦{money(d.total)}</span></div>
       {Number(d.amount_paid) > 0 && <div className="inv-tr"><span>Paid</span><span>{money(d.amount_paid)}</span></div>}
       {Number(d.credited) > 0 && <div className="inv-tr"><span>Credited</span><span>{money(d.credited)}</span></div>}
@@ -144,6 +149,7 @@ export function InvoiceDoc({ d, template, style, fixed }: { d: DocData; template
           <b>Zero-rated export.</b> Supplied to a customer in {countryName(d.customer?.country || d.customer_country)}. VAT is charged at 0% (VAT status 2).
         </div>
       )}
+      {exemptNote && <div className="inv-note">{exemptNote}</div>}
       {show.vat_status && <div className="inv-legend">VAT status: 0 VATable (7.5%) · 1 Exempt · 2 Zero-rated</div>}
       {(pay || terms || d.notes) && (
         <div className="inv-cols">

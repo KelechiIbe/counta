@@ -1,0 +1,465 @@
+{
+  "$schema": "https://taxstreem.dev/schemas/cit-config-v1.json",
+  "meta": {
+    "config_id": "ng-cit-devlevy-engine",
+    "version": "1.0.0",
+    "governing_law": "Nigeria Tax Act, 2025 (Act No. 7)",
+    "gazette_date": "2025-06-26",
+    "commencement_date": "2026-01-01",
+    "applies_from_yoa": 2026,
+    "filing_channel": "NRS Rev360 Self-Service Portal (IT Excel template)",
+    "currency": "NGN",
+    "description": "Canonical computation config: PBT -> CIT + Development Levy. The engine MUST select a rule set by year of assessment (YOA): YOA < 2026 uses the repealed CITA/TET/CGT regime (not in this config); YOA >= 2026 uses this config.",
+    "rule_set_selector": {
+      "field": "year_of_assessment",
+      "branches": [
+        { "when": "yoa < 2026", "engine": "LEGACY_CITA_TET_CGT", "note": "Out of scope for this config." },
+        { "when": "yoa >= 2026", "engine": "NTA_2025", "note": "This config." }
+      ]
+    }
+  },
+
+  "company_classification": {
+    "description": "Run first. Gates CIT rate, Development Levy applicability, and ETR top-up.",
+    "thresholds": {
+      "small_company_turnover_max_ngn": 100000000,
+      "small_company_fixed_assets_max_ngn": 250000000,
+      "etr_turnover_trigger_ngn": 50000000000,
+      "etr_mne_group_turnover_trigger_eur": 750000000
+    },
+    "classes": {
+      "SMALL": {
+        "rule": "grossTurnover <= small_company_turnover_max_ngn AND totalFixedAssets <= small_company_fixed_assets_max_ngn",
+        "logic": "AND",
+        "statute": "s.202 (interpretation)",
+        "cit_rate": 0.0,
+        "subject_to_development_levy": false,
+        "note": "Both conditions must hold. Still files a full return."
+      },
+      "REGULAR": {
+        "rule": "resident company that is not SMALL",
+        "statute": "s.56(b)",
+        "cit_rate": 0.30,
+        "subject_to_development_levy": true
+      },
+      "NON_RESIDENT": {
+        "rule": "non-resident company taxed under s.17/s.18",
+        "statute": "s.59(1)",
+        "cit_basis": "source/PE/deemed-profit (out of scope for v1)",
+        "subject_to_development_levy": false
+      }
+    },
+    "etr_in_scope": {
+      "description": "Independent flag layered on top of class. Triggers s.57 15% minimum effective-tax-rate top-up.",
+      "rule": "(isMNEConstituentEntity AND groupTurnoverEUR >= etr_mne_group_turnover_trigger_eur) OR (annualTurnoverNGN >= etr_turnover_trigger_ngn)",
+      "statute": "s.57(2)",
+      "carve_outs": [
+        "Approved activities of a free-zone enterprise are excluded EXCEPT sales into the customs territory or where the entity is an MNE constituent under s.57(2)(a). [s.57(3)]"
+      ]
+    }
+  },
+
+  "cit_rates": {
+    "description": "Applied to TOTAL PROFITS. Keep keyed by YOA + commencement order.",
+    "statute": "s.56",
+    "by_class": { "SMALL": 0.0, "REGULAR": 0.30, "NON_RESIDENT": null },
+    "future_rate_change": {
+      "planned_rate": 0.25,
+      "trigger": "Presidential order on the advice of the National Economic Council",
+      "effective_date": null,
+      "note": "Not yet effective. Do not hardcode 30%; resolve rate by YOA against the commencement order."
+    }
+  },
+
+  "development_levy": {
+    "description": "Applied to ASSESSABLE PROFITS (Stage D), NOT total profits. Consolidates former TET/NITDA/NASENI/etc.",
+    "statute": "s.59",
+    "rate": 0.04,
+    "base": "ASSESSABLE_PROFIT",
+    "applies_when": "companyClass == 'REGULAR' AND NOT isNonResident AND NOT isHydrocarbonAssessableProfit",
+    "exclusions": [
+      "Small companies [s.59(1)]",
+      "Non-resident companies [s.59(1)]",
+      "Assessable profits computed for hydrocarbon tax [s.59(4)]"
+    ],
+    "note": "Capital allowances and loss relief do NOT reduce this base. A company can owe NGN 0 CIT and still owe Development Levy."
+  },
+
+  "etr_topup": {
+    "description": "Domestic minimum top-up to a 15% effective tax rate. Only for etr_in_scope companies.",
+    "statute": "s.57",
+    "minimum_rate": 0.15,
+    "net_income": {
+      "formula": "PBT - frankedInvestmentIncome - unrealisedGainsLosses",
+      "statute": "s.57(1)(c)",
+      "life_insurer_adjustment": "Also exclude policyholders' gross income and investment income (s.57 proviso)."
+    },
+    "covered_taxes": {
+      "formula": "CIT + petroleumProfitTax + hydrocarbonTax + developmentLevy + prioritySectorTaxCredit",
+      "statute": "s.57(1)(b)",
+      "components": ["companies_income_tax", "petroleum_profit_tax", "hydrocarbon_tax", "development_levy", "priority_sector_tax_credit"]
+    },
+    "topup_formula": "etr = coveredTaxes / netIncome ; topup = (etrInScope AND netIncome > 0 AND etr < 0.15) ? (0.15 * netIncome - coveredTaxes) : 0"
+  },
+
+  "general_minimum_tax": {
+    "exists": false,
+    "note": "The legacy CITA turnover-based minimum tax is NOT carried into NTA 2025 for YOA 2026+. Functional floors are: SMALL @ 0%, 15% ETR (s.57), and sector-specific floors (e.g. s.18(6) 2% gross-revenue floor for non-resident shipping/air)."
+  },
+
+  "capital_allowances": {
+    "description": "Replace accounting depreciation. Reduce CIT only (via total profits); never reduce Development Levy.",
+    "statute": "First Schedule, Part I",
+    "single_flat_annual_rate": true,
+    "no_initial_allowance_split": true,
+    "no_two_thirds_restriction": true,
+    "notional_retention_pct": 0.01,
+    "notional_retention_note": "Record 1% of QCE for statistics until disposal (First Sched. para 6(a)); notional, does not change allowance claimable.",
+    "table_I": {
+      "statute": "First Schedule, para 6, Table I",
+      "classes": [
+        { "class": 1, "rate": 0.10, "qce_types": ["BUILDING", "AGRICULTURAL", "MAST", "INTANGIBLE_ASSETS", "HEAVY_TRANSPORTATION"] },
+        { "class": 2, "rate": 0.20, "qce_types": ["PLANT", "AGRICULTURAL_EQUIPMENT", "FURNITURE_AND_FITTINGS", "MINING", "OTHER_EQUIPMENT"] },
+        { "class": 3, "rate": 0.25, "qce_types": ["MOTOR_VEHICLE", "SOFTWARE", "OTHER_CAPITAL"] }
+      ]
+    },
+    "category_to_class_map": {
+      "description": "Maps Rev360 config!K2:K16 PPE/asset categories and common asset descriptions to a statutory class.",
+      "Building Industrial": 1,
+      "Building Non-Industrial": 1,
+      "Agricultural plants expenditure": 1,
+      "research and development expenditure": 1,
+      "Housing estate expenditure": 1,
+      "Plants (excluding Furniture and fittings)": 2,
+      "Furnitures & Fittings expenditure": 2,
+      "Plantation equipments expenditure": 2,
+      "Construction Plants expenditure (excluding furniture & fittings)": 2,
+      "ranching and plantation": 2,
+      "Public Transport motor vehicles": 3,
+      "Motor vehicles expenditure": 3,
+      "software": 3,
+      "Land": null,
+      "Others": 2,
+      "_land_note": "Land is not depreciable / not QCE on its own; exclude from capital allowances. Allocate building/works component to class 1."
+    },
+    "rules": [
+      { "id": "in_use_at_period_end", "rule": "Allowance only if at end of basis period the company OWNS the asset AND used it for the trade.", "statute": "1st Sched. para 6,7" },
+      { "id": "qualifying_expenditure", "rule": "Acquisition + refurbishment/improvement cost bringing asset to first use.", "statute": "1st Sched. para 1" },
+      { "id": "vat_duty_bar", "rule": "QCE disqualified if VAT due but not charged, or import duty/levy not paid on the asset.", "statute": "s.27(2)(b); 1st Sched. para 14" },
+      { "id": "priority_sector_certificate", "rule": "Priority-sector companies need Industrial Inspectorate certificate of acceptance for the QCE.", "statute": "s.27(2)(a)" },
+      { "id": "partial_use_proration", "rule": "Pro-rate allowance to the taxable-use portion where asset only partly used to generate assessable profit.", "statute": "s.27(3)" },
+      { "id": "de_minimis_no_proration", "rule": "Do NOT pro-rate where non-taxable income is < 10% of total income.", "threshold_pct": 0.10, "statute": "s.27(4)" },
+      { "id": "short_basis_period", "rule": "Pro-rate the allowance where the basis period is < 1 year (by days/365).", "statute": "1st Sched. para 6(b)" },
+      { "id": "hire_purchase_finance_lease", "rule": "Hirer/lessee treated as owner; QCE limited to instalments paid excluding interest; lessor gets no allowance.", "statute": "1st Sched. para 2,15" },
+      { "id": "operating_lease", "rule": "Lessor/owner claims the allowance as if used in its own trade.", "statute": "1st Sched. para 15(1)" },
+      { "id": "carry_forward_unused", "rule": "Unutilised allowance carries forward to succeeding years until fully utilised.", "statute": "1st Sched. para 20,22(3)" },
+      { "id": "order_of_deduction", "rule": "CA subtracted from remainder of assessable profit AFTER loss relief.", "statute": "1st Sched. para 22" }
+    ],
+    "per_asset_pseudocode": "class=mapCategoryToClass(asset.category); rate=table_I[class].rate; qce=asset.cost (ex disallowed FX/duty); residue=qce - cumulativeAllowanceClaimed; annual=min(rate*qce, residue - notional_retention_pct*qce); if basisPeriodDays<365: annual*=basisPeriodDays/365; if assetPartlyUsed AND nonTaxableIncomePct>=0.10: annual*=taxableUsePct; capitalAllowanceYOA += asset.inUseAtPeriodEnd ? annual : 0"
+  },
+
+  "loss_relief": {
+    "description": "Reduces CIT only (applied to assessable profit before capital allowances).",
+    "statute": "s.27(6)",
+    "rules": {
+      "direction": "CARRY_FORWARD_ONLY",
+      "carry_back": false,
+      "time_limit_years": null,
+      "time_limit_note": "No cap; carry forward until fully recouped (legacy 4-year limit removed).",
+      "same_trade_ring_fence": true,
+      "aggregate_cap_equals_loss": true,
+      "digital_asset_ring_fence": true,
+      "order": "Deduct loss BEFORE capital allowances",
+      "order_statute": "s.27(1); 1st Sched. para 22(2)"
+    }
+  },
+
+  "interest_restriction": {
+    "description": "Thin-cap / EBITDA rule. Excess connected-person interest is an add-back.",
+    "statute": "Third Schedule",
+    "ebitda_cap_pct": 0.30,
+    "ebitda_formula": "PBT + interestExpense + depreciation + amortisation (accounting basis)",
+    "excess_formula": "excessInterest = max(0, connectedPersonInterest - 0.30 * EBITDA)",
+    "treatment": "Add back excessInterest; carry forward up to 5 YOA.",
+    "carry_forward_years": 5,
+    "exemption": "Does NOT apply to a Nigerian subsidiary of a foreign bank or insurer (Third Sched. para 3)."
+  },
+
+  "computation_pipeline": {
+    "description": "Ordered stages A-K. starting_point and base outputs are critical.",
+    "starting_point": "PROFIT_BEFORE_TAX",
+    "stages": [
+      { "id": "A", "name": "Profit Before Tax (PBT)", "op": "input", "source": "INCOME_STATEMENT!E763", "ref": "audited P&L before income-tax charge" },
+      { "id": "B", "name": "Add disallowable expenses / add-backs", "op": "add", "source": "sum(add_backs)", "statute": "s.21 + specific" },
+      { "id": "C", "name": "Deduct non-taxable income / tax-only deductions", "op": "subtract", "source": "sum(deductions)", "statute": "s.20, s.4 exemptions" },
+      { "id": "D", "name": "ASSESSABLE PROFIT", "op": "result", "formula": "A + B - C", "is_base_for": ["development_levy"], "statute": "s.22" },
+      { "id": "E1", "name": "Deduct loss relief brought forward", "op": "subtract", "source": "min(lossBfSameTrade, max(0, assessableProfit))", "statute": "s.27(6)" },
+      { "id": "E2", "name": "Deduct capital allowances (current + b/f)", "op": "subtract", "source": "min(capitalAllowanceTotal, remainderAfterLoss)", "statute": "First Schedule" },
+      { "id": "F", "name": "Add net chargeable gains for the YOA", "op": "add", "source": "net_chargeable_gains", "statute": "s.33-55, s.27(1)" },
+      { "id": "G", "name": "TOTAL PROFITS", "op": "result", "formula": "max(0, D - E1 - E2 + F)", "is_base_for": ["cit"], "statute": "s.27(1)" },
+      { "id": "H", "name": "CIT", "op": "charge", "formula": "G * cit_rate(class, yoa)", "statute": "s.56" },
+      { "id": "I", "name": "Development Levy", "op": "charge", "formula": "applies ? D * 0.04 : 0", "statute": "s.59" },
+      { "id": "J", "name": "ETR top-up", "op": "charge", "formula": "etr_topup (s.57)", "statute": "s.57" },
+      { "id": "K", "name": "Total liability", "op": "result", "formula": "H + I + J + sectorMinima" }
+    ],
+    "tax_charge_addback_convention": {
+      "description": "Lock one convention. Mixing double-counts/under-counts tax.",
+      "selected": "START_FROM_PBT",
+      "START_FROM_PBT": "Do NOT add back the income-tax provision (already below PBT). 'Taxes on profit or income' add-back = 0.",
+      "START_FROM_PAT": "Rev360 template apparent design (PROFIT_ADJUSTMENT!D11 -> E765 = PAT). MUST add back full accounting tax charge (E764) to climb to PBT.",
+      "statute": "s.21(e)"
+    }
+  },
+
+  "add_backs": {
+    "description": "Disallowable expenses. Maps to PROFIT_ADJUSTMENT rows 13-35.",
+    "items": [
+      { "id": "depreciation_amortisation", "label": "Depreciation & amortisation", "statute": "s.21(g)", "rev360_row": 13 },
+      { "id": "expenses_exempt_income", "label": "Expenses related to exempt income", "statute": "s.21(j)", "rev360_row": 14 },
+      { "id": "donations_disallowed", "label": "Donations (to the extent not allowed)", "statute": "s.20(1), s.21", "rev360_row": 15 },
+      { "id": "unrealised_fx_loss", "label": "Unrealised foreign-exchange loss", "statute": "s.21(g)", "rev360_row": 16 },
+      { "id": "loss_on_disposal_fixed_assets", "label": "Loss on disposal of fixed assets", "statute": "s.21(b)", "rev360_row": 17 },
+      { "id": "entertainment_disallowed", "label": "Entertainment expenses (to the extent not allowed)", "statute": "s.20(1)", "rev360_row": 18 },
+      { "id": "capital_repaid_withdrawn", "label": "Capital repaid/withdrawn", "statute": "s.21(a)", "rev360_row": 19 },
+      { "id": "capital_nature_expenses", "label": "Expenses of capital nature", "statute": "s.21(b)", "rev360_row": 20 },
+      { "id": "assets_not_for_trade", "label": "Expenditure on assets not used for the purpose of trade", "statute": "s.21(c)", "rev360_row": 21 },
+      { "id": "sum_recoverable_insurance", "label": "Sum recoverable under an insurance or contract of indemnity", "statute": "s.21(d)", "rev360_row": 22 },
+      { "id": "taxes_on_profit_income", "label": "Taxes on profit or incomes", "statute": "s.21(e)", "rev360_row": 23, "note": "Only add back if starting from PAT. See computation_pipeline.tax_charge_addback_convention." },
+      { "id": "unapproved_pension", "label": "Payment to unapproved retirement fund/scheme", "statute": "s.21(f)", "rev360_row": 24 },
+      { "id": "reserved_out_of_profits", "label": "Sums reserved out of profits", "statute": "s.21(h)", "rev360_row": 25 },
+      { "id": "tp_contravention", "label": "Related-party payments contravening Transfer Pricing Regulations", "statute": "s.21(i)", "rev360_row": 26 },
+      { "id": "expense_deriving_exempt_income", "label": "Expense incurred deriving exempt income", "statute": "s.21(j)", "rev360_row": 27 },
+      { "id": "deductible_for_chargeable_gains", "label": "Expense allowable in determining chargeable gains", "statute": "s.21(k)", "rev360_row": 28 },
+      { "id": "penalty_fine", "label": "Penalty or fine imposed under any law", "statute": "s.21(l)", "rev360_row": 29 },
+      { "id": "vat_duty_uncharged_expense", "label": "Expenses liable to VAT/import duty but not charged or paid", "statute": "s.21(p)", "rev360_row": 30 },
+      { "id": "securities_lending_compensating", "label": "Compensating payments (securities lending) qualifying as dividend/interest", "statute": "s.21(n),(o)", "rev360_row": 31 },
+      { "id": "tax_penalty_borne_for_another", "label": "Tax or penalty borne on behalf of another person", "statute": "s.21(m)", "rev360_row": null },
+      { "id": "other_disallowable", "label": "Other disallowable expenses (free-text: description + amount)", "statute": "s.21", "rev360_row": 32 }
+    ],
+    "computed_not_prelisted": [
+      { "id": "excess_connected_interest", "label": "Excess connected-party interest (> 30% EBITDA)", "statute": "Third Schedule", "see": "interest_restriction", "rev360_row": "use 'Other disallowable' with description" },
+      { "id": "general_provisions", "label": "General (non-specific) provisions e.g. general doubtful-debt provision", "statute": "s.20(1)(h)", "note": "Only specific/GAAP-justified doubtful debts allowed." },
+      { "id": "fx_naira_equivalent_excess", "label": "Excess over Naira equivalent at official CBN rate for foreign-currency expense", "statute": "s.20(4)" }
+    ]
+  },
+
+  "deductions": {
+    "description": "Non-taxable income removed / tax-only deductions added. Maps to PROFIT_ADJUSTMENT rows 40-49.",
+    "items": [
+      { "id": "profit_on_disposal_fixed_assets", "label": "Profit on disposal of fixed assets", "statute": "s.21(b), Part VIII", "rev360_row": 40, "note": "Capital; dealt with under chargeable gains." },
+      { "id": "franked_investment_income", "label": "Franked investment income (dividends already taxed)", "statute": "s.8, s.57(1)(c)", "rev360_row": 41, "note": "Also excluded from ETR net income." },
+      { "id": "unrealised_gains", "label": "Unrealised FX / fair-value gains", "statute": "general", "rev360_row": 42 },
+      { "id": "other_non_taxable_income", "label": "Other non-taxable income (free-text: description + amount)", "statute": "s.4 exemptions", "rev360_row": 43 }
+    ],
+    "non_taxable_income_linkage": {
+      "rule": "If non-taxable revenue present (INCOME_STATEMENT!D631 > 0) THEN 'Expenses Relating To Non-taxable revenue' (INCOME_STATEMENT!D641) MUST be populated.",
+      "statute": "s.21(j)",
+      "enforced_by": "CHECK_BEFORE_UPLOAD progress gate (will not reach 100% otherwise)."
+    }
+  },
+
+  "chargeable_gains": {
+    "description": "CGT repealed; chargeable gains folded into income tax and taxed at the company's CIT rate (no separate 10% CGT).",
+    "statute": "s.27(1), Part VIII (s.33-55)",
+    "gain_formula": "disposalConsideration - allowableCostBase (acquisition + enhancement + disposal costs)",
+    "gain_statute": "s.39, s.40",
+    "basis": "Net chargeable gains over chargeable assets disposed in the basis period (s.26(3))",
+    "rev360_source": "Chargeable Assets Disposal Return (portal computes and posts to income-tax computation).",
+    "in_development_levy_base": false,
+    "in_development_levy_base_note": "FLAG G-B: s.59 levies on 'assessable profits'; s.27 separates gains. Default excluded; confirm with NRS guidance. Configurable.",
+    "selected_exemptions": [
+      { "statute": "s.51", "label": "Principal private residence" },
+      { "statute": "s.52", "label": "Personal chattels" },
+      { "statute": "s.53", "label": "Up to 2 private-use motor vehicles per YOA" },
+      { "statute": "s.54", "label": "Gifts where no consideration passes" },
+      { "statute": "s.55", "label": "Assets held in trust for charities" }
+    ]
+  },
+
+  "validation_rules": {
+    "description": "Hard rules that BLOCK upload/submission until satisfied.",
+    "rules": [
+      { "id": "progress_100", "severity": "block", "rule": "CHECK_BEFORE_UPLOAD progress must equal 100%.", "source": "Rev360 manual" },
+      { "id": "revenue_ties_to_pl", "severity": "block", "rule": "Revenue declared must equal revenue in audited P&L." },
+      { "id": "sfp_ties_to_accounts", "severity": "block", "rule": "STATEMENT_OF_FINANCIAL_POSITION balances must equal audited balances." },
+      { "id": "no_expense_lumping", "severity": "block", "rule": "Each expense on its own line item; reject single-bucket 'Other expenses' lumping." },
+      { "id": "non_taxable_income_pairing", "severity": "block", "rule": "If INCOME_STATEMENT!D631 > 0 then INCOME_STATEMENT!D641 (related expenses) must be populated." },
+      { "id": "do_not_edit_formulas", "severity": "block", "rule": "Populate input cells only; do not alter embedded template formulas." },
+      { "id": "afs_attached_and_ties", "severity": "block", "rule": "Audited FS PDF attached (auditor report, P&L, SFP, cash flows, changes in equity, notes, capital-allowance schedule) and ties to template." },
+      { "id": "yoa_set", "severity": "block", "rule": "USER_INPUT!D7 (ASSESSMENT YEAR) set; selects rule set (see meta.rule_set_selector)." },
+      { "id": "sector_revenue_block", "severity": "warn", "rule": "Revenue entered against the correct sector block (one of 19 in config!C2:C20)." },
+      { "id": "small_company_still_files", "severity": "info", "rule": "SMALL companies still file a full return despite 0% CIT and no levy." }
+    ],
+    "do_not_use_as_tax_rates": {
+      "fields": "CHECK_BEFORE_UPLOAD percentages (0.28, 0.27, 0.25, 0.16, 0.04)",
+      "rule": "These are completion-bar weights, NOT tax rates. Never feed into tax math."
+    }
+  },
+
+  "rev360_mapping": {
+    "description": "Input/output contract. Emit data in this shape; never alter formulas.",
+    "workbook": "CIT IT Excel template",
+    "sheets": {
+      "USER_INPUT": { "assessment_year_cell": "D7" },
+      "INCOME_STATEMENT": {
+        "operating_profit_before_tax": "E763",
+        "taxation_charge": "E764",
+        "profit_after_tax": "E765",
+        "operating_income": "E639",
+        "administrative_expenses": "E640",
+        "finance_cost_ex_interest": "E762",
+        "total_revenue": "E526",
+        "non_taxable_revenue": "D631",
+        "expenses_relating_to_non_taxable_revenue": "D641",
+        "depreciation_factory": "D593",
+        "depreciation_admin": "D654"
+      },
+      "PROFIT_ADJUSTMENT": {
+        "profit_before_tax_ref": "D11",
+        "profit_before_tax_points_to": "INCOME_STATEMENT!E765",
+        "flag": "FLAG G-D: D11 points at E765 (PAT), not PBT. See computation_pipeline.tax_charge_addback_convention.",
+        "addbacks_rows": "13-35",
+        "total_addbacks": "D36",
+        "deductions_rows": "40-49",
+        "total_deductions": "D50"
+      },
+      "STATEMENT_OF_FINANCIAL_POSITION": { "role": "assets/liabilities/equity; must tie to audited accounts" },
+      "CHECK_BEFORE_UPLOAD": { "completion_target": "D17 = 100%", "remaining": "D18" },
+      "config": {
+        "sectors": "C2:C20 (19 sectors)",
+        "ppe_categories": "K2:K16 (15 capital-allowance categories)",
+        "income_statement_codes": "T/U columns",
+        "cit_type": "AP2 = REGULAR"
+      }
+    },
+    "portal_workflow": [
+      "Login", "Self Tax Filing", "Taxes Due", "select earliest CIT form", "File Now",
+      "Fixed Assets Declaration (date, category, description, cost, depreciation)",
+      "MNE disclosure (group turnover EUR)", "CFC disclosure",
+      "download IT template", "complete offline", "upload",
+      "Preview computation", "upload audited FS", "tick declaration", "Submit Return", "save acknowledgment"
+    ]
+  },
+
+  "configurable_flags": {
+    "description": "Items requiring tax-legal sign-off before go-live (rule book section 13). Defaults reflect the best statutory reading; make each configurable and reconcile against the live Rev360 preview.",
+    "flags": {
+      "development_levy_base_before_capital_allowances": {
+        "default": true,
+        "ref": "FLAG A",
+        "note": "true => levy on assessable profit BEFORE capital allowances and loss relief (s.59 read with s.27)."
+      },
+      "chargeable_gains_in_development_levy_base": {
+        "default": false,
+        "ref": "FLAG B",
+        "note": "false => gains excluded from levy base; enter only at total-profits stage."
+      },
+      "use_legacy_balancing_charge_allowance": {
+        "default": false,
+        "ref": "FLAG C",
+        "note": "false => use residue + chargeable-gains path on disposal; terms absent from the Act."
+      },
+      "tax_charge_addback_start_point": {
+        "default": "START_FROM_PBT",
+        "ref": "FLAG D",
+        "enum": ["START_FROM_PBT", "START_FROM_PAT"]
+      },
+      "treat_check_before_upload_pct_as_progress_only": {
+        "default": true,
+        "ref": "FLAG E",
+        "note": "true => never treat 0.28/0.27/0.25/0.16/0.04 as tax rates."
+      },
+      "rule_set_by_yoa": {
+        "default": true,
+        "ref": "FLAG F",
+        "note": "true => branch engine by YOA (pre-2026 legacy; 2026+ NTA 2025)."
+      },
+      "cit_rate_resolved_by_commencement_order": {
+        "default": true,
+        "ref": "FLAG G",
+        "note": "true => 30% until a Presidential order sets 25%; do not hardcode."
+      },
+      "etr_turnover_threshold_ngn": {
+        "default": 50000000000,
+        "ref": "FLAG H",
+        "note": "NRS may raise by regulation (s.57(4)). EUR->NGN conversion convention for the EUR750m group test must be defined."
+      }
+    }
+  },
+
+  "out_of_scope_sector_overrides": {
+    "description": "Override the standard chain; gate behind sector flags before coding. v1 targets the regular resident company.",
+    "regimes": [
+      { "id": "petroleum", "statute": "Ch.3 s.65-88; 1st Sched. Part II" },
+      { "id": "insurance", "statute": "s.61" },
+      { "id": "lottery_gaming", "statute": "s.62" },
+      { "id": "collective_investment_scheme", "statute": "s.63" },
+      { "id": "mining", "statute": "s.64" },
+      { "id": "export_processing_free_zone", "statute": "s.60; 2nd Sched." },
+      { "id": "non_resident_deemed_profit", "statute": "s.17, s.18 (2% gross-revenue floor for shipping/air)" },
+      { "id": "economic_development_incentive_priority_sector", "statute": "s.165-166, s.27(5)" },
+      { "id": "real_estate_investment_company", "statute": "s.20(1)(k)" }
+    ]
+  },
+
+  "worked_example": {
+    "description": "Regular company, YOA 2026. Illustrates the two distinct bases.",
+    "classification": "REGULAR (turnover NGN 2,000,000,000 > 100m; fixed assets 400m; not MNE; turnover < 50bn => not ETR_IN_SCOPE)",
+    "lines": {
+      "A_pbt": 300000000,
+      "B_addbacks_total": 110000000,
+      "B_detail": {
+        "depreciation_amortisation": 80000000,
+        "loss_on_disposal_fixed_asset": 3000000,
+        "donations_disallowed": 5000000,
+        "penalties_fines": 2000000,
+        "general_provision": 10000000,
+        "unrealised_fx_loss": 4000000,
+        "excess_connected_interest": 6000000
+      },
+      "C_deductions_total": 25000000,
+      "C_detail": {
+        "profit_on_disposal_fixed_assets": 8000000,
+        "franked_investment_income": 12000000,
+        "unrealised_gains": 5000000
+      },
+      "D_assessable_profit": 385000000,
+      "E1_loss_relief_bf": 20000000,
+      "remainder_after_loss": 365000000,
+      "E2_capital_allowances": 95000000,
+      "remainder_after_allowances": 270000000,
+      "F_net_chargeable_gains": 6000000,
+      "G_total_profits": 276000000,
+      "H_cit": 82800000,
+      "I_development_levy": 15400000,
+      "J_etr_topup": 0,
+      "K_total_liability": 98200000
+    },
+    "small_company_contrast": {
+      "classification": "SMALL (turnover NGN 90,000,000; fixed assets 200,000,000)",
+      "cit": 0,
+      "development_levy": 0,
+      "note": "Still files a full return."
+    }
+  },
+
+  "statutory_index": {
+    "imposition_chargeability": "s.3-5",
+    "nigerian_company_dividends": "s.6-10",
+    "deductions_allowed": "s.20",
+    "deductions_not_allowed": "s.21",
+    "assessable_profits_basis_period": "s.22-25",
+    "total_profits_of_companies": "s.27",
+    "chargeable_gains": "s.33-55",
+    "cit_rates": "s.56",
+    "effective_tax_rate": "s.57",
+    "development_levy": "s.59",
+    "specialised_trades": "s.60-64",
+    "petroleum_hydrocarbon": "s.65-88",
+    "capital_allowances": "First Schedule Part I (Table I)",
+    "interest_restriction": "Third Schedule",
+    "individual_rates": "Fourth Schedule",
+    "small_company_definition": "s.202",
+    "commencement": "enacting clause (1 January 2026)"
+  }
+}

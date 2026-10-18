@@ -9,6 +9,8 @@ import { N2, fmtDay } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Empty, Field, Pills, SkeletonRows } from '../../components/ui';
 import { TAX_ID_HINT, isOldTin, taxIdError } from '../../lib/taxid';
+import { ENTITY_TYPES, matrixRate, pct, useTaxProfile, useVendorTax } from '../../lib/tax';
+import { COUNTRIES } from '../../lib/countries';
 import { ExportMenu, acc, useMeta } from '../../components/Books';
 
 export default function Vendors() {
@@ -48,8 +50,20 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
   const chart = useChart();
   const meta = useMeta();
   const [tab, setTab] = useState<'statement' | 'details'>('statement');
-  const [f, setF] = useState({ tin: vendor.tin || '', rc_number: vendor.rc_number || '', is_individual: !!vendor.is_individual, wht_category: vendor.wht_category || '', bank_code: vendor.bank_code || '',
-    account_number: vendor.account_number || '', account_name: vendor.account_name || '', default_account: vendor.default_account || '', address: vendor.address || '' });
+  const tax = useVendorTax(vendor.id);
+  const prof = useTaxProfile();
+  const states: string[] = (prof.data?.authorities || []).filter((a: any) => a.state).map((a: any) => a.state);
+  const [f, setF] = useState({ tin: vendor.tin || '', rc_number: vendor.rc_number || '', wht_category: vendor.wht_category || '', bank_code: vendor.bank_code || '',
+    account_number: vendor.account_number || '', account_name: vendor.account_name || '', default_account: vendor.default_account || '', address: vendor.address || '',
+    entity_type: '', resident: true, country: 'NG', state: '', nin: '', is_manufacturer: false, wht_exempt: false, digital_supplier: false, connected_person: false });
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    const t = tax.data;
+    if (!t || loaded) return;
+    setF((x) => ({ ...x, entity_type: t.entity_type || (t.is_individual ? 'individual' : ''), resident: t.resident !== false, country: t.country || 'NG', state: t.state || '', nin: t.nin || '',
+      is_manufacturer: !!t.is_manufacturer, wht_exempt: !!t.wht_exempt, digital_supplier: !!t.digital_supplier, connected_person: !!t.connected_person }));
+    setLoaded(true);
+  }, [tax.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const [banks, setBanks] = useState<{ code: string; name: string }[]>([]);
   const st = useQuery({ queryKey: ['vstatement', vendor.id], enabled: tab === 'statement', queryFn: () => rpc<any>('vendor_statement', { p_vendor: vendor.id, p_from: null, p_to: null }) });
   useEffect(() => { edge<{ banks: any[] }>('payments', { action: 'banks' }).then((r) => setBanks(r.banks || [])); }, []);
@@ -59,11 +73,16 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
   }, [f.account_number, f.bank_code]); // eslint-disable-line react-hooks/exhaustive-deps
   const accounts = (chart.data?.accounts || []).filter((a: any) => !a.is_group && a.active && /^[56]/.test(a.code));
   const tinErr = taxIdError(f.tin, vendor.tin);
+  const corporate = f.entity_type ? !!ENTITY_TYPES.find((e) => e.id === f.entity_type)?.corporate : !vendor.is_individual;
+  const goesTo = f.wht_exempt || f.entity_type === 'government' ? 'No WHT: exempt' : corporate || !f.resident ? 'WHT goes to the NRS'
+    : `WHT goes to the ${f.state ? f.state + ' state' : 'state'} revenue service${f.state ? '' : ' of their state (yours, until you add theirs)'}`;
   async function save() {
     if (tinErr) { toast(tinErr, 'err'); return; }
+    if (f.nin && !/^\d{11}$/.test(f.nin.replace(/\D/g, ''))) { toast('A NIN has 11 digits.', 'err'); return; }
     try {
-      await rpc('save_vendor_details', { p_org: orgId, p_vendor: vendor.id, p_patch: { ...f, bank_name: banks.find((b) => b.code === f.bank_code)?.name || null } });
-      toast('Vendor saved'); await qc.invalidateQueries({ queryKey: ['bills'] });
+      await rpc('save_vendor_details', { p_org: orgId, p_vendor: vendor.id, p_patch: { ...f, entity_type: f.entity_type || null, state: f.resident ? f.state || null : null,
+        country: f.resident ? 'NG' : f.country, bank_name: banks.find((b) => b.code === f.bank_code)?.name || null } });
+      toast('Vendor saved'); await Promise.all(['bills', 'bill', 'vendor-tax'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
     } catch (e) { toast((e as Error).message, 'err'); }
   }
   const s = st.data;
@@ -77,12 +96,32 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
           <div className="stack" style={{ gap: 12 }}>
             {!f.tin && <Alert kind="yellow" icon="alert">Without a Tax ID, withholding tax on this vendor's bills is deducted at double the rate.</Alert>}
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <Field label="Tax ID" error={tinErr} hint={tinErr ? undefined : isOldTin(f.tin) ? 'An old TIN. Ask them for their 13-digit Tax ID.' : TAX_ID_HINT}>
+              <Field label="What kind of business"><select className="input" value={f.entity_type} onChange={(e) => setF({ ...f, entity_type: e.target.value })}>
+                <option value="">Not set{vendor.is_individual ? ' (an individual)' : ' (a company)'}</option>{ENTITY_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}</select></Field>
+              <Field label="Based"><select className="input" value={f.resident ? 'NG' : 'abroad'} onChange={(e) => setF({ ...f, resident: e.target.value === 'NG', country: e.target.value === 'NG' ? 'NG' : f.country === 'NG' ? '' : f.country })}>
+                <option value="NG">In Nigeria</option><option value="abroad">Abroad</option></select></Field>
+              {f.resident ? (
+                <Field label="State" hint="Decides which state service gets WHT for a supplier that is not a company."><select className="input" value={f.state} onChange={(e) => setF({ ...f, state: e.target.value })}>
+                  <option value="">Not known</option>{states.map((x) => <option key={x} value={x}>{x}</option>)}</select></Field>
+              ) : (
+                <Field label="Country"><select className="input" value={f.country} onChange={(e) => setF({ ...f, country: e.target.value })}><option value="">Choose</option>
+                  {COUNTRIES.filter((c) => c.code !== 'NG').map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</select></Field>
+              )}
+              <Field label={f.resident ? 'Tax ID' : 'Nigerian Tax ID, if they have one'} error={tinErr} hint={tinErr ? undefined : !f.resident ? 'Without one the WHT rate doubles, as on the NRS schedule.' : isOldTin(f.tin) ? 'An old TIN. Ask them for their 13-digit Tax ID.' : TAX_ID_HINT}>
                 <input className="input" inputMode="numeric" maxLength={20} placeholder="13 digits" value={f.tin} onChange={(e) => setF({ ...f, tin: e.target.value })} /></Field>
               <Field label="RC number"><input className="input" value={f.rc_number} onChange={(e) => setF({ ...f, rc_number: e.target.value })} /></Field>
+              {!corporate && f.resident && <Field label="NIN" hint="For an individual without a Tax ID."><input className="input" inputMode="numeric" maxLength={11} value={f.nin} onChange={(e) => setF({ ...f, nin: e.target.value.replace(/\D/g, '') })} /></Field>}
             </div>
-            <label className="check"><input type="checkbox" checked={f.is_individual} onChange={(e) => setF({ ...f, is_individual: e.target.checked })} />An individual, not a company</label>
-            <Field label="Withholding tax on what they supply"><select className="input" value={f.wht_category} onChange={(e) => setF({ ...f, wht_category: e.target.value })}><option value="">Choose</option>{whtRates.map((w) => <option key={w.code} value={w.code}>{w.name} · {(Number(f.is_individual ? w.rate_individual : w.rate_company) * 100).toFixed(1)}%</option>)}</select></Field>
+            <Field label="Withholding tax on what they supply"><select className="input" value={f.wht_category} onChange={(e) => setF({ ...f, wht_category: e.target.value })}><option value="">Choose</option>
+              {whtRates.map((w) => { const r = matrixRate(w, corporate, f.resident); return <option key={w.code} value={w.code}>{w.name}{w.code === 'none' ? '' : ` · ${r == null ? 'not withheld' : pct(f.tin ? r : r * 2)}`}</option>; })}</select></Field>
+            <div className="stack" style={{ gap: 6 }}>
+              <label className="check"><input type="checkbox" checked={f.is_manufacturer} onChange={(e) => setF({ ...f, is_manufacturer: e.target.checked })} />Makes the goods it sells us (no WHT on its own goods)</label>
+              <label className="check"><input type="checkbox" checked={f.wht_exempt} onChange={(e) => setF({ ...f, wht_exempt: e.target.checked })} />Exempt from withholding tax (has an exemption from the NRS)</label>
+              {!f.resident && <label className="check"><input type="checkbox" checked={f.digital_supplier} onChange={(e) => setF({ ...f, digital_supplier: e.target.checked })} />A digital service registered for Nigerian VAT (charges its own VAT)</label>}
+              <label className="check"><input type="checkbox" checked={f.connected_person} onChange={(e) => setF({ ...f, connected_person: e.target.checked })} />A connected person (related company, director or shareholder)</label>
+            </div>
+            <div className="faint" style={{ fontSize: 12 }}>{goesTo}.{!f.resident && !f.digital_supplier ? ' VAT on services they supply is self-charged at 7.5% and paid to the NRS by the 14th.' : ''}
+              {tax.data?.wht_profile?.state_assumed && f.resident && !corporate ? ' Their state is not known, so your own is assumed.' : ''}</div>
             <Field label="Their bills usually go to"><select className="input" value={f.default_account} onChange={(e) => setF({ ...f, default_account: e.target.value })}><option value="">No default</option>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select></Field>
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="Bank"><select className="input" value={f.bank_code} onChange={(e) => setF({ ...f, bank_code: e.target.value, account_name: '' })}><option value="">Choose</option>{banks.map((b) => <option key={b.code} value={b.code}>{b.name}</option>)}</select></Field>

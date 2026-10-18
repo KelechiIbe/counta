@@ -1,0 +1,41 @@
+# Tax engines: companies income tax, VAT and withholding
+
+Accounting, Tax returns has three tabs. Each reads the same books the statements are drawn from, so a figure on a return can always be traced to journals.
+
+## Companies income tax
+
+**Years and law.** A company's years run from 2023 accounts (or the first year of its books, if later) to the year running now. The year of assessment is the accounting year plus one. Accounts for 2023 and 2024 use the old law (`supabase/rulebooks/ng-cit-cita-legacy.json`: CIT by size at 0/20/30%, tertiary education tax, minimum tax, Second Schedule capital allowances with initial and annual allowances, the two-thirds restriction and ₦10 retention). Accounts for 2025 onwards use the Nigeria Tax Act 2025 (`ng-cit-nta-2025.json`: small companies exempt, 30% otherwise, 4% development levy, 15% minimum effective tax, interest limited to 30% of EBITDA for connected persons, First Schedule allowances on cost with 1% retained). `private.rulebook(yoa)` picks the rule book; both live in `cit_rulebooks`.
+
+**Where the figures come from.** A year is computed from the books when they cover it, and otherwise from figures read from the audited accounts or a trial balance (`cit_years.source = imported`). The AI reader (`ai` function, action `cit_map`) places each figure on the most specific input line of the Rev360 template (`cit_template_lines`, 260 lines); several source lines on one template line add up and keep the lowest confidence. Anything can be corrected by hand: a books line is overridden with a reason, an imported line is replaced and marked as entered.
+
+**The computation.** `private.cit_compute(org, year, bf)` starts from profit before tax as the template computes it (INCOME_STATEMENT!E115), adds back disallowable expenses (PROFIT_ADJUSTMENT rows 14 to 32: depreciation and donations above the limit from the books by the rule book, the rest as items with reasons), deducts non-taxable income (rows 36 to 40), then applies loss relief, capital allowances, the tax rates and the levies. `private.cit_chain` runs the years in order so losses, unused allowances and disallowed interest carry forward; an approved year carries forward what it was approved with. The first year Counta prepares takes its brought-forward amounts from the year's settings; a later year can use different amounts only with a reason.
+
+**Capital allowances.** Every asset in the fixed asset register, and assets kept for tax only (`tax_assets`, for things bought before the books), has a Rev360 category that decides its class and rate. An asset's tax value is rolled forward from the year it was first used, under the law of each year, unless an opening tax value from the last return filed is given.
+
+**Checks.** A year cannot be approved while anything blocks: the audited accounts are not attached, the balance sheet does not balance, the template's profit or revenue differs from the audited accounts read in, the year has not ended, the business is not a company or is under a regime Counta does not compute. Warnings (lines on "Others", categories missing, rules awaiting sign-off) do not block.
+
+**Approval and filing.** Approving (owner, or someone who approves adjustments) freezes the computation, the template cells, the fixed asset declaration and the company details. The `tax-files` function fills the Rev360 template (`public/tax-templates/rev360-cit-v2.xlsx`, pinned by SHA-256) keeping its formulas and recalculating their cached values, checks five ties against the computation, and stores the approved file once. Sending to Flux is described in `flux-cit-handoff.md`. The financial statements' tax computation and `post_tax_charge` read the same engine.
+
+## VAT
+
+**Rates on items.** Each item is standard-rated (7.5%), zero-rated or exempt. The AI classifier works from the rule book's lists (zero-rated (a) to (s), exempt (a) to (n)); domestic petroleum products, sugar, sparkling and restaurant water, solar equipment and ride-hailing are standard-rated. An invoice with exempt lines says "This supply is exempted from VAT", and one that is wholly exempt has no VAT line.
+
+**Input VAT.** Bills from VAT-registered suppliers carry 7.5% on standard-rated lines; the business claims all of it (lines can be marked not recoverable). Services bought from a supplier abroad that does not charge Nigerian VAT have 7.5% self-charged when the bill is approved (Dr 1402, Cr 2211) and paid to the NRS by the 14th. A business that is a withholding VAT agent keeps back the VAT on its suppliers' bills when paying them (Cr 2211) and pays it over by the 14th. VAT that a customer who is a withholding VAT agent kept is recorded with the payment (Dr 1405) and credited in the return.
+
+**The month.** `private.vat_month` adds up output VAT on sales (less credit notes), input VAT on bills and stock receipts (with the self-charged VAT, less suppliers' credit notes) and VAT withheld by customers. `private.vat_chain` runs month by month from the start of the books: net VAT = output − withheld by customers − input. A positive net is paid after using credit brought forward (oldest first); a negative net becomes credit carried forward, kept in layers by the month it arose. Credit older than five years lapses (to 6512); a refund can be claimed on credit from the last 12 months. Filing a month freezes its figures and clears 2201, 1402 and 1405 into what is payable; paying it clears 2201. A filed month can be reopened until it is paid.
+
+**Whether to charge VAT.** `vat_status` judges the small company test on the last full financial year (turnover up to ₦100 million, fixed assets up to ₦250 million, no professional services). Every morning `vat_threshold_tick` tells the owner of a business not charging VAT once sales this year pass ₦100 million. Only the owner turns VAT on or off.
+
+## Withholding tax
+
+**Rates.** `wht_rates` holds the NRS table: a rate for each transaction type for a company or not, in Nigeria or abroad (null where the transaction does not apply), the NRS transaction code, and the exemptions (a) to (m). The rate doubles, without a cap, when the supplier has no Tax ID, as the NRS template computes it. Nothing is withheld from a government body, an exempt supplier, or a manufacturer on its own goods. A small company need not withhold from a supplier with a Tax ID while the month's bills from that supplier stay within ₦2 million. Compensation for loss of office is 5% of the amount above ₦50 million.
+
+**Bills.** Each bill line can have its own transaction type; the rest follow the bill, which follows the supplier. `private.bill_wht` works out each line and notes why a line has none. Payments keep back WHT (and withholding VAT) in proportion to what they settle and the rest with the last payment, by the wallet, the bank, bank matching, the books inbox and bulk payments alike.
+
+**Where it goes.** WHT from a company or a supplier abroad goes to the NRS by the 21st of the next month; from anyone else (business names, sole traders, partnerships, individuals) to the state revenue service of the supplier's state by the 30th (the last day of February), assuming the business's own state when the supplier's is not known. Withholding VAT goes to the NRS by the 14th.
+
+**Records.** Each paid deduction becomes a row in `wht_deductions` with a receipt number (`WHT-00001`), the supplier's ID (Tax ID, else RC number, else NIN) and the month. `wht_schedule` lists a month for one authority in its template's columns; `tax-files` fills the NRS template (130 lines a file) or the state template. `record_wht_remittance` pays a month over (Dr 2202 or 2211, Cr the bank) and marks its deductions remitted. Suppliers get receipts with payer, payee, nature, amount, rate and month.
+
+## Open points for TaxStreem sign-off
+
+The old-law rule book is a draft (`status: draft_pending_signoff`). Its flags: L-A the tertiary education tax base, L-B the minimum tax exemptions and whether medium companies pay it, L-C software and "Others" treated as plant, L-D the investment allowance and its categories, L-E the two-thirds restriction on assessable profit before loss relief. The Rev360 template's year cell accepts 2025 or later; Counta writes 2023 and 2024 for prior-year returns.
