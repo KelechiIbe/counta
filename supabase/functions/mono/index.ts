@@ -7,6 +7,11 @@
 //   sync { bank_account_id }                            -> fetches new transactions now (asks the bank for fresh data)
 //   reauthorised { bank_account_id }                    -> after the person signed in to their bank again in the widget
 //   unlink { bank_account_id }                          -> stops the feed at Mono and in Counta (lines already in stay)
+//   cac_config {}                                       -> whether the business lookup is switched on
+//   cac_search { query }                                -> businesses on the CAC register by name or RC number (kept on the person's profile)
+//   cac_select { cac_id }                               -> one of those: its profile, directors, shareholders, persons with significant
+//                                                          control, secretary and its Tax ID from the NRS, written to the profile
+//   cac_status_report { org_id }                        -> the owner's latest CAC status report (PDF) into the business's CAC folder
 // Mono:
 //   POST /mono/webhook                                  -> header mono-webhook-secret must equal MONO_WEBHOOK_SECRET
 // Database cron (header x-counta-hook: <PUSH_HOOK_SECRET>):
@@ -14,6 +19,10 @@
 //
 // Nothing a webhook says is taken as a transaction: it only tells Counta to fetch from Mono.
 // Secrets (Edge Function secrets): MONO_SECRET_KEY, MONO_PUBLIC_KEY, MONO_WEBHOOK_SECRET. MONO_BASE_URL is for tests.
+// The lookups use MONO_LOOKUP_SECRET_KEY when the lookups sit on a different Mono app, otherwise MONO_SECRET_KEY.
+// Each paid lookup is counted per person per day in the database (svc_kyc_take), and only the server writes what CAC
+// and the NRS return (svc_kyc_store), so nobody can type in a registry record. Directors' dates of birth, ID numbers,
+// phone numbers, emails and home addresses are dropped before anything is kept.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -199,6 +208,217 @@ async function syncAll() {
   return out;
 }
 
+// ------------------------------------------------------------------ CAC and Tax ID lookups
+async function lookupKey() {
+  return (await secret('MONO_LOOKUP_SECRET_KEY')) || (await secret('MONO_SECRET_KEY'));
+}
+type LookupResult = { status: number; body: any };
+async function lookup(path: string, init: RequestInit = {}): Promise<LookupResult> {
+  const key = await lookupKey();
+  if (!key) throw new UserError('The CAC lookup is not switched on yet. Type the business details in yourself for now.');
+  const res = await fetch(MONO + path, {
+    ...init,
+    headers: { 'mono-sec-key': key, accept: 'application/json', 'Content-Type': 'application/json', ...(init.headers || {}) },
+    signal: AbortSignal.timeout(30_000),
+  });
+  const text = await res.text();
+  let body: any = text;
+  try { body = JSON.parse(text); } catch { /* not json */ }
+  if (res.status === 404) return { status: 404, body };
+  if (!res.ok || body?.status === 'failed' || body?.status === 'error') {
+    const msg = String((typeof body === 'string' ? body : body?.message || body?.error || '') || res.statusText).slice(0, 200);
+    throw new UserError(`The CAC lookup failed: ${msg || 'no reason given'}.`);
+  }
+  return { status: res.status, body };
+}
+const rows = (b: any): any[] => Array.isArray(b?.data) ? b.data : Array.isArray(b?.data?.data) ? b.data.data : Array.isArray(b) ? b : [];
+
+const filled = (v: unknown) => v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '');
+const pick = (o: any, ...keys: string[]) => { for (const k of keys) if (o && filled(o[k])) return o[k]; return null; };
+const text = (v: unknown, n = 300): string | null => {
+  if (!filled(v)) return null;
+  const t = (typeof v === 'object' ? String((v as any).name ?? (v as any).description ?? '') : String(v)).replace(/\s+/g, ' ').trim();
+  return t ? t.slice(0, n) : null;
+};
+const amount = (v: unknown): number | null => {
+  if (!filled(v)) return null;
+  const n = typeof v === 'number' ? v : Number(String(v).replace(/[^0-9.]/g, ''));
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+const tidy = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined));
+const digits = (v: unknown) => String(v ?? '').replace(/\D/g, '');
+
+// A director, shareholder, secretary or person with significant control: names, roles, dates and shares only.
+function person(p: any) {
+  return tidy({
+    firstname: text(pick(p, 'firstname', 'first_name'), 60),
+    other_name: text(pick(p, 'other_name', 'othername', 'middle_name'), 60),
+    surname: text(pick(p, 'surname', 'last_name'), 60),
+    corporation_name: text(pick(p, 'corporation_name', 'corporate_name', 'company_name'), 160),
+    rc_number: text(pick(p, 'rc_number', 'corporation_rc_number'), 20),
+    date_of_appointment: text(pick(p, 'date_of_appointment', 'appointment_date'), 30),
+    is_chairman: typeof p?.is_chairman === 'boolean' ? p.is_chairman : null,
+    status: text(p?.status, 30),
+    role: text(pick(p, 'affiliate_type', 'affiliate_type_fk', 'designation'), 60),
+    nationality: text(pick(p, 'nationality'), 40),
+    num_shares_alloted: amount(pick(p, 'num_shares_alloted', 'num_shares_allotted', 'number_of_shares', 'shares')),
+    type_of_shares: text(p?.type_of_shares, 40),
+  });
+}
+const people = (list: unknown) => (Array.isArray(list) ? list : []).slice(0, 50).map(person).filter((x) => Object.keys(x).length);
+
+function candidate(r: any) {
+  return tidy({
+    id: pick(r, 'id', 'company_id', 'cac_id'),
+    name: text(pick(r, 'approved_name', 'company_name', 'name', 'business_name'), 160),
+    rc_number: text(pick(r, 'rc_number', 'rcNumber', 'registration_number'), 20),
+    classification: text(r?.classification, 30),
+    active: typeof r?.active === 'boolean' ? r.active : null,
+    registered_on: text(pick(r, 'registration_date', 'date_of_registration'), 10),
+    address: text(pick(r, 'address', 'business_address', 'head_office_address'), 200),
+    state: text(r?.state, 40),
+    city: text(r?.city, 60),
+  });
+}
+
+// The company record as CAC holds it: every plain field Mono returns about the business, with the fields Counta uses
+// under fixed names, and the people reduced to what Counta shows.
+const PERSONAL = /phone|mobile|email|birth|dob|identity|id_number|nin|bvn|passport|residential|home_address|signature|photo|image/i;
+function companyProfile(raw: any, c: any, extra: { directors?: unknown; shareholders?: unknown }) {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw || {})) {
+    if (Array.isArray(v)) continue;
+    if (v && typeof v === 'object') { const t = text(v, 200); if (t) out[`${k}_name`] = t; continue; }
+    if (filled(v) && !(PERSONAL.test(k) && !/business|company|head_office/i.test(k))) out[k] = typeof v === 'string' ? v.trim().slice(0, 2000) : v;
+  }
+  const directors = people(Array.isArray(raw?.directors) && raw.directors.length ? raw.directors : extra.directors);
+  const shareholders = people(Array.isArray(raw?.shareholders) && raw.shareholders.length ? raw.shareholders : extra.shareholders);
+  return tidy({
+    ...out,
+    approved_name: text(pick(raw, 'approved_name', 'company_name', 'name', 'business_name') ?? c.name, 160),
+    rc_number: text(pick(raw, 'rc_number', 'rcNumber', 'registration_number') ?? c.rc_number, 20),
+    classification: text(pick(raw, 'classification') ?? c.classification, 30),
+    company_type_name: text(pick(raw, 'company_type_name', 'company_type', 'type_of_company'), 80),
+    registration_date: text(pick(raw, 'registration_date', 'date_of_registration') ?? c.registered_on, 30),
+    business_commencement_date: text(pick(raw, 'business_commencement_date', 'commencement_date', 'date_of_commencement'), 30),
+    active: typeof raw?.active === 'boolean' ? raw.active : (c.active ?? null),
+    objectives: text(pick(raw, 'objectives', 'business_objectives', 'nature_of_business', 'principal_activity'), 2000),
+    nature_of_business_name: text(pick(raw, 'nature_of_business_name', 'nature_of_business', 'business_nature'), 200),
+    address: text(pick(raw, 'address', 'registered_address', 'head_office_address') ?? c.address, 300),
+    business_address: text(pick(raw, 'business_address'), 300),
+    branch_address: text(pick(raw, 'branch_address'), 300),
+    head_office_address: text(pick(raw, 'head_office_address'), 300),
+    state: text(pick(raw, 'state') ?? c.state, 40),
+    city: text(pick(raw, 'city') ?? c.city, 60),
+    lga: text(pick(raw, 'lga'), 60),
+    email: text(pick(raw, 'email', 'business_email', 'company_email'), 120),
+    tax_id: text(pick(raw, 'tax_id', 'tin'), 20),
+    share_capital: amount(pick(raw, 'share_capital', 'issued_share_capital', 'paid_up_share_capital', 'authorised_share_capital', 'authorized_share_capital')),
+    directors, shareholders,
+  });
+}
+
+function taxRecord(b: any) {
+  const d = b?.data && typeof b.data === 'object' && !Array.isArray(b.data) ? b.data : b;
+  const nrs = digits(pick(d, 'nrs_tin', 'tin'));
+  return tidy({
+    taxpayer_name: text(d?.taxpayer_name, 160),
+    nrs_tin: nrs.length === 13 ? nrs : null,
+    firstin: text(d?.firstin, 20),
+    jittin: text(d?.jittin, 20),
+    tax_office: text(d?.tax_office, 120),
+    tin_type: text(d?.tin_type, 20)?.toUpperCase() ?? null,
+    cac_reg_number: text(d?.cac_reg_number, 20),
+    address: text(d?.address, 300),
+    at: new Date().toISOString(),
+  });
+}
+
+async function cacSearch(user: string, query: unknown) {
+  const q = String(query ?? '').replace(/\s+/g, ' ').trim();
+  if (q.length < 2 || q.length > 100) throw new UserError('Type at least two letters of the business name, or its RC number.');
+  if (!(await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'search' }))) {
+    throw new UserError('That is a lot of searching for one day. Type the business details in yourself, or try again tomorrow.');
+  }
+  // "RC 1234567", "rc1234567" and "BN 1234567" search by the number.
+  const rc = q.match(/^(?:rc|bn|it)?\s*-?\s*(\d{3,9})$/i);
+  const { status, body } = await lookup(`/v3/lookup/cac?${new URLSearchParams({ search: rc ? rc[1] : q })}`);
+  const found = status === 404 ? [] : rows(body).map(candidate).filter((c) => c.id !== null && c.name);
+  // Exact and active matches first, then the rest as CAC returned them.
+  const want = q.toLowerCase();
+  found.sort((a: any, b: any) => (Number(b.name?.toLowerCase() === want || b.rc_number === rc?.[1]) - Number(a.name?.toLowerCase() === want || a.rc_number === rc?.[1]))
+    || (Number(b.active !== false) - Number(a.active !== false)));
+  return await svc('svc_kyc_store', { p_user: user, p_part: 'search', p_data: { query: q, candidates: found.slice(0, 10), at: new Date().toISOString() } });
+}
+
+async function cacSelect(user: string, draft: any, cacId: unknown) {
+  const c = (draft?.search?.candidates || []).find((x: any) => String(x.id) === String(cacId ?? ''));
+  if (!c) throw new UserError('Search for the business again and pick it from the list.');
+  if (!(await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'profile' }))) {
+    throw new UserError('That is a lot of company lookups for one day. Type the business details in yourself, or try again tomorrow.');
+  }
+  const id = encodeURIComponent(String(c.id));
+  const soft = (p: Promise<LookupResult>) => p.then((r) => (r.status === 404 ? null : r.body)).catch(() => null);
+  const [profile, psc, secretary] = await Promise.all([
+    c.rc_number ? soft(lookup(`/v3/lookup/cac/profile/${encodeURIComponent(digits(c.rc_number) || c.rc_number)}`)) : Promise.resolve(null),
+    soft(lookup(`/v3/lookup/cac/company/${id}/psc`)),
+    soft(lookup(`/v3/lookup/cac/company/${id}/secretary`)),
+  ]);
+  const raw = profile?.data && !Array.isArray(profile.data) ? profile.data : rows(profile)[0] || null;
+  // The directors and shareholders have their own lookups when the profile leaves them out.
+  const [directors, shareholders] = await Promise.all([
+    raw && Array.isArray(raw.directors) && raw.directors.length ? null : soft(lookup(`/v3/lookup/cac/company/${id}/directors`)),
+    raw && Array.isArray(raw.shareholders) && raw.shareholders.length ? null : soft(lookup(`/v3/lookup/cac/company/${id}`)),
+  ]);
+  const record = {
+    cac_id: c.id,
+    profile: companyProfile(raw || {}, c, { directors: rows(directors), shareholders: rows(shareholders) }),
+    psc: people(rows(psc)),
+    secretary: people(rows(secretary)),
+    found_profile: Boolean(raw),
+    at: new Date().toISOString(),
+  };
+  let kyc = await svc('svc_kyc_store', { p_user: user, p_part: 'cac', p_data: record });
+
+  // The Tax ID the NRS holds for the RC number. A business name or a company the NRS does not know is not an error here.
+  let taxNote: string | null = null;
+  const rcDigits = digits(record.profile.rc_number);
+  if (rcDigits && await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'tin' })) {
+    try {
+      const { status, body } = await lookup('/v3/lookup/tin', { method: 'POST', body: JSON.stringify({ number: rcDigits, channel: 'cac' }) });
+      const t = status === 404 ? null : taxRecord(body);
+      if (t && (t.nrs_tin || t.firstin || t.jittin)) kyc = await svc('svc_kyc_store', { p_user: user, p_part: 'tin', p_data: t });
+      else taxNote = 'The NRS did not return a Tax ID for this RC number.';
+    } catch (e) { taxNote = (e as Error).message; }
+  }
+  return { kyc, tax_note: taxNote };
+}
+
+async function cacStatusReport(user: string, orgId: string, draft: any) {
+  const cacId = draft?.business?.cac_id;
+  if (!cacId) throw new UserError('This business was not found on CAC through Counta, so upload the status report yourself.');
+  if (!(await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'status_report' }))) {
+    throw new UserError('Counta has fetched the status report a few times today already. Try again tomorrow, or upload it yourself.');
+  }
+  const key = await lookupKey();
+  if (!key) throw new UserError('The CAC lookup is not switched on yet. Upload the status report yourself for now.');
+  const res = await fetch(`${MONO}/v3/lookup/cac/company/${encodeURIComponent(String(cacId))}/status-report`, {
+    headers: { 'mono-sec-key': key, accept: 'application/pdf' }, signal: AbortSignal.timeout(45_000),
+  });
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const isPdf = bytes.length > 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
+  if (!res.ok || !isPdf) {
+    if (res.status === 404) throw new UserError('CAC has no status report for this business yet. Upload the one you have, or the application for registration.');
+    throw new UserError('CAC did not send the status report just now. Try again in a few minutes, or upload it yourself.');
+  }
+  if (bytes.length > 10 * 1024 * 1024) throw new UserError('The status report CAC sent is too large to keep. Upload a copy yourself.');
+  const day = new Date(Date.now() + 3600_000).toISOString().slice(0, 10);
+  const path = `${orgId}/kyc/cac-status-report-${day}.pdf`;
+  const up = await admin.storage.from('documents').upload(path, bytes, { contentType: 'application/pdf', upsert: true });
+  if (up.error) throw new UserError('Counta could not save the status report. Try again.');
+  return { path, file_name: `CAC status report ${day}.pdf`, bytes: bytes.length };
+}
+
 // ------------------------------------------------------------------ webhook
 async function webhook(req: Request) {
   const expected = await secret('MONO_WEBHOOK_SECRET');
@@ -266,6 +486,23 @@ Deno.serve(async (req) => {
     };
 
     switch (action) {
+      case 'cac_config':
+        return json({ ok: true, lookup: Boolean(await lookupKey()) });
+      case 'cac_search':
+        return json({ ok: true, kyc: await cacSearch(u.user.id, body.query) });
+      case 'cac_select': {
+        const draft = await mine('kyc_draft', {});
+        return json({ ok: true, ...(await cacSelect(u.user.id, draft, body.cac_id)) });
+      }
+      case 'cac_status_report': {
+        const orgId = String(body.org_id || '');
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgId)) throw new UserError('Choose the business first.');
+        // kyc_draft for a business answers only to its owner.
+        const draft = await mine('kyc_draft', { p_org: orgId });
+        const doc = await cacStatusReport(u.user.id, orgId, draft);
+        const kyc = await mine('kyc_doc', { p_org: orgId, p_path: doc.path, p_kind: 'status_report', p_file_name: doc.file_name });
+        return json({ ok: true, kyc, document: doc });
+      }
       case 'config': {
         const ctx = await mine('bank_feed_context', { p_org: body.org_id });
         const pub = await secret('MONO_PUBLIC_KEY');
