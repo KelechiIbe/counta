@@ -10,6 +10,10 @@
 --    due dates, receipts to suppliers and the NRS and SIRS schedules.
 -- 5. VAT: withholding VAT (as an agent, and when customers withhold it), self-charged VAT on services from abroad,
 --    the small-company test, and the monthly position with the input VAT credit carried forward.
+-- 6. Bills sent back to the supplier for a missing Tax ID or address (TaxStreem sign-off W-1, W-2); no supplier state assumed.
+-- 7. The NRS VAT return (Form VAT 002, schedules A to F): states and LGAs for branches and customers, the NRS description of
+--    exempt and zero-rated supplies, customs entries for imports, VAT taken back on stock written off, and the month's schedule.
+-- Safe to run more than once.
 
 -- ---------------------------------------------------------------------------
 -- 1. Rule books
