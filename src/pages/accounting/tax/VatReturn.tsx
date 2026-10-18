@@ -128,8 +128,10 @@ function Check({ c }: { c: any }) {
           <StateLga state={place.state} lga={place.lga} onChange={(state, lga) => setPlace({ state, lga })} compact />
           <button className="btn btn-secondary btn-xs" disabled={busy || !place.state || !place.lga} onClick={() => go(async () => {
             if (f.kind === 'branch') {
-              const { error } = await supabase.from('locations').update({ state: place.state, lga: place.lga }).eq('id', f.id);
+              // Only the owner may change a branch; for anyone else no row comes back.
+              const { data, error } = await supabase.from('locations').update({ state: place.state, lga: place.lga }).eq('id', f.id).select('id');
               if (error) throw new Error(/row-level|permission/i.test(error.message) ? 'Only the owner changes a branch.' : error.message);
+              if (!data?.length) throw new Error('Only the owner changes a branch.');
             } else await rpc('save_customer', { p_org: orgId, p_customer: { id: f.id, name: f.name, state: place.state, lga: place.lga } });
           }, `${f.name} is in ${place.lga}, ${place.state}`)}>Save</button>
         </div>

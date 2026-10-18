@@ -13,7 +13,9 @@ type Sheet = { name: string; path: string; xml: string; cells: Map<string, Cell>
   parsed: boolean; reads: Set<string> | null };
 type Table = { name: string; sheet: string; ref: string; columns: string[]; path: string; header: number; totals: number; grown: boolean };
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// Characters XML 1.0 does not allow (control characters, lone surrogates) would make Excel refuse the file, so they go.
+const xmlSafe = (s: string) => s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+const esc = (s: string) => xmlSafe(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const unesc = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 
 export function colNum(col: string) { let n = 0; for (const ch of col) n = n * 26 + (ch.charCodeAt(0) - 64); return n; }
@@ -300,7 +302,7 @@ export class Workbook {
     if (typeof val === 'boolean') return `<c r="${addr}"${style} t="b">${fXml}<v>${val ? 1 : 0}</v></c>`;
     if (c && /^#(N\/A|DIV\/0!|VALUE!|REF!|NAME\?|NUM!|NULL!)$/.test(val)) return `<c r="${addr}"${style} t="e">${fXml}<v>${val}</v></c>`;
     if (c) return `<c r="${addr}"${style} t="str">${fXml}<v>${esc(val)}</v></c>`;
-    return `<c r="${addr}"${style} t="inlineStr"><is><t xml:space="preserve">${esc(val)}</t></is></c>`;
+    return `<c r="${addr}"${style} t="inlineStr"><is><t xml:space="preserve">${esc(val.slice(0, 32767))}</t></is></c>`;
   }
 
   save(opts: { level?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 } = {}): Uint8Array {

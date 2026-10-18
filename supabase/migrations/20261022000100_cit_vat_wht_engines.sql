@@ -380,12 +380,41 @@ alter table public.vendors add column if not exists entity_type text check (enti
 alter table public.vendors add column if not exists resident boolean not null default true;
 alter table public.vendors add column if not exists state text;
 alter table public.vendors add column if not exists country text not null default 'NG';
-alter table public.vendors add column if not exists nin text;
 alter table public.vendors add column if not exists is_manufacturer boolean not null default false;
 alter table public.vendors add column if not exists wht_exempt boolean not null default false;
 alter table public.vendors add column if not exists digital_supplier boolean not null default false;
 alter table public.vendors add column if not exists connected_person boolean not null default false;
 update public.vendors set entity_type = case when is_individual then 'individual' else 'company' end where entity_type is null;
+
+-- A supplier's NIN (for an individual without a Tax ID) is personal, so it is kept apart from the supplier row that every member of
+-- the business reads. No policy lets anyone read or write it directly; the tax functions do, for those who handle money.
+create table if not exists public.vendor_nins (
+  vendor_id uuid primary key references public.vendors(id) on delete cascade,
+  org_id uuid not null references public.orgs(id) on delete cascade,
+  nin text not null check (nin ~ '^[0-9]{11}$'),
+  updated_by uuid references public.members(id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+create index if not exists vendor_nins_org_fk on public.vendor_nins(org_id);
+create index if not exists vendor_nins_updated_by_fk on public.vendor_nins(updated_by);
+alter table public.vendor_nins enable row level security;
+revoke all on public.vendor_nins from anon, authenticated;
+
+create or replace function private.vendor_nin(p_vendor uuid) returns text
+language sql stable security definer set search_path = public, private as $$
+  select nin from public.vendor_nins where vendor_id = p_vendor
+$$;
+
+-- Sets or clears a supplier's NIN (11 digits).
+create or replace function private.set_vendor_nin(p_vendor uuid, p_nin text, p_member uuid) returns void
+language plpgsql security definer set search_path = public, private as $$
+declare v_nin text := nullif(regexp_replace(coalesce(p_nin, ''), '\D', '', 'g'), '');
+begin
+  if v_nin is null then delete from vendor_nins where vendor_id = p_vendor; return; end if;
+  if v_nin !~ '^[0-9]{11}$' then raise exception 'A NIN has 11 digits.'; end if;
+  insert into vendor_nins (vendor_id, org_id, nin, updated_by) select id, org_id, v_nin, p_member from vendors where id = p_vendor
+  on conflict (vendor_id) do update set nin = excluded.nin, updated_by = excluded.updated_by, updated_at = now();
+end $$;
 
 -- Customers that withhold VAT (and usually WHT) from what they pay us.
 alter table public.customers add column if not exists wvat_agent boolean not null default false;
@@ -2357,8 +2386,8 @@ language sql stable security definer set search_path = public, private as $$
     'corporate', c.corporate, 'resident', coalesce(v.resident, true),
     'recipient_type', case when c.corporate then 'CORPORATE' else 'NON-CORPORATE' end,
     'beneficiary_type', case when nullif(trim(v.tin), '') is not null then 'TAX ID' when nullif(trim(v.rc_number), '') is not null then 'RC'
-                             when nullif(trim(v.nin), '') is not null then 'NIN' end,
-    'beneficiary_number', coalesce(nullif(trim(v.tin), ''), nullif(trim(v.rc_number), ''), nullif(trim(v.nin), '')),
+                             when private.vendor_nin(v.id) is not null then 'NIN' end,
+    'beneficiary_number', coalesce(nullif(trim(v.tin), ''), nullif(trim(v.rc_number), ''), private.vendor_nin(v.id)),
     'has_tin', nullif(trim(v.tin), '') is not null,
     'exempt', coalesce(v.wht_exempt, false) or v.entity_type = 'government',
     'state', st.own, 'state_missing', st.own is null)
@@ -2520,15 +2549,16 @@ begin
       or (nullif(trim(p->'vendor'->>'tin'), '') is not null and tin = trim(p->'vendor'->>'tin'))) limit 1;
     if v_vendor is null then
       insert into vendors (org_id, name, tin, is_individual, wht_category, bank_code, bank_name, account_number, account_name, vat_registered, channel, phone, email,
-        entity_type, resident, state, address, rc_number, nin, country)
+        entity_type, resident, state, address, rc_number, country)
       values (p_org, left(trim(p->'vendor'->>'name'), 120), nullif(trim(p->'vendor'->>'tin'), ''), coalesce((p->'vendor'->>'is_individual')::boolean, false),
         nullif(p->'vendor'->>'wht_category', ''), nullif(p->'vendor'->>'bank_code', ''), nullif(p->'vendor'->>'bank_name', ''),
         nullif(p->'vendor'->>'account_number', ''), nullif(p->'vendor'->>'account_name', ''), coalesce((p->>'vat_charged')::boolean, true), 'email',
         nullif(p->'vendor'->>'phone', ''), nullif(p->'vendor'->>'email', ''),
         coalesce(nullif(p->'vendor'->>'entity_type', ''), case when coalesce((p->'vendor'->>'is_individual')::boolean, false) then 'individual' end),
         coalesce((p->'vendor'->>'resident')::boolean, true), nullif(trim(p->'vendor'->>'state'), ''), nullif(trim(p->'vendor'->>'address'), ''),
-        nullif(trim(p->'vendor'->>'rc_number'), ''), nullif(trim(p->'vendor'->>'nin'), ''), coalesce(nullif(p->'vendor'->>'country', ''), 'NG'))
+        nullif(trim(p->'vendor'->>'rc_number'), ''), coalesce(nullif(p->'vendor'->>'country', ''), 'NG'))
       returning id into v_vendor;
+      if regexp_replace(coalesce(p->'vendor'->>'nin', ''), '\D', '', 'g') ~ '^[0-9]{11}$' then perform private.set_vendor_nin(v_vendor, p->'vendor'->>'nin', m.id); end if;
     end if;
   end if;
   select * into v from vendors where id = v_vendor and org_id = p_org;
@@ -3742,20 +3772,20 @@ begin
     resident = coalesce((p_patch->>'resident')::boolean, resident),
     country = case when p_patch ? 'country' then coalesce(nullif(upper(trim(p_patch->>'country')), ''), 'NG') else country end,
     state = case when p_patch ? 'state' then (select a.state from tax_authorities a where a.code = private.state_code(p_patch->>'state')) else state end,
-    nin = case when p_patch ? 'nin' then nullif(regexp_replace(p_patch->>'nin', '\D', '', 'g'), '') else nin end,
     is_manufacturer = coalesce((p_patch->>'is_manufacturer')::boolean, is_manufacturer),
     wht_exempt = coalesce((p_patch->>'wht_exempt')::boolean, wht_exempt),
     digital_supplier = coalesce((p_patch->>'digital_supplier')::boolean, digital_supplier),
     connected_person = coalesce((p_patch->>'connected_person')::boolean, connected_person)
   where id = p_vendor and org_id = p_org returning * into v;
   if not found then raise exception 'Vendor not found.'; end if;
+  if p_patch ? 'nin' then perform private.set_vendor_nin(v.id, p_patch->>'nin', m.id); end if;
   -- Draft bills from the supplier follow the change.
   perform private.bill_wht(b.id) from bills b where b.vendor_id = v.id and b.status = 'draft';
   -- WHT already deducted while the supplier's state was not known goes to its state service now that it is.
   update wht_deductions d set authority = st.code, state_missing = false, due_date = private.wht_due('wht', st.code, d.category, d.deducted_on)
   from (select private.vendor_wht_profile(v.id)->>'state' code) st
   where d.vendor_id = v.id and d.kind = 'wht' and d.state_missing and d.authority is null and st.code is not null and d.status in ('pending', 'deducted');
-  return to_jsonb(v) || jsonb_build_object('wht_profile', private.vendor_wht_profile(v.id));
+  return to_jsonb(v) || jsonb_build_object('nin', private.vendor_nin(v.id), 'wht_profile', private.vendor_wht_profile(v.id));
 end $$;
 
 create or replace function private.bill_from_receipt(p_receipt uuid) returns uuid
@@ -3809,7 +3839,7 @@ language sql stable security definer set search_path = public, private as $$
   select to_jsonb(b) || jsonb_build_object(
     'vendor', (select jsonb_build_object('id', v.id, 'name', v.name, 'tin', v.tin, 'is_individual', v.is_individual, 'bank_code', v.bank_code, 'bank_name', v.bank_name,
         'account_number', v.account_number, 'account_name', v.account_name, 'wht_category', v.wht_category, 'entity_type', v.entity_type, 'resident', v.resident,
-        'state', v.state, 'rc_number', v.rc_number, 'nin', v.nin, 'is_manufacturer', v.is_manufacturer, 'wht_exempt', v.wht_exempt,
+        'state', v.state, 'rc_number', v.rc_number, 'nin', private.vendor_nin(v.id), 'is_manufacturer', v.is_manufacturer, 'wht_exempt', v.wht_exempt,
         'email', v.email, 'phone', v.phone, 'address', v.address,
         'wht_profile', private.vendor_wht_profile(v.id)) from vendors v where v.id = b.vendor_id),
     'balance', case when b.status in ('approved', 'partially_paid') then b.total - b.amount_paid else 0 end,
@@ -4044,7 +4074,7 @@ create or replace function private.wht_receipt_json(p_deduction uuid) returns js
 language sql stable security definer set search_path = public, private as $$
   select jsonb_build_object('id', d.id, 'receipt_no', d.receipt_no, 'kind', d.kind, 'issued_on', d.deducted_on, 'month', d.period, 'status', d.status,
     'payer', jsonb_build_object('name', o.name, 'address', coalesce(o.registered_office, o.address), 'tin', o.tin, 'rc_number', o.rc_number),
-    'beneficiary', jsonb_build_object('name', v.name, 'address', v.address, 'tin', v.tin, 'rc_number', v.rc_number, 'nin', v.nin,
+    'beneficiary', jsonb_build_object('name', v.name, 'address', v.address, 'tin', v.tin, 'rc_number', v.rc_number, 'nin', private.vendor_nin(v.id),
       'id_type', d.beneficiary_type, 'id_number', d.beneficiary_number),
     'nature', case d.kind when 'wht' then coalesce(r.name, 'Withholding tax') when 'wvat' then 'VAT withheld' else 'VAT self-charged' end,
     'description', d.description, 'transaction_amount', d.base, 'amount_settled', coalesce(bp.gross, d.base), 'rate', d.rate, 'doubled', d.doubled, 'deducted', d.amount,
@@ -4166,11 +4196,13 @@ language plpgsql stable security definer set search_path = public, private as $$
 declare m public.members; v public.vendors; pf jsonb; v_auth text;
 begin
   m := private.require(p_org, null);
+  -- The NIN and what was withheld are for those who pay suppliers or keep the books (as bills are).
+  if not (private.can_handle_money(p_org) or private.perm_of(m, 'approve_pos')) then raise exception 'Your role does not see suppliers'' tax details.' using errcode = '42501'; end if;
   select * into v from vendors where id = p_vendor and org_id = p_org;
   if not found then raise exception 'Vendor not found.'; end if;
   pf := private.vendor_wht_profile(v.id);
   v_auth := case when (pf->>'corporate')::boolean or not (pf->>'resident')::boolean then 'NRS' else pf->>'state' end;
-  return jsonb_build_object('id', v.id, 'name', v.name, 'tin', v.tin, 'rc_number', v.rc_number, 'nin', v.nin, 'entity_type', v.entity_type,
+  return jsonb_build_object('id', v.id, 'name', v.name, 'tin', v.tin, 'rc_number', v.rc_number, 'nin', private.vendor_nin(v.id), 'entity_type', v.entity_type,
     'is_individual', v.is_individual, 'resident', coalesce(v.resident, true), 'country', coalesce(v.country, 'NG'), 'state', v.state, 'address', v.address,
     'wht_category', v.wht_category, 'is_manufacturer', coalesce(v.is_manufacturer, false), 'wht_exempt', coalesce(v.wht_exempt, false),
     'digital_supplier', coalesce(v.digital_supplier, false), 'connected_person', coalesce(v.connected_person, false), 'vat_registered', v.vat_registered,
@@ -4205,7 +4237,8 @@ begin
   select * into v from vendors where id = b.vendor_id;
   v_note := coalesce(nullif(trim(p->>'note'), ''), private.return_note(v_reason));
   if v_note is null then raise exception 'Write what the supplier should know.'; end if;
-  v_ref := coalesce(nullif(b.vendor_ref, ''), b.number);
+  -- One line of plain text: it goes in an email subject and a WhatsApp template.
+  v_ref := left(coalesce(nullif(trim(regexp_replace(b.vendor_ref, '[[:cntrl:]\s]+', ' ', 'g')), ''), b.number), 60);
   v_label := case v_reason when 'missing_tin' then 'no Tax ID' when 'missing_state' then 'no address for the state revenue service' else 'see the note' end;
   -- Out of the books first, as a void bill.
   if b.journal_id is not null then
@@ -4477,8 +4510,9 @@ alter table public.locations add column if not exists state text;
 alter table public.locations add column if not exists lga text;
 alter table public.customers add column if not exists lga text;
 
+-- Security definer: a branch is edited straight from the app by its owner, and the private helpers are not theirs to call.
 create or replace function private.on_place_saved() returns trigger
-language plpgsql set search_path = public, private as $$
+language plpgsql security definer set search_path = public, private as $$
 declare v_state text; v_lga text; v_lga_changed boolean;
 begin
   if tg_op = 'UPDATE' and new.state is not distinct from old.state and new.lga is not distinct from old.lga then return new; end if;
@@ -4570,8 +4604,9 @@ $$;
 
 -- An exempt or zero-rated item carries the description the NRS return needs: the one a person chose, else the tax agent's,
 -- else the one its words suggest. A standard-rated item has none.
+-- Security definer for the same reason: items are written straight from the app and by the edge functions.
 create or replace function private.on_item_vat_label() returns trigger
-language plpgsql set search_path = public, private as $$
+language plpgsql security definer set search_path = public, private as $$
 begin
   if coalesce(new.vat_treatment, 'standard') not in ('zero', 'exempt') then
     new.nrs_vat_label := null; new.nrs_vat_label_manual := false; return new;
@@ -4691,6 +4726,10 @@ begin
   if v_vat < 0 then raise exception 'The import VAT cannot be negative.'; end if;
   if nullif(p->>'vendor_id', '') is not null and not exists (select 1 from vendors where id = (p->>'vendor_id')::uuid and org_id = p_org) then raise exception 'Supplier not found.'; end if;
   if nullif(p->>'receipt_id', '') is not null and not exists (select 1 from receipts where id = (p->>'receipt_id')::uuid and org_id = p_org) then raise exception 'Stock receipt not found.'; end if;
+  -- A document is kept only under the business's own folder in storage.
+  if nullif(p->>'document_path', '') is not null and (p->>'document_path' not like p_org::text || '/%' or p->>'document_path' like '%..%') then
+    raise exception 'Upload the customs document again.';
+  end if;
   if nullif(p->>'journal_ref', '') is not null then
     select * into j from journals where org_id = p_org and ref = trim(p->>'journal_ref');
     if not found then raise exception 'No entry % in the books.', trim(p->>'journal_ref'); end if;
@@ -5172,6 +5211,7 @@ revoke execute on function private.bill_from_receipt(uuid),
   private.rev360_asset_code(text),
   private.rev360_category(text),
   private.rulebook(int),
+  private.set_vendor_nin(uuid, text, uuid),
   private.state_code(text),
   private.sync_wht_deductions(),
   private.tax_computation(uuid, date, date),
@@ -5185,6 +5225,7 @@ revoke execute on function private.bill_from_receipt(uuid),
   private.vat_stock_writeoffs(uuid, date, date),
   private.vat_threshold_tick(),
   private.vat_tin(text),
+  private.vendor_nin(uuid),
   private.vendor_wht_profile(uuid),
   private.void_bill_deductions(),
   private.wht_due(text, text, text, date),
@@ -5194,3 +5235,7 @@ revoke execute on function private.bill_from_receipt(uuid),
   private.wht_schedule(uuid, date, text, text),
   private.write_bill(uuid, jsonb, public.members)
   from public, anon, authenticated;
+revoke execute on function private.can_handle_money_text(text)
+  from public, anon;
+grant execute on function private.can_handle_money_text(text)
+  to authenticated;

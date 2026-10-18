@@ -77,6 +77,8 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
   const goesTo = f.wht_exempt || f.entity_type === 'government' ? 'No WHT: exempt' : corporate || !f.resident ? 'WHT goes to the NRS'
     : f.state ? `WHT goes to the ${f.state} state revenue service` : 'WHT goes to the revenue service of their state, so add the state before their bills are approved or paid';
   async function save() {
+    // The tax fields come from the supplier's tax details; saving before they load would clear them.
+    if (!loaded) { toast(tax.error ? (tax.error as Error).message : 'The supplier\'s details are still loading.', 'err'); return; }
     if (tinErr) { toast(tinErr, 'err'); return; }
     if (f.nin && !/^\d{11}$/.test(f.nin.replace(/\D/g, ''))) { toast('A NIN has 11 digits.', 'err'); return; }
     try {
@@ -94,6 +96,7 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
         <Pills value={tab} onChange={setTab} options={[{ id: 'statement', label: 'Statement' }, { id: 'details', label: 'Tax and bank details' }]} />
         {tab === 'details' ? (
           <div className="stack" style={{ gap: 12 }}>
+            {tax.error && <Alert kind="yellow" icon="shield">{(tax.error as Error).message}</Alert>}
             {!f.tin && <Alert kind="yellow" icon="alert">Without a Tax ID, withholding tax on this vendor's bills is deducted at double the rate.</Alert>}
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="What kind of business"><select className="input" value={f.entity_type} onChange={(e) => setF({ ...f, entity_type: e.target.value })}>

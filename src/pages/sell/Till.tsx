@@ -39,7 +39,8 @@ export default function Till() {
     if (!loc || !inv.locations.some((l) => l.id === loc)) setLocState(inv.me.location_id || inv.locations.find((l) => l.is_main)?.id || inv.locations[0]?.id || null);
   }, [inv, loc]);
   const setLoc = (l: string) => { setLocState(l); store.set(locKey, l); };
-  const till = useTill(loc);
+  // A role without the Record sales permission sees the notice below, so the till is not read for it.
+  const till = useTill(inv && can(inv, 'record_sales') ? loc : null);
   const shift = till.data?.shift || null;
   const settings = till.data?.settings || {};
 
