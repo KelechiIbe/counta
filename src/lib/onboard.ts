@@ -39,7 +39,7 @@ export interface Score { score: number; total: number; items: ScoreItem[]; next:
 export interface GuideStep { id: string; phase: 'profile' | 'first_steps'; optional: boolean; done: boolean; skipped: boolean }
 export interface GuideState {
   steps: GuideStep[]; done: number; total: number; next: string | null; completed: boolean; dismissed: boolean;
-  org: { id: string; name: string; industry: string; voice_id: string | null; voice_lang: 'en' | 'pcm'; is_owner: boolean } | null;
+  org: { id: string; name: string; industry: string; voice_id: string | null; voice_lang: 'en' | 'pcm'; is_owner: boolean; created_at: string } | null;
   first_name: string; language: 'en' | 'pcm'; marks: Record<string, string>; call: { consent: boolean; phone: string | null; status: string };
 }
 export interface Category { id: string; label: string; kind: 'goods' | 'services' | 'both'; industry: string; sort: number }

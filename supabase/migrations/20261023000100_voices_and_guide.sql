@@ -6,8 +6,11 @@
 -- 2. Each business's voice settings: which voice speaks, English or Pidgin, and which events are announced.
 -- 3. A daily allowance of spoken phrases per business (and per person before they have a business), so a mistake
 --    or misuse cannot run up the ElevenLabs bill.
--- 4. The business profile: the CAC and TIN records Mono returns, what a web search finds, the person's answers, the
---    compliance score out of ten (rules TaxStreem can reword), and the CAC document on file.
+-- 4. The business profile: the CAC and TIN records Mono returns (directors' birth dates, ID numbers, phones, emails and
+--    home addresses are never kept), what a web search finds, the person's answers, the compliance score out of ten
+--    (rules TaxStreem can reword), and the CAC document on file in "<business>/kyc/", which only the owner can open.
+--    Submitting sets the business up from CAC: name, RC number, Tax ID, legal form, addresses, dates, directors,
+--    secretary, issued shares and the head office's state.
 -- 5. The onboarding guide: what a new customer has done (worked out from their real data), their consent to a
 --    follow-up call, and how many guide conversations they have started.
 -- 6. Follow-up calls to people who stopped halfway and said they want one, placed between 9:00 and 18:30 Lagos time.
@@ -757,7 +760,7 @@ begin
   return jsonb_build_object(
     'steps', v_steps, 'done', v_done, 'total', jsonb_array_length(v_steps), 'next', v_next,
     'completed', g.completed_at is not null, 'dismissed', g.dismissed_at is not null,
-    'org', case when o.id is null then null else jsonb_build_object('id', o.id, 'name', o.name, 'industry', o.industry,
+    'org', case when o.id is null then null else jsonb_build_object('id', o.id, 'name', o.name, 'industry', o.industry, 'created_at', o.created_at,
       'voice_id', o.voice_id, 'voice_lang', o.voice_lang, 'is_owner', exists (select 1 from members where org_id = o.id and user_id = v_uid and role = 'owner')) end,
     'first_name', coalesce(split_part(v_name, ' ', 1), ''),
     'language', g.language, 'marks', g.marks,

@@ -81,8 +81,17 @@ export function GuideDock() {
   // The onboarding page and Home's checklist have their own buttons for Martina.
   const onboarding = loc.pathname.startsWith('/onboarding') || loc.pathname === '/home';
   const gs = guide.data;
-  // The launcher shows for owners still setting up (the onboarding page has its own big buttons).
-  const offer = !hidden && !onboarding && g.status === 'idle' && gs && !gs.completed && !gs.dismissed && (gs.org?.is_owner ?? true);
+  // The launcher shows for the owner of a business set up in the last 30 days that is still getting going (the onboarding
+  // page and Home's checklist have their own buttons).
+  const recent = gs?.org?.created_at ? Date.now() - Date.parse(gs.org.created_at) < 30 * 86400_000 : false;
+  const offer = !hidden && !onboarding && g.status === 'idle' && gs && !gs.completed && !gs.dismissed && gs.org?.is_owner && recent;
+  // While a drawer or a dialog is open, the panel moves to the left so it never covers their buttons.
+  const [overlay, setOverlay] = useState(false);
+  useEffect(() => {
+    if (g.status === 'idle') return;
+    const t = window.setInterval(() => setOverlay(Boolean(document.querySelector('.drawer, .modal-wrap:not(.g-own)'))), 500);
+    return () => window.clearInterval(t);
+  }, [g.status]);
   const extras = <><Confetti fire={g.confetti} />{g.voicePicker && <VoicePickerModal onClose={() => g.setVoicePicker(false)} />}</>;
   if (hidden) return extras;
   if (g.status === 'idle') {
@@ -98,14 +107,15 @@ export function GuideDock() {
       </>
     );
   }
-  if (g.minimized) {
-    return <>{extras}<button className="g-mini" onClick={() => g.setMinimized(false)} aria-label="Open Martina"><Orb size={62} live={g.status === 'live'} /></button></>;
+  // On a phone an open drawer or dialog keeps the whole screen; Martina waits as the small orb.
+  if (g.minimized || (overlay && window.innerWidth < 700)) {
+    return <>{extras}<button className={'g-mini' + (overlay ? ' left' : '')} onClick={() => g.setMinimized(false)} aria-label="Open Martina"><Orb size={62} live={g.status === 'live'} /></button></>;
   }
   const last = g.lines.slice(-6);
   return (
     <>
       {extras}
-      <div className="g-dock" role="dialog" aria-label="Martina, your Counta guide">
+      <div className={'g-dock' + (overlay ? ' left' : '')} role="dialog" aria-label="Martina, your Counta guide">
         <div className="g-dock-hd">
           <Orb size={38} live={g.status === 'live'} />
           <div className="grow" style={{ minWidth: 0 }}>

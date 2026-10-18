@@ -20,10 +20,10 @@
 .g-orb .ring.r2 { animation-delay: 1.2s; }
 .g-orb.off .ring { display: none; }
 
-.g-launch { position: fixed; right: 20px; bottom: 20px; z-index: 60; display: flex; align-items: center; gap: 10px; padding: 8px 16px 8px 8px; border-radius: 999px;
+.g-launch { position: fixed; right: 20px; bottom: 20px; z-index: 35; display: flex; align-items: center; gap: 10px; padding: 8px 16px 8px 8px; border-radius: 999px;
   background: #fff; border: 1px solid var(--line); box-shadow: 0 12px 32px rgba(14, 63, 126, .18); cursor: pointer; font-weight: 600; font-size: 14px; color: var(--ink); animation: gSlide .3s ease-out; }
 .g-launch:hover { border-color: var(--primary-line); }
-.g-dock { position: fixed; right: 20px; bottom: 20px; z-index: 70; width: 360px; max-width: calc(100vw - 32px); background: #fff; border-radius: 22px; border: 1px solid var(--line);
+.g-dock { position: fixed; right: 20px; bottom: 20px; z-index: 45; width: 360px; max-width: calc(100vw - 32px); background: #fff; border-radius: 22px; border: 1px solid var(--line);
   box-shadow: 0 24px 60px rgba(14, 63, 126, .24); display: flex; flex-direction: column; overflow: hidden; animation: gSlide .28s ease-out; }
 .g-dock-hd { display: flex; align-items: center; gap: 10px; padding: 12px 12px 10px 14px; border-bottom: 1px solid var(--row); }
 .g-dock-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; max-height: min(46vh, 380px); overflow-y: auto; }
@@ -35,8 +35,10 @@
 .g-dock-ft { display: flex; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--row); align-items: center; }
 .g-dot { width: 8px; height: 8px; border-radius: 4px; background: #22C55E; box-shadow: 0 0 0 3px rgba(34, 197, 94, .2); }
 .g-dot.wait { background: #F59E0B; box-shadow: 0 0 0 3px rgba(245, 158, 11, .2); }
-.g-mini { position: fixed; right: 20px; bottom: 20px; z-index: 70; cursor: pointer; border: 0; background: transparent; padding: 0; }
+.g-mini { position: fixed; right: 20px; bottom: 20px; z-index: 45; cursor: pointer; border: 0; background: transparent; padding: 0; }
+.g-dock.left, .g-mini.left { right: auto; left: 20px; }
 @media (max-width: 700px) {
+  .g-dock.left, .g-mini.left { left: 8px; }
   .g-dock { right: 8px; left: 8px; bottom: 8px; width: auto; max-width: none; border-radius: 20px; }
   .g-launch { right: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); }
   .g-mini { right: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); }
