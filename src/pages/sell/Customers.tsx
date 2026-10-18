@@ -11,7 +11,8 @@ import { TAX_ID_HINT, isOldTin, taxIdError } from '../../lib/taxid';
 import { ExportMenu, acc, useMeta } from '../../components/Books';
 import type { RCol } from '../../lib/reports';
 import { StatusChip, docUrl } from './common';
-import { COUNTRIES, NG_STATES, countryName, isExport } from '../../lib/countries';
+import { COUNTRIES, countryName, isExport } from '../../lib/countries';
+import { StateLga } from '../../components/Places';
 import { SaleDrawer } from './Sales';
 
 type Tab = 'all' | 'owing' | 'overdue' | 'credit';
@@ -80,16 +81,16 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   const toast = useToast();
   const qc = useQueryClient();
   const [tab, setTab] = useState<'details' | 'statement' | 'documents'>(customer ? 'statement' : 'details');
-  const [f, setF] = useState({ name: '', phone: '', email: '', address: '', tin: '', kind: 'business', credit_limit: '', terms_days: '', price_list_id: '', whatsapp_opt_in: true,
-    city: '', state: '', country: 'NG', contact_person: '', cc_emails: '' });
+  const [f, setF] = useState({ name: '', phone: '', email: '', address: '', tin: '', kind: 'business', credit_limit: '', terms_days: '', price_list_id: '', whatsapp_opt_in: true, wvat_agent: false,
+    city: '', state: '', lga: '', country: 'NG', contact_person: '', cc_emails: '' });
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState<'pay' | 'refund' | null>(null);
   const [doc, setDoc] = useState<string | null>(null);
   const [range, setRange] = useState({ from: '', to: today() });
   useEffect(() => {
     if (customer) setF({ name: customer.name, phone: customer.phone || '', email: customer.email || '', address: customer.address || '', tin: customer.tin || '', kind: customer.kind || 'business',
-      credit_limit: String(Number(customer.credit_limit) || ''), terms_days: String(customer.terms_days || ''), price_list_id: customer.price_list_id || '', whatsapp_opt_in: customer.whatsapp_opt_in,
-      city: customer.city || '', state: customer.state || '', country: customer.country || 'NG', contact_person: customer.contact_person || '', cc_emails: (customer.cc_emails || []).join(', ') });
+      credit_limit: String(Number(customer.credit_limit) || ''), terms_days: String(customer.terms_days || ''), price_list_id: customer.price_list_id || '', whatsapp_opt_in: customer.whatsapp_opt_in, wvat_agent: !!(customer as any).wvat_agent,
+      city: customer.city || '', state: customer.state || '', lga: (customer as any).lga || '', country: customer.country || 'NG', contact_person: customer.contact_person || '', cc_emails: (customer.cc_emails || []).join(', ') });
   }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const statement = useQuery({ queryKey: ['statement', customer?.id, range.from, range.to], enabled: !!customer && tab === 'statement',
     queryFn: () => rpc<any>('customer_statement', { p_customer: customer!.id, p_from: range.from || null, p_to: range.to || null }) });
@@ -105,8 +106,9 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
     try {
       await rpc('save_customer', { p_org: orgId, p_customer: { id: customer?.id || null, name: f.name, phone: f.phone || null, email: f.email || null, address: f.address || null, tin: f.tin || null,
         kind: f.kind, price_list_id: f.price_list_id || null, whatsapp_opt_in: f.whatsapp_opt_in, city: f.city || null, state: f.state || null, country: f.country || 'NG',
+        lga: abroad ? null : f.lga || null,
         contact_person: f.contact_person || null, cc_emails: f.cc_emails.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean),
-        ...(canCredit ? { credit_limit: money(f.credit_limit) ?? 0, terms_days: Number(f.terms_days) || 0 } : {}) } });
+        ...(canCredit ? { credit_limit: money(f.credit_limit) ?? 0, terms_days: Number(f.terms_days) || 0, wvat_agent: f.wvat_agent } : {}) } });
       toast('Customer saved'); await qc.invalidateQueries({ queryKey: ['customers'] }); if (!customer) onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
@@ -137,20 +139,20 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
               <Field label="Price list"><select className="input" value={f.price_list_id} onChange={(e) => set('price_list_id', e.target.value)}><option value="">Retail</option>{priceLists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
             </div>
             <Field label="Street address"><textarea className="input" value={f.address} onChange={(e) => set('address', e.target.value)} style={{ minHeight: 56 }} placeholder="12 Adeola Odeku Street, Victoria Island" /></Field>
-            <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="City or town"><input className="input" value={f.city} onChange={(e) => set('city', e.target.value)} /></Field>
-              <Field label={f.country === 'NG' ? 'State' : 'State or region'}>
-                <input className="input" value={f.state} onChange={(e) => set('state', e.target.value)} list={f.country === 'NG' ? 'ng-states' : undefined} />
-                <datalist id="ng-states">{NG_STATES.map((x) => <option key={x} value={x} />)}</datalist>
-              </Field>
               <Field label="Country"><select className="input" value={f.country} onChange={(e) => set('country', e.target.value)}>{COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</select></Field>
             </div>
+            {abroad ? <Field label="State or region"><input className="input" value={f.state} onChange={(e) => set('state', e.target.value)} /></Field>
+              : <StateLga state={f.state} lga={f.lga} onChange={(state, lga) => setF((x) => ({ ...x, state, lga }))} />}
             {isExport(f.country) && <Alert kind="blue" icon="info">This customer is in {countryName(f.country)}, so what you sell them is an export. Counta zero-rates the VAT on their invoices (VAT status 2), even for items that are normally VATable or exempt.</Alert>}
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="Credit limit" hint={canCredit ? '0 means a manager approves each credit sale.' : 'Set by a manager or the bookkeeper.'}><input className="input" inputMode="decimal" disabled={!canCredit} value={f.credit_limit} onChange={(e) => set('credit_limit', e.target.value)} /></Field>
               <Field label="Payment terms (days)"><input className="input" inputMode="numeric" disabled={!canCredit} value={f.terms_days} onChange={(e) => set('terms_days', e.target.value)} /></Field>
             </div>
             <label className="check"><input type="checkbox" checked={f.whatsapp_opt_in} onChange={(e) => set('whatsapp_opt_in', e.target.checked)} />Send receipts and reminders by WhatsApp</label>
+            {f.kind === 'business' && <label className="check" title={canCredit ? undefined : 'Set by a manager or the bookkeeper.'}><input type="checkbox" disabled={!canCredit} checked={f.wvat_agent} onChange={(e) => set('wvat_agent', e.target.checked)} />
+              A withholding VAT agent (a bank, telecom, oil company or government body): it keeps the VAT on our invoices and pays it to the NRS for us</label>}
             <div><button className="btn btn-primary" disabled={busy || !f.name.trim()} onClick={save}>Save customer</button></div>
           </div>
         )}

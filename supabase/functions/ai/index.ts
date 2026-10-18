@@ -5,6 +5,7 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 import { cleanVat, numens, VAT_SCHEMA, VAT_SYSTEM, type VatAnswer, type VatItem, vatPrompt } from './vat.ts';
+import { catalogueText, CIT_MAP_SCHEMA, CIT_MAP_SYSTEM, cleanCitLines, type TbRow, tbText, type TemplateLine } from './cit.ts';
 import { accessProblem, CredentialError, fallbackModels, type GeminiConfig, geminiConfig, generateContent, quotaMessage, thinkingConfig } from './google.ts';
 
 let MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
@@ -531,7 +532,7 @@ async function applyVat(admin: SupabaseClient, items: VatItem[]) {
     const a = byId.get(it.id);
     // No answer for an item the model was shown: a person decides (the item is flagged for review).
     const { data } = await admin.rpc('svc_set_item_vat', { p_item: it.id, p: a ? { treatment: a.treatment, confidence: a.confidence, reason: a.reason, law: a.law,
-      source: a.source, model: a.model } : { treatment: null } });
+      source: a.source, model: a.model, nrs_label: a.nrs_label ?? null } : { treatment: null } });
     results.push({ id: it.id, name: it.name, treatment: a?.treatment ?? null, confidence: a?.confidence ?? 0, applied: Boolean(data?.applied), kept: data?.kept });
   }
   return { ok: true, checked: results.length, results };
@@ -592,6 +593,47 @@ async function mapAccounts(sb: SupabaseClient, body: any) {
   const { data: res, error: e3 } = await sb.rpc('migration_ai_map', { p_migration: mig.id, p_maps: results, p_model: model });
   if (e3) return json({ ok: false, error: e3.message });
   return json({ ok: true, model, ...res });
+}
+
+// ---------------------------------------------------------------- CIT: audited accounts or a trial balance onto the Rev360 lines
+// body: {org_id, year, kind: 'afs' | 'trial_balance', file_path (PDF or picture in the business's documents), rows (a trial balance read in the browser)}
+async function citMap(sb: SupabaseClient, body: any) {
+  if (!aiOn()) return json(notConfigured());
+  const orgId = String(body.org_id || ''), year = Number(body.year), kind = body.kind === 'trial_balance' ? 'trial_balance' : 'afs';
+  // The year as the person may see it: proves they may handle tax returns for this business, and gives the template lines.
+  const { data: cy, error } = await sb.rpc('cit_year', { p_org: orgId, p_year: year });
+  if (error) return json({ ok: false, error: error.message });
+  if (!cy?.can_edit) return json({ ok: false, error: 'Only someone who keeps the books, on a return not yet approved, reads statements into it.' });
+  const lines = (cy.lines || []) as TemplateLine[];
+  const parts: Part[] = [{ text: `Accounting year: ${year} (${cy.period?.from} to ${cy.period?.to}).${NL}Template input lines (cell | section | label):${NL}${catalogueText(lines)}` }];
+  const path = String(body.file_path || '');
+  if (path) {
+    if (path.split('/')[0] !== orgId) return json({ ok: false, error: 'That file is not this business\'s.' });
+    // Downloaded as the person: storage rules decide whether they may read it.
+    const { data: blob, error: dErr } = await sb.storage.from('documents').download(path);
+    if (dErr || !blob) return json({ ok: false, error: 'Could not open the file.' });
+    if (blob.size > 18_000_000) return json({ ok: false, error: 'The file is larger than 18 MB. Upload the statements without the scanned appendices.' });
+    const mime = blob.type && blob.type !== 'application/octet-stream' ? blob.type : path.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+    if (!/^(application\/pdf|image\/(jpeg|png|webp))$/.test(mime)) return json({ ok: false, error: 'Upload the statements as a PDF or a picture.' });
+    parts.push({ text: kind === 'afs' ? 'The audited financial statements:' : 'The trial balance:' });
+    parts.push({ inlineData: { mimeType: mime, data: encodeBase64(new Uint8Array(await blob.arrayBuffer())) } });
+  } else if (Array.isArray(body.rows) && body.rows.length) {
+    parts.push({ text: `The trial balance at the year end (code | account | balance):${NL}${tbText(body.rows as TbRow[])}` });
+  } else {
+    return json({ ok: false, error: 'Upload the audited financial statements or a trial balance.' });
+  }
+  const { data, model } = await gemini(CIT_MAP_SYSTEM, parts, CIT_MAP_SCHEMA, 0.1, { timeoutMs: 120_000 });
+  const { lines: placed, dropped } = cleanCitLines(data?.lines || [], lines);
+  if (!placed.length) return json({ ok: false, error: 'No figures could be read from it. Check it is the full statements for ' + year + '.', warnings: data?.warnings || [] });
+  const totals = data?.totals || {};
+  const { data: after, error: e2 } = await sb.rpc('cit_import', { p_org: orgId, p_year: year,
+    p: { lines: placed, totals, file_path: path || null, kind, replace: body.replace !== false } });
+  if (e2) return json({ ok: false, error: e2.message });
+  // The statements read are the ones the return is filed with, unless others are attached already.
+  if (kind === 'afs' && path && !after?.row?.afs_path) await sb.rpc('save_cit_year', { p_org: orgId, p_year: year, p: { afs_path: path } });
+  return json({ ok: true, model, placed: placed.length, low_confidence: placed.filter((l) => l.confidence < 0.8).length, dropped, totals,
+    period_end: data?.period_end || null, company_name: data?.company_name || null, warnings: data?.warnings || [],
+    checks: (after?.computation?.checks || []).filter((c: any) => ['pbt_ties_to_afs', 'revenue_ties_to_pl', 'sfp_ties_to_accounts', 'figures_missing'].includes(c.id)) });
 }
 
 Deno.serve(async (req) => {
@@ -657,6 +699,7 @@ Deno.serve(async (req) => {
       case 'extract_rows': return await extractRows(body);
       case 'read_statement': return await readStatement(body);
       case 'map_accounts': return await mapAccounts(sb, body);
+      case 'cit_map': return await citMap(sb, body);
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }
   } catch (e) {

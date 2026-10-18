@@ -1,0 +1,3563 @@
+[
+ {
+  "cell": "USER_INPUT!D7",
+  "sheet": "USER_INPUT",
+  "addr": "D7",
+  "sort": 1,
+  "label": "ACCOUNTING YEAR",
+  "codes": [],
+  "basis": "computed",
+  "sign": null,
+  "section": "year",
+  "note": "Accounting year"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D7",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D7",
+  "sort": 2,
+  "label": "MANUFACTURING",
+  "codes": [
+   "4101"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D8",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D8",
+  "sort": 3,
+  "label": "AGRICULTURE, FORESTRY & FISHING",
+  "codes": [
+   "4102"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D9",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D9",
+  "sort": 4,
+  "label": "MINNING & QUARRY",
+  "codes": [
+   "4103"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D10",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D10",
+  "sort": 5,
+  "label": "ELECTRICITY",
+  "codes": [
+   "4104"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D11",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D11",
+  "sort": 6,
+  "label": "WATER SUPPLY, SEWERAGE & WASTE MANAGEMENT",
+  "codes": [
+   "4105"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D12",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D12",
+  "sort": 7,
+  "label": "CONSTRUCTION",
+  "codes": [
+   "4106"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D13",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D13",
+  "sort": 8,
+  "label": "WHOLESALE AND RETAIL TRADE",
+  "codes": [
+   "4107"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D14",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D14",
+  "sort": 9,
+  "label": "TRANSPORTATION AND HAULAGE",
+  "codes": [
+   "4108"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D15",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D15",
+  "sort": 10,
+  "label": "ACCOMODATION AND FOOD SERVICE ACTIVITIES",
+  "codes": [
+   "4109"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D16",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D16",
+  "sort": 11,
+  "label": "COMMUNICATION &. INFORMATION",
+  "codes": [
+   "4110"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D17",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D17",
+  "sort": 12,
+  "label": "BANKS & OTHER FINANCIAL AND  ACTIVITIES",
+  "codes": [
+   "4111"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D18",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D18",
+  "sort": 13,
+  "label": "INSURANCE ACTIVITIES",
+  "codes": [
+   "4112"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D19",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D19",
+  "sort": 14,
+  "label": "REAL ESTATE ACTIVITIES",
+  "codes": [
+   "4113"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D20",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D20",
+  "sort": 15,
+  "label": "PROFESSIONAL, SCIENTIFIC AND TECHNICAL ACTIVITIES",
+  "codes": [
+   "4114"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D21",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D21",
+  "sort": 16,
+  "label": "ADMINISTRATIVE AND SUPPORT ACTIVITIES",
+  "codes": [
+   "4115"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D22",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D22",
+  "sort": 17,
+  "label": "EDUCATION",
+  "codes": [
+   "4116"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D23",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D23",
+  "sort": 18,
+  "label": "OIL AND GAS",
+  "codes": [
+   "4117"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D24",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D24",
+  "sort": 19,
+  "label": "NGOs, NFPOs, RELIGIOUS INSTITUTIONS",
+  "codes": [
+   "4118"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D25",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D25",
+  "sort": 20,
+  "label": "ART, ENTERTAINMENT AND RECREATION",
+  "codes": [
+   "4119"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D26",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D26",
+  "sort": 21,
+  "label": "DIGITAL AND VIRTUAL ASSETS",
+  "codes": [
+   "4120"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D27",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D27",
+  "sort": 22,
+  "label": "Others",
+  "codes": [
+   "4121"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "revenue",
+  "positive_only": true,
+  "note": "Sales returns (4131) and discounts allowed (4132) are shared across the sectors in proportion to their sales."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D66",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D66",
+  "sort": 23,
+  "label": "Raw materials",
+  "codes": [
+   "1201"
+  ],
+  "basis": "balance_start",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D67",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D67",
+  "sort": 24,
+  "label": "Work in progress",
+  "codes": [
+   "1202"
+  ],
+  "basis": "balance_start",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D68",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D68",
+  "sort": 25,
+  "label": "Finished goods",
+  "codes": [
+   "1203",
+   "1207"
+  ],
+  "basis": "balance_start",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D71",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D71",
+  "sort": 26,
+  "label": "Local Purchases",
+  "codes": [
+   "5101"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D72",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D72",
+  "sort": 27,
+  "label": "Import Purchases",
+  "codes": [
+   "5102",
+   "5105"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D73",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D73",
+  "sort": 28,
+  "label": "Returns Outwards",
+  "codes": [
+   "5103"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D76",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D76",
+  "sort": 29,
+  "label": "Direct wages",
+  "codes": [
+   "5201"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D77",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D77",
+  "sort": 30,
+  "label": "Direct expenses",
+  "codes": [
+   "5202",
+   "5203"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D78",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D78",
+  "sort": 31,
+  "label": "Carriage Inwards",
+  "codes": [
+   "5104"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D79",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D79",
+  "sort": 32,
+  "label": "Depreciation",
+  "codes": [
+   "5204"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D80",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D80",
+  "sort": 33,
+  "label": "Mining Cost",
+  "codes": [
+   "5206"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D81",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D81",
+  "sort": 34,
+  "label": "Direct construction cost",
+  "codes": [
+   "5207"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D82",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D82",
+  "sort": 35,
+  "label": "Cost of Storage",
+  "codes": [
+   "5208"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D83",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D83",
+  "sort": 36,
+  "label": "Amortisation of intangible assets",
+  "codes": [
+   "5205"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D84",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D84",
+  "sort": 37,
+  "label": "Other Direct costs",
+  "codes": [
+   "5209",
+   "5401",
+   "5400"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales",
+  "note": "Other direct costs, plus the difference between the inventory movement in the books (5400) and opening less closing inventory, so cost of sales agrees with the accounts."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D87",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D87",
+  "sort": 38,
+  "label": "Factory Rent",
+  "codes": [
+   "5301"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D88",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D88",
+  "sort": 39,
+  "label": "Factory Rates",
+  "codes": [
+   "5302"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D89",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D89",
+  "sort": 40,
+  "label": "Fuel and Power",
+  "codes": [
+   "5303"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D90",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D90",
+  "sort": 41,
+  "label": "Indirect Wages",
+  "codes": [
+   "5304"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D91",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D91",
+  "sort": 42,
+  "label": "Other Factory Overheads",
+  "codes": [
+   "5305",
+   "5306"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D94",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D94",
+  "sort": 43,
+  "label": "Raw materials",
+  "codes": [
+   "1201"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D95",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D95",
+  "sort": 44,
+  "label": "Work In Progress",
+  "codes": [
+   "1202"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D96",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D96",
+  "sort": 45,
+  "label": "Finished goods",
+  "codes": [
+   "1203",
+   "1207"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "cost_of_sales"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D113",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D113",
+  "sort": 46,
+  "label": "Expenses Relating To Non-taxable revenue",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "pl",
+  "positive_only": true,
+  "note": "Expenses relating to non-taxable revenue: needed whenever non-taxable revenue is declared. Taken from the add-back for expenses on exempt income."
+ },
+ {
+  "cell": "INCOME_STATEMENT!D114",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D114",
+  "sort": 47,
+  "label": "Finance Cost (Excluding Interest Expense)",
+  "codes": [
+   "7101",
+   "7102",
+   "7104",
+   "7105"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "pl"
+ },
+ {
+  "cell": "INCOME_STATEMENT!D116",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D116",
+  "sort": 48,
+  "label": "Taxation",
+  "codes": [
+   "7501",
+   "7502",
+   "7503",
+   "7504",
+   "7505"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "pl",
+  "positive_only": true
+ },
+ {
+  "cell": "INCOME_STATEMENT!D119",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D119",
+  "sort": 49,
+  "label": "Revaluation Gain/Loss",
+  "codes": [
+   "8001"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "oci",
+  "positive_only": true
+ },
+ {
+  "cell": "INCOME_STATEMENT!D120",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D120",
+  "sort": 50,
+  "label": "Unrealized foreign exchange gainX",
+  "codes": [
+   "8007"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "oci",
+  "positive_only": true
+ },
+ {
+  "cell": "INCOME_STATEMENT!D121",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D121",
+  "sort": 51,
+  "label": "Currency Translation Adjustments",
+  "codes": [
+   "8003"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "oci",
+  "positive_only": true
+ },
+ {
+  "cell": "INCOME_STATEMENT!D122",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D122",
+  "sort": 52,
+  "label": "Cash Flow Hedge",
+  "codes": [
+   "8004"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "oci",
+  "positive_only": true
+ },
+ {
+  "cell": "INCOME_STATEMENT!D123",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D123",
+  "sort": 53,
+  "label": "Gain Or Loss On Derivative Contracts",
+  "codes": [
+   "8006"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "oci",
+  "positive_only": true
+ },
+ {
+  "cell": "INCOME_STATEMENT!D124",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D124",
+  "sort": 54,
+  "label": "Pension Plans Adustments",
+  "codes": [
+   "8002"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "oci",
+  "positive_only": true
+ },
+ {
+  "cell": "INCOME_STATEMENT!D125",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D125",
+  "sort": 55,
+  "label": "Others",
+  "codes": [
+   "8005",
+   "8008",
+   "8009"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "oci",
+  "positive_only": true
+ },
+ {
+  "cell": "INCOME_STATEMENT!D127",
+  "sheet": "INCOME_STATEMENT",
+  "addr": "D127",
+  "sort": 56,
+  "label": "Retained Earnings Brought Forward",
+  "codes": [],
+  "basis": "retained_start",
+  "sign": "cr",
+  "section": "pl",
+  "note": "Retained earnings at the start of the year, including profit not yet closed."
+ },
+ {
+  "cell": "OTHER_INCOME!D4",
+  "sheet": "OTHER_INCOME",
+  "addr": "D4",
+  "sort": 57,
+  "label": "Commision Income",
+  "codes": [
+   "4501"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "OTHER_INCOME!D5",
+  "sheet": "OTHER_INCOME",
+  "addr": "D5",
+  "sort": 58,
+  "label": "Interest Income",
+  "codes": [
+   "4502"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "OTHER_INCOME!D6",
+  "sheet": "OTHER_INCOME",
+  "addr": "D6",
+  "sort": 59,
+  "label": "Lease Income-Finance",
+  "codes": [
+   "4503"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "OTHER_INCOME!D7",
+  "sheet": "OTHER_INCOME",
+  "addr": "D7",
+  "sort": 60,
+  "label": "Rental Income",
+  "codes": [
+   "4504"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "OTHER_INCOME!D8",
+  "sheet": "OTHER_INCOME",
+  "addr": "D8",
+  "sort": 61,
+  "label": "Dividend Income",
+  "codes": [
+   "4505"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "OTHER_INCOME!D9",
+  "sheet": "OTHER_INCOME",
+  "addr": "D9",
+  "sort": 62,
+  "label": "Profit from disposal of investment in subsidiary income",
+  "codes": [
+   "4506"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "OTHER_INCOME!D10",
+  "sheet": "OTHER_INCOME",
+  "addr": "D10",
+  "sort": 63,
+  "label": "Decrease in provision",
+  "codes": [
+   "4507"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "OTHER_INCOME!D11",
+  "sheet": "OTHER_INCOME",
+  "addr": "D11",
+  "sort": 64,
+  "label": "Gain on sale of asset",
+  "codes": [
+   "4508"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C29"
+ },
+ {
+  "cell": "OTHER_INCOME!D12",
+  "sheet": "OTHER_INCOME",
+  "addr": "D12",
+  "sort": 65,
+  "label": "Non-taxable revenue",
+  "codes": [
+   "4509"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "OTHER_INCOME!D13",
+  "sheet": "OTHER_INCOME",
+  "addr": "D13",
+  "sort": 66,
+  "label": "Realized foreign exchange gain",
+  "codes": [
+   "4510"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C60"
+ },
+ {
+  "cell": "OTHER_INCOME!D14",
+  "sheet": "OTHER_INCOME",
+  "addr": "D14",
+  "sort": 67,
+  "label": "Unrealized foreign exchange gain",
+  "codes": [
+   "4511"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "OTHER_INCOME!D15",
+  "sheet": "OTHER_INCOME",
+  "addr": "D15",
+  "sort": 68,
+  "label": "Bad debt recovered",
+  "codes": [
+   "4512"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "OTHER_INCOME!D16",
+  "sheet": "OTHER_INCOME",
+  "addr": "D16",
+  "sort": 69,
+  "label": "Other investment income",
+  "codes": [
+   "4513",
+   "4515"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "OTHER_INCOME!D17",
+  "sheet": "OTHER_INCOME",
+  "addr": "D17",
+  "sort": 70,
+  "label": "Others",
+  "codes": [
+   "4514",
+   "4516"
+  ],
+  "basis": "movement",
+  "sign": "cr",
+  "section": "other_income",
+  "positive_only": true,
+  "negative_to": "ADMINISTRATIVE_EXPENSES!C70"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C4",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C4",
+  "sort": 71,
+  "label": "Salary and Wages",
+  "codes": [
+   "6101"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C5",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C5",
+  "sort": 72,
+  "label": "Employee Benefit Expenses",
+  "codes": [
+   "6103"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C6",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C6",
+  "sort": 73,
+  "label": "Directors Emoluments",
+  "codes": [
+   "6109"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C7",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C7",
+  "sort": 74,
+  "label": "Directors expenses",
+  "codes": [
+   "6110"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C8",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C8",
+  "sort": 75,
+  "label": "Staff Allowances",
+  "codes": [
+   "6102"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C9",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C9",
+  "sort": 76,
+  "label": "Staff Loan written off",
+  "codes": [
+   "6111"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C10",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C10",
+  "sort": 77,
+  "label": "Staff Gratuity",
+  "codes": [
+   "6105"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C11",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C11",
+  "sort": 78,
+  "label": "Pension and Gratuity",
+  "codes": [
+   "6104"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C12",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C12",
+  "sort": 79,
+  "label": "Other staff & related Cost",
+  "codes": [
+   "6108",
+   "6113",
+   "6114"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C13",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C13",
+  "sort": 80,
+  "label": "depreciation",
+  "codes": [
+   "6901",
+   "6902"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C14",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C14",
+  "sort": 81,
+  "label": "Amortisation of intangible assetsX",
+  "codes": [
+   "6903"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C15",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C15",
+  "sort": 82,
+  "label": "Government and regulatory costs",
+  "codes": [
+   "6508",
+   "6506"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C16",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C16",
+  "sort": 83,
+  "label": "Advertisement & Promotion",
+  "codes": [
+   "6401"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C17",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C17",
+  "sort": 84,
+  "label": "Bad Debt written off",
+  "codes": [
+   "6801",
+   "6802"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C18",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C18",
+  "sort": 85,
+  "label": "Bank charges",
+  "codes": [
+   "6701"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C19",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C19",
+  "sort": 86,
+  "label": "Interest Expense",
+  "codes": [
+   "6702",
+   "7103"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C20",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C20",
+  "sort": 87,
+  "label": "Rooms/ Accomodation cost",
+  "codes": [
+   "6604"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C21",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C21",
+  "sort": 88,
+  "label": "Audit fees",
+  "codes": [
+   "6501"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C22",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C22",
+  "sort": 89,
+  "label": "Donations",
+  "codes": [
+   "6904"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C23",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C23",
+  "sort": 90,
+  "label": "Entertainment expenses",
+  "codes": [
+   "6409",
+   "6410"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C24",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C24",
+  "sort": 91,
+  "label": "Postages",
+  "codes": [
+   "6213"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C25",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C25",
+  "sort": 92,
+  "label": "Fuel expenses",
+  "codes": [
+   "6605"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C26",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C26",
+  "sort": 93,
+  "label": "Generator expenses",
+  "codes": [
+   "6208"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C27",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C27",
+  "sort": 94,
+  "label": "Head office cost",
+  "codes": [
+   "6607"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C28",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C28",
+  "sort": 95,
+  "label": "Internet Cost",
+  "codes": [
+   "6302"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C29",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C29",
+  "sort": 96,
+  "label": "Loss on sale of property, plants and equipments",
+  "codes": [
+   "6804"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C30",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C30",
+  "sort": 97,
+  "label": "Medical Expenses",
+  "codes": [
+   "6106"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C31",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C31",
+  "sort": 98,
+  "label": "Newspaper & Periodicals",
+  "codes": [
+   "6214"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C32",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C32",
+  "sort": 99,
+  "label": "Outsourcing Services expenses",
+  "codes": [
+   "6112"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C33",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C33",
+  "sort": 100,
+  "label": "Rates",
+  "codes": [
+   "6202"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C34",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C34",
+  "sort": 101,
+  "label": "Rent & Rates",
+  "codes": [
+   "6201"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C35",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C35",
+  "sort": 102,
+  "label": "Repairs and Maintenance",
+  "codes": [
+   "6209",
+   "6305"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C36",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C36",
+  "sort": 103,
+  "label": "Research cost",
+  "codes": [
+   "6905"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C37",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C37",
+  "sort": 104,
+  "label": "Security expenses",
+  "codes": [
+   "6211"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C38",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C38",
+  "sort": 105,
+  "label": "Selling & Distribution Expenses",
+  "codes": [
+   "6407"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C39",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C39",
+  "sort": 106,
+  "label": "Service Charge",
+  "codes": [
+   "6203"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C40",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C40",
+  "sort": 107,
+  "label": "Public Relation",
+  "codes": [
+   "6403"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C41",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C41",
+  "sort": 108,
+  "label": "Publication Cost",
+  "codes": [
+   "6404"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C42",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C42",
+  "sort": 109,
+  "label": "Permits",
+  "codes": [],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C43",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C43",
+  "sort": 110,
+  "label": "Telephone",
+  "codes": [
+   "6301"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C44",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C44",
+  "sort": 111,
+  "label": "Trade fairs & exhibitions",
+  "codes": [
+   "6405"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C45",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C45",
+  "sort": 112,
+  "label": "Training and Development",
+  "codes": [
+   "6107"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C46",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C46",
+  "sort": 113,
+  "label": "Transport of supplies",
+  "codes": [
+   "6601"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C47",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C47",
+  "sort": 114,
+  "label": "Utilities",
+  "codes": [
+   "6204"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C48",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C48",
+  "sort": 115,
+  "label": "Website Design & Maintenance",
+  "codes": [
+   "6304"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C49",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C49",
+  "sort": 116,
+  "label": "Software maintenance",
+  "codes": [
+   "6303"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C50",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C50",
+  "sort": 117,
+  "label": "Cleaning & Janitory Services",
+  "codes": [
+   "6210"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C51",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C51",
+  "sort": 118,
+  "label": "Corporate promotion",
+  "codes": [
+   "6402"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C52",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C52",
+  "sort": 119,
+  "label": "Freight & Transport Expenses",
+  "codes": [
+   "6606"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C53",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C53",
+  "sort": 120,
+  "label": "Subscription & Dues",
+  "codes": [
+   "6510"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C54",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C54",
+  "sort": 121,
+  "label": "Sponsorship",
+  "codes": [
+   "6406"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C55",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C55",
+  "sort": 122,
+  "label": "Stationeries expenses",
+  "codes": [
+   "6212",
+   "6216"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C56",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C56",
+  "sort": 123,
+  "label": "other professional fees",
+  "codes": [
+   "6502",
+   "6503",
+   "6504",
+   "6505",
+   "6507"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C57",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C57",
+  "sort": 124,
+  "label": "Fines",
+  "codes": [
+   "6513"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C58",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C58",
+  "sort": 125,
+  "label": "penalties",
+  "codes": [
+   "6514"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C59",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C59",
+  "sort": 126,
+  "label": "AMCON charges",
+  "codes": [
+   "6511"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C60",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C60",
+  "sort": 127,
+  "label": "Realized foreign exchange loss",
+  "codes": [
+   "6703"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C61",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C61",
+  "sort": 128,
+  "label": "Corporate Social Responsibilities",
+  "codes": [
+   "6408"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C62",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C62",
+  "sort": 129,
+  "label": "Royalties",
+  "codes": [
+   "6515"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C63",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C63",
+  "sort": 130,
+  "label": "Electricity & Power",
+  "codes": [
+   "6205"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C64",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C64",
+  "sort": 131,
+  "label": "PMS",
+  "codes": [
+   "6207"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C65",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C65",
+  "sort": 132,
+  "label": "Health, safety and environmental expenses",
+  "codes": [
+   "6906"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C66",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C66",
+  "sort": 133,
+  "label": "Licences & leases charges",
+  "codes": [
+   "6509"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C67",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C67",
+  "sort": 134,
+  "label": "Other statutory charges & levies",
+  "codes": [
+   "6512"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C68",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C68",
+  "sort": 135,
+  "label": "AGO-Diesel",
+  "codes": [
+   "6206"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C69",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C69",
+  "sort": 136,
+  "label": "Travel Expenses",
+  "codes": [
+   "6602",
+   "6603"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "ADMINISTRATIVE_EXPENSES!C70",
+  "sheet": "ADMINISTRATIVE_EXPENSES",
+  "addr": "C70",
+  "sort": 137,
+  "label": "Others",
+  "codes": [
+   "6215",
+   "6704",
+   "6803",
+   "6805",
+   "6907"
+  ],
+  "basis": "movement",
+  "sign": "dr",
+  "section": "admin"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D8",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D8",
+  "sort": 138,
+  "label": "Properties, Plants and Equipments",
+  "codes": [
+   "1501",
+   "1502",
+   "1503",
+   "1504",
+   "1505",
+   "1506",
+   "1507",
+   "1508",
+   "1509",
+   "1510",
+   "1511",
+   "1512",
+   "1513",
+   "1514",
+   "1515",
+   "1516",
+   "1517",
+   "1518",
+   "1519",
+   "1520",
+   "1521",
+   "1522",
+   "1523",
+   "1524",
+   "1525",
+   "1526",
+   "1527",
+   "1551",
+   "1552",
+   "1553",
+   "1554",
+   "1555",
+   "1556",
+   "1557",
+   "1558",
+   "1559",
+   "1560",
+   "1561",
+   "1562",
+   "1563",
+   "1564",
+   "1565",
+   "1566",
+   "1567",
+   "1568",
+   "1569",
+   "1570",
+   "1571",
+   "1572",
+   "1573",
+   "1574"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets",
+  "note": "Cost less accumulated depreciation."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D10",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D10",
+  "sort": 139,
+  "label": "Investment in securities",
+  "codes": [
+   "1703",
+   "1704",
+   "1705"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D11",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D11",
+  "sort": 140,
+  "label": "Investment in stock and bonds",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D12",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D12",
+  "sort": 141,
+  "label": "Investment in Properties",
+  "codes": [
+   "1706"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D13",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D13",
+  "sort": 142,
+  "label": "Investment in Associate & Joint Ventures",
+  "codes": [
+   "1702"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D14",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D14",
+  "sort": 143,
+  "label": "Investment in Subsidiaries",
+  "codes": [
+   "1701"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D15",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D15",
+  "sort": 144,
+  "label": "Investment in finance lease",
+  "codes": [
+   "1707"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D16",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D16",
+  "sort": 145,
+  "label": "Investment in staff loan",
+  "codes": [
+   "1708"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D17",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D17",
+  "sort": 146,
+  "label": "Investment in digital assets",
+  "codes": [
+   "1709"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D18",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D18",
+  "sort": 147,
+  "label": "Investment in Commodities",
+  "codes": [
+   "1710"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D19",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D19",
+  "sort": 148,
+  "label": "Others",
+  "codes": [
+   "1711"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D21",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D21",
+  "sort": 149,
+  "label": "Goodwill",
+  "codes": [
+   "1601"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D22",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D22",
+  "sort": 150,
+  "label": "Patent",
+  "codes": [
+   "1602"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D23",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D23",
+  "sort": 151,
+  "label": "Trademarks",
+  "codes": [
+   "1603"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D24",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D24",
+  "sort": 152,
+  "label": "Terminal and service concession rights",
+  "codes": [
+   "1608"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D25",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D25",
+  "sort": 153,
+  "label": "Brands",
+  "codes": [
+   "1604"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D26",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D26",
+  "sort": 154,
+  "label": "Customer relationships",
+  "codes": [
+   "1605"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D27",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D27",
+  "sort": 155,
+  "label": "Right of use",
+  "codes": [
+   "1651",
+   "1652",
+   "1653",
+   "1654"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets",
+  "note": "Right-of-use assets less their depreciation."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D28",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D28",
+  "sort": 156,
+  "label": "Copyrights",
+  "codes": [
+   "1606"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D29",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D29",
+  "sort": 157,
+  "label": "Others",
+  "codes": [
+   "1607",
+   "1610"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets",
+  "note": "Accumulated amortisation (1609) is shared across the intangible lines in proportion to their cost."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D31",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D31",
+  "sort": 158,
+  "label": "Lease-hold Land",
+  "codes": [
+   "1801"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D32",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D32",
+  "sort": 159,
+  "label": "Lease-hold Building",
+  "codes": [
+   "1802"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D33",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D33",
+  "sort": 160,
+  "label": "Building and Real estate lease",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D34",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D34",
+  "sort": 161,
+  "label": "Other leases",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D35",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D35",
+  "sort": 162,
+  "label": "Non-Current Assets Held for Sale",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D36",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D36",
+  "sort": 163,
+  "label": "Contract assets",
+  "codes": [
+   "1804"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D37",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D37",
+  "sort": 164,
+  "label": "Deferred tax asset",
+  "codes": [
+   "1803"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D38",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D38",
+  "sort": 165,
+  "label": "Other financial assets",
+  "codes": [
+   "1808"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D39",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D39",
+  "sort": 166,
+  "label": "Derivative financial instrument",
+  "codes": [
+   "1805"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D40",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D40",
+  "sort": 167,
+  "label": "Long-term borrowings and debts",
+  "codes": [
+   "1806"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D41",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D41",
+  "sort": 168,
+  "label": "Defined Benefits Assets",
+  "codes": [
+   "1807"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D42",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D42",
+  "sort": 169,
+  "label": "Others",
+  "codes": [
+   "1809"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D46",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D46",
+  "sort": 170,
+  "label": "Inventories",
+  "codes": [
+   "1201",
+   "1202",
+   "1203",
+   "1207"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D47",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D47",
+  "sort": 171,
+  "label": "Other Receivables",
+  "codes": [
+   "1104",
+   "1105",
+   "1108",
+   "1110"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D48",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D48",
+  "sort": 172,
+  "label": "Trade recievables",
+  "codes": [
+   "1101",
+   "1102",
+   "1103"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets",
+  "note": "Includes customers in credit, which also show as unearned income, as in the financial statements."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D50",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D50",
+  "sort": 173,
+  "label": "Other Interbank Advances",
+  "codes": [
+   "1109"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D51",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D51",
+  "sort": 174,
+  "label": "Withholding tax recievables",
+  "codes": [
+   "1401"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D52",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D52",
+  "sort": 175,
+  "label": "Other  receivables",
+  "codes": [
+   "1402",
+   "1403",
+   "1404",
+   "1405"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D53",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D53",
+  "sort": 176,
+  "label": "Current portion of Long Term Loan",
+  "codes": [
+   "1305"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D54",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D54",
+  "sort": 177,
+  "label": "Short Term Investments",
+  "codes": [
+   "1304"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D55",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D55",
+  "sort": 178,
+  "label": "Accrued Income",
+  "codes": [
+   "1107"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D56",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D56",
+  "sort": 179,
+  "label": "Asset classified as held for sale",
+  "codes": [
+   "1306"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D57",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D57",
+  "sort": 180,
+  "label": "Advance payment to vendor",
+  "codes": [
+   "1106"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets",
+  "note": "Includes suppliers in debit, as in the financial statements."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D58",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D58",
+  "sort": 181,
+  "label": "Prepaid Expenses",
+  "codes": [
+   "1301",
+   "1302",
+   "1303"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D59",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D59",
+  "sort": 182,
+  "label": "Small Tools",
+  "codes": [
+   "1205"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D60",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D60",
+  "sort": 183,
+  "label": "Goods in transit",
+  "codes": [
+   "1204"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D61",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D61",
+  "sort": 184,
+  "label": "chemicals, materials supplies and others",
+  "codes": [
+   "1206"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D62",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D62",
+  "sort": 185,
+  "label": "Others",
+  "codes": [
+   "1307",
+   "1308"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets",
+  "note": "Includes uncleared suspense and clearing balances in debit."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D64",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D64",
+  "sort": 186,
+  "label": "Cash in hand",
+  "codes": [
+   "1011"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D65",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D65",
+  "sort": 187,
+  "label": "Cash at Bank",
+  "codes": [
+   "1012",
+   "1013"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets",
+  "note": "Overdrawn bank accounts are shown as short-term debt."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D66",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D66",
+  "sort": 188,
+  "label": "marketable securities",
+  "codes": [
+   "1016"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D67",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D67",
+  "sort": 189,
+  "label": "Others",
+  "codes": [
+   "1014",
+   "1015",
+   "1019"
+  ],
+  "basis": "balance_end",
+  "sign": "dr",
+  "section": "sofp_assets"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D73",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D73",
+  "sort": 190,
+  "label": "Trade Payables",
+  "codes": [
+   "2101",
+   "2102"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities",
+  "note": "Includes suppliers in debit, as in the financial statements."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D74",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D74",
+  "sort": 191,
+  "label": "Current tax liabilities",
+  "codes": [
+   "2208",
+   "2209"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D76",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D76",
+  "sort": 192,
+  "label": "Other payables",
+  "codes": [
+   "2104",
+   "2105",
+   "2106"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D77",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D77",
+  "sort": 193,
+  "label": "Financial liabilities",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D78",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D78",
+  "sort": 194,
+  "label": "Accruals",
+  "codes": [
+   "2103"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D79",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D79",
+  "sort": 195,
+  "label": "Unearned income (advance from customers)",
+  "codes": [
+   "2107",
+   "2110"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities",
+  "note": "Includes customers in credit."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D80",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D80",
+  "sort": 196,
+  "label": "Interest payable",
+  "codes": [
+   "2305"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D81",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D81",
+  "sort": 197,
+  "label": "Short-term debt",
+  "codes": [
+   "2301",
+   "2302",
+   "2306"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities",
+  "note": "Includes overdrawn bank accounts."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D82",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D82",
+  "sort": 198,
+  "label": "Provision for warranty expenses",
+  "codes": [
+   "2401"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D83",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D83",
+  "sort": 199,
+  "label": "Provision for bonuses and employee benefit",
+  "codes": [
+   "2402"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D84",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D84",
+  "sort": 200,
+  "label": "Current portion of lease liability",
+  "codes": [
+   "2304"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D85",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D85",
+  "sort": 201,
+  "label": "Current portion of long-term debt",
+  "codes": [
+   "2303"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D86",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D86",
+  "sort": 202,
+  "label": "Dividend payable",
+  "codes": [
+   "2108"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D87",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D87",
+  "sort": 203,
+  "label": "Provisions",
+  "codes": [
+   "2403"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D88",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D88",
+  "sort": 204,
+  "label": "Short-term debt",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D89",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D89",
+  "sort": 205,
+  "label": "Income taxes payable",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D90",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D90",
+  "sort": 206,
+  "label": "Decommissioning and other provisions",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D91",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D91",
+  "sort": 207,
+  "label": "Other payables",
+  "codes": [
+   "2109",
+   "2201",
+   "2202",
+   "2203",
+   "2204",
+   "2205",
+   "2206",
+   "2207",
+   "2210",
+   "2211"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D92",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D92",
+  "sort": 208,
+  "label": "Others",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_liabilities",
+  "note": "Uncleared suspense and clearing balances in credit."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D95",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D95",
+  "sort": 209,
+  "label": "Long Term Debt",
+  "codes": [
+   "2501"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D96",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D96",
+  "sort": 210,
+  "label": "Long term Borrowings",
+  "codes": [
+   "2502"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D97",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D97",
+  "sort": 211,
+  "label": "Pension and Employee Benefit obligation",
+  "codes": [
+   "2603"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D98",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D98",
+  "sort": 212,
+  "label": "Deferred Revenue (Long Term Portion)",
+  "codes": [
+   "2602"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D99",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D99",
+  "sort": 213,
+  "label": "Contigent Liability (Long Term Provision)",
+  "codes": [
+   "2605"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D100",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D100",
+  "sort": 214,
+  "label": "Employees Benefits obligations",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D101",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D101",
+  "sort": 215,
+  "label": "Non-current Portion of Lease Obligation",
+  "codes": [
+   "2504"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D102",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D102",
+  "sort": 216,
+  "label": "Deferred Tax Liabilities",
+  "codes": [
+   "2601"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D103",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D103",
+  "sort": 217,
+  "label": "Stock warrant obligations",
+  "codes": [
+   "2607"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D104",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D104",
+  "sort": 218,
+  "label": "Debt Securities",
+  "codes": [
+   "2503"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D105",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D105",
+  "sort": 219,
+  "label": "Lease liabilities",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D106",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D106",
+  "sort": 220,
+  "label": "Derivaties liabilities held for risk Management",
+  "codes": [
+   "2606"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D107",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D107",
+  "sort": 221,
+  "label": "Deposit from Customers",
+  "codes": [
+   "2505"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D108",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D108",
+  "sort": 222,
+  "label": "Retirement benefits",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D109",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D109",
+  "sort": 223,
+  "label": "Derivative financial instruments liabilities",
+  "codes": [],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D110",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D110",
+  "sort": 224,
+  "label": "Others",
+  "codes": [
+   "2604",
+   "2608"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_noncurrent"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D112",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D112",
+  "sort": 225,
+  "label": "Issued Share Capital",
+  "codes": [
+   "3001",
+   "3002"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D113",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D113",
+  "sort": 226,
+  "label": "Share premium",
+  "codes": [
+   "3003"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D114",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D114",
+  "sort": 227,
+  "label": "Retained earnings",
+  "codes": [
+   "3005"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity",
+  "note": "Retained earnings include profit for the year not yet closed."
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D115",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D115",
+  "sort": 228,
+  "label": "Revaluation reserve",
+  "codes": [
+   "3006"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D116",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D116",
+  "sort": 229,
+  "label": "Statutory reserve",
+  "codes": [
+   "3007"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D117",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D117",
+  "sort": 230,
+  "label": "Non-controlling interest",
+  "codes": [
+   "3016"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D119",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D119",
+  "sort": 231,
+  "label": "Contigency reserve",
+  "codes": [
+   "3013"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D120",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D120",
+  "sort": 232,
+  "label": "Cumulative Translation Adjustment",
+  "codes": [
+   "3008"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D121",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D121",
+  "sort": 233,
+  "label": "Share based payment reserve",
+  "codes": [
+   "3011"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D122",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D122",
+  "sort": 234,
+  "label": "Reserve for bonus issue",
+  "codes": [
+   "3014"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D123",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D123",
+  "sort": 235,
+  "label": "Capital reserve",
+  "codes": [
+   "3012"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D124",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D124",
+  "sort": 236,
+  "label": "Other reserves",
+  "codes": [
+   "3009",
+   "3010",
+   "3015",
+   "3017"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "STATEMENT_OF_FINANCIAL_POSITION!D125",
+  "sheet": "STATEMENT_OF_FINANCIAL_POSITION",
+  "addr": "D125",
+  "sort": 237,
+  "label": "Equity contribution to shareholders/ Equity holders",
+  "codes": [
+   "3004",
+   "3999"
+  ],
+  "basis": "balance_end",
+  "sign": "cr",
+  "section": "sofp_equity"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D14",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D14",
+  "sort": 238,
+  "label": "Expenses Related To Exempt Income",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "expenses_exempt_income"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D15",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D15",
+  "sort": 239,
+  "label": "Donations (To The Extent Not Allowed)",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "donations_disallowed"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D16",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D16",
+  "sort": 240,
+  "label": "Unrealised Foreign Exchange Loss",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "unrealised_fx_loss"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D17",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D17",
+  "sort": 241,
+  "label": "Loss On Disposal Of Fixed Assets",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "loss_on_disposal_fixed_assets"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D18",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D18",
+  "sort": 242,
+  "label": "Entertainment Expenses (To The Extent Not Allowed)",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "entertainment_disallowed"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D19",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D19",
+  "sort": 243,
+  "label": "Capital Repaid/Withdrawn",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "capital_repaid_withdrawn"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D20",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D20",
+  "sort": 244,
+  "label": "Expenses of Capital Nature",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "capital_nature_expenses"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D21",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D21",
+  "sort": 245,
+  "label": "Expenditure on assets not used for the purpose of trade",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "assets_not_for_trade"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D22",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D22",
+  "sort": 246,
+  "label": "Sum recoverable under an insurance or contract of indemnity",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "sum_recoverable_insurance"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D23",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D23",
+  "sort": 247,
+  "label": "Taxes on Profit or Incomes",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "taxes_on_profit_income"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D24",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D24",
+  "sort": 248,
+  "label": "Payment to any unapproved retirement fund or scheme under the Pension Reform Act.",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "unapproved_pension"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D25",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D25",
+  "sort": 249,
+  "label": "Any sum reserved out of profits subject to the provisions of section 20(1)(h) of this Act",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "reserved_out_of_profits"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D26",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D26",
+  "sort": 250,
+  "label": "Any payment to a related party that contravenes the Transfer Pricing Regulations.",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "tp_contravention"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D27",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D27",
+  "sort": 251,
+  "label": "Any expense incurred in deriving an income that is exempt from income tax",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "expense_deriving_exempt_income"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D28",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D28",
+  "sort": 252,
+  "label": "Any expense allowable as a deduction in determining chargeable gains",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "deductible_for_chargeable_gains"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D29",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D29",
+  "sort": 253,
+  "label": "Penalty or fine imposed under any law",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "penalty_fine"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D30",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D30",
+  "sort": 254,
+  "label": "Expenses liable to VAT or import duties but not charged or paid",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "vat_duty_uncharged_expense"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D31",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D31",
+  "sort": 255,
+  "label": "Compensating payments in regulated securities lending that qualify as dividends or interest under this Act",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "securities_lending_compensating"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D32",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D32",
+  "sort": 256,
+  "label": "Others",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "dr",
+  "section": "add_back",
+  "config_id": "other_disallowable"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D36",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D36",
+  "sort": 257,
+  "label": "Deduct Non Taxable Items",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "cr",
+  "section": "deduction",
+  "config_id": "other_non_taxable_income_items"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D37",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D37",
+  "sort": 258,
+  "label": "Profit From Sales Of Fixed Assets",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "cr",
+  "section": "deduction",
+  "config_id": "profit_on_disposal_fixed_assets"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D38",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D38",
+  "sort": 259,
+  "label": "Frank Investment Income",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "cr",
+  "section": "deduction",
+  "config_id": "franked_investment_income"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D39",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D39",
+  "sort": 260,
+  "label": "Unrealised Gains",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "cr",
+  "section": "deduction",
+  "config_id": "unrealised_gains"
+ },
+ {
+  "cell": "PROFIT_ADJUSTMENT!D40",
+  "sheet": "PROFIT_ADJUSTMENT",
+  "addr": "D40",
+  "sort": 261,
+  "label": "Others",
+  "codes": [],
+  "basis": "adjustment",
+  "sign": "cr",
+  "section": "deduction",
+  "config_id": "other_non_taxable_income"
+ }
+]

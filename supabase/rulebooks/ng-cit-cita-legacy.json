@@ -1,0 +1,185 @@
+{
+  "$schema": "https://taxstreem.dev/schemas/cit-config-v1.json",
+  "meta": {
+    "config_id": "ng-cit-cita-legacy-engine",
+    "version": "0.9.0",
+    "status": "approved",
+    "drafted_by": "Counta (for TaxStreem tax-legal sign-off)",
+    "signed_off_by": "TaxStreem (Kelechi Ibe), 18 October 2026: flags L-A to L-G agreed",
+    "governing_law": "Companies Income Tax Act Cap C21 LFN 2004 as amended by the Finance Acts 2019, 2020, 2021 and 2023; Tertiary Education Trust Fund (Establishment, etc.) Act 2011 as amended",
+    "currency": "NGN",
+    "applies_to_yoa": 2025,
+    "accounting_years_covered": "Accounts for years ending in 2024 or earlier (year of assessment = accounting year + 1). Counta prepares returns from 2023 accounts (YOA 2024); earlier years are used only to roll capital allowance tax values forward.",
+    "description": "Pre-NTA regime: CIT by company size, tertiary education tax, minimum tax, CITA capital allowances (initial + annual, two-thirds restriction, NGN10 retention). The engine selects this rule set when YOA <= 2025 (meta.rule_set_selector of the NTA config).",
+    "filing_channel": "NRS Rev360 Self-Service Portal (IT Excel template; same template version as YOA 2026)"
+  },
+
+  "company_classification": {
+    "description": "Run first. Gates the CIT rate, tertiary education tax and minimum tax.",
+    "statute": "CITA s.40(1) and s.105 as amended by Finance Act 2019",
+    "measure": "Gross turnover of the accounting year (revenue in the profit or loss account, before cost of sales)",
+    "classes": {
+      "SMALL":  { "turnover_max_ngn": 25000000, "cit_rate": 0.0, "tertiary_education_tax": false, "minimum_tax": false, "note": "Gross turnover of NGN25m or less. Still files a full return." },
+      "MEDIUM": { "turnover_min_exclusive_ngn": 25000000, "turnover_max_exclusive_ngn": 100000000, "cit_rate": 0.20, "tertiary_education_tax": true, "minimum_tax": true },
+      "LARGE":  { "turnover_min_ngn": 100000000, "cit_rate": 0.30, "tertiary_education_tax": true, "minimum_tax": true }
+    },
+    "professional_services_exclusion": false,
+    "professional_services_note": "The professional-services exclusion is an NTA 2025 (s.202) rule; under CITA a professional firm is classified on turnover like any other company."
+  },
+
+  "tertiary_education_tax": {
+    "statute": "TETFund Act 2011 s.1(2), as amended by Finance Act 2021 (2.5%) and Finance Act 2023 (3%)",
+    "rate_by_yoa": { "2021": 0.02, "2022": 0.025, "2023": 0.03, "2024": 0.03, "2025": 0.03 },
+    "base": "ASSESSABLE_PROFIT",
+    "base_note": "Assessable profit as defined by CITA s.30: adjusted profit after balancing charges, before loss relief and before capital allowances.",
+    "exempt_small_companies": true,
+    "exempt_small_companies_note": "Finance Act 2021 took small companies out of the tax.",
+    "signoff_flag": "FLAG L-A: confirm the base (before loss relief and capital allowances)."
+  },
+
+  "minimum_tax": {
+    "statute": "CITA s.33 as amended by Finance Acts 2019 and 2020",
+    "rate": 0.005,
+    "base": "GROSS_TURNOVER_LESS_FRANKED_INVESTMENT_INCOME",
+    "applies_when": "Total profits give no tax, or tax lower than the minimum tax: CIT payable = max(CIT computed, minimum tax).",
+    "rate_history": [
+      { "returns_due_from": "2020-01-01", "returns_due_to": "2021-12-31", "rate": 0.0025, "note": "COVID relief (Finance Act 2020)." }
+    ],
+    "exemptions": [
+      { "id": "small_company", "rule": "Gross turnover of NGN25m or less (Finance Act 2019)." },
+      { "id": "first_four_years", "rule": "First four calendar years from commencement of business (uses the incorporation date when no commencement date is recorded)." },
+      { "id": "agricultural_trade", "rule": "Company carrying on agricultural trade or business." },
+      { "id": "imported_equity", "rule": "At least 25% of share capital imported (paid in foreign currency)." }
+    ],
+    "signoff_flag": "FLAG L-B: confirm the exemption list and that medium companies pay minimum tax."
+  },
+
+  "cit_rates": {
+    "statute": "CITA s.40(1)",
+    "by_class": { "SMALL": 0.0, "MEDIUM": 0.20, "LARGE": 0.30 },
+    "applies_to": "TOTAL_PROFITS"
+  },
+
+  "capital_allowances": {
+    "statute": "CITA Second Schedule (Tables I and II), paras 7-24",
+    "method": "INITIAL_PLUS_ANNUAL",
+    "description": "Initial allowance in the year the asset is first in use; annual allowance each year on cost less initial allowance (straight line), from the first year, until NGN10 is left. Both need the asset owned and in use for the trade at the end of the basis period.",
+    "retention_ngn": 10,
+    "retention_note": "NGN10 stays in the tax value of each asset until disposal (para 24).",
+    "categories": {
+      "Building Industrial":                                              { "initial": 0.15, "annual": 0.10 },
+      "Building Non-Industrial":                                          { "initial": 0.15, "annual": 0.10 },
+      "Plants (excluding Furniture and fittings)":                         { "initial": 0.50, "annual": 0.25 },
+      "Agricultural plants expenditure":                                  { "initial": 0.95, "annual": 0.00 },
+      "Furnitures & Fittings expenditure":                                { "initial": 0.25, "annual": 0.20 },
+      "Public Transport motor vehicles":                                  { "initial": 0.95, "annual": 0.00 },
+      "Motor vehicles expenditure":                                       { "initial": 0.50, "annual": 0.25 },
+      "Plantation equipments expenditure":                                { "initial": 0.95, "annual": 0.00 },
+      "Construction Plants expenditure (excluding furniture & fittings)": { "initial": 0.50, "annual": 0.00 },
+      "research and development expenditure":                             { "initial": 0.95, "annual": 0.00 },
+      "Housing estate expenditure":                                       { "initial": 0.50, "annual": 0.25 },
+      "ranching and plantation":                                          { "initial": 0.30, "annual": 0.50 },
+      "software":                                                         { "initial": 0.50, "annual": 0.25, "note": "No software class in the Second Schedule; treated as plant. FLAG L-C." },
+      "Others":                                                           { "initial": 0.50, "annual": 0.25, "note": "Treated as plant. FLAG L-C." },
+      "Land":                                                             null
+    },
+    "investment_allowance": {
+      "statute": "CITA s.32",
+      "rate": 0.10,
+      "categories": ["Plants (excluding Furniture and fittings)", "Agricultural plants expenditure", "Plantation equipments expenditure", "Construction Plants expenditure (excluding furniture & fittings)"],
+      "note": "10% of the cost of plant and equipment in the year first used; does not reduce the tax value. FLAG L-D: confirm it is still claimed and on which categories."
+    },
+    "restriction": {
+      "statute": "CITA s.31 / Second Schedule para 24(8)",
+      "fraction_of_assessable_profit": 0.6667,
+      "exact_fraction": "2/3",
+      "exempt_sectors": ["MANUFACTURING", "AGRICULTURE, FORESTRY & FISHING"],
+      "note": "Allowances used in a year cannot exceed two-thirds of assessable profit, except for manufacturing and agro-allied companies. Unused allowances carry forward without time limit. FLAG L-E: confirm the cap is on assessable profit before loss relief."
+    },
+    "balancing_adjustments": {
+      "statute": "CITA Second Schedule paras 12-14",
+      "balancing_charge": "min(proceeds - tax value, allowances claimed) when proceeds exceed tax value; added to assessable profit",
+      "balancing_allowance": "tax value - proceeds when proceeds are below tax value; added to the year's allowances",
+      "chargeable_gain_note": "Any gain above original cost is a chargeable gain under the Capital Gains Tax Act (10%, separate return), not part of CIT."
+    },
+    "rules": [
+      { "id": "in_use_at_period_end", "rule": "Allowance only if the asset is owned and in use for the trade at the end of the basis period." },
+      { "id": "land_excluded", "rule": "Land is not qualifying expenditure." },
+      { "id": "carry_forward_unused", "rule": "Unused allowances carry forward indefinitely." },
+      { "id": "order_of_deduction", "rule": "Loss relief first, then capital allowances (within the two-thirds cap)." }
+    ]
+  },
+
+  "loss_relief": {
+    "statute": "CITA s.31(1)(b) as amended",
+    "rules": {
+      "direction": "CARRY_FORWARD_ONLY",
+      "time_limit_years": null,
+      "time_limit_note": "No time limit for companies (the four-year limit for insurers was removed by Finance Act 2021).",
+      "same_trade_ring_fence": true,
+      "order": "Deduct loss BEFORE capital allowances"
+    }
+  },
+
+  "interest_restriction": {
+    "statute": "CITA s.24(2) proviso as inserted by Finance Act 2019",
+    "applies_to": "Interest paid to a foreign connected person",
+    "ebitda_cap_pct": 0.30,
+    "ebitda_formula": "PBT + interestExpense + depreciation + amortisation (accounting basis)",
+    "excess_formula": "excessInterest = max(0, connectedForeignInterest - 0.30 * EBITDA)",
+    "carry_forward_years": 5,
+    "exemption": "Does not apply to a Nigerian subsidiary of a foreign bank or insurer."
+  },
+
+  "computation_pipeline": {
+    "starting_point": "PROFIT_BEFORE_TAX",
+    "stages": [
+      { "id": "A",  "name": "Profit before tax", "source": "INCOME_STATEMENT!E115" },
+      { "id": "B",  "name": "Add disallowable expenses", "source": "PROFIT_ADJUSTMENT!E33" },
+      { "id": "C",  "name": "Deduct non-taxable income", "source": "PROFIT_ADJUSTMENT!E41" },
+      { "id": "D",  "name": "Adjusted profit", "formula": "A + B - C" },
+      { "id": "D2", "name": "Add balancing charges", "source": "capital allowance schedule" },
+      { "id": "AP", "name": "ASSESSABLE PROFIT", "formula": "D + D2", "is_base_for": ["tertiary_education_tax"] },
+      { "id": "E1", "name": "Loss relief brought forward", "formula": "min(lossBf, max(0, AP))" },
+      { "id": "E2", "name": "Capital allowances used", "formula": "min(CA available, cap (2/3 of AP unless exempt sector), AP - E1)" },
+      { "id": "G",  "name": "TOTAL PROFITS", "formula": "max(0, AP - E1 - E2)", "is_base_for": ["cit"] },
+      { "id": "H",  "name": "CIT", "formula": "G * cit_rate(class)" },
+      { "id": "MT", "name": "Minimum tax", "formula": "applies ? rate * (turnover - FII) : 0" },
+      { "id": "H2", "name": "CIT payable", "formula": "minimumTaxApplies ? max(H, MT) : H" },
+      { "id": "I",  "name": "Tertiary education tax", "formula": "class <> SMALL ? rate(yoa) * max(0, AP) : 0" },
+      { "id": "K",  "name": "Total liability", "formula": "H2 + I" }
+    ],
+    "tax_charge_addback_convention": { "selected": "START_FROM_PBT", "note": "The template starts from profit before tax (PROFIT_ADJUSTMENT!E11 = INCOME_STATEMENT!E115), so the tax charge is not added back." }
+  },
+
+  "add_backs": {
+    "description": "Same template rows as the NTA config (PROFIT_ADJUSTMENT rows 13-32). Statutory basis is CITA s.27 (deductions not allowed) and s.24 (allowable deductions).",
+    "donations": { "statute": "CITA s.25 and Fifth Schedule", "rule": "Donations to listed bodies allowed up to 10% of total profits before the donation; the rest, and donations to unlisted bodies, are added back.", "cap_pct": 0.10 },
+    "general_provisions": { "statute": "CITA s.24(d)", "rule": "Only specific bad debts are deductible; general provisions are added back." },
+    "depreciation": { "statute": "CITA s.27", "rule": "Depreciation and amortisation are added back; capital allowances are given instead." }
+  },
+
+  "deductions": {
+    "description": "Same template rows as the NTA config (PROFIT_ADJUSTMENT rows 36-40).",
+    "chargeable_gains": "Profit on disposal of fixed assets and investments is removed from CIT; any chargeable gain goes to the separate capital gains tax return (10%)."
+  },
+
+  "out_of_scope_v1": [
+    { "id": "commencement_cessation", "statute": "CITA s.29(3)-(4)", "note": "First, second and third years of a new business and the last years of a ceasing business use special basis periods. Counta flags these years for manual review." },
+    { "id": "excess_dividend_tax", "statute": "CITA s.19 as amended by Finance Act 2019" },
+    { "id": "police_trust_fund_levy", "statute": "Nigeria Police Trust Fund (Establishment) Act 2019, 0.005% of net profit", "note": "Separate levy, not in the CIT template." },
+    { "id": "nitda_levy", "statute": "NITDA Act 2007 s.12, 1% of profit before tax for specified companies", "note": "Separate levy." },
+    { "id": "naseni_levy", "statute": "NASENI Act 2023, 0.25% of profit before tax for specified sectors", "note": "Separate levy." },
+    { "id": "capital_gains_tax", "statute": "Capital Gains Tax Act, 10%", "note": "Separate return." },
+    { "id": "petroleum_insurance_special_regimes", "note": "As in the NTA config." }
+  ],
+
+  "signoff_flags": {
+    "L-A": "Tertiary education tax base: assessable profit before loss relief and capital allowances.",
+    "L-B": "Minimum tax: 0.5% of turnover less franked investment income; applies to medium and large companies; exemption list as above.",
+    "L-C": "Software and 'Others' categories treated as plant (50% initial, 25% annual).",
+    "L-D": "Investment allowance of 10% on plant and equipment categories.",
+    "L-E": "Two-thirds cap measured on assessable profit before loss relief; manufacturing and agro-allied exempt.",
+    "L-F": "TET exempts small companies (Finance Act 2021)."
+  }
+}

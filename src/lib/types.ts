@@ -33,7 +33,7 @@ export interface Org {
   audit_exempt?: boolean; bankers?: string | null; solicitors?: string | null; registered_office?: string | null; incorporation_date?: string | null;
   share_info?: Record<string, any>; fs_narrative?: Record<string, any>;
 }
-export interface Location { id: string; org_id: string; name: string; code: string; address: string | null; is_main: boolean; }
+export interface Location { id: string; org_id: string; name: string; code: string; address: string | null; is_main: boolean; state?: string | null; lga?: string | null; }
 export interface Vendor {
   id: string; org_id: string; name: string; location: string | null; channel: 'whatsapp' | 'email' | 'phone'; phone: string | null; email: string | null;
   vat_registered: boolean; lead_time_days: number; credit_days: number; fill_rate: number | null; price_stability: 'High' | 'Medium' | 'Low' | null; notes: string | null;
