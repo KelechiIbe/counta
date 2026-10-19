@@ -29,19 +29,18 @@ const cors = {
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 const cache = new Map<string, { v: string; at: number }>();
+// Keys set in the admin portal (Supabase Vault) come first; the Edge Function secrets are the fallback.
 async function secret(name: string): Promise<string> {
-  const env = Deno.env.get(name);
-  if (env) return env.trim();
   const hit = cache.get(name);
   if (hit && Date.now() - hit.at < 60_000) return hit.v;
   const { data } = await admin.rpc('svc_secret', { p_name: name });
-  const v = typeof data === 'string' ? data.trim() : '';
+  const v = (typeof data === 'string' ? data.trim() : '') || (Deno.env.get(name) || '').trim();
   cache.set(name, { v, at: Date.now() });
   return v;
 }
 
 async function sso(token: string) {
-  const claims = await verifySsoToken(token, await secret('TAXSTREEM_SSO_SECRET'), { issuer: Deno.env.get('TAXSTREEM_SSO_ISSUER') || 'taxstreem' });
+  const claims = await verifySsoToken(token, await secret('TAXSTREEM_SSO_SECRET'), { issuer: (await secret('TAXSTREEM_SSO_ISSUER')) || 'taxstreem' });
   // The person: created the first time (email already confirmed by TaxStreem), found every time after.
   const created = await admin.auth.admin.createUser({ email: claims.email, email_confirm: true,
     user_metadata: { name: claims.name, taxstreem_user_id: claims.sub, signed_up_with: 'taxstreem' } });
@@ -78,7 +77,7 @@ async function prism(path: string, raw: string, sig: string | null) {
 }
 
 async function flux(raw: string, sig: string | null) {
-  if (!(await verifyBody(raw, sig, Deno.env.get('FLUX_SECRET') || ''))) return json({ ok: false, error: 'Bad signature.' }, 401);
+  if (!(await verifyBody(raw, sig, await secret('FLUX_SECRET')))) return json({ ok: false, error: 'Bad signature.' }, 401);
   let body: any;
   try { body = JSON.parse(raw); } catch { return json({ ok: false, error: 'Invalid JSON.' }, 400); }
   const org = String(body.counta_org_id || ''), year = Number(body.accounting_year);

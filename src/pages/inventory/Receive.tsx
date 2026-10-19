@@ -15,6 +15,7 @@ import { Icon } from '../../components/Icon';
 import { Alert, Chip, Empty, Label, Modal, SkeletonRows, Spinner, XButton } from '../../components/ui';
 import JournalDrawer from '../../components/JournalDrawer';
 import { acct, accountName, useAccounts, useItemAccounts, usePostingMap } from '../../lib/accounts';
+import { vatPct } from '../../lib/vat';
 
 const STATUS: Record<string, string> = { reading: 'Reading', needs_review: 'Needs review', posted: 'Posted', discarded: 'Discarded' };
 const SRC: Record<string, string> = { pdf: 'Typed · PDF', photo_typed: 'Typed · photo', photo_handwritten: 'Handwritten · OCR', manual: 'Manual' };
@@ -189,7 +190,7 @@ export function ReceiveFlow({ mode, receiptId, po, itemId, onClose, onAnother, o
   }
 
   const items = inv?.items || [];
-  const t = totals(inv, lines, header.vendor_vat_registered);
+  const t = totals(inv, lines, header.vendor_vat_registered, receipt?.invoice_date);
   const postingMap = usePostingMap();
   const itemAccounts = useItemAccounts();
   const accounts = useAccounts();
@@ -354,7 +355,7 @@ export function ReceiveFlow({ mode, receiptId, po, itemId, onClose, onAnother, o
               <div className="card" style={{ borderRadius: 12, marginTop: 10, overflow: 'hidden' }}>
                 <div className="tr head shade th jr-grid" style={{ gridTemplateColumns: '60px 1fr 110px 110px', padding: '8px 14px' }}><span>Acct</span><span>Account</span><span className="right">Debit</span><span className="right">Credit</span></div>
                 <JRow code={acct(map, 'purchases').code} name={acct(map, 'purchases').name} dr={t.net} />
-                {header.vendor_vat_registered && t.vat > 0 && <JRow code={acct(map, 'input_vat').code} name={`${acct(map, 'input_vat').name} · 7.5%`} dr={t.vat} />}
+                {header.vendor_vat_registered && t.vat > 0 && <JRow code={acct(map, 'input_vat').code} name={`${acct(map, 'input_vat').name} · ${vatPct(receipt?.invoice_date)}`} dr={t.vat} />}
                 <JRow code={acct(map, 'payables').code} name={`${acct(map, 'payables').name} · ${header.vendor_id ? vendors.find((v) => v.id === header.vendor_id)?.name : header.vendor_name || 'vendor'}`} cr={t.gross} />
                 {Object.entries(stockByAcct).sort(([a], [b]) => a.localeCompare(b)).map(([code, amt]) => (
                   <JRow key={code} code={code} name={`${code === invDefault ? acct(map, 'inventory').name : accountName(accounts.data, code)} · ${locName}`} dr={amt} />
@@ -363,7 +364,7 @@ export function ReceiveFlow({ mode, receiptId, po, itemId, onClose, onAnother, o
               </div>
               <div className="muted" style={{ marginTop: 10, fontSize: 12, lineHeight: 1.45 }}>
                 {header.vendor_vat_registered
-                  ? `Input VAT flows into this month's VAT position. ${t.vatBase < t.net ? 'Zero-rated and exempt lines are excluded from the 7.5% by their item master treatment.' : 'Every line on this invoice is standard-rated.'}`
+                  ? `Input VAT flows into this month's VAT position. ${t.vatBase < t.net ? 'Zero-rated and exempt lines are excluded from the ${vatPct(receipt?.invoice_date)} by their item master treatment.' : 'Every line on this invoice is standard-rated.'}`
                   : 'Vendor is not VAT-registered, so no input VAT is claimable on this receipt.'}
                 {receipt.document_path ? ' The source image stays attached to the journal as audit evidence.' : ''}
                 {` Accounts follow the TaxStreem chart. Purchases and the stock movement both sit in cost of sales, so the profit and loss shows what you bought less what is still on the shelf.`}
@@ -665,7 +666,7 @@ function NewItemFields({ nw, canPrice, cost, onChange }: { nw: NonNullable<Draft
         <div><label className="field-label" style={{ fontSize: 12 }}>Sell by the</label>
           <select className="input input-sm" value={nw.selling_unit || 'piece'} onChange={(e) => onChange({ selling_unit: e.target.value })}>{['piece', 'pack', 'sachet', 'tin', 'bottle', 'derica', 'mudu', 'paint bucket', 'kg', 'roll'].map((u) => <option key={u}>{u}</option>)}</select></div>
         <div><label className="field-label" style={{ fontSize: 12 }}>VAT</label>
-          <select className="input input-sm" value={nw.vat_treatment || 'standard'} onChange={(e) => onChange({ vat_treatment: e.target.value as any })}><option value="standard">Standard 7.5%</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select></div>
+          <select className="input input-sm" value={nw.vat_treatment || 'standard'} onChange={(e) => onChange({ vat_treatment: e.target.value as any })}><option value="standard">Standard {vatPct()}</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select></div>
         {canPrice ? (
           <div><label className="field-label" style={{ fontSize: 12 }}>Selling price / {nw.selling_unit || 'piece'}</label>
             <input className="input input-sm" type="number" min={0} placeholder={cost > 0 ? `≈ ${Math.round(cost * 1.15)}` : '₦'} value={nw.price ?? ''} onChange={(e) => onChange({ price: e.target.value === '' ? null : (e.target.value as any) })} /></div>

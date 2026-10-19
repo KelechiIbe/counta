@@ -57,7 +57,7 @@ export function VoicePicker({ onChosen, compact }: { onChosen?: () => void; comp
   }
 
   if (list.isLoading || settings.isLoading) return <div className="row" style={{ justifyContent: 'center', padding: 24 }}><Spinner /></div>;
-  if (!list.data?.configured) return <Alert kind="grey" icon="volume">Nigerian voices switch on once the ElevenLabs key is added. Until then, the phone's own voice announces payments.</Alert>;
+  if (!list.data?.configured) return <Alert kind="grey" icon="volume">Nigerian voices are not available yet. TaxStreem is setting them up; the phone's own voice announces payments meanwhile.</Alert>;
   if (!voices.length) return <Alert kind="amber" icon="volume">No voices are ready yet. Try again in a minute.</Alert>;
   return (
     <div className="stack" style={{ gap: 12 }}>

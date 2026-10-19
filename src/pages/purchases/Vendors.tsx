@@ -12,6 +12,7 @@ import { TAX_ID_HINT, isOldTin, taxIdError } from '../../lib/taxid';
 import { ENTITY_TYPES, matrixRate, pct, useTaxProfile, useVendorTax } from '../../lib/tax';
 import { COUNTRIES } from '../../lib/countries';
 import { ExportMenu, acc, useMeta } from '../../components/Books';
+import { vatPct } from '../../lib/vat';
 
 export default function Vendors() {
   const { data: inv } = useInventory();
@@ -123,7 +124,7 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
               {!f.resident && <label className="check"><input type="checkbox" checked={f.digital_supplier} onChange={(e) => setF({ ...f, digital_supplier: e.target.checked })} />A digital service registered for Nigerian VAT (charges its own VAT)</label>}
               <label className="check"><input type="checkbox" checked={f.connected_person} onChange={(e) => setF({ ...f, connected_person: e.target.checked })} />A connected person (related company, director or shareholder)</label>
             </div>
-            <div className="faint" style={{ fontSize: 12 }}>{goesTo}.{!f.resident && !f.digital_supplier ? ' VAT on services they supply is self-charged at 7.5% and paid to the NRS by the 14th.' : ''}
+            <div className="faint" style={{ fontSize: 12 }}>{goesTo}.{!f.resident && !f.digital_supplier ? ' VAT on services they supply is self-charged at ${vatPct()} and paid to the NRS by the 14th.' : ''}
               {tax.data?.state_needed && !f.state ? ' Without it, send their bills back to ask for the address.' : ''}</div>
             <Field label="Their bills usually go to"><select className="input" value={f.default_account} onChange={(e) => setF({ ...f, default_account: e.target.value })}><option value="">No default</option>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select></Field>
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

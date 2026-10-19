@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { photoUrl } from '../lib/supabase';
 import { amountInWords, fmtDay } from '../lib/format';
 import { addressLines, countryName } from '../lib/countries';
+import { useVatRate, vatPct } from '../lib/vat';
 
 export type Template = 'classic' | 'modern' | 'minimal';
 export const TEMPLATES: { id: Template; name: string; blurb: string }[] = [
@@ -57,6 +58,7 @@ export interface DocData {
 }
 
 export function InvoiceDoc({ d, template, style, fixed }: { d: DocData; template?: Template; style?: CSSProperties; fixed?: boolean }) {
+  useVatRate();
   const o = d.org || {};
   const t: Template = template || (['classic', 'modern', 'minimal'].includes(o.invoice_template) ? o.invoice_template : 'classic');
   const brand = cleanHex(o.brand_color);
@@ -134,7 +136,7 @@ export function InvoiceDoc({ d, template, style, fixed }: { d: DocData; template
   const totals = (
     <div className="inv-totals">
       <div className="inv-tr"><span>{d.prices_include_vat ? 'Total before VAT' : 'Subtotal'}</span><span>{money(d.subtotal)}</span></div>
-      {!allExempt && <div className="inv-tr"><span>VAT{Number(d.vat_total) > 0 ? ' at 7.5%' : ''}{d.prices_include_vat ? ' (included)' : ''}</span><span>{money(d.vat_total)}</span></div>}
+      {!allExempt && <div className="inv-tr"><span>VAT{Number(d.vat_total) > 0 ? ` at ${vatPct(d.issue_date)}` : ''}{d.prices_include_vat ? ' (included)' : ''}</span><span>{money(d.vat_total)}</span></div>}
       <div className="inv-tr inv-total"><span>Total (NGN)</span><span>₦{money(d.total)}</span></div>
       {Number(d.amount_paid) > 0 && <div className="inv-tr"><span>Paid</span><span>{money(d.amount_paid)}</span></div>}
       {Number(d.credited) > 0 && <div className="inv-tr"><span>Credited</span><span>{money(d.credited)}</span></div>}
@@ -150,7 +152,7 @@ export function InvoiceDoc({ d, template, style, fixed }: { d: DocData; template
         </div>
       )}
       {exemptNote && <div className="inv-note">{exemptNote}</div>}
-      {show.vat_status && <div className="inv-legend">VAT status: 0 VATable (7.5%) · 1 Exempt · 2 Zero-rated</div>}
+      {show.vat_status && <div className="inv-legend">VAT status: 0 VATable ({vatPct(d.issue_date)}) · 1 Exempt · 2 Zero-rated</div>}
       {(pay || terms || d.notes) && (
         <div className="inv-cols">
           {pay && <div className="inv-box"><div className="inv-k">Payment details</div><div className="inv-pre">{pay}</div></div>}

@@ -14,7 +14,7 @@ export function dueText(due?: string | null) {
 export const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 export const first = (name: unknown) => String(name || '').trim().split(/\s+/)[0] || 'there';
 
-export type Msg = { id: string; channel: 'email' | 'whatsapp'; to_address: string; template: string; subject?: string; params: Record<string, any>;
+export type Msg = { id: string; org_id?: string; channel: 'email' | 'whatsapp'; to_address: string; template: string; subject?: string; params: Record<string, any>;
   org: { name: string; email?: string; phone?: string; address?: string; tin?: string; website?: string; brand_color?: string; logo_path?: string;
     logo_url?: string | null; reply_to_email?: string; invoice_footer?: string } };
 

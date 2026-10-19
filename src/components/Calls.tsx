@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useInventory } from '../state/session';
 import { when } from '../lib/format';
@@ -10,6 +9,7 @@ import {
 import type { Member } from '../lib/types';
 import { Icon } from './Icon';
 import { Alert, Chip, Label, Modal, ModalHead } from './ui';
+import { isOn, PAUSED, useFeatures } from '../lib/features';
 
 export function CallChip({ c }: { c: Pick<VoiceCall, 'status'> }) {
   const s = CALL_STATUS[c.status];
@@ -81,15 +81,12 @@ export function CallList({ calls, names }: { calls: VoiceCall[]; names?: (c: Voi
   );
 }
 
-function SetupNote({ reason, message }: { reason?: string | null; message?: string }) {
-  const { data: inv } = useInventory();
-  const owner = inv?.me.role === 'owner';
+function SetupNote({ reason }: { reason?: string | null }) {
   return (
     <Alert kind="yellow" icon="call">
-      {reason === 'no_number' ? 'Phone calls need a phone number connected in ElevenLabs before Martina can dial out.'
-        : reason === 'error' ? `The phone service did not answer: ${message || 'try again shortly'}.`
-        : 'Phone calls are not switched on yet. They need an ElevenLabs key and a phone number.'}
-      {owner && <> <Link to="/settings#calls" style={{ color: 'inherit', fontWeight: 600 }}>See phone call settings</Link></>}
+      {reason === 'paused' ? PAUSED.phone_calls
+        : reason === 'error' ? 'The phone line did not answer just now. Try again shortly, or send the order by WhatsApp or email.'
+        : 'Phone calls are not available yet. TaxStreem is setting them up; send orders and reminders by WhatsApp or email meanwhile.'}
     </Alert>
   );
 }
@@ -112,7 +109,9 @@ export function VendorCallModal({ po, vendor, lines, onClose }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [callId, setCallId] = useState<string | null>(null);
-  const ready = status.data?.configured;
+  const feats = useFeatures();
+  const paused = !isOn(feats.data, 'phone_calls');
+  const ready = status.data?.configured && !paused;
   const live = (history.data || []).find((c) => ACTIVE.includes(c.status));
   async function call() {
     setBusy(true); setErr(null);
@@ -139,7 +138,7 @@ export function VendorCallModal({ po, vendor, lines, onClose }: {
             <div className="hint">She confirms quantities and the delivery date, notes anything out of stock or repriced, and never discusses payment details. If the vendor confirms, the order is marked sent and you get a notification with what was agreed.</div>
           </>
         )}
-        {status.data && !ready && !shown && <SetupNote reason={status.data.reason} message={status.data.message} />}
+        {status.data && !ready && !shown && <SetupNote reason={paused ? 'paused' : status.data.reason} />}
         {!vendor.phone && !shown && <Alert kind="yellow" icon="alert">Add a phone number for {vendor.name} first.</Alert>}
         {err && <Alert kind="red" icon="alert">{err}</Alert>}
         {!shown && (history.data || []).length > 0 && (
@@ -166,7 +165,9 @@ export function ReminderCallModal({ member, onClose }: { member: Member; onClose
   const [err, setErr] = useState<string | null>(null);
   const [callId, setCallId] = useState<string | null>(null);
   const first = member.display_name.split(' ')[0];
-  const ready = status.data?.configured;
+  const feats = useFeatures();
+  const paused = !isOn(feats.data, 'phone_calls');
+  const ready = status.data?.configured && !paused;
   async function call() {
     setBusy(true); setErr(null);
     const r = await voice<{ call_id?: string }>('call_member', { member_id: member.id, topic });
@@ -193,7 +194,7 @@ export function ReminderCallModal({ member, onClose }: { member: Member; onClose
             <div className="hint">Martina tells {first} exactly what is waiting and how to finish it in Counta, then asks when it will be done. You get a notification with the answer.</div>
           </>
         )}
-        {status.data && !ready && !callId && <SetupNote reason={status.data.reason} message={status.data.message} />}
+        {status.data && !ready && !callId && <SetupNote reason={paused ? 'paused' : status.data.reason} />}
         {err && <Alert kind="red" icon="alert">{err}</Alert>}
       </div>
       <div className="modal-ft">

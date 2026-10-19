@@ -2,7 +2,7 @@
 // what to fix first (places, NRS descriptions), and the filled workbook. And customs entries: goods imported and the VAT paid
 // at the port, which schedule D needs.
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useInventory, useSession, useToast } from '../../../state/session';
 import { rpc, supabase } from '../../../lib/supabase';
 import { edge, money, today } from '../../../lib/api';
@@ -14,6 +14,7 @@ import { Alert, Empty, Field, Modal, ModalHead, SkeletonRows, Spinner } from '..
 import { NrsLabelSelect, StateLga } from '../../../components/Places';
 import { PayFrom } from './VatTab';
 import { downloadUrl, useTaxRefresh } from './CitTab';
+import { vatPct, vatRateOn } from '../../../lib/vat';
 
 const LINES: [string, string, 'in' | 'sub' | 'total'][] = [
   ['10', 'Total sales and income, excluding VAT', 'in'], ['15', 'Less exempt sales', 'in'], ['20', 'Less zero-rated sales', 'in'], ['22', 'Less sales adjustments (credit notes)', 'in'],
@@ -192,10 +193,18 @@ function CustomsModal({ onClose }: { onClose: () => void }) {
     invoice_value: '', fx_rate: '', value_ngn: '', other_charges: '', import_vat: '', vendor_id: '', paid: 'account', bank_account_id: '', reference: '', journal_ref: '' });
   const [busy, setBusy] = useState(false);
   const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
-  const fx = f.currency === 'NGN' ? 1 : money(f.fx_rate) || 0;
+  // The currencies TaxStreem takes, and Counta's rate for the day as the starting point; the customs assessment's own rate wins.
+  const currencies = useQuery({ queryKey: ['currencies'], staleTime: 10 * 60_000, queryFn: async () => {
+    const { data, error } = await supabase.from('currencies').select('code, name').eq('allowed', true).order('sort');
+    return error || !data?.length ? ['USD', 'EUR', 'GBP', 'CNY', 'AED', 'INR', 'JPY', 'ZAR', 'NGN'].map((code) => ({ code, name: code })) : data as { code: string; name: string }[];
+  } });
+  const suggested = useQuery({ queryKey: ['fx-on', f.currency, f.entry_date], enabled: f.currency !== 'NGN', staleTime: 10 * 60_000,
+    queryFn: () => rpc<{ rate: number; day: string; source: string } | null>('fx_rate_on', { p_currency: f.currency, p_day: f.entry_date || null }).catch(() => null) });
+  const dayRate = Number(suggested.data?.rate) || 0;
+  const fx = f.currency === 'NGN' ? 1 : money(f.fx_rate) || dayRate;
   const valueNgn = money(f.value_ngn) ?? Math.round((money(f.invoice_value) || 0) * fx * 100) / 100;
   const base = valueNgn + (money(f.other_charges) || 0);
-  const vat = money(f.import_vat) ?? Math.round(base * 0.075 * 100) / 100;
+  const vat = money(f.import_vat) ?? Math.round(base * vatRateOn(f.entry_date) * 100) / 100;
   const ready = f.description.trim() && (money(f.invoice_value) || 0) > 0 && fx > 0 && (f.paid === 'account' ? !!f.bank_account_id : !!f.journal_ref.trim());
   async function save() {
     setBusy(true);
@@ -229,15 +238,16 @@ function CustomsModal({ onClose }: { onClose: () => void }) {
           <Field label="Quantity"><input className="input num" inputMode="decimal" value={f.quantity} onChange={(e) => set('quantity', e.target.value)} /></Field>
         </div>
         <div className="m-stack" style={grid(4)}>
-          <Field label="Currency"><select className="input" value={f.currency} onChange={(e) => set('currency', e.target.value)}>{['USD', 'EUR', 'GBP', 'CNY', 'AED', 'INR', 'JPY', 'ZAR', 'NGN'].map((c) => <option key={c}>{c}</option>)}</select></Field>
+          <Field label="Currency"><select className="input" value={f.currency} onChange={(e) => set('currency', e.target.value)}>{(currencies.data || [{ code: 'USD', name: 'US dollar' }]).map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}</select></Field>
           <Field label="Invoice value" req><input className="input num" inputMode="decimal" value={f.invoice_value} onChange={(e) => set('invoice_value', e.target.value)} /></Field>
-          <Field label="Customs exchange rate" req={f.currency !== 'NGN'}><input className="input num" inputMode="decimal" disabled={f.currency === 'NGN'} value={f.currency === 'NGN' ? '1' : f.fx_rate} onChange={(e) => set('fx_rate', e.target.value)} /></Field>
+          <Field label="Customs exchange rate" req={f.currency !== 'NGN' && !dayRate} hint={f.currency !== 'NGN' && dayRate ? `Blank uses Counta's rate for the day, ${N2(dayRate)}. Enter the rate on the assessment if it differs.` : undefined}>
+            <input className="input num" inputMode="decimal" disabled={f.currency === 'NGN'} value={f.currency === 'NGN' ? '1' : f.fx_rate} placeholder={dayRate ? String(dayRate) : ''} onChange={(e) => set('fx_rate', e.target.value)} /></Field>
           <Field label="Value in naira"><input className="input num" inputMode="decimal" value={f.value_ngn} onChange={(e) => set('value_ngn', e.target.value)} placeholder={N2(valueNgn).replace('₦', '')} /></Field>
         </div>
         <div className="m-stack" style={grid(3)}>
           <Field label="Duty, levies and charges" hint="The part of the VAT base on top of the value"><input className="input num" inputMode="decimal" value={f.other_charges} onChange={(e) => set('other_charges', e.target.value)} /></Field>
           <Field label="VAT base"><div className="input num" style={{ background: '#FAFAFA' }}>{N2(base)}</div></Field>
-          <Field label="Import VAT paid" hint="7.5% of the base, unless customs charged otherwise"><input className="input num" inputMode="decimal" value={f.import_vat} onChange={(e) => set('import_vat', e.target.value)} placeholder={N2(vat).replace('₦', '')} /></Field>
+          <Field label="Import VAT paid" hint={`${vatPct(f.entry_date)} of the base, unless customs charged otherwise`}><input className="input num" inputMode="decimal" value={f.import_vat} onChange={(e) => set('import_vat', e.target.value)} placeholder={N2(vat).replace('₦', '')} /></Field>
         </div>
         <Field label="Supplier abroad (optional)"><select className="input" value={f.vendor_id} onChange={(e) => set('vendor_id', e.target.value)}><option value="">None</option>{(inv?.vendors || []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
         <div className="row" style={{ gap: 16, fontSize: 14 }}>

@@ -63,7 +63,7 @@ function RecordsChat({ initial, onRetry }: { initial: string; onRetry: () => voi
             <span style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg,#0072F5,#7C3AED 55%,#DB2779)', display: 'grid', placeItems: 'center' }}><Icon name="sparkles" size={18} color="#fff" /></span>
             <div>
               <div style={{ fontSize: 15, fontWeight: 600 }}>Martina</div>
-              <div className="muted" style={{ fontSize: 12 }}>{status.data == null ? 'Checking…' : status.data.configured ? `Answers from your stock records · Gemini` : 'Answers from your stock records'}</div>
+              <div className="muted" style={{ fontSize: 12 }}>{status.data == null ? 'Checking…' : 'Answers from your stock records'}</div>
             </div>
           </div>
           <div className="row" style={{ gap: 6 }}>

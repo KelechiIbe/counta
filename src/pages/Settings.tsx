@@ -1,10 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../state/session';
 import { useAction } from '../lib/queries';
-import { must, rpc, supabase, SUPABASE_URL } from '../lib/supabase';
-import { aiCheck, aiStatus } from '../lib/martina';
+import { must, rpc, supabase } from '../lib/supabase';
+import { isOn, PAUSED, useFeatures } from '../lib/features';
 import { Icon } from '../components/Icon';
 import { Alert, Field, Label } from '../components/ui';
 import { ChartDrawer, PostingRules } from '../components/ChartOfAccounts';
@@ -94,31 +94,23 @@ function NotificationsSection() {
   );
 }
 
-function CallsSection({ owner }: { owner: boolean }) {
+function CallsSection() {
   const { data: inv } = useInventory();
   const st = useVoiceStatus();
+  const feats = useFeatures();
   const calls = useVoiceCalls({ limit: 6 });
   const name = (c: VoiceCall) => c.kind === 'vendor_order'
     ? `${inv?.vendors.find((v) => v.id === c.vendor_id)?.name || 'Vendor'}${c.variables?.po_ref ? ' · ' + c.variables.po_ref : ''}`
     : `${inv?.members.find((m) => m.id === c.member_id)?.display_name || 'Team member'} · ${TOPICS.find((t) => t.id === c.topic)?.label || 'reminder'}`;
+  const paused = !isOn(feats.data, 'phone_calls');
   return (
-    <Section id="calls" title="Phone calls" sub="Martina phones vendors to place orders and reminds staff about work waiting in Counta. Runs on ElevenLabs voice agents.">
-      {st.isLoading ? <div className="skel" style={{ height: 40 }} /> : st.data?.configured ? (
-        <Alert kind="green" icon="check">Switched on · calls go out from {st.data.phone?.number || 'your connected number'}{st.data.phone?.provider ? ` (${st.data.phone.provider === 'sip_trunk' ? 'SIP trunk' : 'Twilio'})` : ''}.</Alert>
+    <Section id="calls" title="Phone calls" sub="Martina phones vendors to place orders and reminds staff about work waiting in Counta.">
+      {st.isLoading || feats.isLoading ? <div className="skel" style={{ height: 40 }} /> : paused ? (
+        <Alert kind="amber" icon="info">{PAUSED.phone_calls}</Alert>
+      ) : st.data?.configured ? (
+        <Alert kind="green" icon="check">Switched on · calls go out from {st.data.phone?.number || 'TaxStreem\'s number'}.</Alert>
       ) : (
-        <>
-          <Alert kind="blue" icon="info">{st.data?.reason === 'no_number' ? 'The ElevenLabs key is in place. Connect a phone number in ElevenLabs and calls start working.' : st.data?.reason === 'error' ? `ElevenLabs did not answer: ${st.data.message || 'try again shortly'}.` : 'Not switched on yet. Orders still go out by WhatsApp or email.'}</Alert>
-          {owner && (
-            <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>
-              {st.data?.reason !== 'no_number' && <>Create an API key in ElevenLabs with access to Agents and phone numbers, then store it in Supabase Vault as <span className="mono" style={{ background: '#F3F4F6', padding: '1px 6px', borderRadius: 6 }}>ELEVENLABS_API_KEY</span>. </>}
-              Calls need a number to ring from: import a Twilio number (or connect a SIP trunk) under Phone Numbers in ElevenLabs. Counta creates both voice agents itself on the first call.
-            </div>
-          )}
-          <div className="row wrap">
-            {owner && <a className="btn btn-secondary btn-sm" href="https://elevenlabs.io/app/agents/phone-numbers" target="_blank" rel="noreferrer"><Icon name="external" size={14} />ElevenLabs phone numbers</a>}
-            <button className="btn btn-ghost btn-sm" onClick={() => st.refetch()}>Check again</button>
-          </div>
-        </>
+        <Alert kind="blue" icon="info">Phone calls are not available yet. TaxStreem is setting them up; orders and reminders go out by WhatsApp or email meanwhile.</Alert>
       )}
       <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>
         Start a vendor call from any open purchase order under Reorder. Reminder calls start from the phone icon beside a person under Locations &amp; staff. Martina always says she is an AI assistant, never discusses payment details, and writes the outcome back to the order.
@@ -162,7 +154,6 @@ export default function Settings() {
   const nav = useNavigate();
   const { hash } = useLocation();
   const qc = useQueryClient();
-  const status = useQuery({ queryKey: ['aiStatus'], queryFn: aiStatus, staleTime: 60_000 });
   const owner = inv?.me.role === 'owner';
   // Changing the business's settings is a permission of its own (owners and admins by default).
   const edit = can(inv, 'manage_settings');
@@ -183,7 +174,6 @@ export default function Settings() {
   }, [hash, !!inv]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!inv) return null;
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
-  const project = SUPABASE_URL.replace('https://', '').split('.')[0];
 
   async function saveOrg() {
     if (!String(f.name || '').trim()) { toast('Enter the business name.', 'err'); return; }
@@ -247,34 +237,10 @@ export default function Settings() {
       <Section title="Chart of accounts" sub={edit ? 'TaxStreem standard chart. Change where an entry lands; stock value moves with it.' : 'TaxStreem standard chart. Only people who can change settings change the rules.'}>
         <PostingRules owner={edit} onOpenChart={() => setChart(true)} />
       </Section>
-      <Section title="AI reading" sub="Invoice OCR, voice entry, Martina's open answers and the bookkeeper run on Gemini through Vertex AI in Google Cloud.">
-        {status.isLoading ? <div className="skel" style={{ height: 40 }} /> : status.data?.configured ? (
-          <>
-            <Alert kind="green" icon="check">Switched on · Gemini {status.data.model}{status.data.auth === 'vertex' ? ` on Vertex AI (${status.data.location})` : ' through the Gemini API key'}. Invoices, handwritten sheets and voice notes are read automatically.</Alert>
-            {status.data.auth === 'api_key' && <Alert kind="amber" icon="info">This runs on a Gemini API key. Add the Google Cloud credential below to move it to Vertex AI; the key is then no longer used.</Alert>}
-          </>
-        ) : (
-          <>
-            <Alert kind={status.data?.problem ? 'red' : 'blue'} icon={status.data?.problem ? 'alert' : 'info'}>{status.data?.problem || 'Not switched on yet. Everything else works: lines can be typed by hand and Martina answers from your records with rules.'}</Alert>
-          </>
-        )}
-        {!status.isLoading && status.data?.auth !== 'vertex' && (
-          <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>
-            Gemini signs in to Vertex AI with Application Default Credentials. In Google Cloud, give a service account the <b>Vertex AI User</b> role in the project and create a JSON key for it
-            (or use the file <span className="mono">gcloud auth application-default login</span> writes). Add the whole JSON as an Edge Function secret named <Mono>GOOGLE_APPLICATION_CREDENTIALS_JSON</Mono>,
-            and set <Mono>GOOGLE_CLOUD_PROJECT</Mono> and <Mono>GOOGLE_CLOUD_LOCATION</Mono> if they differ from the key's project and us-central1. It takes effect within a minute; nothing needs redeploying.
-          </div>
-        )}
-        <div className="row wrap">
-          <AiCheckButton onDone={() => status.refetch()} />
-          {status.data?.auth !== 'vertex' && <a className="btn btn-secondary btn-sm" href={`https://supabase.com/dashboard/project/${project}/functions/secrets`} target="_blank" rel="noreferrer"><Icon name="external" size={14} />Open Supabase secrets</a>}
-          {status.data?.auth !== 'vertex' && <a className="btn btn-secondary btn-sm" href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noreferrer"><Icon name="external" size={14} />Google Cloud service accounts</a>}
-        </div>
-      </Section>
       <TaxStreemSection />
       <NotificationsSection />
       <VoiceSection />
-      <CallsSection owner={!!owner} />
+      <CallsSection />
       <Section title="Phone app" sub="For the people who handle stock. Works offline and syncs in order when data returns.">
         <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>Open <b>{window.location.host}</b> on the phone. On Android, Chrome offers <b>Install</b>; on iPhone, tap Share in Safari and choose <b>Add to Home Screen</b>. Staff sign in with the email you invited and land on the phone screens for scanning, blind counts, invoice photos and voice entry. The full app, with approvals and reports, is one tap away and fits the phone too.</div>
         <div><button className="btn btn-secondary btn-sm" onClick={() => nav('/m')}><Icon name="phone" size={14} />Open the phone app here</button></div>
@@ -294,25 +260,5 @@ export default function Settings() {
       </Section>
       {chart && <ChartDrawer onClose={() => setChart(false)} />}
     </div>
-  );
-}
-
-const Mono = ({ children }: { children: string }) => <span className="mono" style={{ background: '#F3F4F6', padding: '1px 6px', borderRadius: 6 }}>{children}</span>;
-
-// Sends one short request through the live connection and says how it went.
-function AiCheckButton({ onDone }: { onDone: () => void }) {
-  const [state, setState] = useState<{ busy?: boolean; ok?: boolean; text?: string }>({});
-  async function go() {
-    setState({ busy: true });
-    const r = await aiCheck();
-    const route = r.auth === 'vertex' ? `on Vertex AI in ${r.location || 'us-central1'}` : r.auth === 'api_key' ? 'through the Gemini API key, not Vertex AI' : '';
-    setState({ ok: r.ok, text: r.ok ? `Gemini (${r.model}) answered ${route} in ${((r.ms || 0) / 1000).toFixed(1)}s.`.replace('  ', ' ') : r.error });
-    onDone();
-  }
-  return (
-    <span className="row wrap" style={{ gap: 8 }}>
-      <button className="btn btn-secondary btn-sm" disabled={state.busy} onClick={go}>{state.busy ? 'Checking…' : 'Test the connection'}</button>
-      {state.text && <span style={{ fontSize: 13, color: state.ok ? '#15803D' : '#B91C1C', maxWidth: 560 }}>{state.text}</span>}
-    </span>
   );
 }

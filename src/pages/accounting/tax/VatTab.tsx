@@ -12,6 +12,7 @@ import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Stat } from
 import { ExportMenu, useMeta } from '../../../components/Books';
 import { useTaxRefresh } from './CitTab';
 import { CustomsPanel, VatReturnModal } from './VatReturn';
+import { vatPct } from '../../../lib/vat';
 
 const STATUS: Record<string, { label: string; tone: string }> = {
   open: { label: 'Not filed', tone: 't-grey' }, filed: { label: 'Filed, to pay', tone: 't-amber' }, paid: { label: 'Filed', tone: 't-green' },
@@ -96,7 +97,7 @@ export default function VatTab() {
         <Modal onClose={() => setModal(null)} width={480}>
           <ModalHead title={modal.charge ? 'Start charging VAT' : 'Stop charging VAT'} onClose={() => setModal(null)} />
           <div className="modal-body stack" style={{ gap: 10, fontSize: 14 }}>
-            {modal.charge ? <div>New invoices and receipts add VAT at 7.5% on standard-rated items, and a VAT return is filed every month by the 21st.</div>
+            {modal.charge ? <div>New invoices and receipts add VAT at {vatPct()} on standard-rated items, and a VAT return is filed every month by the 21st.</div>
               : <div>A small company need not charge VAT or file returns. New invoices and receipts will show no VAT, and input VAT on purchases becomes part of their cost. Returns already filed stay as they are.</div>}
           </div>
           <div className="modal-ft"><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button>

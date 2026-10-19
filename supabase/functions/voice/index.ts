@@ -27,7 +27,7 @@
 // when there are several). ELEVENLABS_BASE_URL is for tests.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
-import { FOLLOWUP_DATA, FOLLOWUP_PROMPT, firstMessage, GUIDE_PROMPT, GUIDE_TOOLS, stepLabel, toolConfig, type ToolDef, whatWeKnow } from './guide.ts';
+import { CALM, FOLLOWUP_DATA, FOLLOWUP_PROMPT, firstMessage, GUIDE_PROMPT, GUIDE_TOOLS, stepLabel, toolConfig, type ToolDef, whatWeKnow } from './guide.ts';
 import { ASSISTANT_PROMPT, ASSISTANT_TOOLS, assistantFirst, PERM_WORDS } from './assistant.ts';
 import { wordingNote, wordsFor } from './wording.ts';
 import { cacheable, phrase, shortName } from './phrases.ts';
@@ -45,19 +45,35 @@ const cors = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
-const NOT_CONFIGURED = 'Phone calls are not switched on yet. Add the ElevenLabs API key and connect a phone number in ElevenLabs.';
-const VOICE_OFF = 'Nigerian voices are not switched on yet. Add the ElevenLabs API key to the Supabase Edge Function secrets.';
+// What a business sees. TaxStreem's admin portal tests the ElevenLabs key and phone number itself.
+const NOT_CONFIGURED = 'Phone calls are not switched on yet. TaxStreem is setting them up; send orders and reminders by WhatsApp or email for now.';
+const VOICE_OFF = 'Nigerian voices are not switched on yet. TaxStreem is setting them up; the device\'s own voice speaks meanwhile.';
+const MARTINA_OFF = 'Martina is paused for now by TaxStreem. Everything on the screens works without her.';
 
+// Keys set in the admin portal (Supabase Vault) come first; the Edge Function secrets are the fallback.
 const secrets = new Map<string, { v: string; at: number }>();
 async function secret(name: string): Promise<string> {
-  const env = Deno.env.get(name);
-  if (env) return env.trim();
+  // The database's hook secret keeps its old order: the Edge Function secret first.
+  if (name === 'PUSH_HOOK_SECRET' && Deno.env.get(name)) return Deno.env.get(name)!.trim();
   const hit = secrets.get(name);
   if (hit && Date.now() - hit.at < 60_000) return hit.v;
   const { data } = await admin.rpc('app_secret', { p_name: name });
-  const v = typeof data === 'string' ? data.trim() : '';
+  const v = (typeof data === 'string' ? data.trim() : '') || (Deno.env.get(name) || '').trim();
   secrets.set(name, { v, at: Date.now() });
   return v;
+}
+// What TaxStreem set in the admin portal for Martina (tone, default voice), read again once a minute.
+let plat: { at: number; v: any } | null = null;
+async function platform(): Promise<any> {
+  if (plat && Date.now() - plat.at < 60_000) return plat.v;
+  const { data } = await admin.rpc('svc_platform');
+  plat = { at: Date.now(), v: data && typeof data === 'object' ? data : {} };
+  return plat.v;
+}
+// A feature TaxStreem has paused for everyone, or for one business.
+async function featureOn(orgId: string | null, feature: string) {
+  const { data } = await admin.rpc('svc_feature', { p_org: orgId, p_feature: feature });
+  return data !== false;
 }
 function sameSecret(a: string, b: string) {
   const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
@@ -111,7 +127,7 @@ async function refreshVoices() {
         preview_url: v?.preview_url ?? null, source: 'pinned', owner_id: null, sort: i + 1, active: true });
     }
   } else {
-    const { data: have } = await admin.from('tts_voices').select('voice_id, owner_id');
+    const { data: have } = await admin.from('tts_voices').select('voice_id, owner_id, active');
     for (const [g, gender] of ['female', 'male'].entries()) {
       const q = new URLSearchParams({ accent: 'nigerian', language: 'en', gender, sort: 'usage_character_count_1y', page_size: '12',
         include_custom_rates: 'false', include_live_moderated: 'false' });
@@ -134,19 +150,39 @@ async function refreshVoices() {
   }
   if (!rows.length) return { added: 0, voices: 0 };
   const now = new Date().toISOString();
-  const { error } = await admin.from('tts_voices').upsert(rows.map((r) => ({ ...r, updated_at: now })), { onConflict: 'voice_id' });
-  if (error) throw new Error(error.message);
-  // Voices no longer offered stay on record (a business may still use one) but are not offered to new choices.
-  await admin.from('tts_voices').update({ active: false, updated_at: now }).not('voice_id', 'in', `(${rows.map((r) => r.voice_id).join(',')})`);
-  return { added: rows.length, voices: rows.length };
+  if (pinned.length) {
+    const { error } = await admin.from('tts_voices').upsert(rows.map((r) => ({ ...r, updated_at: now })), { onConflict: 'voice_id' });
+    if (error) throw new Error(error.message);
+    // Voices no longer offered stay on record (a business may still use one) but are not offered to new choices.
+    await admin.from('tts_voices').update({ active: false, updated_at: now }).not('voice_id', 'in', `(${rows.map((r) => r.voice_id).join(',')})`);
+    return { added: rows.length, voices: rows.length };
+  }
+  // From the library: voices already known keep the choice TaxStreem made in the admin portal; new ones go on offer only
+  // when nothing is on offer yet.
+  const { data: known } = await admin.from('tts_voices').select('voice_id, active');
+  const knownIds = new Set((known || []).map((k: any) => k.voice_id));
+  const anyActive = (known || []).some((k: any) => k.active);
+  const fresh = rows.filter((r) => !knownIds.has(r.voice_id)).map((r) => ({ ...r, active: !anyActive, updated_at: now }));
+  if (fresh.length) {
+    const { error } = await admin.from('tts_voices').insert(fresh);
+    if (error) throw new Error(error.message);
+  }
+  for (const r of rows.filter((x) => knownIds.has(x.voice_id))) {
+    const { active: _a, ...rest } = r;
+    await admin.from('tts_voices').update({ ...rest, updated_at: now }).eq('voice_id', r.voice_id);
+  }
+  return { added: fresh.length, voices: rows.length };
 }
 
 async function activeVoices() {
   const { data } = await admin.from('tts_voices').select('voice_id, name, gender, age, accent, description, sort').eq('active', true).order('sort');
   return data || [];
 }
-// Martina's voice when a business has not chosen one: ELEVENLABS_VOICE_ID, else the first Nigerian voice.
+// Martina's voice when a business has not chosen one: the one chosen in the admin portal, ELEVENLABS_VOICE_ID, else the first
+// Nigerian voice on offer.
 async function defaultVoice(): Promise<string> {
+  const chosen = String((await platform())?.martina?.default_voice_id || '');
+  if (VOICE_ID.test(chosen)) return chosen;
   const pinned = await secret('ELEVENLABS_VOICE_ID');
   if (VOICE_ID.test(pinned)) return pinned;
   return String((await activeVoices())[0]?.voice_id || '');
@@ -212,7 +248,18 @@ async function speak(sb: SupabaseClient, userId: string, body: any) {
 const RULES = `Speak clear, warm Nigerian English and understand Nigerian Pidgin. Keep sentences short; this is a phone call.
 You are an AI assistant. Say so if anyone asks, and never pretend to be a person.
 Never ask for or discuss bank details, card numbers, passwords or one-time codes. If payment comes up, say the owner will follow up.
-If the person is busy or asks you to call back, ask for a good time, thank them and end the call.`;
+If the person is busy or asks you to call back, ask for a good time, thank them and end the call.
+${CALM}`;
+
+// How Martina's voice carries. Calm is steady with no expressive audio tags; warm lets a few gentle tags through; lively is
+// the old, more animated delivery.
+const TONES: Record<string, Record<string, unknown>> = {
+  calm: { expressive_mode: false, stability: 0.62, similarity_boost: 0.8, speed: 0.97 },
+  warm: { expressive_mode: true, stability: 0.52, similarity_boost: 0.8, speed: 1,
+    suggested_audio_tags: [{ tag: 'warm', description: 'Greeting someone or thanking them' }, { tag: 'calm', description: 'Explaining a figure or a next step' },
+      { tag: 'reassuring', description: 'When something went wrong or the person is worried' }] },
+  lively: { expressive_mode: true, stability: 0.45, similarity_boost: 0.8, speed: 1.02 },
+};
 
 type Agent = { name: string; prompt: string; first: string; maxSecs: number; data: Record<string, unknown>; criteria: unknown[]; web?: boolean; temperature?: number;
   tools?: ToolDef[] };
@@ -330,7 +377,7 @@ async function ensureTools(list: ToolDef[]): Promise<string[]> {
   return ids;
 }
 
-function agentBody(kind: string, voiceId: string, toolIds: string[] = []) {
+function agentBody(kind: string, voiceId: string, toolIds: string[] = [], tone = 'calm') {
   const a = AGENTS[kind];
   return {
     name: a.name,
@@ -339,7 +386,7 @@ function agentBody(kind: string, voiceId: string, toolIds: string[] = []) {
       agent: { first_message: a.first, language: 'en',
         prompt: { prompt: a.prompt, temperature: a.temperature ?? 0.3, ...(toolIds.length ? { tool_ids: toolIds } : {}) } },
       conversation: { max_duration_seconds: a.maxSecs },
-      ...(voiceId ? { tts: { voice_id: voiceId } } : {}),
+      tts: { ...(TONES[tone] || TONES.calm), ...(voiceId ? { voice_id: voiceId } : {}) },
     },
     platform_settings: {
       data_collection: a.data,
@@ -358,7 +405,7 @@ function agentBody(kind: string, voiceId: string, toolIds: string[] = []) {
 async function ensureAgent(kind: string): Promise<string> {
   const voiceId = await defaultVoice();
   const toolIds = AGENTS[kind].tools ? await ensureTools(AGENTS[kind].tools!) : [];
-  const bodyObj = agentBody(kind, voiceId, toolIds);
+  const bodyObj = agentBody(kind, voiceId, toolIds, String((await platform())?.martina?.tone || 'calm'));
   const body = JSON.stringify(bodyObj);
   const version = AGENT_VERSION * 100000 + hashNum(body);
   const { data: row } = await admin.from('voice_agents').select('*').eq('kind', kind).maybeSingle();
@@ -393,7 +440,7 @@ async function phoneNumber(): Promise<any> {
 async function ready(): Promise<{ ok: true; num: any } | { ok: false; error: string }> {
   if (!(await secret('ELEVENLABS_API_KEY'))) return { ok: false, error: NOT_CONFIGURED };
   const num = await phoneNumber();
-  if (!num) return { ok: false, error: 'The ElevenLabs account has no phone number yet. Connect a Twilio number (or a SIP trunk) under Phone Numbers in ElevenLabs.' };
+  if (!num) return { ok: false, error: 'Phone calls are not switched on yet: TaxStreem has not connected a phone number.' };
   return { ok: true, num };
 }
 
@@ -517,6 +564,7 @@ async function guideToken(sb: SupabaseClient, userId: string, textOnly = false, 
   // The business the person has open (they must belong to it), else the newest one they own.
   const { data: g, error } = await sb.rpc('guide_state', orgId ? { p_org: orgId } : {});
   if (error) return { ok: false, error: error.message };
+  if (!(await featureOn(g?.org?.id || null, 'martina'))) return { ok: false, reason: 'paused', error: MARTINA_OFF };
   const { data: k } = await sb.rpc('kyc_draft', g?.org?.id && g.org.is_owner ? { p_org: g.org.id } : {});
   const { data: session } = await admin.rpc('svc_guide_session', { p_user: userId, p_kind: 'guide' });
   if (!session) return { ok: false, reason: 'limit', error: 'You have talked with Martina a lot today. Carry on by typing, or come back tomorrow.' };
@@ -555,6 +603,7 @@ async function guideToken(sb: SupabaseClient, userId: string, textOnly = false, 
 async function assistantToken(sb: SupabaseClient, userId: string, textOnly: boolean, orgId: string | null, page: string) {
   if (!(await secret('ELEVENLABS_API_KEY'))) return { ok: false, reason: 'not_configured', error: VOICE_OFF };
   if (!orgId) return { ok: false, error: 'Open a business first.' };
+  if (!(await featureOn(orgId, 'martina'))) return { ok: false, reason: 'paused', error: MARTINA_OFF };
   // get_team answers only to a member, with their own permissions.
   const { data: team, error } = await sb.rpc('get_team', { p_org: orgId });
   if (error) return { ok: false, error: error.message };
@@ -616,6 +665,42 @@ async function forgetConversations(userId: string | null) {
     if (ok) deleted++;
   }
   return { ok: true, deleted };
+}
+
+// ------------------------------------------------------------------ the admin portal
+// Voices in the ElevenLabs library TaxStreem may add to the list on offer, and adding one.
+async function isAdmin(sb: SupabaseClient) {
+  const { data } = await sb.rpc('admin_me');
+  return Boolean(data?.admin && data?.aal2);
+}
+async function libraryVoices(body: any) {
+  const gender = ['female', 'male'].includes(body.gender) ? body.gender : '';
+  const accent = /^[a-z -]{2,30}$/.test(String(body.accent || '')) ? String(body.accent) : 'nigerian';
+  const q = new URLSearchParams({ accent, language: 'en', sort: 'usage_character_count_1y', page_size: '24', include_custom_rates: 'false', include_live_moderated: 'false',
+    ...(gender ? { gender } : {}), ...(body.search ? { search: String(body.search).slice(0, 40) } : {}) });
+  const list = await xi(`/v1/shared-voices?${q}`);
+  const { data: have } = await admin.from('tts_voices').select('voice_id, owner_id, name');
+  const voices = (Array.isArray(list?.voices) ? list.voices : []).filter((v: any) => VOICE_ID.test(String(v?.voice_id || '')) && v?.public_owner_id)
+    .map((v: any) => ({ voice_id: v.voice_id, public_owner_id: v.public_owner_id, name: shortName(v.name), gender: v.gender ?? null, age: v.age ?? null,
+      accent: v.accent ?? null, description: String(v.description || v.descriptive || '').slice(0, 200) || null, preview_url: v.preview_url ?? null,
+      added: (have || []).some((h: any) => h.owner_id === v.public_owner_id && h.voice_id === v.voice_id) }));
+  return { ok: true, voices };
+}
+async function addLibraryVoice(body: any) {
+  const owner = String(body.public_owner_id || ''), id = String(body.voice_id || '');
+  if (!/^[A-Za-z0-9]{8,80}$/.test(owner) || !VOICE_ID.test(id)) return { ok: false, error: 'Choose a voice from the library.' };
+  const name = shortName(body.name);
+  const added = await xi(`/v1/voices/add/${encodeURIComponent(owner)}/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify({ new_name: `Counta ${name}` }) });
+  const vid = String(added?.voice_id || id);
+  if (!VOICE_ID.test(vid)) return { ok: false, error: 'ElevenLabs did not add the voice.' };
+  const { data: last } = await admin.from('tts_voices').select('sort').order('sort', { ascending: false }).limit(1).maybeSingle();
+  const row = { voice_id: vid, name, gender: ['female', 'male'].includes(body.gender) ? body.gender : null, age: body.age ? String(body.age).slice(0, 20) : null,
+    accent: body.accent ? String(body.accent).slice(0, 30) : 'nigerian', description: body.description ? String(body.description).slice(0, 200) : null,
+    preview_url: /^https:\/\//.test(String(body.preview_url || '')) ? String(body.preview_url) : null, source: 'library', owner_id: owner,
+    sort: Number(last?.sort || 0) + 1, active: true, updated_at: new Date().toISOString() };
+  const { error } = await admin.from('tts_voices').upsert(row, { onConflict: 'voice_id' });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, voice: row };
 }
 
 // ------------------------------------------------------------------ handler
@@ -694,6 +779,12 @@ Deno.serve(async (req) => {
         if (error) return json({ ok: false, error: error.message });
         return json(await place('reminder', prep, r.num));
       }
+      case 'admin_library':
+        if (!(await isAdmin(sb))) return json({ ok: false, error: 'This is only for TaxStreem\'s admins.' }, 403);
+        return json(await libraryVoices(body));
+      case 'admin_add_voice':
+        if (!(await isAdmin(sb))) return json({ ok: false, error: 'This is only for TaxStreem\'s admins.' }, 403);
+        return json(await addLibraryVoice(body));
       case 'sync': {
         const { data: call } = await sb.from('voice_calls').select('*').eq('id', body.call_id).maybeSingle();
         if (!call) return json({ ok: false, error: 'Call not found.' }, 404);

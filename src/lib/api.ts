@@ -2,6 +2,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { cleanError, rpc, supabase } from './supabase';
 import { useSession } from '../state/session';
+import { vatPct } from './vat';
 
 // ---------------------------------------------------------------- edge functions
 export async function edge<T = any>(name: string, body: Record<string, unknown>): Promise<T & { ok?: boolean; reason?: string; error?: string }> {
@@ -37,7 +38,7 @@ export interface SaleLine {
 }
 // VAT status codes as the NRS schedules use them.
 export const VAT_STATUS: Record<number, { label: string; short: string; tone: string }> = {
-  0: { label: 'VATable', short: 'VATable 7.5%', tone: 't-blue' }, 1: { label: 'Exempt', short: 'Exempt', tone: 't-grey' }, 2: { label: 'Zero-rated', short: 'Zero-rated', tone: 't-green' },
+  0: { label: 'VATable', get short() { return `VATable ${vatPct()}`; }, tone: 't-blue' }, 1: { label: 'Exempt', short: 'Exempt', tone: 't-grey' }, 2: { label: 'Zero-rated', short: 'Zero-rated', tone: 't-green' },
 };
 export const vatStatusOf = (treatment?: string | null): 0 | 1 | 2 => (treatment === 'exempt' ? 1 : treatment === 'zero' ? 2 : 0);
 export interface Sale extends SaleRow {

@@ -16,24 +16,29 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-// How Gemini is reached, read again once a minute: Vertex AI with ADC, or a Gemini API key. Vault still holds
-// GEMINI_API_KEY and GEMINI_MODEL for setups that put them there.
+// How Gemini is reached, read again once a minute: Vertex AI with ADC, or a Gemini API key. Keys set in the admin portal
+// live in Supabase Vault and come first; the Edge Function secrets are the fallback.
 let CFG: GeminiConfig = { mode: 'none' };
 let cfgAt = 0;
+async function vaultFirst(admin: SupabaseClient, name: string, rpc = 'app_secret') {
+  const { data } = await admin.rpc(rpc, { p_name: name });
+  const v = typeof data === 'string' ? data.trim() : '';
+  return v || (Deno.env.get(name) || '').trim();
+}
 async function loadKeys(admin: SupabaseClient) {
   if (Date.now() - cfgAt < 60_000) return;
   cfgAt = Date.now();
-  const read = async (name: string) => {
-    const env = Deno.env.get(name);
-    if (env) return env.trim();
-    if (name !== 'GEMINI_API_KEY' && name !== 'GEMINI_MODEL') return '';
-    const { data } = await admin.rpc('app_secret', { p_name: name });
-    return typeof data === 'string' ? data.trim() : '';
-  };
-  CFG = await geminiConfig(read);
-  if (!Deno.env.get('GEMINI_MODEL')) { const m = await read('GEMINI_MODEL'); if (m) MODEL = m; }
+  CFG = await geminiConfig((name) => vaultFirst(admin, name));
+  MODEL = (await vaultFirst(admin, 'GEMINI_MODEL')) || 'gemini-3.8-flash';
 }
 const aiOn = () => CFG.mode !== 'none';
+// Switched off by TaxStreem for everyone, or for this business.
+async function paused(admin: SupabaseClient, orgId: string | null) {
+  const { data } = await admin.rpc('svc_feature', { p_org: orgId, p_feature: 'ai_reading' });
+  return data === false;
+}
+const PAUSED = { ok: false, reason: 'paused', error: 'AI reading is paused for this business by TaxStreem. Type the details in for now.' };
+const isUuid = (v: unknown) => typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v);
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -42,8 +47,8 @@ const cors = {
 };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 const NL = String.fromCharCode(10);
-const notConfigured = () => ({ ok: false, reason: 'not_configured', error: CFG.problem
-  || 'AI reading is not switched on yet. Add GOOGLE_APPLICATION_CREDENTIALS_JSON (a Google Cloud service account key with the Vertex AI User role) to the Supabase Edge Function secrets.' });
+// What a business sees. TaxStreem's admin portal shows the setup problem itself (status and check).
+const notConfigured = () => ({ ok: false, reason: 'not_configured', error: 'AI reading is not switched on yet. TaxStreem is setting it up; type the details in for now.' });
 
 type Part = { text: string } | { inlineData: { mimeType: string; data: string } };
 
@@ -147,6 +152,7 @@ async function readInvoice(sb: SupabaseClient, admin: SupabaseClient, body: any,
     return json({ ok: false, reason, error: msg });
   };
   if (!aiOn()) return fail(notConfigured().error, 'not_configured');
+  if (await paused(admin, r.org_id)) return fail(PAUSED.error, 'paused');
   if (!r.document_path) return fail('There is no document attached to read.');
 
   const { data: blob, error: dErr } = await sb.storage.from('documents').download(r.document_path);
@@ -188,6 +194,9 @@ KNOWN VENDORS: ${JSON.stringify(vendors)}`;
   }
 
   const known = new Map(items.map((i: any) => [i.id, i]));
+  // Prices that include VAT lose it at the rate on the invoice's day.
+  const { data: vr } = await admin.rpc('current_vat_rate', { p_day: /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(out.invoice_date || '') ? out.invoice_date : null });
+  const vatRate = Number(vr) > 0 ? Number(vr) : 0.075;
   const vat = new Map((inv.items || []).map((i: any) => [i.id, i.vat_treatment]));
   const lines = (out.lines || []).filter((l: any) => l && (l.qty || l.unit_cost)).map((l: any, idx: number) => {
     let itemId = l.item_id && known.has(l.item_id) ? l.item_id : null;
@@ -198,7 +207,7 @@ KNOWN VENDORS: ${JSON.stringify(vendors)}`;
     if (total && qty && Math.abs(qty * cost - total) / total > 0.01) conf = Math.min(conf, 60);
     if (!itemId && conf > 84) conf = Math.min(conf, 90);
     const vatT = itemId ? vat.get(itemId) : l.new_item?.vat_treatment || 'standard';
-    if (out.prices_include_vat && vatT === 'standard') cost = Math.round((cost / 1.075) * 100) / 100;
+    if (out.prices_include_vat && vatT === 'standard') cost = Math.round((cost / (1 + vatRate)) * 100) / 100;
     const it: any = itemId ? known.get(itemId) : null;
     return {
       receipt_id: r.id, org_id: r.org_id, line_no: idx + 1, raw_text: String(l.raw_text || '').slice(0, 300), item_id: itemId,
@@ -507,12 +516,7 @@ function sameSecret(a: string, b: string) {
   return d === 0;
 }
 
-async function svcSecret(admin: SupabaseClient, name: string) {
-  const env = Deno.env.get(name);
-  if (env) return env.trim();
-  const { data } = await admin.rpc('svc_secret', { p_name: name });
-  return typeof data === 'string' ? data.trim() : '';
-}
+const svcSecret = (admin: SupabaseClient, name: string) => vaultFirst(admin, name, 'svc_secret');
 
 async function classifyVat(admin: SupabaseClient, items: VatItem[]): Promise<{ answers: VatAnswer[]; error?: string }> {
   if (!items.length) return { answers: [] };
@@ -521,7 +525,7 @@ async function classifyVat(admin: SupabaseClient, items: VatItem[]): Promise<{ a
   if (url && key) {
     try { return { answers: await numens(url, key, items) }; } catch (e) { error = (e as Error).message; console.warn('numens', error); }
   }
-  if (!aiOn()) return { answers: [], error: error || CFG.problem || 'No tax model is connected (NUMENS_API_URL/NUMENS_API_KEY, or Gemini through GOOGLE_APPLICATION_CREDENTIALS_JSON).' };
+  if (!aiOn()) return { answers: [], error: error || 'No tax model is connected yet. TaxStreem is setting it up.' };
   const answers: VatAnswer[] = [];
   for (let i = 0; i < items.length; i += 30) {
     const chunk = items.slice(i, i + 30);
@@ -769,7 +773,13 @@ Deno.serve(async (req) => {
     try {
       await loadKeys(admin);
       const { data: items } = await admin.rpc('svc_items_for_vat', { p_limit: 60 });
-      return json(await applyVat(admin, (items as VatItem[]) || []));
+      const open = new Map<string, boolean>();
+      const keep: VatItem[] = [];
+      for (const it of (items as VatItem[]) || []) {
+        if (!open.has(it.org_id)) open.set(it.org_id, !(await paused(admin, it.org_id)));
+        if (open.get(it.org_id)) keep.push(it);
+      }
+      return json(await applyVat(admin, keep));
     } catch (e) {
       return json({ ok: false, error: (e as Error).message }, 500);
     }
@@ -780,9 +790,15 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
   try {
     await loadKeys(admin);
+    // Everything but the status and the connection check waits while TaxStreem has paused AI reading.
+    const orgId = isUuid(body.org_id) ? body.org_id : null;
+    if (!['status', 'check'].includes(body.action) && await paused(admin, orgId)) return json(PAUSED);
     switch (body.action) {
-      case 'status': return json({ ok: true, configured: aiOn(), model: MODEL, auth: CFG.mode, location: CFG.mode === 'vertex' ? CFG.location : undefined,
-        problem: CFG.problem });
+      case 'status': {
+        const off = await paused(admin, orgId);
+        return json({ ok: true, configured: aiOn() && !off, paused: off, model: MODEL, auth: CFG.mode, location: CFG.mode === 'vertex' ? CFG.location : undefined,
+          problem: CFG.problem });
+      }
       case 'check': {
         // A one-line request, so the person setting up Vertex AI sees at once whether the credential and the project work.
         if (!aiOn()) return json(notConfigured());
@@ -819,6 +835,11 @@ Deno.serve(async (req) => {
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }
   } catch (e) {
+    // A problem with Google's credential is TaxStreem's to fix: the admin portal's connection check shows it in full.
+    if (e instanceof CredentialError) {
+      console.error('gemini credential', (e as Error).message);
+      return json({ ok: false, reason: 'not_configured', error: 'AI reading is not available just now. TaxStreem has been told; type the details in for now.' }, 503);
+    }
     return json({ ok: false, reason: 'error', error: (e as Error).message }, 500);
   }
 });

@@ -2,8 +2,8 @@
 // supabase/functions/ai and supabase/functions/atlas; keep the two identical.
 //
 // ADC on Supabase. An Edge Function has no Google metadata server and no credentials file, so the JSON that ADC would read
-// from the file named in GOOGLE_APPLICATION_CREDENTIALS is stored as the Edge Function secret
-// GOOGLE_APPLICATION_CREDENTIALS_JSON (the JSON itself, or the same text base64-encoded). The credential types Google's
+// from the file named in GOOGLE_APPLICATION_CREDENTIALS is stored as GOOGLE_APPLICATION_CREDENTIALS_JSON (the JSON itself, or
+// the same text base64-encoded): in Supabase Vault from the admin portal, or as an Edge Function secret. The credential types Google's
 // tools write are supported:
 //   service_account                that service account's JSON key (the right choice for a server)
 //   authorized_user                `gcloud auth application-default login`
@@ -164,7 +164,7 @@ export async function generateContent(cfg: GeminiConfig, model: string, body: un
     return fetch(`${GEMINI_API}/models/${model}:generateContent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.key || '' },
       body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
   }
-  throw new CredentialError(cfg.problem || 'Gemini is not connected. Add GOOGLE_APPLICATION_CREDENTIALS_JSON to the Supabase Edge Function secrets.');
+  throw new CredentialError(cfg.problem || 'Gemini is not connected. Add the service account key under Keys and services in the admin portal.');
 }
 
 // Models to try after the chosen one when it is busy or not offered where Vertex AI runs.

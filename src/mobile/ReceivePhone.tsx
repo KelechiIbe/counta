@@ -89,7 +89,7 @@ export default function ReceiveScreen() {
   const newItems = lines.filter((l) => !l.item_id).length;
   const bad = lines.filter((l) => !(Number(l.qty) > 0) || !(Number(l.unit_cost) > 0)).length;
   const vat = vendor.id ? !!inv.vendors.find((v) => v.id === vendor.id)?.vat_registered : !!receipt?.vendor_vat_registered;
-  const t = totals(inv, lines, vat);
+  const t = totals(inv, lines, vat, receipt?.invoice_date);
   const branch = inv.locations.find((l) => l.id === (receipt?.location_id || loc))?.name || '';
 
   async function finish(post: boolean) {

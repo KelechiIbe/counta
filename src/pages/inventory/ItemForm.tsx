@@ -12,6 +12,7 @@ import { ITEM_TYPES, defaultVat, fieldsFor, industryOf, typeSells, type FieldDef
 import type { Item } from '../../lib/types';
 import type { Drafts } from '../../lib/drafts';
 import { shrinkImage } from '../../lib/images';
+import { vatPct } from '../../lib/vat';
 
 // Kept for screens that still offer the older fixed lists.
 export const CATEGORIES = ['Staples', 'Noodles', 'Dairy', 'Beverages', 'Drinks', 'Household', 'Personal care', 'OTC medicine', 'Breakfast', 'Snacks', 'Baby', 'Frozen', 'General'];
@@ -187,7 +188,7 @@ export default function ItemForm({ item, draft, note, onClose, onSaved }: {
           <Field label="VAT treatment" hint={f.vat_treatment === 'auto' ? 'Numens reads the item and sets its VAT under the NTA 2025. You can change it later.' : undefined}>
             <select className="input" value={f.vat_treatment} onChange={(e) => set('vat_treatment', e.target.value)}>
               {!editing && <option value="auto">Let Numens decide</option>}
-              <option value="standard">Standard · 7.5%</option><option value="zero">Zero-rated (basic food, medicine, farm inputs)</option><option value="exempt">Exempt (baby products, petroleum products…)</option>
+              <option value="standard">Standard · {vatPct()}</option><option value="zero">Zero-rated (basic food, medicine, farm inputs)</option><option value="exempt">Exempt (baby products, petroleum products…)</option>
             </select>
           </Field>
         </div>

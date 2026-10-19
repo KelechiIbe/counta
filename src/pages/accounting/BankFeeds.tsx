@@ -64,10 +64,7 @@ export function ConnectBank({ accounts, preselect, onClose }: { accounts: any[];
       <ModalHead title="Connect a bank account" sub="Transactions flow into Banking without uploading statements." onClose={onClose} />
       <div className="modal-body">
         {cfg.isLoading ? <Spinner /> : cfg.error ? <Alert kind="yellow" icon="shield">{(cfg.error as Error).message}</Alert> : !cfg.data?.configured ? (
-          <Alert kind="blue" icon="info">
-            Bank feeds are not switched on yet. In Supabase, under Edge Functions then Secrets, add MONO_SECRET_KEY and MONO_PUBLIC_KEY from the Mono dashboard.
-            Then in the Mono dashboard set the webhook URL to <span className="mono">{cfg.data?.webhook_url}</span> and put the same webhook secret in MONO_WEBHOOK_SECRET.
-          </Alert>
+          <Alert kind="blue" icon="info">Bank feeds are not available yet. TaxStreem is setting them up; statements can still be uploaded under Banking meanwhile.</Alert>
         ) : (
           <div className="stack" style={{ gap: 12 }}>
             <div className="stack" style={{ gap: 6, fontSize: 13, lineHeight: 1.5 }}>
@@ -82,7 +79,6 @@ export function ConnectBank({ accounts, preselect, onClose }: { accounts: any[];
                 {banks.map((a) => <option key={a.id} value={a.id}>{a.name}{a.account_number ? ` · ${a.account_number}` : ''}</option>)}
               </select>
             </Field>
-            {!cfg.data.webhook_secret_set && <div className="faint" style={{ fontSize: 12 }}>The webhook secret is not set yet, so Counta fetches on its schedule rather than the moment Mono has new data.</div>}
           </div>
         )}
         {err && <Alert kind="red" icon="alert">{err}</Alert>}

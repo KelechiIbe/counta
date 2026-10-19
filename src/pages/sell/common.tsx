@@ -13,6 +13,7 @@ import { taxIdError } from '../../lib/taxid';
 import { COUNTRIES, isExport } from '../../lib/countries';
 import { InvoiceDoc, PrintPortal, type DocData } from '../../components/InvoiceDoc';
 import { announce as speakAnnouncement } from '../../lib/speech';
+import { vatPct } from '../../lib/vat';
 
 export const docUrl = (token: string) => `${window.location.origin}/p/${token}`;
 
@@ -304,7 +305,7 @@ export function SaleLines({ sale, compact }: { sale: Sale; compact?: boolean }) 
       ))}
       <div className="stack" style={{ padding: '10px 14px', gap: 4, borderTop: '1px solid #F3F4F6', fontSize: 13 }}>
         <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Before VAT</span><span className="num">{N2(sale.subtotal)}</span></div>
-        <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">VAT{inv?.org.vat_registered ? ' 7.5%' : ''}</span><span className="num">{N2(sale.vat_total)}</span></div>
+        <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">VAT{inv?.org.vat_registered ? ` ${vatPct(sale.issue_date)}` : ''}</span><span className="num">{N2(sale.vat_total)}</span></div>
         <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700, fontSize: 15 }}><span>Total</span><span className="num">{N2(sale.total)}</span></div>
         {Number(sale.amount_paid) > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Paid</span><span className="num">{N2(sale.amount_paid)}</span></div>}
         {Number(sale.credited) > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Credited</span><span className="num">{N2(sale.credited)}</span></div>}

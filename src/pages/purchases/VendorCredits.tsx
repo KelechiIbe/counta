@@ -10,6 +10,7 @@ import { N2, fmtDay } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Empty, Field, Modal, ModalHead, SkeletonRows, Spinner } from '../../components/ui';
 import { StatusChip } from '../sell/common';
+import { vatInside, vatPct } from '../../lib/vat';
 
 export function useVendorCredits(vendorId?: string | null, enabled = true) {
   const { orgId } = useSession();
@@ -38,7 +39,7 @@ export function VendorCreditModal({ bill, onClose }: { bill?: any; onClose: () =
   const items = useMemo(() => [...(inv?.items || [])].sort((a, b) => a.name.localeCompare(b.name)), [inv]);
   const total = bill ? lines.reduce((a, l) => a + (money(amt[l.id]) || 0), 0) : money(free.amount) || 0;
   const vat = bill ? lines.reduce((a, l) => a + (Number(l.gross) ? (money(amt[l.id]) || 0) * Number(l.vat) / Number(l.gross) : 0), 0)
-    : free.vat_treatment === 'standard' ? (money(free.amount) || 0) * 0.075 / 1.075 : 0;
+    : free.vat_treatment === 'standard' ? vatInside(money(free.amount) || 0, f.credit_date) : 0;
   const isStock = (code: string) => /^120[1-7]/.test(code || '');
   async function go() {
     setBusy(true); setErr(null);
@@ -106,7 +107,7 @@ export function VendorCreditModal({ bill, onClose }: { bill?: any; onClose: () =
             <Field label="It reduces"><select className="input" value={free.account_code} onChange={(e) => setFree({ ...free, account_code: e.target.value })}>
               <option value="">Choose the account</option>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select></Field>
             <Field label="VAT"><select className="input" value={free.vat_treatment} onChange={(e) => setFree({ ...free, vat_treatment: e.target.value })}>
-              <option value="standard">7.5% included</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option><option value="none">No VAT</option></select></Field>
+              <option value="standard">{vatPct(f.credit_date)} included</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option><option value="none">No VAT</option></select></Field>
           </div>
         )}
         <div className="row" style={{ justifyContent: 'space-between', background: '#FAFAFA', borderRadius: 10, padding: 10, fontSize: 13 }}>
