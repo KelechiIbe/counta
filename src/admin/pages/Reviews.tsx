@@ -1,12 +1,12 @@
-// TaxStreem's reviewers: NIN slips whose name did not match a director on the CAC record. Approving opens the business's
-// payments; rejecting tells the owner why. Only accounts listed as platform reviewers can open this page or the slips.
+// TaxStreem's identity reviews: NIN slips whose name did not match a director on the CAC record. Approving opens the
+// business's payments; rejecting tells the owner why. Reviewers and admins see this, after an authenticator code.
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { cleanError, rpc, supabase } from '../lib/supabase';
-import { when } from '../lib/format';
-import { Icon } from '../components/Icon';
-import { Alert, Spinner } from '../components/ui';
+import { cleanError, rpc, supabase } from '../../lib/supabase';
+import { when } from '../../lib/format';
+import { Icon } from '../../components/Icon';
+import { Alert, Spinner } from '../../components/ui';
+import { PageHead } from '../ui';
 
 type Row = {
   org_id: string; business: string; rc_number: string | null; legal_form: string | null; status: 'review' | 'approved' | 'rejected'; attempts: number;
@@ -16,26 +16,16 @@ type Row = {
   owner: { name: string; email: string | null } | null;
 };
 
-export function useAmReviewer(enabled = true) {
-  return useQuery({ queryKey: ['am-reviewer'], enabled, staleTime: 10 * 60_000, queryFn: () => rpc<boolean>('am_reviewer').catch(() => false) });
-}
-
-export default function Review() {
-  const me = useAmReviewer();
-  const list = useQuery({ queryKey: ['identity-reviews'], enabled: me.data === true, queryFn: () => rpc<Row[]>('identity_reviews') });
+export default function Reviews() {
+  const list = useQuery({ queryKey: ['identity-reviews'], queryFn: () => rpc<Row[]>('identity_reviews') });
   return (
-    <div className="container" style={{ maxWidth: 880, padding: '24px 16px 60px' }}>
-      <div className="row wrap" style={{ gap: 12, marginBottom: 18 }}>
-        <Link to="/" className="btn btn-ghost btn-sm"><Icon name="house" size={14} />Counta</Link>
-        <h1 style={{ fontFamily: 'var(--font-brand)', fontSize: 26, fontWeight: 600, margin: 0 }}>Identity reviews</h1>
-      </div>
-      {me.isLoading ? <div className="row" style={{ justifyContent: 'center', padding: 40 }}><Spinner /></div>
-        : me.data !== true ? <Alert kind="grey" icon="lock">This page is for TaxStreem's reviewers.</Alert>
-        : list.isLoading ? <div className="row" style={{ justifyContent: 'center', padding: 40 }}><Spinner /></div>
+    <>
+      <PageHead title="Identity reviews" sub="NIN slips that did not match a director on the CAC record, and the decisions of the last 30 days." />
+      {list.isLoading ? <div className="row" style={{ justifyContent: 'center', padding: 40 }}><Spinner /></div>
         : list.isError ? <Alert kind="red" icon="alert">{cleanError(list.error)}</Alert>
         : !list.data?.length ? <Alert kind="green" icon="check">Nothing waiting. Slips that need a person to look at them appear here.</Alert>
         : <div className="stack" style={{ gap: 14 }}>{list.data.map((r) => <ReviewCard key={r.org_id} r={r} />)}</div>}
-    </div>
+    </>
   );
 }
 
@@ -57,7 +47,7 @@ function ReviewCard({ r }: { r: Row }) {
   async function decide(approve: boolean) {
     if (!approve && note.trim().length < 5) { setErr('Say why, so the business knows what to do next.'); return; }
     setBusy(approve ? 'yes' : 'no'); setErr(null);
-    try { await rpc('review_identity', { p_org: r.org_id, p_approve: approve, p_note: note.trim() || null }); await qc.invalidateQueries({ queryKey: ['identity-reviews'] }); }
+    try { await rpc('review_identity', { p_org: r.org_id, p_approve: approve, p_note: note.trim() || null }); await qc.invalidateQueries({ queryKey: ['identity-reviews'] }); await qc.invalidateQueries({ queryKey: ['admin-overview'] }); }
     catch (e) { setErr(cleanError(e)); }
     setBusy(null);
   }

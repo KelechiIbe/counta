@@ -316,3 +316,19 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 .people { display: flex; flex-direction: column; border: 1px solid var(--row); border-radius: 12px; overflow: hidden; }
 .person-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--row); flex-wrap: wrap; }
 .person-row:first-child { border-top: 0; }
+
+/* TaxStreem's admin portal (/admin): its own top bar and menu, outside the business screens. */
+.adm { min-height: 100vh; background: var(--canvas); }
+.adm-top { display: flex; align-items: center; gap: 10px; padding: 10px 20px; background: #fff; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20; min-width: 0; }
+.adm-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; max-width: 1320px; margin: 0 auto; padding: 24px 20px 64px; }
+.adm-nav { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 72px; align-self: start; }
+.adm-nav .nav-item { font-size: 14px; padding: 8px 10px; }
+.adm-row { display: grid; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--row); font-size: 13px; align-items: center; min-width: 0; }
+.adm-row:first-child { border-top: 0; }
+@media (max-width: 860px) {
+  .adm-body { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 12px 16px 64px; }
+  .adm-top { padding: 10px 16px; }
+  .adm-nav { flex-direction: row; overflow-x: auto; position: static; gap: 4px; padding-bottom: 6px; scrollbar-width: thin; }
+  .adm-nav .nav-item { white-space: nowrap; width: auto; flex: none; }
+  .adm-row { grid-template-columns: minmax(0, 1fr) !important; gap: 6px; }
+}

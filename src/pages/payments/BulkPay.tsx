@@ -321,7 +321,7 @@ export function BatchModal({ id, onClose }: { id: string; onClose: () => void })
     try {
       for (let i = 0; i < 40 && alive.current; i++) {
         const r = await edge<{ batch: any; sent: number; failed: number }>('payments', { action: 'send_batch', batch_id: id });
-        if (r.ok === false) { toast(r.reason === 'not_configured' ? 'Payments are not switched on for TaxStreem yet. Add the Flutterwave keys first.' : r.error || 'Sending stopped.', 'err'); break; }
+        if (r.ok === false) { toast(r.reason === 'not_configured' ? 'Payments are not available yet. TaxStreem is setting them up.' : r.error || 'Sending stopped.', 'err'); break; }
         if (r.batch) qc.setQueryData(['payout-batch', id], r.batch);
         if (!r.batch || Number(r.batch.approved_count) === 0) break;
       }

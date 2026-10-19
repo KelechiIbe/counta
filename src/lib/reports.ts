@@ -110,7 +110,7 @@ export const REPORTS: ReportDef[] = [
     id: 'input_vat', group: 'Purchases', title: 'Input VAT schedule', period: 'range', location: true, needsCosts: true, source: 'rpc',
     blurb: 'Purchases from VAT-registered vendors with taxable value and VAT, for the monthly VAT return.',
     cols: [c('date', 'Date', 'date'), c('invoice_date', 'Invoice date', 'date'), c('vendor', 'Vendor'), c('invoice_no', 'Invoice no.'), c('ref', 'Receipt'),
-      money('taxable', 'Taxable value'), money('non_taxable', 'Exempt / zero-rated'), money('vat', 'VAT 7.5%'), money('gross', 'Invoice total'), c('journal', 'Journal', 'text', { pdf: false })],
+      money('taxable', 'Taxable value'), money('non_taxable', 'Exempt / zero-rated'), money('vat', 'VAT'), money('gross', 'Invoice total'), c('journal', 'Journal', 'text', { pdf: false })],
   },
   {
     id: 'vendors', group: 'Purchases', title: 'Purchases by vendor', period: 'range', location: true, needsCosts: true, source: 'rpc',

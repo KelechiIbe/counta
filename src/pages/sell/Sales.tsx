@@ -14,6 +14,7 @@ import { ExportMenu, useMeta } from '../../components/Books';
 import type { RCol } from '../../lib/reports';
 import { useDraft, type Drafts } from '../../lib/drafts';
 import { CustomerPicker, PaymentsList, PrintButtons, RecordPayment, RequestPayment, SaleLines, SendBox, StatusChip, docUrl, dueText } from './common';
+import { useVatRate, vatInside, vatPct, vatRateOn } from '../../lib/vat';
 
 type Tab = 'all' | 'invoice' | 'receipt' | 'quote' | 'credit_note' | 'unpaid' | 'confirm';
 
@@ -73,7 +74,7 @@ export default function Sales() {
             </div>
           </div>
           <div className="faint" style={{ fontSize: 12, padding: '8px 20px', borderBottom: '1px solid var(--line)' }}>
-            VAT status: <b>0</b> VATable (7.5%) · <b>1</b> Exempt · <b>2</b> Zero-rated. Sales to customers outside Nigeria are exports and always 2.
+            VAT status: <b>0</b> VATable ({vatPct()}) · <b>1</b> Exempt · <b>2</b> Zero-rated. Sales to customers outside Nigeria are exports and always 2.
           </div>
           <div className="tbl">
             <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '130px 110px minmax(160px,1.4fr) 90px 130px 120px 120px 140px', minWidth: 990 }}>
@@ -436,7 +437,7 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
   const sum = lines.reduce((a, l) => a + gross(l), 0) + (money(f.delivery_fee) || 0);
   // A customer outside Nigeria makes the sale an export: zero-rated, unless a manager has said otherwise on this document.
   const exp = existing.data && existing.data.customer_id === customer?.id ? !!existing.data.export : isExport(customer?.country);
-  const vat = inv.org.vat_registered && !exp ? lines.reduce((a, l) => a + (l.vat_treatment === 'standard' ? (f.prices_include_vat ? gross(l) - gross(l) / 1.075 : gross(l) * 0.075) : 0), 0) : 0;
+  const vat = inv.org.vat_registered && !exp ? lines.reduce((a, l) => a + (l.vat_treatment === 'standard' ? (f.prices_include_vat ? vatInside(gross(l), f.issue_date) : gross(l) * vatRateOn(f.issue_date)) : 0), 0) : 0;
   const total = f.prices_include_vat ? sum : sum + vat;
   async function save(issue: boolean) {
     if (!customer) { toast('Choose the customer.', 'err'); return; }
@@ -479,7 +480,7 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
               <span className="stack" style={{ gap: 4 }}>
                 {l.item_id ? <b>{l.description}</b> : <input className="input input-sm" value={l.description} placeholder="Service or charge" onChange={(e) => upd(l.key, { description: e.target.value })} />}
                 {!l.item_id && <div className="row" style={{ gap: 4 }}>
-                  <select className="input input-sm" value={l.vat_treatment} onChange={(e) => upd(l.key, { vat_treatment: e.target.value })} aria-label="VAT"><option value="standard">VAT 7.5%</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select>
+                  <select className="input input-sm" value={l.vat_treatment} onChange={(e) => upd(l.key, { vat_treatment: e.target.value })} aria-label="VAT"><option value="standard">VAT {vatPct(f.issue_date)}</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select>
                   <select className="input input-sm" value={l.revenue_account} onChange={(e) => upd(l.key, { revenue_account: e.target.value })} aria-label="Income account"><option value="">Usual income account</option>{revenue.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select>
                 </div>}
                 {exp ? <span className="faint" style={{ fontSize: 11 }}>Zero-rated export · VAT 2{l.vat_treatment !== 'zero' ? ` (normally ${l.vat_treatment === 'exempt' ? 'exempt' : 'VATable'})` : ''}</span>

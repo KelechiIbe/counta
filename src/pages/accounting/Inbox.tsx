@@ -9,6 +9,7 @@ import { edge, useChart, useCustomers, useInbox, useBills, type AiProposal } fro
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Empty, Pills, SkeletonRows } from '../../components/ui';
+import { vatPct } from '../../lib/vat';
 
 const pct = (c: number) => `${Math.round(Number(c) * 100)}%`;
 
@@ -98,13 +99,13 @@ function Question({ p }: { p: AiProposal }) {
     return (
       <div className="card card-pad stack" style={{ gap: 8 }}>
         <div className="row" style={{ justifyContent: 'space-between' }}><b>{p.question || p.title}</b><span className="chip t-blue">VAT · {pct(p.confidence)} sure</span></div>
-        <div className="muted" style={{ fontSize: 13 }}>{p.rationale}{p.proposal?.law ? ` (${p.proposal.law})` : ''}. Now: {item?.vat_treatment === 'standard' ? 'charged 7.5%' : item?.vat_treatment}.</div>
+        <div className="muted" style={{ fontSize: 13 }}>{p.rationale}{p.proposal?.law ? ` (${p.proposal.law})` : ''}. Now: {item?.vat_treatment === 'standard' ? `charged ${vatPct()}` : item?.vat_treatment}.</div>
         {can(inv, 'edit_prices') || can(inv, 'keep_books') ? (
           <div className="row wrap">
             {(['standard', 'zero', 'exempt'] as const).map((x) => (
               <button key={x} className={'btn btn-sm ' + (x === t ? 'btn-primary' : 'btn-secondary')} disabled={busy}
                 onClick={() => act(() => rpc('set_item_vat', { p_item: p.source_id, p_treatment: x, p_reason: x === t ? 'Confirmed the suggestion' : 'Changed the suggestion' }), 'VAT set')}>
-                {x === 'standard' ? 'Charge 7.5%' : x === 'zero' ? 'Zero-rated' : 'Exempt'}{x === t ? ' (suggested)' : ''}
+                {x === 'standard' ? `Charge ${vatPct()}` : x === 'zero' ? 'Zero-rated' : 'Exempt'}{x === t ? ' (suggested)' : ''}
               </button>
             ))}
           </div>

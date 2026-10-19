@@ -14,6 +14,7 @@ import { CustomerPicker, PayWait, StatusChip } from '../sell/common';
 import { useDraft, type Drafts } from '../../lib/drafts';
 import type { Customer, PayRequest } from '../../lib/api';
 import { BatchList, BatchModal, BulkPayModal, TemplateButton } from './BulkPay';
+import { isOn, PAUSED, useFeatures } from '../../lib/features';
 
 export default function Payments() {
   const { data: inv } = useInventory();
@@ -21,6 +22,7 @@ export default function Payments() {
   const toast = useToast();
   const qc = useQueryClient();
   const pay = usePayments();
+  const feats = useFeatures();
   type Tab = 'collections' | 'payouts' | 'bulk' | 'reconciliations' | 'settings';
   const [params, setParams] = useSearchParams();
   const [tab, setTabState] = useState<Tab>(() => (['collections', 'payouts', 'bulk', 'reconciliations', 'settings'].includes(params.get('tab') || '') ? params.get('tab') as Tab : 'collections'));
@@ -41,7 +43,7 @@ export default function Payments() {
   async function openWallet() {
     setBusy('open');
     const r = await edge('payments', { action: 'open_wallet', org_id: orgId });
-    if (r.ok === false) toast(r.reason === 'not_configured' ? 'Payments are not switched on for TaxStreem yet. Add the Flutterwave keys first.' : r.error || 'Could not open the wallet.', 'err');
+    if (r.ok === false) toast(r.reason === 'not_configured' ? 'Payments are not available yet. TaxStreem is setting them up.' : r.error || 'Could not open the wallet.', 'err');
     else toast('The wallet is open');
     await refresh(); setBusy(null);
   }
@@ -60,6 +62,7 @@ export default function Payments() {
   return (
     <div className="container">
       <PaymentsLock />
+      {!isOn(feats.data, 'payments') && <Alert kind="amber" icon="info">{PAUSED.payments}</Alert>}
       {pay.isLoading ? <SkeletonRows n={4} /> : !w || w.status !== 'active' ? (
         <div className="card card-pad stack" style={{ gap: 12, maxWidth: 760 }}>
           <div style={{ fontSize: 18, fontWeight: 600 }}>Open the business wallet</div>
@@ -232,7 +235,6 @@ function PaymentSettings({ data, onSaved }: { data: any; onSaved: () => void }) 
   const toggle = (m: string) => setF((x) => ({ ...x, payment_methods: x.payment_methods.includes(m) ? x.payment_methods.filter((y: string) => y !== m) : [...x.payment_methods, m] }));
   return (
     <div className="card card-pad stack" style={{ gap: 14, maxWidth: 760 }}>
-      <RailConnection />
       <Field label="Payment rail" hint="Flutterwave unless a partner has connected its own rail through TaxStreem. Empty the wallet before moving.">
         <select className="input" value={f.payment_rail} onChange={(e) => setF({ ...f, payment_rail: e.target.value })}>{(data.rails || []).map((r: any) => <option key={r.code} value={r.code}>{r.name}</option>)}</select>
       </Field>
@@ -246,34 +248,6 @@ function PaymentSettings({ data, onSaved }: { data: any; onSaved: () => void }) 
         <input className="input" inputMode="decimal" value={f.payout_approval_threshold} onChange={(e) => setF({ ...f, payout_approval_threshold: e.target.value })} style={{ maxWidth: 220 }} />
       </Field>
       <div><button className="btn btn-primary" onClick={save}>Save</button></div>
-    </div>
-  );
-}
-
-// Whether the rail can reach Counta: its keys, the shared webhook secret, and the last verified event it sent.
-type RailStatus = { configured: boolean; payments?: any; webhook?: { url: string; secret_set: boolean; last_event: { received_at: string; event: string; outcome: string | null } | null } };
-function RailConnection() {
-  const { orgId } = useSession();
-  const toast = useToast();
-  const q = useQuery({ queryKey: ['payments-status', orgId], queryFn: () => edge<RailStatus>('payments', { action: 'status', org_id: orgId }), staleTime: 30_000 });
-  const r = q.data;
-  if (q.isLoading) return <SkeletonRows n={2} />;
-  if (!r || r.ok === false || !r.webhook) return null;
-  const name = r.payments?.rail?.name || 'the rail';
-  const wh = r.webhook;
-  return (
-    <div className="stack" style={{ gap: 8, paddingBottom: 14, borderBottom: '1px solid var(--line)' }}>
-      <div className="field-label">Connection to {name}</div>
-      <div className="row wrap" style={{ gap: 8 }}>
-        <span className={'chip ' + (r.configured ? 't-green' : 't-grey')}>Keys {r.configured ? 'set' : 'missing'}</span>
-        <span className={'chip ' + (wh.secret_set ? 't-green' : 't-amber')}>Webhook secret {wh.secret_set ? 'set' : 'missing'}</span>
-        <span className={'chip ' + (wh.last_event ? 't-green' : 't-grey')}>{wh.last_event ? `Last heard from ${name} ${when(wh.last_event.received_at)}` : `Nothing received from ${name} yet`}</span>
-      </div>
-      <div className="row" style={{ gap: 8, minWidth: 0 }}>
-        <code className="ellipsis" style={{ fontSize: 12, minWidth: 0, flex: 1 }}>{wh.url}</code>
-        <button className="btn btn-secondary btn-sm" onClick={() => navigator.clipboard?.writeText(wh.url).then(() => toast('Copied'))}><Icon name="copy" size={14} />Copy</button>
-      </div>
-      <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>{name} sends every payment to this address. Its dashboard must use this address and the same secret hash, or payments are confirmed only by the check Counta runs every few minutes.{!wh.last_event ? ` ${name} only sends something once money moves, so this stays empty until the first payment.` : ''}</div>
     </div>
   );
 }

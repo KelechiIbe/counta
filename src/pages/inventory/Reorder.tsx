@@ -13,6 +13,7 @@ import type { PurchaseOrder, Vendor } from '../../lib/types';
 import { Icon } from '../../components/Icon';
 import { Alert, Annot, Chip, Empty, Field, Label, Modal, ModalHead, SkeletonRows } from '../../components/ui';
 import { RecentCalls, VendorCallModal } from '../../components/Calls';
+import { vatPct } from '../../lib/vat';
 
 const scoreColor = (s: number) => (s >= 85 ? '#15803D' : s >= 70 ? '#0072F5' : '#A16207');
 const PO_STATUS: Record<string, string> = { draft: 'Draft', sent: 'Sent', received: 'Received', cancelled: 'Cancelled' };
@@ -374,7 +375,7 @@ function VendorModal({ vendor, onClose }: { vendor: Vendor | null; onClose: () =
           <Field label="Lead time (days)"><input className="input" type="number" min={0} value={f.lead_time_days} onChange={(e) => set('lead_time_days', e.target.value)} /></Field>
           <Field label="Credit (days)"><input className="input" type="number" min={0} value={f.credit_days} onChange={(e) => set('credit_days', e.target.value)} /></Field>
         </div>
-        <label className="check"><input type="checkbox" checked={f.vat_registered} onChange={(e) => set('vat_registered', e.target.checked)} />VAT-registered (charges 7.5% VAT on invoices)</label>
+        <label className="check"><input type="checkbox" checked={f.vat_registered} onChange={(e) => set('vat_registered', e.target.checked)} />VAT-registered (charges {vatPct()} VAT on invoices)</label>
         <Field label="Notes"><textarea className="input" value={f.notes} onChange={(e) => set('notes', e.target.value)} /></Field>
         {err && <Alert kind="red" icon="alert">{err}</Alert>}
         <div className="hint">Fill rate, price stability and lead time are measured from your own invoices and orders once there is history.</div>

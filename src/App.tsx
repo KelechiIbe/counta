@@ -25,7 +25,7 @@ const Assistant = lazy(() => import('./pages/Assistant'));
 const Onboard = lazy(() => import('./pages/onboarding/Onboard'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Join = lazy(() => import('./pages/auth/Join'));
-const Review = lazy(() => import('./pages/Review'));
+const AdminApp = lazy(() => import('./admin/AdminApp'));
 
 const MobileApp = lazy(() => import('./mobile/MobileApp'));
 const HomePage = lazy(() => import('./pages/home/Home'));
@@ -127,7 +127,8 @@ export default function App() {
       <Route path="/reset" element={<AuthPage mode="reset" />} />
       <Route path="/update-password" element={<UpdatePasswordPage />} />
       <Route path="/join" element={<Suspense fallback={<Loading />}><Join /></Suspense>} />
-      <Route path="/review" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><Review /></Suspense></RequireAuth>} />
+      <Route path="/admin/*" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><AdminApp /></Suspense></RequireAuth>} />
+      <Route path="/review" element={<Navigate to="/admin/reviews" replace />} />
       <Route path="/onboarding" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><Onboard /></Suspense></RequireAuth>} />
       <Route path="/p/:token" element={<Suspense fallback={<Loading />}><PublicDoc /></Suspense>} />
       <Route path="/shop/:slug" element={<Suspense fallback={<Loading />}><ShopPage /></Suspense>} />

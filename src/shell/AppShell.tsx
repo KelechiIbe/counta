@@ -8,8 +8,9 @@ import { useNeedsAction } from './needsAction';
 import { InstallBanner } from '../components/InstallBanner';
 import { store } from '../lib/pwa';
 import { useInbox } from '../lib/api';
-import { useAmReviewer } from '../pages/Review';
+import { useAdminMe } from '../admin/api';
 import { cap, useWords } from '../lib/wording';
+import { useVatRate } from '../lib/vat';
 
 // ---------- location picker state shared by Overview, Items and Insights ----------
 const LocCtx = createContext<{ loc: string; setLoc: (l: string) => void }>({ loc: 'ALL', setLoc: () => {} });
@@ -104,7 +105,7 @@ function Sidebar({ open, onClose, rail, onRail }: { open: boolean; onClose: () =
   const loc = useLocation();
   const badges = useNeedsAction().badges;
   const [menu, setMenu] = useState(false);
-  const reviewer = useAmReviewer(menu).data === true;
+  const staff = useAdminMe(menu).data?.staff === true;
   const w = useWords();
   const populated = (inv?.items.length ?? 0) > 0;
   const current = memberships.find((m) => m.org_id === orgId);
@@ -181,7 +182,7 @@ function Sidebar({ open, onClose, rail, onRail }: { open: boolean; onClose: () =
             <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/onboarding'); }}><Icon name="plus" size={16} color="#6B7280" />Add a business</button>
             <div style={{ height: 1, background: '#F3F4F6', margin: '4px 0' }} />
             <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/settings'); }}><Icon name="settings" size={16} color="#6B7280" />Settings</button>
-            {reviewer && <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/review'); }}><Icon name="shield" size={16} color="#6B7280" />Identity reviews</button>}
+            {staff && <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/admin'); }}><Icon name="shield" size={16} color="#6B7280" />Admin portal</button>}
             <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={signOut}><Icon name="logout" size={16} color="#6B7280" />Sign out</button>
           </div>
         )}
@@ -241,6 +242,8 @@ function Header({ onMenu }: { onMenu: () => void }) {
 }
 
 export default function AppShell() {
+  // The VAT rule book, so every VAT figure and label on the screens uses the rate on its own date.
+  useVatRate();
   const { data: inv, isLoading, error } = useInventory();
   const [open, setOpen] = useState(false);
   const narrow = useMedia('(max-width: 1080px)');

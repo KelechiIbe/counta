@@ -16,6 +16,7 @@ import { StatusChip } from '../sell/common';
 import { authorityLabel, pct, useTaxProfile } from '../../lib/tax';
 import { CreditsList, UseCredits, VendorCreditModal } from './VendorCredits';
 import { useDraft, type Drafts } from '../../lib/drafts';
+import { vatPct } from '../../lib/vat';
 
 type Tab = 'all' | 'draft' | 'unpaid' | 'overdue' | 'paid' | 'credits' | 'returned';
 
@@ -430,7 +431,7 @@ function BillEditor({ id, draft, vendors, whtRates, assetClasses, onClose, onSav
               <input className="input input-sm num" inputMode="decimal" value={l.qty} onChange={(e) => upd(l.key, { qty: e.target.value })} aria-label="Quantity" />
               <input className="input input-sm num" inputMode="decimal" value={l.unit_cost} onChange={(e) => upd(l.key, { unit_cost: e.target.value })} aria-label="Unit cost" />
               <span className="stack" style={{ gap: 4 }}>
-                <select className="input input-sm" disabled={!f.vat_charged} value={l.vat_treatment} onChange={(e) => upd(l.key, { vat_treatment: e.target.value })}><option value="standard">7.5%</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select>
+                <select className="input input-sm" disabled={!f.vat_charged} value={l.vat_treatment} onChange={(e) => upd(l.key, { vat_treatment: e.target.value })}><option value="standard">{vatPct(f.bill_date)}</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select>
                 {f.vat_charged && l.vat_treatment === 'standard' && <label className="check" style={{ fontSize: 11 }}><input type="checkbox" checked={l.vat_recoverable} onChange={(e) => upd(l.key, { vat_recoverable: e.target.checked })} />Claim back</label>}
               </span>
               <button className="btn btn-ghost btn-xs" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label="Remove line"><Icon name="trash" size={13} /></button>

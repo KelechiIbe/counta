@@ -19,8 +19,11 @@ import ChatScreen from './ChatPhone';
 import IssueScreen from './IssuePhone';
 import { TillScreen } from './TillPhone';
 import { AddScreen } from './AddPhone';
+import { useVatRate } from '../lib/vat';
 
 export default function MobileApp() {
+  // The VAT rule book, so every VAT figure and label on the screens uses the rate on its own date.
+  useVatRate();
   const { data: inv, isLoading } = useInventory();
   const { orgId } = useSession();
   const queue = useQueue(orgId);

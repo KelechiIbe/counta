@@ -21,6 +21,7 @@ import { shrinkImage } from '../../lib/images';
 import { edge } from '../../lib/api';
 import { useQuery } from '@tanstack/react-query';
 import { NrsLabelSelect } from '../../components/Places';
+import { vatPct } from '../../lib/vat';
 
 const COLS = 'minmax(240px,2fr) 120px minmax(160px,1.2fr) 100px 100px 90px 110px 110px 24px';
 
@@ -121,7 +122,7 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
   if (!inv) return null;
   const costs = inv.can_see_costs;
   const vendor = inv.vendors.find((v) => v.id === it.preferred_vendor_id);
-  const vat = { standard: 'Standard 7.5%', zero: 'Zero-rated', exempt: 'Exempt' }[it.vat_treatment];
+  const vat = { standard: `Standard ${vatPct()}`, zero: 'Zero-rated', exempt: 'Exempt' }[it.vat_treatment];
   const totalAll = Math.max(1, it.qAll);
   const batches = inv.batches.filter((b) => b.item_id === it.id).sort((a, b) => (a.expiry_date || '9') < (b.expiry_date || '9') ? -1 : 1);
   const su = it.selling_unit;
@@ -277,7 +278,7 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
 }
 
 
-const VAT_LABEL: Record<string, string> = { standard: 'Standard 7.5%', zero: 'Zero-rated', exempt: 'Exempt' };
+const VAT_LABEL: Record<string, string> = { get standard() { return `Standard ${vatPct()}`; }, zero: 'Zero-rated', exempt: 'Exempt' };
 
 // How the NRS VAT return describes a zero-rated or exempt item (its own list; Counta suggests one, a person can choose).
 function NrsLabel({ it, may }: { it: ItemView; may: boolean }) {

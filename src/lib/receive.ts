@@ -3,6 +3,7 @@ import { ai, must, rpc, supabase } from './supabase';
 import type { Inventory, Item, NewItemDraft, Receipt, ReceiptLine } from './types';
 import { uuid } from './format';
 import { pluralUnit, puAbbr, suAbbr } from './domain';
+import { vatRateOn } from './vat';
 
 export type Source = 'typed' | 'hand' | 'manual';
 export const DOUBT = 85;
@@ -104,14 +105,14 @@ export function vatTreatment(item: Item | null, l: Pick<ReceiptLine, 'new_item'>
   return item?.vat_treatment || l.new_item?.vat_treatment || 'standard';
 }
 
-export function totals(inv: Inventory | undefined, lines: DraftLine[], vendorVat: boolean) {
+export function totals(inv: Inventory | undefined, lines: DraftLine[], vendorVat: boolean, day?: string | null) {
   let net = 0; let base = 0;
   for (const l of lines) {
     const t = Math.round(Number(l.qty || 0) * Number(l.unit_cost || 0) * 100) / 100;
     net += t;
     if (vatTreatment(lineItem(inv, l), l) === 'standard') base += t;
   }
-  const vat = vendorVat ? Math.round(base * 0.075 * 100) / 100 : 0;
+  const vat = vendorVat ? Math.round(base * vatRateOn(day) * 100) / 100 : 0;
   return { net: Math.round(net * 100) / 100, vat, gross: Math.round((net + vat) * 100) / 100, vatBase: base };
 }
 

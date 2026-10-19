@@ -144,7 +144,7 @@ export default function SellScreen() {
             ) : (
               <div className="alert alert-blue" style={{ textAlign: 'left' }}>
                 {!queue.online ? 'Voice needs data to understand you. Record the sale by hand below; it saves on this phone and posts when data returns.'
-                  : status.data && !status.data.configured ? 'Voice entry switches on when the owner adds a Gemini key. Record the sale by hand below for now.'
+                  : status.data && !status.data.configured ? 'Voice entry is not available just now. Record the sale by hand below for now.'
                   : 'This browser cannot record audio. Record the sale by hand below.'}
               </div>
             )}

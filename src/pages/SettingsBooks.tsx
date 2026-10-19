@@ -95,7 +95,8 @@ export function MessagesSection() {
   const toast = useToast();
   const qc = useQueryClient();
   const msgs = useMessages();
-  const status = useQuery({ queryKey: ['msg-status'], queryFn: () => edge<{ email: boolean; whatsapp: boolean; sender?: string | null; sender_set?: boolean; email_key?: boolean }>('messaging', { action: 'status' }), staleTime: 60_000 });
+  const status = useQuery({ queryKey: ['msg-status', orgId], enabled: !!orgId, staleTime: 60_000,
+    queryFn: () => edge<{ email: boolean; whatsapp: boolean; sender?: string | null; paused?: { email: boolean; whatsapp: boolean } }>('messaging', { action: 'status', org_id: orgId }) });
   const s = msgs.data?.settings;
   const [f, setF] = useState({ reminders_enabled: false, reminder_days: '-3, 0, 3, 7, 14', reply_to_email: '' });
   useEffect(() => { if (s) setF({ reminders_enabled: !!s.reminders_enabled, reminder_days: (s.reminder_days || []).join(', '), reply_to_email: s.reply_to_email || '' }); }, [s?.reminders_enabled, s?.reply_to_email]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -116,8 +117,9 @@ export function MessagesSection() {
         <span className={'chip ' + (status.data?.whatsapp ? 't-green' : 't-grey')}>WhatsApp {status.data?.whatsapp ? 'on' : 'off'}</span>
         {status.data?.sender && <span className="chip t-grey" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>Sends from {inv.org.name} via Counta &lt;{status.data.sender}&gt;</span>}
       </div>
-      {status.data?.email_key && status.data.sender_set && !status.data.sender && <Alert kind="red" icon="alert">The sending address (RESEND_FROM) has no email address in it. It should be an address on the domain verified in Resend, such as billing@yourdomain.com.</Alert>}
-      {status.data && (!status.data.email || !status.data.whatsapp) && <Alert kind="blue" icon="info">TaxStreem switches these on for everyone with its Resend and WhatsApp Business keys. Until then, messages wait and go out as soon as they are on.</Alert>}
+      {status.data && (status.data.paused?.email || status.data.paused?.whatsapp)
+        ? <Alert kind="amber" icon="info">TaxStreem has paused {status.data.paused?.email && status.data.paused?.whatsapp ? 'email and WhatsApp' : status.data.paused?.email ? 'email' : 'WhatsApp'} messages for now. They wait and go out once it is back.</Alert>
+        : status.data && (!status.data.email || !status.data.whatsapp) && <Alert kind="blue" icon="info">TaxStreem is still setting up {!status.data.email && !status.data.whatsapp ? 'email and WhatsApp' : !status.data.email ? 'email' : 'WhatsApp'}. Messages wait and go out as soon as it is on.</Alert>}
       <label className="check"><input type="checkbox" disabled={!owner} checked={f.reminders_enabled} onChange={(e) => setF({ ...f, reminders_enabled: e.target.checked })} />Remind customers about unpaid invoices automatically</label>
       <Field label="On these days from the due date" hint="Negative is before it is due: -3, 0, 3, 7, 14."><input className="input" disabled={!owner || !f.reminders_enabled} value={f.reminder_days} onChange={(e) => setF({ ...f, reminder_days: e.target.value })} style={{ maxWidth: 260 }} /></Field>
       <Field label="Replies go to" hint="Customers who reply to an email reach this address."><input className="input" disabled={!owner} value={f.reply_to_email} onChange={(e) => setF({ ...f, reply_to_email: e.target.value })} placeholder={inv.org.email || 'accounts@yourbusiness.ng'} style={{ maxWidth: 360 }} /></Field>

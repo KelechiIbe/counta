@@ -618,6 +618,10 @@ create index if not exists tax_rules_set_by on public.tax_rules(set_by);
 insert into public.tax_rules (key, effective_from, value, label, source) values
   ('vat_rate', '2020-02-01', 0.075, 'VAT rate', 'Finance Act 2019; kept by the Nigeria Tax Act 2025')
 on conflict (key, effective_from) do nothing;
+-- The VAT rate is public law: a customer who opens an invoice link without signing in sees the rate on its date.
+drop policy if exists tax_rules_read_vat on public.tax_rules;
+create policy tax_rules_read_vat on public.tax_rules for select to anon using (key = 'vat_rate');
+grant select on public.tax_rules to anon;
 
 create or replace function private.vat_rate(p_day date) returns numeric
 language sql stable security definer set search_path = public, private as $$

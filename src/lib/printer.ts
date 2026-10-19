@@ -1,6 +1,7 @@
 // Receipts: on a Bluetooth thermal printer (ESC/POS over Web Bluetooth, Chrome on Android and desktop) or through the
 // browser's print dialog on an 80 mm or A4 page.
 import type { Sale } from './api';
+import { vatPct } from './vat';
 
 // Services that common 58 mm and 80 mm Bluetooth receipt printers expose.
 const SERVICES = [
@@ -64,7 +65,7 @@ export function receiptText(s: Sale, width = 32): string[] {
     out.push(pad(`  ${Number(l.qty)} x ${amt(l.unit_price)}${Number(l.discount) ? ` -${amt(l.discount)}` : ''}`, amt(l.gross)));
   }
   out.push(rule);
-  if (Number(s.vat_total)) out.push(pad('VAT 7.5% (included)', amt(s.vat_total)));
+  if (Number(s.vat_total)) out.push(pad(`VAT ${vatPct(s.issue_date || String(s.created_at || '').slice(0, 10) || null)} (included)`, amt(s.vat_total)));
   out.push(pad('TOTAL', 'N' + amt(s.total)));
   for (const p of s.payments || []) if (p.direction !== 'out') out.push(pad(`Paid ${p.method === 'flutterwave' || p.method === 'rail' ? 'transfer' : p.method}`, amt(p.amount)));
   if (Number(s.change)) out.push(pad('Change', amt(Number(s.change))));
