@@ -31,9 +31,10 @@ const cors = {
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 const cache = new Map<string, { v: string; at: number }>();
+// Keys set in the admin portal (Supabase Vault) come first; the Edge Function secrets are the fallback.
 async function secret(name: string): Promise<string> {
-  const env = Deno.env.get(name);
-  if (env) return env.trim();
+  // The database's hook secret keeps its old order: the Edge Function secret first.
+  if (name === 'PUSH_HOOK_SECRET' && Deno.env.get(name)) return Deno.env.get(name)!.trim();
   const hit = cache.get(name);
   if (hit && Date.now() - hit.at < 60_000) return hit.v;
   let v = '';
@@ -41,8 +42,14 @@ async function secret(name: string): Promise<string> {
     const { data } = await admin.rpc(fn, { p_name: name });
     if (typeof data === 'string' && data.trim()) { v = data.trim(); break; }
   }
+  if (!v) v = (Deno.env.get(name) || '').trim();
   cache.set(name, { v, at: Date.now() });
   return v;
+}
+// A channel TaxStreem has paused, for everyone or for one business.
+async function channelOn(orgId: string | null, channel: string) {
+  const { data } = await admin.rpc('svc_feature', { p_org: orgId, p_feature: channel === 'whatsapp' ? 'whatsapp' : 'email' });
+  return data !== false;
 }
 
 function same(a: string, b: string) {
@@ -73,10 +80,10 @@ const storageUrl = (path?: string | null) => (path ? `${SUPABASE_URL}/storage/v1
 async function sendEmail(m: Msg): Promise<string> {
   const key = await secret('RESEND_API_KEY');
   const from = await secret('RESEND_FROM');
-  if (!key || !from) throw new Error('Email is not switched on yet: add RESEND_API_KEY and RESEND_FROM.');
+  if (!key || !from) throw new Error('Email is not switched on yet. TaxStreem is setting it up; the message goes out once it is.');
   // Shown as "Business name via Counta <billing@...>", replies go to the business.
   const addr = senderAddress(from);
-  if (!addr) throw new Error('RESEND_FROM has no email address in it. Set it to an address on the domain verified in Resend, such as billing@yourdomain.com.');
+  if (!addr) throw new Error('Email is not switched on yet: the sending address TaxStreem set has no email address in it.');
   const replyTo = m.params?.reply_to || m.org?.reply_to_email || m.org?.email;
   const cc = (Array.isArray(m.params?.cc) ? m.params.cc : []).filter((e: unknown) => typeof e === 'string' && senderAddress(e as string)).slice(0, 5);
   m.org = { ...m.org, logo_url: storageUrl(m.org?.logo_path) };
@@ -96,7 +103,7 @@ async function sendEmail(m: Msg): Promise<string> {
 async function sendWhatsApp(m: Msg): Promise<string> {
   const token = await secret('WHATSAPP_TOKEN');
   const phoneId = await secret('WHATSAPP_PHONE_NUMBER_ID');
-  if (!token || !phoneId) throw new Error('WhatsApp is not switched on yet: add WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID.');
+  if (!token || !phoneId) throw new Error('WhatsApp is not switched on yet. TaxStreem is setting it up; the message goes out once it is.');
   const w = wording(m);
   if (!w.wa) throw new Error('This message can only go by email.');
   const lang = (await secret('WHATSAPP_TEMPLATE_LANG')) || 'en';
@@ -119,6 +126,12 @@ async function sendWhatsApp(m: Msg): Promise<string> {
 }
 
 async function deliver(id: string) {
+  // Customers' messages wait, untouched, while TaxStreem has paused the channel; invitations to the team still go.
+  const { data: head } = await admin.from('messages').select('org_id, channel, template, status').eq('id', id).maybeSingle();
+  if (head && head.template !== 'invite' && ['queued', 'failed'].includes(head.status) && !(await channelOn(head.org_id, head.channel))) {
+    await admin.from('messages').update({ status: 'queued', error: `${head.channel === 'whatsapp' ? 'WhatsApp' : 'Email'} is paused for now by TaxStreem. The message goes out once it is back on.` }).eq('id', id);
+    return { id, status: 'queued', paused: true };
+  }
   const { data: m, error } = await admin.rpc('svc_message', { p_id: id });
   if (error) throw new Error(error.message);
   if (!m) return { id, skipped: true };
@@ -201,10 +214,13 @@ Deno.serve(async (req) => {
     const { data: u } = await sb.auth.getUser();
     if (!u?.user) return json({ ok: false, error: 'Sign in first.' }, 401);
     if (body.action === 'status') {
+      const orgId = typeof body.org_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.org_id) ? body.org_id : null;
       const sender = senderAddress(await secret('RESEND_FROM'));
-      return json({ ok: true, email: Boolean((await secret('RESEND_API_KEY')) && sender), sender: sender || null,
+      const emailOn = await channelOn(orgId, 'email'), waOn = await channelOn(orgId, 'whatsapp');
+      return json({ ok: true, email: Boolean((await secret('RESEND_API_KEY')) && sender) && emailOn, sender: sender || null,
         sender_set: Boolean(await secret('RESEND_FROM')), email_key: Boolean(await secret('RESEND_API_KEY')),
-        whatsapp: Boolean((await secret('WHATSAPP_TOKEN')) && (await secret('WHATSAPP_PHONE_NUMBER_ID'))) });
+        whatsapp: Boolean((await secret('WHATSAPP_TOKEN')) && (await secret('WHATSAPP_PHONE_NUMBER_ID'))) && waOn,
+        paused: { email: !emailOn, whatsapp: !waOn } });
     }
     return json({ ok: false, error: 'Unknown action.' }, 400);
   } catch (e) {

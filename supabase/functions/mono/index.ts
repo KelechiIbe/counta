@@ -44,14 +44,14 @@ class UserError extends Error {}
 class ReauthNeeded extends UserError {}
 
 const secrets = new Map<string, { v: string; at: number }>();
+// Keys set in the admin portal (Supabase Vault) come first; the Edge Function secrets are the fallback.
 async function secret(name: string): Promise<string> {
-  const env = Deno.env.get(name);
-  if (env) return env.trim();
+  // The database's hook secret keeps its old order: the Edge Function secret first.
+  if (name === 'PUSH_HOOK_SECRET' && Deno.env.get(name)) return Deno.env.get(name)!.trim();
   const hit = secrets.get(name);
   if (hit && Date.now() - hit.at < 60_000) return hit.v;
-  let v = '';
   const { data } = await admin.rpc('app_secret', { p_name: name });
-  if (typeof data === 'string') v = data.trim();
+  const v = (typeof data === 'string' ? data.trim() : '') || (Deno.env.get(name) || '').trim();
   secrets.set(name, { v, at: Date.now() });
   return v;
 }
@@ -73,7 +73,7 @@ async function svc<T = any>(fn: string, args: Record<string, unknown>): Promise<
 type MonoResult = { body: any; headers: Headers };
 async function mono(path: string, init: RequestInit = {}): Promise<MonoResult> {
   const key = await secret('MONO_SECRET_KEY');
-  if (!key) throw new UserError('Bank feeds are not switched on yet. Add MONO_SECRET_KEY and MONO_PUBLIC_KEY to the Supabase Edge Function secrets.');
+  if (!key) throw new UserError('Bank feeds are not switched on yet. TaxStreem is setting them up; upload a bank statement for now.');
   const res = await fetch(MONO + path, {
     ...init,
     headers: { 'mono-sec-key': key, accept: 'application/json', 'Content-Type': 'application/json', ...(init.headers || {}) },

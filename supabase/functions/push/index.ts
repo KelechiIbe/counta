@@ -19,11 +19,12 @@ const cors = {
 };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
+// Keys set in the admin portal (Supabase Vault) come first; the Edge Function secrets are the fallback.
 async function secret(name: string): Promise<string> {
-  const env = Deno.env.get(name);
-  if (env) return env;
+  // The database's hook secret keeps its old order: the Edge Function secret first.
+  if (name === 'PUSH_HOOK_SECRET' && Deno.env.get(name)) return Deno.env.get(name)!.trim();
   const { data } = await admin.rpc('app_secret', { p_name: name });
-  return typeof data === 'string' ? data.trim() : '';
+  return (typeof data === 'string' ? data.trim() : '') || (Deno.env.get(name) || '').trim();
 }
 
 // The VAPID pair is generated here the first time and kept in Vault as one JSON value, so two

@@ -31,7 +31,6 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const APP_URL = (Deno.env.get('APP_URL') || 'https://counta-taxstreem.netlify.app').replace(/\/$/, '');
 const FLW = Deno.env.get('FLW_BASE_URL') || 'https://api.flutterwave.com/v3';
 const admin = createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false } });
 
@@ -46,9 +45,10 @@ class UserError extends Error {}
 class NotConfigured extends UserError {}
 
 const secrets = new Map<string, { v: string; at: number }>();
+// Keys set in the admin portal (Supabase Vault) come first; the Edge Function secrets are the fallback.
 async function secret(name: string): Promise<string> {
-  const env = Deno.env.get(name);
-  if (env) return env.trim();
+  // The database's hook secret keeps its old order: the Edge Function secret first.
+  if (name === 'PUSH_HOOK_SECRET' && Deno.env.get(name)) return Deno.env.get(name)!.trim();
   const hit = secrets.get(name);
   if (hit && Date.now() - hit.at < 60_000) return hit.v;
   let v = '';
@@ -58,9 +58,12 @@ async function secret(name: string): Promise<string> {
     const b = await admin.rpc('app_secret', { p_name: name });
     if (typeof b.data === 'string') v = b.data.trim();
   }
+  if (!v) v = (Deno.env.get(name) || '').trim();
   secrets.set(name, { v, at: Date.now() });
   return v;
 }
+// Counta's web address, for the page a payer returns to.
+const appUrl = async () => ((await secret('APP_URL')) || 'https://counta-taxstreem.netlify.app').replace(/\/$/, '');
 
 async function svc<T = any>(fn: string, args: Record<string, unknown>): Promise<T> {
   const { data, error } = await admin.rpc(fn, args);
@@ -110,7 +113,7 @@ interface Rail {
 
 async function flw(path: string, init: RequestInit = {}): Promise<any> {
   const key = await secret('FLW_SECRET_KEY');
-  if (!key) throw new NotConfigured('Payments are not switched on yet. Add FLW_SECRET_KEY to the Supabase Edge Function secrets.');
+  if (!key) throw new NotConfigured('Payments are not switched on yet. TaxStreem is setting them up.');
   const res = await fetch(FLW + path, { ...init, headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
     signal: AbortSignal.timeout(30_000) });
   const text = await res.text();
@@ -192,7 +195,7 @@ const flutterwave: Rail = {
     }
     const l = await flw('/payments', { method: 'POST', body: JSON.stringify({
       tx_ref: r.tx_ref, amount: r.amount, currency: 'NGN',
-      redirect_url: ctx.public_token ? `${APP_URL}/p/${ctx.public_token}?paid=1` : `${APP_URL}/paid`,
+      redirect_url: ctx.public_token ? `${await appUrl()}/p/${ctx.public_token}?paid=1` : `${await appUrl()}/paid`,
       customer: { email, name: c.walk_in ? ctx.org_name : (c.name || 'Customer'), phonenumber: ngPhone(c.phone) },
       customizations: { title: String(ctx.org_name).slice(0, 60), description: String(ctx.narration || '').slice(0, 100) },
       payment_options: 'banktransfer,card,ussd,account', meta: { org_id: ctx.org_id, request_id: r.id } }) });
@@ -321,7 +324,7 @@ function httpRail(rail: any): Rail {
     async collect(ctx, method) {
       const r = await call('/collections', { method: 'POST', body: JSON.stringify({ tx_ref: ctx.request.tx_ref, amount: ctx.request.amount, currency: 'NGN', method,
         account_ref: ctx.wallet?.account_ref, customer: ctx.customer, narration: ctx.narration, expires_in: 3600,
-        redirect_url: ctx.public_token ? `${APP_URL}/p/${ctx.public_token}?paid=1` : undefined }) });
+        redirect_url: ctx.public_token ? `${await appUrl()}/p/${ctx.public_token}?paid=1` : undefined }) });
       return { provider_ref: r.provider_ref, account_number: r.account_number, bank_name: r.bank_name, account_name: r.account_name, link_url: r.link_url,
         qr_image: r.qr_image, expires_at: r.expires_at };
     },
@@ -423,7 +426,7 @@ async function sendPayout(sb: SupabaseClient, payoutId: string) {
 // same batch without paying anyone twice. Stops after budgetMs; whatever is left goes on the next push.
 async function pushBatch(b: { id: string; rail: string; bulk?: boolean; title?: string; wallet: { account_ref?: string } }, budgetMs: number) {
   const { rail, row } = await railFor(b.rail);
-  if (!(await rail.configured())) throw new NotConfigured(row.kind === 'flutterwave' ? 'Payments are not switched on yet. Add FLW_SECRET_KEY to the Supabase Edge Function secrets.' : `The ${row.name} payment rail has no API key yet.`);
+  if (!(await rail.configured())) throw new NotConfigured(row.kind === 'flutterwave' ? 'Payments are not switched on yet. TaxStreem is setting them up.' : `The ${row.name} payment rail has no API key yet.`);
   const bulk = Boolean(b.bulk && rail.bulkPayout);
   const start = Date.now();
   let sent = 0, failed = 0;

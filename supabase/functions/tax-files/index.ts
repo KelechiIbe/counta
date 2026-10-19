@@ -11,12 +11,12 @@
 //   { action: 'vat_file', org_id, period: 'YYYY-MM' }
 //                                        -> the month's NRS VAT return (Form VAT 002, schedules A to F) and how each line of the
 //                                           form ties to Counta's VAT for the month.
-// Flux settings (edge function secrets): FLUX_URL (base URL) and FLUX_SECRET (shared HMAC secret). Requests carry
+// Flux settings (admin portal, or Edge Function secrets): FLUX_URL (base URL) and FLUX_SECRET (shared HMAC secret). Requests carry
 //   x-counta-signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">; Flux reports back on
 //   /functions/v1/taxstreem/flux/cit-status with the same signature (docs/flux-cit-handoff.md).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { type CitPack, fillCit } from './cit.ts';
-import { sha256Hex, template } from './templates.ts';
+import { sha256Hex, template, TEMPLATES, templatesBase } from './templates.ts';
 import { fillVat, type VatSchedule } from './vat.ts';
 import { nrsFiles, stateFile, type WhtSchedule } from './wht.ts';
 
@@ -24,6 +24,11 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const admin = createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false, autoRefreshToken: false } });
+// Keys set in the admin portal (Supabase Vault) come first; the Edge Function secrets are the fallback.
+async function vaultFirst(name: string): Promise<string> {
+  const { data } = await admin.rpc('svc_secret', { p_name: name });
+  return (typeof data === 'string' ? data.trim() : '') || (Deno.env.get(name) || '').trim();
+}
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 const cors = {
@@ -87,8 +92,8 @@ async function citSend(p: CitPack) {
     if (p.status === 'sent' || p.status === 'filed') throw new UserError(`The ${p.year} return is already ${p.status}.`);
     throw new UserError('Only the owner or someone who approves adjustments sends a tax return.');
   }
-  const url = (Deno.env.get('FLUX_URL') || '').replace(/\/$/, '');
-  const secret = Deno.env.get('FLUX_SECRET') || '';
+  const url = (await vaultFirst('FLUX_URL')).replace(/\/$/, '');
+  const secret = await vaultFirst('FLUX_SECRET');
   if (!url || !secret) return { ok: false, reason: 'not_configured', error: 'TaxStreem Flux is not connected yet. Download the file and file it on Rev360, or ask TaxStreem to connect Flux.' };
   const file = await citFile(p);
   const week = 7 * 24 * 3600;
@@ -170,6 +175,10 @@ Deno.serve(async (req) => {
     const sb = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: req.headers.get('Authorization') || '' } }, auth: { persistSession: false } });
     const { data: u } = await sb.auth.getUser();
     if (!u?.user) return json({ ok: false, error: 'Sign in first.' }, 401);
+    // The official templates Counta fills, for TaxStreem's admin portal: which version of each, and where it is served from.
+    if (body.action === 'templates') {
+      return json({ ok: true, base: templatesBase(), templates: Object.entries(TEMPLATES).map(([id, t]) => ({ id, ...t, url: `${templatesBase()}/${t.file}` })) });
+    }
     const orgId = String(body.org_id || ''), year = Number(body.year);
     if (!/^[0-9a-f-]{36}$/i.test(orgId)) return json({ ok: false, error: 'Choose the business.' }, 400);
     if (body.action === 'wht_files') {

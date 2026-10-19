@@ -31,13 +31,14 @@ const cors = {
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 const cache = new Map<string, { v: string; at: number }>();
+// Keys set in the admin portal (Supabase Vault) come first; the Edge Function secrets are the fallback.
 async function secret(name: string): Promise<string> {
-  const env = Deno.env.get(name);
-  if (env) return env.trim();
+  // The database's hook secret keeps its old order: the Edge Function secret first.
+  if (name === 'PUSH_HOOK_SECRET' && Deno.env.get(name)) return Deno.env.get(name)!.trim();
   const hit = cache.get(name);
   if (hit && Date.now() - hit.at < 60_000) return hit.v;
   const { data } = await admin.rpc('app_secret', { p_name: name });
-  const v = typeof data === 'string' ? data.trim() : '';
+  const v = (typeof data === 'string' ? data.trim() : '') || (Deno.env.get(name) || '').trim();
   cache.set(name, { v, at: Date.now() });
   return v;
 }
@@ -65,10 +66,11 @@ export async function bookkeep(orgId: string) {
   const run = { items: 0, posted: 0, asked: 0, model: '', error: null as string | null };
   try {
     const cfg = await geminiCfg();
-    if (cfg.g.mode === 'none') {
-      // No AI yet: lines older than an hour go to suspense with a question, so nothing sits unexplained.
+    const { data: on } = await admin.rpc('svc_feature', { p_org: orgId, p_feature: 'ai_reading' });
+    if (cfg.g.mode === 'none' || on === false) {
+      // No AI yet (or TaxStreem paused it): lines older than an hour go to suspense with a question, so nothing sits unexplained.
       run.asked = await svc<number>('svc_suspend_rest', { p_org: orgId });
-      run.error = cfg.g.problem || 'Gemini is not connected (GOOGLE_APPLICATION_CREDENTIALS_JSON is not set)';
+      run.error = on === false ? 'AI reading is paused for this business by TaxStreem.' : cfg.g.problem || 'Gemini is not connected: add the service account key in the admin portal.';
       return { org_id: orgId, ...run };
     }
     for (let round = 0; round < 5; round++) {
