@@ -332,3 +332,20 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
   .adm-nav .nav-item { white-space: nowrap; width: auto; flex: none; }
   .adm-row { grid-template-columns: minmax(0, 1fr) !important; gap: 6px; }
 }
+/* VAT explanations behind a small icon */
+.vat-info { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; margin: -3px 0 -3px 2px; border: 0; border-radius: 50%; background: transparent; color: var(--placeholder); cursor: pointer; vertical-align: middle; flex: none; }
+.vat-info:hover, .vat-info[aria-expanded="true"] { color: var(--primary); background: var(--primary-soft); }
+.vat-note { padding: 8px 10px 10px; font-size: 13px; line-height: 1.55; color: var(--ink-3); white-space: normal; text-align: left; font-weight: 400; }
+.vat-note b { display: block; color: var(--ink); font-size: 14px; margin-bottom: 4px; }
+.vat-note p { margin: 6px 0 0; }
+.vat-law { display: flex; gap: 6px; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--ink-3); }
+/* Period picker */
+.period-btn { max-width: 100%; min-width: 0; gap: 6px; }
+.period-btn .ellipsis { min-width: 0; }
+.period-pop { padding: 4px; }
+.period-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+.period-preset { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; font-size: 14px; color: var(--ink-3); cursor: pointer; text-align: left; }
+.period-preset:hover { background: var(--canvas); }
+.period-preset.on { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.period-custom { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); margin-top: 6px; padding: 10px 6px 4px; }
+.period-custom .input { min-width: 0; flex: 1 1 0; }

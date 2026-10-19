@@ -2,6 +2,7 @@
 // month, twelve-month trends, budget against actual, a 13-week cash forecast and sales analysis. One click exports the
 // board pack.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useScreenPeriod } from '../../lib/period';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
@@ -21,7 +22,7 @@ export default function Cfo() {
   const qc = useQueryClient();
   const toast = useToast();
   const [tab, setTab] = useState<Tab>('ratios');
-  const [period, setPeriod] = useState<Period>(() => ({ from: yearStart(today(), inv?.org.fiscal_year_start || 1), to: today() }));
+  const [period, setPeriod] = useScreenPeriod(orgId, 'cfo', 'ytd', inv?.org.fiscal_year_start || 1);
   const [by, setBy] = useState('item');
   const [comment, setComment] = useState<any>(null);
   const [writing, setWriting] = useState(false);

@@ -1,13 +1,16 @@
 // VAT month by month: output VAT on sales, input VAT on bills and stock (and VAT self-charged on services from abroad), VAT
 // customers withheld, what is payable, and the input VAT credit carried forward. A month is filed once it has ended (freezing
 // its figures and clearing the VAT accounts), then paid. Whether the business must charge VAT at all is decided here too.
-import { useEffect, useState } from 'react';
-import { useSession, useToast } from '../../../state/session';
+import { useEffect, useState, type ReactNode } from 'react';
+import { useInventory, useSession, useToast } from '../../../state/session';
 import { rpc } from '../../../lib/supabase';
 import { money, moneyAccounts, today } from '../../../lib/api';
 import { N2, fmtDay } from '../../../lib/format';
 import { addMonths, monthName, monthShort, useVatPosition } from '../../../lib/tax';
 import { Icon } from '../../../components/Icon';
+import { VatInfo } from '../../../components/VatInfo';
+import { PeriodPicker } from '../../../components/PeriodPicker';
+import { useScreenPeriod } from '../../../lib/period';
 import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Stat } from '../../../components/ui';
 import { ExportMenu, useMeta } from '../../../components/Books';
 import { useTaxRefresh } from './CitTab';
@@ -23,8 +26,10 @@ export default function VatTab() {
   const toast = useToast();
   const refresh = useTaxRefresh();
   const meta = useMeta();
-  const [to, setTo] = useState(today().slice(0, 7));
-  const from = addMonths(to + '-01', -11).slice(0, 7);
+  const { data: inv } = useInventory();
+  const [period, setPeriod] = useScreenPeriod(orgId, 'vat-months', 'l12', inv?.org.fiscal_year_start || 1);
+  const from = period.from.slice(0, 7);
+  const to = period.to.slice(0, 7);
   const q = useVatPosition(from + '-01', to + '-01');
   const [open, setOpen] = useState<any>(null);
   const [modal, setModal] = useState<null | { kind: 'file' | 'pay' | 'reopen' | 'charge'; m?: any; charge?: boolean }>(null);
@@ -48,7 +53,7 @@ export default function VatTab() {
           <div className="row wrap" style={{ justifyContent: 'space-between' }}>
             <Pills value={view} onChange={setView} options={[{ id: 'months', label: 'By month' }, { id: 'customs', label: 'Customs entries' }]} />
             {view === 'months' && <div className="row wrap" style={{ gap: 8 }}>
-            <div className="row"><span className="muted" style={{ fontSize: 14 }}>Twelve months to</span><input className="input input-sm" type="month" value={to} max={today().slice(0, 7)} onChange={(e) => e.target.value && setTo(e.target.value)} style={{ width: 160 }} /></div>
+            <PeriodPicker value={period} onChange={setPeriod} presets={['qtd', 'lq', 'ytd', 'ly', 'l12', 'all']} label="Months shown" align="end" />
             <ExportMenu name={`VAT ${from} to ${to}`} disabled={!months.length} sheets={() => [{ meta: meta('VAT position', `${monthName(from)} to ${monthName(to)}`),
               cols: [{ key: 'month', label: 'Month' }, { key: 'output', label: 'Output VAT', type: 'money', total: true }, { key: 'input', label: 'Input VAT', type: 'money', total: true },
                 { key: 'wvat_credit', label: 'Withheld by customers', type: 'money', total: true }, { key: 'credit_used', label: 'Credit used', type: 'money', total: true },
@@ -131,7 +136,7 @@ function VatStatus({ st, onChange }: { st: any; onChange: (charge: boolean) => v
   );
 }
 
-function Row({ label, value, strong, muted }: { label: string; value: unknown; strong?: boolean; muted?: boolean }) {
+function Row({ label, value, strong, muted }: { label: ReactNode; value: unknown; strong?: boolean; muted?: boolean }) {
   return <div className="row" style={{ justifyContent: 'space-between', fontWeight: strong ? 700 : undefined, color: muted ? '#6B7280' : undefined }}><span>{label}</span><span className="num">{N2(Number(value || 0))}</span></div>;
 }
 
@@ -140,11 +145,13 @@ function MonthModal({ m, canFile, onClose, onAct, onNrs }: { m: any; canFile: bo
     <Modal onClose={onClose} width={520}>
       <ModalHead title={`VAT for ${monthName(m.period)}`} sub={`Due ${fmtDay(m.due_date)}${m.filed_at ? ` · filed ${fmtDay(String(m.filed_at).slice(0, 10))}` : ''}${m.journal_ref ? ` · ${m.journal_ref}` : ''}`} onClose={onClose} />
       <div className="modal-body stack" style={{ gap: 6, fontSize: 14 }}>
-        <Row label="Standard-rated sales" value={m.standard_sales} muted /><Row label="Zero-rated sales" value={m.zero_rated_sales} muted /><Row label="Exempt sales" value={m.exempt_sales} muted />
+        <Row label={<>Standard-rated sales<VatInfo side="sale" treatment="standard" subject="These sales" day={`${m.period}-01`} /></>} value={m.standard_sales} muted />
+        <Row label={<>Zero-rated sales<VatInfo side="sale" treatment="zero" subject="These sales" /></>} value={m.zero_rated_sales} muted />
+        <Row label={<>Exempt sales<VatInfo side="sale" treatment="exempt" subject="These sales" /></>} value={m.exempt_sales} muted />
         <div style={{ height: 6 }} />
         <Row label="Output VAT" value={m.output} />
         <Row label="Less VAT withheld by customers" value={m.wvat_credit} />
-        <Row label={`Less input VAT${Number(m.reverse_charge) ? ` (with ${N2(m.reverse_charge)} self-charged on services from abroad)` : ''}`} value={m.input} />
+        <Row label={<>{`Less input VAT${Number(m.reverse_charge) ? ` (with ${N2(m.reverse_charge)} self-charged on services from abroad)` : ''}`}<VatInfo side="purchase" treatment="standard" day={`${m.period}-01`} /></>} value={m.input} />
         {Number(m.import_vat) > 0 && <Row label="of which VAT paid at customs" value={m.import_vat} muted />}
         {Number(m.stock_writeoff_vat) > 0 && <Row label="after taking back VAT on stock written off" value={m.stock_writeoff_vat} muted />}
         <Row label="Net for the month" value={m.net} strong />

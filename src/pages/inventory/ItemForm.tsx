@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { edge } from '../../lib/api';
 import { Drawer, Field, XButton, Alert, Thumb } from '../../components/ui';
 import { Icon } from '../../components/Icon';
+import { VatInfo } from '../../components/VatInfo';
 import { rpc, supabase } from '../../lib/supabase';
 import { useInventory, useSession, useToast } from '../../state/session';
 import { useAction } from '../../lib/queries';
@@ -185,7 +186,7 @@ export default function ItemForm({ item, draft, note, onClose, onSaved }: {
             <input className="input" list="item-brands" value={f.brand} onChange={(e) => set('brand', e.target.value)} placeholder="Optional" />
             <datalist id="item-brands">{brands.map((b) => <option key={b} value={b} />)}</datalist>
           </Field>
-          <Field label="VAT treatment" hint={f.vat_treatment === 'auto' ? 'Numens reads the item and sets its VAT under the NTA 2025. You can change it later.' : undefined}>
+          <Field label={<>VAT treatment{f.vat_treatment !== 'auto' && <VatInfo side="sale" treatment={f.vat_treatment} name={f.name} item={editing && item?.vat_treatment === f.vat_treatment ? item : null} vatRegistered={inv?.org.vat_registered} />}</>} hint={f.vat_treatment === 'auto' ? 'Numens reads the item and sets its VAT under the NTA 2025. You can change it later.' : undefined}>
             <select className="input" value={f.vat_treatment} onChange={(e) => set('vat_treatment', e.target.value)}>
               {!editing && <option value="auto">Let Numens decide</option>}
               <option value="standard">Standard · {vatPct()}</option><option value="zero">Zero-rated (basic food, medicine, farm inputs)</option><option value="exempt">Exempt (baby products, petroleum products…)</option>

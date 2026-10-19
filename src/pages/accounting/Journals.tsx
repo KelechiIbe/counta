@@ -7,6 +7,8 @@ import { must, rpc, supabase } from '../../lib/supabase';
 import { money, today, useChart, useCustomers, useBills } from '../../lib/api';
 import { N2, fmtDay } from '../../lib/format';
 import { Icon } from '../../components/Icon';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { useScreenPeriod } from '../../lib/period';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, SkeletonRows } from '../../components/ui';
 import JournalDrawer from '../../components/JournalDrawer';
 
@@ -18,8 +20,9 @@ export default function Journals() {
   const toast = useToast();
   const qc = useQueryClient();
   const [q, setQ] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  const [period, setPeriod] = useScreenPeriod(orgId, 'journals', 'all', inv?.org.fiscal_year_start || 1);
+  const from = period.preset === 'all' ? '' : period.from;
+  const to = period.preset === 'all' ? '' : period.to;
   const [origin, setOrigin] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -45,8 +48,7 @@ export default function Journals() {
       <div className="row wrap" style={{ justifyContent: 'space-between' }}>
         <div className="row wrap">
           <input className="input input-sm" placeholder="Journal or description" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 240 }} />
-          <input className="input input-sm" type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={{ width: 150 }} aria-label="From" />
-          <input className="input input-sm" type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ width: 150 }} aria-label="To" />
+          <PeriodPicker value={period} onChange={setPeriod} label="Journal dates" />
           <select className="input input-sm" style={{ width: 'auto' }} value={origin} onChange={(e) => setOrigin(e.target.value)} aria-label="Posted by"><option value="">Posted by anyone</option><option value="system">Counta</option><option value="ai">Atlas</option><option value="manual">By hand</option></select>
         </div>
         {can(inv, 'keep_books') && <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><Icon name="plus" size={14} color="#fff" />Journal</button>}

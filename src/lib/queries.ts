@@ -28,13 +28,21 @@ export function useItemMoves(itemId: string | null) {
     queryFn: () => rpc<LedgerRow[]>('get_ledger', { p_org: orgId, p_limit: 40, p_item: itemId, p_grouped: false }),
   });
 }
-export function useReceipts(enabled = true) {
+// A period (Lagos days) narrows a list to records made in it; without one the latest come back.
+const dayStart = (d: string) => `${d}T00:00:00+01:00`;
+const dayEnd = (d: string) => `${d}T23:59:59.999+01:00`;
+type Range = { from: string; to: string } | null | undefined;
+
+export function useReceipts(enabled = true, range?: Range) {
   const { orgId } = useSession();
   return useQuery({
-    queryKey: ['receipts', orgId],
+    queryKey: ['receipts', orgId, range?.from || null, range?.to || null],
     enabled: !!orgId && enabled,
-    queryFn: () => must<Receipt[]>(supabase.from('receipts').select('*, receipt_lines(id, confidence, confirmed)').eq('org_id', orgId!)
-      .neq('status', 'discarded').order('created_at', { ascending: false }).limit(60)),
+    queryFn: () => {
+      let x = supabase.from('receipts').select('*, receipt_lines(id, confidence, confirmed)').eq('org_id', orgId!).neq('status', 'discarded');
+      if (range) x = x.gte('created_at', dayStart(range.from)).lte('created_at', dayEnd(range.to));
+      return must<Receipt[]>(x.order('created_at', { ascending: false }).limit(range ? 500 : 60));
+    },
   });
 }
 export function useReceipt(id: string | null) {
@@ -44,12 +52,16 @@ export function useReceipt(id: string | null) {
     queryFn: () => must<Receipt>(supabase.from('receipts').select('*, receipt_lines(*)').eq('id', id!).single()),
   });
 }
-export function useCounts() {
+export function useCounts(range?: Range) {
   const { orgId } = useSession();
   return useQuery({
-    queryKey: ['counts', orgId],
+    queryKey: ['counts', orgId, range?.from || null, range?.to || null],
     enabled: !!orgId,
-    queryFn: () => must<CountSession[]>(supabase.from('count_sessions').select('*, count_lines(item_id, counted, expected, reason, note)').eq('org_id', orgId!).order('created_at', { ascending: false }).limit(60)),
+    queryFn: () => {
+      let x = supabase.from('count_sessions').select('*, count_lines(item_id, counted, expected, reason, note)').eq('org_id', orgId!);
+      if (range) x = x.gte('created_at', dayStart(range.from)).lte('created_at', dayEnd(range.to));
+      return must<CountSession[]>(x.order('created_at', { ascending: false }).limit(range ? 500 : 60));
+    },
   });
 }
 export function useCountLines(sessionId: string | null, enabled: boolean) {

@@ -12,6 +12,9 @@ import {
   toDraft, totals, unitLabel, unitOptions, uploadDocument, vatTreatment, type DraftLine, type Source,
 } from '../../lib/receive';
 import { Icon } from '../../components/Icon';
+import { VatInfo } from '../../components/VatInfo';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { useScreenPeriod } from '../../lib/period';
 import { Alert, Chip, Empty, Label, Modal, SkeletonRows, Spinner, XButton } from '../../components/ui';
 import JournalDrawer from '../../components/JournalDrawer';
 import { acct, accountName, useAccounts, useItemAccounts, usePostingMap } from '../../lib/accounts';
@@ -37,7 +40,9 @@ export default function Receive() {
   const nav = useNavigate();
   const st = (location.state || {}) as { open?: string; manualItem?: string; po?: string };
   const [params, setParams] = useSearchParams();
-  const receipts = useReceipts();
+  const { orgId } = useSession();
+  const [period, setPeriod] = useScreenPeriod(orgId, 'receipts', 'all', inv?.org.fiscal_year_start || 1);
+  const receipts = useReceipts(true, period.preset === 'all' ? null : period);
   const [flow, setFlow] = useState<{ mode: Source; receiptId?: string; po?: string; itemId?: string } | null>(null);
   const [journal, setJournal] = useState<string | null>(null);
 
@@ -67,7 +72,7 @@ export default function Receive() {
           body="Type the lines yourself. Same journal preview before anything posts." />
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
-        <div className="card-hd"><Label>Recent receipts</Label><span className="faint" style={{ fontSize: 12 }}>Needs review rows reopen the flow · posted rows open their journal</span></div>
+        <div className="card-hd"><Label>{period.preset === 'all' ? 'Recent receipts' : 'Receipts'}</Label><span className="row wrap" style={{ gap: 8 }}><span className="faint hide-sm" style={{ fontSize: 12 }}>Needs review rows reopen the flow · posted rows open their journal</span><PeriodPicker value={period} onChange={setPeriod} align="end" label="Receipt dates" /></span></div>
         <div className="tbl">
           <div className="tr head th rsp" style={{ gridTemplateColumns: COLS, minWidth: 960 }}>
             <span>Ref</span><span>Date</span><span>Vendor</span><span>Source</span><span>Lines</span><span className="right">Total</span><span className="right">Input VAT</span><span>Status</span>
@@ -364,7 +369,7 @@ export function ReceiveFlow({ mode, receiptId, po, itemId, onClose, onAnother, o
               </div>
               <div className="muted" style={{ marginTop: 10, fontSize: 12, lineHeight: 1.45 }}>
                 {header.vendor_vat_registered
-                  ? `Input VAT flows into this month's VAT position. ${t.vatBase < t.net ? 'Zero-rated and exempt lines are excluded from the ${vatPct(receipt?.invoice_date)} by their item master treatment.' : 'Every line on this invoice is standard-rated.'}`
+                  ? `Input VAT flows into this month's VAT position. ${t.vatBase < t.net ? `Zero-rated and exempt lines are excluded from the ${vatPct(receipt?.invoice_date)} by their item master treatment.` : 'Every line on this invoice is standard-rated.'}`
                   : 'Vendor is not VAT-registered, so no input VAT is claimable on this receipt.'}
                 {receipt.document_path ? ' The source image stays attached to the journal as audit evidence.' : ''}
                 {` Accounts follow the TaxStreem chart. Purchases and the stock movement both sit in cost of sales, so the profit and loss shows what you bought less what is still on the shelf.`}
@@ -665,7 +670,7 @@ function NewItemFields({ nw, canPrice, cost, onChange }: { nw: NonNullable<Draft
         <div><label className="field-label" style={{ fontSize: 12 }}>Contains</label><input className={'input input-sm' + (packErr ? ' err' : '')} type="number" min={1} step={1} value={nw.pack_size ?? 1} onChange={(e) => onChange({ pack_size: e.target.value as any })} /></div>
         <div><label className="field-label" style={{ fontSize: 12 }}>Sell by the</label>
           <select className="input input-sm" value={nw.selling_unit || 'piece'} onChange={(e) => onChange({ selling_unit: e.target.value })}>{['piece', 'pack', 'sachet', 'tin', 'bottle', 'derica', 'mudu', 'paint bucket', 'kg', 'roll'].map((u) => <option key={u}>{u}</option>)}</select></div>
-        <div><label className="field-label" style={{ fontSize: 12 }}>VAT</label>
+        <div><label className="field-label" style={{ fontSize: 12 }}>VAT on sales<VatInfo side="sale" treatment={nw.vat_treatment || 'standard'} name={nw.name} size={12} /></label>
           <select className="input input-sm" value={nw.vat_treatment || 'standard'} onChange={(e) => onChange({ vat_treatment: e.target.value as any })}><option value="standard">Standard {vatPct()}</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select></div>
         {canPrice ? (
           <div><label className="field-label" style={{ fontSize: 12 }}>Selling price / {nw.selling_unit || 'piece'}</label>

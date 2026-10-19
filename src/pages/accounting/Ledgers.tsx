@@ -2,6 +2,7 @@
 // vendor sub-ledgers and ageing, VAT return and WHT schedule. Any of them, or all at once, to Excel, PDF or CSV.
 import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useScreenPeriod } from '../../lib/period';
 import { useInventory, useSession } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { monthStart, today, useChart, yearStart, type Report } from '../../lib/api';
@@ -17,7 +18,7 @@ export default function Ledgers() {
   const qc = useQueryClient();
   const chart = useChart();
   const [id, setId] = useState('trial_balance');
-  const [period, setPeriod] = useState<Period>(() => ({ from: yearStart(today(), inv?.org.fiscal_year_start || 1), to: today() }));
+  const [period, setPeriod] = useScreenPeriod(orgId, 'ledgers', 'ytd', inv?.org.fiscal_year_start || 1);
   const [accounts, setAccounts] = useState<string[]>([]);
   const [journal, setJournal] = useState<string | null>(null);
   const meta = useMeta();

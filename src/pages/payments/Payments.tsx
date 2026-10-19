@@ -10,6 +10,8 @@ import { METHOD_LABEL, edge, edgeOk, money, useChart, useCustomers, usePayments,
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { useScreenPeriod } from '../../lib/period';
 import { CustomerPicker, PayWait, StatusChip } from '../sell/common';
 import { useDraft, type Drafts } from '../../lib/drafts';
 import type { Customer, PayRequest } from '../../lib/api';
@@ -21,7 +23,8 @@ export default function Payments() {
   const { orgId } = useSession();
   const toast = useToast();
   const qc = useQueryClient();
-  const pay = usePayments();
+  const [period, setPeriod] = useScreenPeriod(orgId, 'payments', 'all', inv?.org.fiscal_year_start || 1);
+  const pay = usePayments(true, period.preset === 'all' ? null : period);
   const feats = useFeatures();
   type Tab = 'collections' | 'payouts' | 'bulk' | 'reconciliations' | 'settings';
   const [params, setParams] = useSearchParams();
@@ -106,6 +109,7 @@ export default function Payments() {
           { id: 'reconciliations' as const, label: 'Reconciliations' }] : []),
         ...(d?.can?.settings ? [{ id: 'settings' as const, label: 'Settings' }] : []),
       ]} />
+      {['collections', 'payouts', 'bulk'].includes(tab) && <div><PeriodPicker value={period} onChange={setPeriod} label="Payments made" /></div>}
       {tab === 'collections' && can(inv, 'record_sales') && inv.org.payments_open !== false && w?.status === 'active' && (
         <div><button className="btn btn-secondary btn-sm" onClick={() => setLink('new')}><Icon name="link" size={14} />Payment link</button></div>
       )}

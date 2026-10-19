@@ -3,11 +3,13 @@ import { useSearchParams } from 'react-router-dom';
 import { can, useInventory, useSession } from '../../state/session';
 import { useAction } from '../../lib/queries';
 import { rpc } from '../../lib/supabase';
-import { N, fmtDay, num, uuid, when } from '../../lib/format';
+import { N, fmtDay, num, uuid, when, toDayKey } from '../../lib/format';
 import { pluralUnit, puAbbr, qtyLabel } from '../../lib/domain';
 import { jobNoun, recipeNeeds, recipeUnitCost, round3, STATUS_LABEL, useJobs, type Job, type Recipe } from '../../lib/jobs';
 import type { Item } from '../../lib/types';
 import { Icon } from '../../components/Icon';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { useScreenPeriod } from '../../lib/period';
 import { ItemPicker } from '../../components/ItemPicker';
 import { Alert, Annot, Chip, Drawer, Field, Label, Modal, ModalHead, Seg, SkeletonRows, XButton } from '../../components/ui';
 
@@ -16,9 +18,11 @@ type Tab = 'open' | 'closed' | 'recipes';
 
 export default function Production() {
   const { data: inv } = useInventory();
-  const jobs = useJobs();
+  const { orgId: periodOrg } = useSession();
+  const [period, setPeriod] = useScreenPeriod(periodOrg, 'jobs-closed', 'all', inv?.org.fiscal_year_start || 1);
   const [params, setParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>('open');
+  const jobs = useJobs(true, tab === 'closed' && period.preset !== 'all' ? period.from : null);
   const [active, setActive] = useState<string | null>(params.get('open'));
   const [creating, setCreating] = useState<Job['kind'] | null>(null);
   const [recipeFor, setRecipeFor] = useState<string | null | undefined>(undefined);
@@ -26,7 +30,8 @@ export default function Production() {
   if (!inv) return null;
   const canIssue = can(inv, 'issue_stock');
   const costs = inv.can_see_costs;
-  const list = (jobs.data?.jobs || []).filter((j) => (tab === 'open' ? j.status === 'open' : j.status !== 'open'));
+  const closedIn = (j: Job) => period.preset === 'all' || (!!j.closed_at && toDayKey(j.closed_at) >= period.from && toDayKey(j.closed_at) <= period.to);
+  const list = (jobs.data?.jobs || []).filter((j) => (tab === 'open' ? j.status === 'open' : j.status !== 'open' && closedIn(j)));
   const job = active ? jobs.data?.jobs.find((j) => j.id === active) || null : null;
   const locName = (id: string) => inv.locations.find((l) => l.id === id)?.name || '—';
   const itemName = (id: string | null) => inv.items.find((i) => i.id === id)?.name || '—';
@@ -45,7 +50,8 @@ export default function Production() {
       </div>
       <Seg value={tab} onChange={setTab} options={[
         { id: 'open', label: `Open · ${(jobs.data?.jobs || []).filter((j) => j.status === 'open').length}` },
-        { id: 'closed', label: 'Closed lately' }, { id: 'recipes', label: `Recipes · ${jobs.data?.recipes.length || 0}` }]} />
+        { id: 'closed', label: period.preset === 'all' ? 'Closed lately' : 'Closed' }, { id: 'recipes', label: `Recipes · ${jobs.data?.recipes.length || 0}` }]} />
+      {tab === 'closed' && <div><PeriodPicker value={period} onChange={setPeriod} label="Closed between" /></div>}
 
       {tab !== 'recipes' ? (
         <div className="card" style={{ overflow: 'hidden' }}>

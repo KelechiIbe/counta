@@ -8,6 +8,7 @@ import { N2, fmtDay, when } from '../../lib/format';
 import { qrSvg } from '../../lib/labels';
 import { bluetoothSupported, connectPrinter, printBluetooth, printBrowser, printerName } from '../../lib/printer';
 import { Icon } from '../../components/Icon';
+import { VatInfo } from '../../components/VatInfo';
 import { Alert, Field, Modal, ModalHead, Spinner } from '../../components/ui';
 import { taxIdError } from '../../lib/taxid';
 import { COUNTRIES, isExport } from '../../lib/countries';
@@ -290,15 +291,20 @@ export function ReceiptModal({ sale, change, onClose, onNew }: { sale: Sale; cha
 
 export function SaleLines({ sale, compact }: { sale: Sale; compact?: boolean }) {
   const { data: inv } = useInventory();
+  // The item's own reasoning shows only while the item still has the treatment the line was sold with.
+  const lineVat = (l: NonNullable<Sale['lines']>[number]) => {
+    const it = inv?.items.find((x) => x.id === l.item_id && x.vat_treatment === (l.item_vat_treatment || l.vat_treatment));
+    return <VatInfo side="sale" treatment={l.vat_treatment} name={l.description} day={sale.issue_date} item={it || null} vatRegistered={inv?.org.vat_registered} exportSale={!!sale.export} />;
+  };
   return (
     <div className="card" style={{ overflow: 'hidden', borderRadius: 12 }}>
       {(sale.lines || []).map((l) => (
-        <div key={l.id} className="tr" style={{ gridTemplateColumns: compact ? '1fr auto' : 'minmax(160px,2fr) 70px 110px 90px 110px', padding: '9px 14px' }}>
-          <span style={{ minWidth: 0 }}>{l.description}{compact && <span className="faint" style={{ display: 'block', fontSize: 12 }}>{Number(l.qty)} {l.unit_label} × {N2(l.unit_price)}{Number(l.discount) ? ` − ${N2(l.discount)}` : ''}{` · VAT ${vatStatusOf(l.vat_treatment)}`}{l.vat_treatment !== 'standard' ? ` ${l.vat_treatment === 'zero' ? 'zero-rated' : 'exempt'}` : ''}{Number(l.returned_qty) ? ` · ${Number(l.returned_qty)} returned` : ''}</span>}</span>
+        <div key={l.id} className="tr" style={{ gridTemplateColumns: compact ? '1fr auto' : 'minmax(160px,2fr) 70px 110px 128px 110px', padding: '9px 14px' }}>
+          <span style={{ minWidth: 0 }}>{l.description}{compact && <span className="faint" style={{ display: 'block', fontSize: 12 }}>{Number(l.qty)} {l.unit_label} × {N2(l.unit_price)}{Number(l.discount) ? ` − ${N2(l.discount)}` : ''}{` · VAT ${vatStatusOf(l.vat_treatment)}`}{l.vat_treatment !== 'standard' ? ` ${l.vat_treatment === 'zero' ? 'zero-rated' : 'exempt'}` : ''}{Number(l.returned_qty) ? ` · ${Number(l.returned_qty)} returned` : ''}{lineVat(l)}</span>}</span>
           {!compact && <span className="right num">{Number(l.qty)}</span>}
           {!compact && <span className="right num">{N2(l.unit_price)}</span>}
           {!compact && <span className="right faint" title={`VAT status ${vatStatusOf(l.vat_treatment)}: ${VAT_STATUS[vatStatusOf(l.vat_treatment)].label}${sale.export && l.item_vat_treatment && l.item_vat_treatment !== 'zero' ? ` (export; normally ${l.item_vat_treatment === 'exempt' ? 'exempt' : 'VATable'})` : ''}`}>
-            {l.vat_treatment === 'standard' ? N2(l.vat) : l.vat_treatment === 'zero' ? 'Zero-rated' : 'Exempt'}<span className={'chip ' + VAT_STATUS[vatStatusOf(l.vat_treatment)].tone} style={{ marginLeft: 6, fontSize: 10, padding: '1px 6px' }}>{vatStatusOf(l.vat_treatment)}</span>
+            {l.vat_treatment === 'standard' ? N2(l.vat) : l.vat_treatment === 'zero' ? 'Zero-rated' : 'Exempt'}<span className={'chip ' + VAT_STATUS[vatStatusOf(l.vat_treatment)].tone} style={{ marginLeft: 6, fontSize: 10, padding: '1px 6px' }}>{vatStatusOf(l.vat_treatment)}</span>{lineVat(l)}
           </span>}
           <span className="right num" style={{ fontWeight: 500 }}>{N2(l.gross)}</span>
         </div>

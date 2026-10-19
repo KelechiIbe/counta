@@ -6,6 +6,7 @@ import { rpc } from '../lib/supabase';
 import { edge, money, useMessages } from '../lib/api';
 import { when } from '../lib/format';
 import { Icon } from '../components/Icon';
+import { OrgTinPanel, useTinCheck } from './purchases/TinCheck';
 import { Alert, Field, Label } from '../components/ui';
 import { TAX_ID_HINT, isOldTin, taxIdError } from '../lib/taxid';
 
@@ -39,6 +40,7 @@ export function BooksSection() {
       capitalisation_threshold: String(o.capitalisation_threshold ?? ''), prices_include_vat: !!o.prices_include_vat, invoice_terms_days: String(o.invoice_terms_days ?? 30),
       invoice_note: o.invoice_note || '', books_start: o.books_start || '', wht_small_company: !!o.wht_small_company });
   }, [inv?.org]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tinCheck = useTinCheck();
   if (!inv) return null;
   const owner = can(inv, 'manage_settings');
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
@@ -54,6 +56,8 @@ export function BooksSection() {
         invoice_terms_days: Number(f.invoice_terms_days) || 0, invoice_note: f.invoice_note, books_start: f.books_start || null } });
       await rpc('update_books_settings', { p_org: orgId, p_patch: { reporting_framework: f.reporting_framework, principal_activity: f.principal_activity, wht_small_company: f.wht_small_company } });
       toast('Saved'); await qc.invalidateQueries({ queryKey: ['inv'] });
+      // A Tax ID typed or changed is checked with the NRS straight away.
+      if (f.tin && f.tin.replace(/[\s\-./]/g, '') !== String(inv!.org.tin || '').replace(/[\s\-./]/g, '')) await tinCheck.check(null);
     } catch (e) { toast((e as Error).message, 'err'); }
   }
   return (
@@ -67,6 +71,7 @@ export function BooksSection() {
             {MONTHS.map((m, i) => <option key={m} value={i + 1}>{endLabel(i + 1)}</option>)}
           </select></Field>
       </div>
+      <OrgTinPanel org={inv.org as any} canEdit={owner} />
       <Field label="Registered address" hint="Printed on invoices and in note 1 to the statements."><input className="input" disabled={!owner} value={f.address || ''} onChange={(e) => set('address', e.target.value)} /></Field>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
         <Field label="Statements prepared under"><select className="input" disabled={!owner} value={f.reporting_framework} onChange={(e) => set('reporting_framework', e.target.value)}><option value="ifrs">IFRS Accounting Standards</option><option value="ifrs_sme">IFRS for SMEs</option></select></Field>

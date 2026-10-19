@@ -8,6 +8,8 @@ import { qtyLabel } from '../../lib/domain';
 import { REASONS, type CountSession } from '../../lib/types';
 import { acct, usePostingMap } from '../../lib/accounts';
 import { Icon } from '../../components/Icon';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { useScreenPeriod } from '../../lib/period';
 import { Alert, Annot, Chip, Drawer, Field, Label, Modal, ModalHead, SkeletonRows, XButton } from '../../components/ui';
 
 const STATUS: Record<CountSession['status'], string> = { open: 'In progress', awaiting_reasons: 'Awaiting reasons', awaiting_approval: 'Awaiting approval', approved: 'Approved' };
@@ -15,7 +17,9 @@ const COLS = '90px 110px minmax(200px,1.4fr) 160px 120px 70px 90px 150px';
 
 export default function Counts() {
   const { data: inv } = useInventory();
-  const counts = useCounts();
+  const { orgId } = useSession();
+  const [period, setPeriod] = useScreenPeriod(orgId, 'counts', 'all', inv?.org.fiscal_year_start || 1);
+  const counts = useCounts(period.preset === 'all' ? null : period);
   const location = useLocation();
   const nav = useNavigate();
   const st = (location.state || {}) as { open?: string; newCount?: { location_id?: string; area?: string } };
@@ -41,7 +45,7 @@ export default function Counts() {
           : <Annot>Counts are scheduled by the owner</Annot>}
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
-        <div className="card-hd"><Label>Count sessions</Label></div>
+        <div className="card-hd"><Label>Count sessions</Label><PeriodPicker value={period} onChange={setPeriod} align="end" label="Count dates" /></div>
         <div className="tbl">
           <div className="tr head th rsp" style={{ gridTemplateColumns: COLS, minWidth: 940 }}>
             <span>Session</span><span>Location</span><span>Area</span><span>Assigned to</span><span>Date</span><span>Items</span><span>Variances</span><span>Status</span>

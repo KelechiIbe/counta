@@ -112,10 +112,19 @@ const S = {
 };
 
 // ---------------------------------------------------------------- invoices
+// A Tax ID as printed ("2622431609295", "TIN: 20000071-0001", "Tax ID 2622 4316 09295") reduced to its digits; anything
+// that is not 8 to 13 digits is dropped.
+export function invoiceTin(v: unknown): string | null {
+  const m = String(v ?? '').match(/\d[\d\s\-./]{6,24}\d/);
+  const d = m ? m[0].replace(/[\s\-./]/g, '') : '';
+  return /^[0-9]{8,13}$/.test(d) ? d : null;
+}
+
 const INVOICE_SCHEMA = {
   type: 'OBJECT',
   properties: {
-    vendor_id: S.nstr, vendor_name: S.nstr, invoice_no: S.nstr, invoice_date: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' },
+    vendor_id: S.nstr, vendor_name: S.nstr, vendor_tin: { type: 'STRING', nullable: true, description: 'The seller\'s Tax ID or TIN exactly as printed' },
+    invoice_no: S.nstr, invoice_date: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' },
     vat_charged: S.bool, prices_include_vat: S.bool, currency: S.nstr, invoice_total: S.nnum,
     other_charges: { type: 'ARRAY', items: { type: 'OBJECT', properties: { label: S.str, amount: S.num }, required: ['label', 'amount'] } },
     lines: {
@@ -180,6 +189,7 @@ Rules:
 - confidence (0-100) is how sure you are of the WHOLE line: item, qty, unit and cost. Use below 85 when handwriting is ambiguous, digits could be read two ways, the unit is unclear, or qty x unit_cost does not match the printed total. When unsure, give the most likely reading and put the other plausible one in alt_reading with a short human label like "16 packs" or "1 bag (20 packs)".
 - bbox: the line's box on the page as [ymin, xmin, ymax, xmax] scaled 0-1000 (images only; null for PDFs).
 - batch_no and expiry_date (YYYY-MM-DD) only when printed on the line.
+- vendor_tin: the seller's Tax ID (13 digits) or old TIN exactly as printed on the document (labels such as "TIN", "Tax ID", "FIRS TIN", "NRS TIN"); null when the document shows none. Never the buyer's.
 - vendor: set vendor_id if the seller matches a known vendor, else vendor_name as printed. vat_charged = true when the invoice charges VAT or shows the seller's VAT registration, Tax ID or old TIN with a VAT line. prices_include_vat = true only when unit prices clearly include VAT.
 - Never invent lines or numbers that are not on the document.
 ITEM MASTER: ${JSON.stringify(items)}
@@ -232,6 +242,8 @@ KNOWN VENDORS: ${JSON.stringify(vendors)}`;
   await sb.from('receipts').update({
     status: 'needs_review', ai_model: model, ai_error: null,
     vendor_id: vendor?.id ?? r.vendor_id, vendor_name: vendor?.name ?? out.vendor_name ?? r.vendor_name,
+    // The Tax ID printed on the invoice goes with the bill: it fills an empty supplier record and is flagged when it differs.
+    vendor_tin: invoiceTin(out.vendor_tin) ?? r.vendor_tin ?? null,
     invoice_no: out.invoice_no || r.invoice_no, invoice_date: /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(out.invoice_date || '') ? out.invoice_date : r.invoice_date,
     vendor_vat_registered: Boolean(out.vat_charged || vendor?.vat_registered), prices_include_vat: Boolean(out.prices_include_vat),
   }).eq('id', r.id);

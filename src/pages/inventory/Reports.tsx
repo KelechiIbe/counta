@@ -6,11 +6,13 @@ import { rpc } from '../../lib/supabase';
 import { N, fmtDay } from '../../lib/format';
 import { useAccounts } from '../../lib/accounts';
 import {
-  GROUPS, PACK, PRESETS, REPORTS, clientRows, presetRange, reportById, itemAttrCols,
-  type PresetId, type RCol, type ReportDef,
+  GROUPS, PACK, REPORTS, clientRows, reportById, itemAttrCols,
+  type RCol, type ReportDef,
 } from '../../lib/reports';
 import { downloadBlob, itemsXlsx, packXlsx, reportCsv, reportPdf, reportXlsx, safeName, type ReportMeta } from '../../lib/exporters';
 import { Icon } from '../../components/Icon';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { useScreenPeriod } from '../../lib/period';
 import { Alert, Label, Spinner } from '../../components/ui';
 
 interface RpcResult { rows: Record<string, unknown>[]; extra: Record<string, any>; from: string; to: string; truncated: boolean; can_see_costs: boolean }
@@ -32,9 +34,8 @@ export default function Reports() {
   const { suggestions } = useSuggestions();
   const accounts = useAccounts().data;
   const [id, setId] = useState<string>(() => { try { return localStorage.getItem('counta.report') || 'valuation'; } catch { return 'valuation'; } });
-  const [preset, setPreset] = useState<PresetId>('this_month');
   const today = inv?.today || new Date().toISOString().slice(0, 10);
-  const [range, setRange] = useState(() => presetRange('this_month', today));
+  const [range, setRange] = useScreenPeriod(orgId, 'inventory-reports', 'mtd', inv?.org.fiscal_year_start || 1);
   const [loc, setLoc] = useState('');
   const [item, setItem] = useState('');
   const [acctSel, setAcctSel] = useState<string>('');
@@ -43,7 +44,6 @@ export default function Reports() {
   const costs = !!inv?.can_see_costs;
   const blocked = def.needsCosts && !costs;
   const pick = (r: string) => { setId(r); try { localStorage.setItem('counta.report', r); } catch { /* private mode */ } };
-  const choosePreset = (p: PresetId) => { setPreset(p); if (p !== 'custom') setRange(presetRange(p, today)); };
 
   const params = (d: ReportDef) => ({
     p_org: orgId, p_report: d.id,
@@ -174,21 +174,14 @@ export default function Reports() {
               </div>
             </div>
             <div className="m-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10, marginTop: 14 }}>
-              {def.period !== 'none' && (
-                <label className="stack" style={{ gap: 4, fontSize: 12, color: '#6B7280' }}>Period
-                  <select className="input input-sm" value={preset} onChange={(e) => choosePreset(e.target.value as PresetId)}>
-                    {PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-                  </select>
-                </label>
-              )}
               {def.period === 'range' && (
-                <label className="stack" style={{ gap: 4, fontSize: 12, color: '#6B7280' }}>From
-                  <input className="input input-sm" type="date" value={range.from} max={range.to} onChange={(e) => { setPreset('custom'); setRange({ ...range, from: e.target.value }); }} />
-                </label>
+                <div className="stack" style={{ gap: 4, fontSize: 12, color: '#6B7280' }}>Period
+                  <PeriodPicker value={range} onChange={setRange} presets={['mtd', 'lm', 'qtd', 'lq', 'ytd', 'ly', 'l12']} />
+                </div>
               )}
-              {def.period !== 'none' && (
-                <label className="stack" style={{ gap: 4, fontSize: 12, color: '#6B7280' }}>{def.period === 'asAt' ? 'As at' : 'To'}
-                  <input className="input input-sm" type="date" value={range.to} max={today} onChange={(e) => { setPreset('custom'); setRange({ ...range, to: e.target.value }); }} />
+              {def.period === 'asAt' && (
+                <label className="stack" style={{ gap: 4, fontSize: 12, color: '#6B7280' }}>As at
+                  <input className="input input-sm" type="date" value={range.to} max={today} onChange={(e) => e.target.value && setRange({ from: range.from <= e.target.value ? range.from : e.target.value, to: e.target.value, preset: null })} />
                 </label>
               )}
               {def.location && inv.locations.length > 1 && (

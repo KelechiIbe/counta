@@ -4,6 +4,7 @@
 // Nigeria Tax Act 2025 (or the Companies Income Tax Act for earlier years). The full set exports to Word, PDF and Excel, ready to sign.
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useScreenPeriod } from '../../lib/period';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
@@ -30,7 +31,7 @@ export default function Statements() {
   const { orgId } = useSession();
   const toast = useToast();
   const [tab, setTab] = useState<Tab>('sofp');
-  const [period, setPeriod] = useState<Period>(() => ({ from: yearStart(today(), inv?.org.fiscal_year_start || 1), to: today() }));
+  const [period, setPeriod] = useScreenPeriod(orgId, 'statements', 'ytd', inv?.org.fiscal_year_start || 1);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -199,7 +200,7 @@ function TaxPanel({ section, pack, period, canEdit }: { section: PSection; pack:
             <div><div className="faint" style={{ fontSize: 12 }}>In the accounts</div><div style={{ fontWeight: 700, fontSize: 18, color: Math.abs(charge - inBooks) >= 1 ? '#B45309' : undefined }} className="num">₦{N(inBooks)}</div></div>
           </div>
           <div className="row wrap">
-            {fig.year && <Link className="btn btn-secondary btn-sm" to={`/accounting/tax?year=${fig.year}`}><Icon name="pencil" size={14} />{canEdit ? 'Adjustments, losses and the return' : 'Open the tax return'}</Link>}
+            {fig.year && <Link className="btn btn-secondary btn-sm" to={`/tax/cit?year=${fig.year}`}><Icon name="pencil" size={14} />{canEdit ? 'Adjustments, losses and the return' : 'Open the tax return'}</Link>}
             {canEdit && <button className="btn btn-primary btn-sm" disabled={busy || !fig.company} onClick={post}>{busy ? 'Posting…' : st.posted_ref ? 'Post again' : 'Post the tax charge'}</button>}
           </div>
         </div>
