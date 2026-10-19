@@ -27,7 +27,7 @@
 // when there are several). ELEVENLABS_BASE_URL is for tests.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
-import { FOLLOWUP_DATA, FOLLOWUP_PROMPT, firstMessage, GUIDE_PROMPT, GUIDE_TOOLS, stepLabel, toolConfig, type ToolDef, whatWeKnow } from './guide.ts';
+import { CALM, FOLLOWUP_DATA, FOLLOWUP_PROMPT, firstMessage, GUIDE_PROMPT, GUIDE_TOOLS, stepLabel, toolConfig, type ToolDef, whatWeKnow } from './guide.ts';
 import { ASSISTANT_PROMPT, ASSISTANT_TOOLS, assistantFirst, PERM_WORDS } from './assistant.ts';
 import { wordingNote, wordsFor } from './wording.ts';
 import { cacheable, phrase, shortName } from './phrases.ts';
@@ -212,7 +212,19 @@ async function speak(sb: SupabaseClient, userId: string, body: any) {
 const RULES = `Speak clear, warm Nigerian English and understand Nigerian Pidgin. Keep sentences short; this is a phone call.
 You are an AI assistant. Say so if anyone asks, and never pretend to be a person.
 Never ask for or discuss bank details, card numbers, passwords or one-time codes. If payment comes up, say the owner will follow up.
-If the person is busy or asks you to call back, ask for a good time, thank them and end the call.`;
+If the person is busy or asks you to call back, ask for a good time, thank them and end the call.
+${CALM}`;
+
+// How Martina's voice carries. Calm is steady with no expressive audio tags; warm lets a few gentle tags through; lively is
+// the old, more animated delivery.
+const TONES: Record<string, Record<string, unknown>> = {
+  calm: { expressive_mode: false, stability: 0.62, similarity_boost: 0.8, speed: 0.97 },
+  warm: { expressive_mode: true, stability: 0.52, similarity_boost: 0.8, speed: 1,
+    suggested_audio_tags: [{ tag: 'warm', description: 'Greeting someone or thanking them' }, { tag: 'calm', description: 'Explaining a figure or a next step' },
+      { tag: 'reassuring', description: 'When something went wrong or the person is worried' }] },
+  lively: { expressive_mode: true, stability: 0.45, similarity_boost: 0.8, speed: 1.02 },
+};
+const TONE: string = 'calm';
 
 type Agent = { name: string; prompt: string; first: string; maxSecs: number; data: Record<string, unknown>; criteria: unknown[]; web?: boolean; temperature?: number;
   tools?: ToolDef[] };
@@ -339,7 +351,7 @@ function agentBody(kind: string, voiceId: string, toolIds: string[] = []) {
       agent: { first_message: a.first, language: 'en',
         prompt: { prompt: a.prompt, temperature: a.temperature ?? 0.3, ...(toolIds.length ? { tool_ids: toolIds } : {}) } },
       conversation: { max_duration_seconds: a.maxSecs },
-      ...(voiceId ? { tts: { voice_id: voiceId } } : {}),
+      tts: { ...(TONES[TONE] || TONES.calm), ...(voiceId ? { voice_id: voiceId } : {}) },
     },
     platform_settings: {
       data_collection: a.data,
