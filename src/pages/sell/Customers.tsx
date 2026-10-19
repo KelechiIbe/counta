@@ -6,6 +6,8 @@ import { rpc } from '../../lib/supabase';
 import { money, today, useCustomers, useSales, type Customer, moneyAccounts } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { useScreenPeriod } from '../../lib/period';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows } from '../../components/ui';
 import { TAX_ID_HINT, isOldTin, taxIdError } from '../../lib/taxid';
 import { ExportMenu, acc, useMeta } from '../../components/Books';
@@ -86,13 +88,14 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState<'pay' | 'refund' | null>(null);
   const [doc, setDoc] = useState<string | null>(null);
-  const [range, setRange] = useState({ from: '', to: today() });
+  const [period, setPeriod] = useScreenPeriod(orgId, 'customer-statement', 'all', inv?.org.fiscal_year_start || 1);
+  const range = { from: period.preset === 'all' ? '' : period.from, to: period.to };
   useEffect(() => {
     if (customer) setF({ name: customer.name, phone: customer.phone || '', email: customer.email || '', address: customer.address || '', tin: customer.tin || '', kind: customer.kind || 'business',
       credit_limit: String(Number(customer.credit_limit) || ''), terms_days: String(customer.terms_days || ''), price_list_id: customer.price_list_id || '', whatsapp_opt_in: customer.whatsapp_opt_in, wvat_agent: !!(customer as any).wvat_agent,
       city: customer.city || '', state: customer.state || '', lga: (customer as any).lga || '', country: customer.country || 'NG', contact_person: customer.contact_person || '', cc_emails: (customer.cc_emails || []).join(', ') });
   }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const statement = useQuery({ queryKey: ['statement', customer?.id, range.from, range.to], enabled: !!customer && tab === 'statement',
+  const statement = useQuery({ queryKey: ['statement', customer?.id, range.from, range.to], enabled: !!customer && tab === 'statement', placeholderData: (prev, q) => (q?.queryKey[1] === customer?.id ? prev : undefined),
     queryFn: () => rpc<any>('customer_statement', { p_customer: customer!.id, p_from: range.from || null, p_to: range.to || null }) });
   const docs = useSales({ customer_id: customer?.id, limit: 200 });
   const meta = useMeta();
@@ -160,8 +163,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
           <div className="stack" style={{ gap: 12 }}>
             <div className="row wrap" style={{ justifyContent: 'space-between' }}>
               <div className="row wrap">
-                <input className="input input-sm" type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} style={{ width: 150 }} aria-label="From" />
-                <span className="faint">to</span><input className="input input-sm" type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} style={{ width: 150 }} aria-label="To" />
+                <PeriodPicker value={period} onChange={setPeriod} label="Statement period" />
               </div>
               <div className="row wrap">
                 <ExportMenu name={`${customer.name} statement ${range.to}`} disabled={!st} sheets={() => [{ meta: meta(`Statement · ${customer.name}`, `${fmtDay(st.from)} to ${fmtDay(st.to)}`),

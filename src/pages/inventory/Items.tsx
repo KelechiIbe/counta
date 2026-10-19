@@ -7,6 +7,7 @@ import { K, N, P, fmtDay, when } from '../../lib/format';
 import { useItemMoves, useAction } from '../../lib/queries';
 import { moveQty, moveRef, typeLabel, typeTone } from '../../lib/ledger';
 import { Icon } from '../../components/Icon';
+import { VatInfo } from '../../components/VatInfo';
 import { Chip, Drawer, Pills, Stat, Thumb, XButton, Alert, Empty, SkeletonRows } from '../../components/ui';
 import ItemForm from './ItemForm';
 import { useDraft, type Drafts } from '../../lib/drafts';
@@ -152,7 +153,9 @@ function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void
           <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
           <div className="grow">
             <div className="row wrap"><div className="drawer-title">{it.name}</div><Chip label={it.status} /></div>
-            <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>{[it.brand, it.category, !typeSells(it.item_type) ? kindLabel(it.item_type) : null, vat, vendor?.name || 'No preferred vendor'].filter(Boolean).join(' · ')}</div>
+            <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>{[it.brand, it.category, !typeSells(it.item_type) ? kindLabel(it.item_type) : null, vat].filter(Boolean).join(' · ')}
+              {vat && <VatInfo side="sale" treatment={it.vat_treatment} name={it.name} item={it} vatRegistered={inv.org.vat_registered} />}
+              {[it.brand, it.category, !typeSells(it.item_type) ? kindLabel(it.item_type) : null, vat].some(Boolean) ? ' · ' : ''}{vendor?.name || 'No preferred vendor'}</div>
           </div>
           {can(inv, 'edit_prices') && <button className="btn btn-secondary btn-xs" onClick={() => setEdit(true)}><Icon name="pencil" size={14} />Edit</button>}
           <XButton onClick={onClose} />
@@ -307,7 +310,6 @@ function NrsLabel({ it, may }: { it: ItemView; may: boolean }) {
     </div>
   );
 }
-const VAT_SOURCE: Record<string, string> = { numens: 'Numens', gemini: 'Numens (testing model)', manual: 'set by hand', import: 'from the import' };
 
 // VAT on the item: what applies at the till, who decided it and why. Below 80% sure, the agent's answer waits for a person.
 function VatCard({ it }: { it: ItemView }) {
@@ -329,16 +331,10 @@ function VatCard({ it }: { it: ItemView }) {
         {checking ? <span className="chip t-blue">Numens is checking</span> : it.vat_review ? <span className="chip t-yellow">Needs your answer</span>
           : b?.source === 'manual' ? <span className="chip t-grey">Set by hand</span> : conf != null ? <span className="chip t-green">{conf}% sure</span> : null}
       </div>
-      <div style={{ fontSize: 16, fontWeight: 600, marginTop: 6 }}>{VAT_LABEL[it.vat_treatment] || it.vat_treatment}</div>
-      <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
-        {it.vat_treatment === 'standard' ? 'Output VAT on each sale goes to account 2201.' : it.vat_treatment === 'zero' ? 'Charged at 0%; input VAT on purchases is still claimable.' : 'No VAT charged; input VAT on purchases becomes part of cost.'}
+      <div className="row" style={{ gap: 4, marginTop: 6 }}>
+        <span style={{ fontSize: 16, fontWeight: 600 }}>{VAT_LABEL[it.vat_treatment] || it.vat_treatment}</span>
+        <VatInfo side="sale" treatment={it.vat_treatment} name={it.name} item={it} vatRegistered={inv.org.vat_registered} />
       </div>
-      {b && (b.reason || b.law) && (
-        <div style={{ fontSize: 13, marginTop: 10, lineHeight: 1.5 }}>
-          {b.reason && <div>{b.reason}</div>}
-          <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{[b.law, b.source && (VAT_SOURCE[b.source] || b.source), b.by, b.at && when(b.at)].filter(Boolean).join(' · ')}</div>
-        </div>
-      )}
       {(it.vat_treatment === 'zero' || it.vat_treatment === 'exempt') && <NrsLabel it={it} may={may} />}
       {it.vat_review && (
         <Alert kind="yellow" icon="alert">

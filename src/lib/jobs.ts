@@ -16,14 +16,16 @@ export interface RecipeLine { item_id: string; qty: number; wastage_pct: number 
 export interface Recipe { item_id: string; yield_qty: number; lines: RecipeLine[]; notes: string | null; updated_at: string }
 export interface JobsPayload { jobs: Job[]; recipes: Recipe[]; accounts: { code: string; name: string }[]; default_account: string }
 
-export function useJobs(enabled = true) {
+// closedSince: the first day closed jobs are wanted from (the default is the last 60 days).
+export function useJobs(enabled = true, closedSince?: string | null) {
   const { orgId } = useSession();
+  const days = closedSince ? Math.min(20000, Math.max(1, Math.ceil((Date.now() - Date.parse(closedSince + 'T00:00:00+01:00')) / 86400000) + 1)) : null;
   return useQuery({
-    queryKey: ['jobs', orgId],
+    queryKey: ['jobs', orgId, days],
     enabled: !!orgId && enabled,
     queryFn: async () => {
-      const r = await rpc<JobsPayload>('get_jobs', { p_org: orgId });
-      try { localStorage.setItem('counta.jobs.' + orgId, JSON.stringify(r)); } catch { /* quota */ }
+      const r = await rpc<JobsPayload>('get_jobs', days ? { p_org: orgId, p_closed_days: days } : { p_org: orgId });
+      if (!days) { try { localStorage.setItem('counta.jobs.' + orgId, JSON.stringify(r)); } catch { /* quota */ } }
       return r;
     },
     initialData: () => {

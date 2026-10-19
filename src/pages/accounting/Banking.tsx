@@ -7,20 +7,36 @@ import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { money, today, useBanking } from '../../lib/api';
-import { N2, fmtDay, when } from '../../lib/format';
+import { N2, fmtDay, when, addDays } from '../../lib/format';
 import { Icon } from '../../components/Icon';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { BOOKS_FLOOR, useScreenPeriod } from '../../lib/period';
 import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows } from '../../components/ui';
 import { StatusChip } from '../sell/common';
 import StatementUpload, { STAGE } from './BankStatement';
 import { ConnectBank, FeedControls } from './BankFeeds';
 
 
+// Returns are filed from January 2023 (or from when the books start): a bank account whose lines start later needs the
+// statements for the months before.
+function StatementGap({ first, booksStart }: { first?: string | null; booksStart?: string | null }) {
+  const need = [BOOKS_FLOOR, String(booksStart || '').slice(0, 10)].filter(Boolean).sort().pop()!;
+  if (first && first <= addDays(need, 7)) return null;
+  return (
+    <div style={{ fontSize: 12, color: '#B45309', lineHeight: 1.45 }}>
+      {first ? `Lines start ${fmtDay(first)}. Upload statements from ${fmtDay(need)} to ${fmtDay(addDays(first, -1))} so the books and returns for those months are complete.`
+        : `No lines yet. Connect the bank or upload statements from ${fmtDay(need)}.`}
+    </div>
+  );
+}
+
 export default function Banking() {
   const { data: inv } = useInventory();
   const { orgId } = useSession();
   const toast = useToast();
   const qc = useQueryClient();
-  const bank = useBanking();
+  const [period, setPeriod] = useScreenPeriod(orgId, 'banking-lines', 'all', inv?.org.fiscal_year_start || 1);
+  const bank = useBanking(true, period.preset === 'all' ? null : period);
   const [acct, setAcct] = useState<string>('all');
   const [status, setStatus] = useState<'all' | 'unmatched' | 'proposed' | 'done'>('all');
   const [upload, setUpload] = useState<any | null>(null);
@@ -58,6 +74,7 @@ export default function Banking() {
               Last statement {a.last_import.from ? `${fmtDay(a.last_import.from)} to ${fmtDay(a.last_import.to)}` : fmtDay(String(a.last_import.created_at).slice(0, 10))}
               {a.last_import.balance_check === 'agrees' ? ' · balances agree' : a.last_import.balance_check === 'differs' ? ' · balances did not add up' : ''}</div>}
             <FeedControls account={a} canAct={can(inv, 'keep_books')} />
+            {a.kind === 'bank' && <StatementGap first={a.first_line} booksStart={inv.org.books_start} />}
             <div className="row wrap" style={{ gap: 6 }}>
               {Number(a.unmatched) > 0 && <span className="chip t-amber">{a.unmatched} unmatched</span>}
               {Number(a.questions) > 0 && <span className="chip t-blue">{a.questions} questions</span>}
@@ -73,7 +90,10 @@ export default function Banking() {
         ))}
       </div>
       <div className="row wrap" style={{ justifyContent: 'space-between' }}>
-        <Pills value={status} onChange={setStatus} options={[{ id: 'all', label: 'All lines' }, { id: 'unmatched', label: 'Unmatched' }, { id: 'proposed', label: 'Waiting for an answer' }, { id: 'done', label: 'Done' }]} />
+        <div className="row wrap" style={{ gap: 8 }}>
+          <Pills value={status} onChange={setStatus} options={[{ id: 'all', label: 'All lines' }, { id: 'unmatched', label: 'Unmatched' }, { id: 'proposed', label: 'Waiting for an answer' }, { id: 'done', label: 'Done' }]} />
+          <PeriodPicker value={period} onChange={setPeriod} label="Line dates" />
+        </div>
         {Number(d?.suspense || 0) !== 0 && <Link className="pill" to="/accounting/inbox">Suspense {N2(d.suspense)} · answer the questions<Icon name="chevR" size={13} /></Link>}
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>

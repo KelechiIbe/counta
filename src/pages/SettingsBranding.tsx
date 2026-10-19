@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useInventory, useSession, useToast, can } from '../state/session';
 import { photoUrl, rpc, supabase } from '../lib/supabase';
 import { Icon } from '../components/Icon';
+import { useTinCheck } from './purchases/TinCheck';
 import { Alert, Field, Label } from '../components/ui';
 import { shrinkImage } from '../lib/images';
 import { TAX_ID_HINT, isOldTin, taxIdError } from '../lib/taxid';
@@ -65,6 +66,7 @@ export function BrandingSection() {
   const preview = useMemo(() => o && sampleDoc({ name: o.name, address: f.address, phone: f.phone, email: f.email, tin: f.tin, rc_number: f.rc_number, logo_path: f.logo_path || null,
     brand_color: f.brand_color, invoice_template: f.invoice_template, website: f.website, invoice_footer: f.invoice_footer, payment_details: f.invoice_note,
     invoice_show: f.invoice_show }), [o, f]);
+  const tinCheck = useTinCheck();
   if (!inv || !o || !f.brand_color) return null;
   const owner = can(inv, 'manage_settings');
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
@@ -85,6 +87,7 @@ export function BrandingSection() {
       await rpc('update_branding', { p_org: orgId, p_patch: { logo_path: f.logo_path || '', brand_color: f.brand_color, invoice_template: f.invoice_template, website: f.website,
         invoice_footer: f.invoice_footer, invoice_note: f.invoice_note, invoice_show: f.invoice_show } });
       toast('Branding saved'); await qc.invalidateQueries({ queryKey: ['inv'] });
+      if (f.tin && f.tin.replace(/[\s\-./]/g, '') !== String(o?.tin || '').replace(/[\s\-./]/g, '')) await tinCheck.check(null);
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(null);
   }

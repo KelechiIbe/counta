@@ -1,13 +1,17 @@
 // Bills: what the business owes suppliers. Entered by hand, from a stock receipt, or sent over from Prism. Approving one
 // posts it (expense or stock, recoverable input VAT, payables); paying it from the wallet or the bank deducts withholding tax.
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { edge, money, today, useBill, useBills, useChart, type Bill, moneyAccounts } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
+import { VatInfo } from '../../components/VatInfo';
+import { TinHold, holdText } from './TinCheck';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { periodText, useScreenPeriod } from '../../lib/period';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import { taxIdError } from '../../lib/taxid';
 import { ExportMenu, useMeta } from '../../components/Books';
@@ -18,7 +22,7 @@ import { CreditsList, UseCredits, VendorCreditModal } from './VendorCredits';
 import { useDraft, type Drafts } from '../../lib/drafts';
 import { vatPct } from '../../lib/vat';
 
-type Tab = 'all' | 'draft' | 'unpaid' | 'overdue' | 'paid' | 'credits' | 'returned';
+type Tab = 'all' | 'draft' | 'unpaid' | 'overdue' | 'paid' | 'credits' | 'returned' | 'held';
 
 export default function Bills() {
   const { data: inv } = useInventory();
@@ -33,15 +37,20 @@ export default function Bills() {
   const bills = useBills({}, true);
   const meta = useMeta();
   const open = params.get('open');
-  const rows = useMemo(() => (bills.data?.bills || []).filter((b) =>
+  const { orgId } = useSession();
+  const [period, setPeriod] = useScreenPeriod(orgId, 'bills', 'all', inv?.org.fiscal_year_start || 1);
+  const inPeriod = (d: string) => period.preset === 'all' || (d >= period.from && d <= period.to);
+  const rows = useMemo(() => (bills.data?.bills || []).filter((b) => inPeriod(String(b.bill_date || '').slice(0, 10)) &&
     (tab === 'all' || (tab === 'draft' && b.status === 'draft') || (tab === 'unpaid' && ['approved', 'partially_paid'].includes(b.status))
-      || (tab === 'overdue' && Number(b.overdue_days) > 0) || (tab === 'paid' && b.status === 'paid') || (tab === 'returned' && !!(b as any).returned_reason))
-    && (!q.trim() || `${b.number} ${b.vendor_name} ${b.vendor_ref || ''}`.toLowerCase().includes(q.trim().toLowerCase()))), [bills.data, tab, q]);
+      || (tab === 'overdue' && Number(b.overdue_days) > 0) || (tab === 'paid' && b.status === 'paid') || (tab === 'returned' && !!(b as any).returned_reason)
+      || (tab === 'held' && !!(b as any).tin_hold))
+    && (!q.trim() || `${b.number} ${b.vendor_name} ${b.vendor_ref || ''}`.toLowerCase().includes(q.trim().toLowerCase()))), [bills.data, tab, q, period]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!inv) return null;
   const all = bills.data?.bills || [];
   const owed = all.filter((b) => ['approved', 'partially_paid'].includes(b.status)).reduce((a, b) => a + Number(b.balance), 0);
   const overdue = all.filter((b) => Number(b.overdue_days) > 0).reduce((a, b) => a + Number(b.balance), 0);
   const returned = all.filter((b) => (b as any).returned_reason).length;
+  const held = all.filter((b) => (b as any).tin_hold).length;
   const cols: RCol[] = [{ key: 'number', label: 'Bill' }, { key: 'vendor_name', label: 'Vendor' }, { key: 'vendor_ref', label: 'Their invoice' }, { key: 'bill_date', label: 'Date', type: 'date' },
     { key: 'due_date', label: 'Due', type: 'date' }, { key: 'status', label: 'Status' }, { key: 'subtotal', label: 'Before VAT', type: 'money', total: true }, { key: 'vat_total', label: 'VAT', type: 'money', total: true },
     { key: 'total', label: 'Total', type: 'money', total: true }, { key: 'wht_expected', label: 'WHT', type: 'money', total: true }, { key: 'balance', label: 'Balance', type: 'money', total: true }];
@@ -54,9 +63,11 @@ export default function Bills() {
       </div>
       <div className="row wrap" style={{ justifyContent: 'space-between' }}>
         <Pills value={tab} onChange={setTab} options={[{ id: 'unpaid', label: 'To pay' }, { id: 'draft', label: 'To approve', count: all.filter((b) => b.status === 'draft').length || undefined }, { id: 'overdue', label: 'Overdue' }, { id: 'paid', label: 'Paid' },
+          ...(held || tab === 'held' ? [{ id: 'held' as Tab, label: 'Waiting for Tax ID', count: held || undefined }] : []),
           ...(returned || tab === 'returned' ? [{ id: 'returned' as Tab, label: 'Sent back', count: returned || undefined }] : []), { id: 'all', label: 'All' }, { id: 'credits', label: 'Credit notes' }]} />
         <div className="row wrap">
-          <ExportMenu name={`${inv.org.name} bills ${today()}`} disabled={!rows.length} sheets={() => [{ meta: meta('Bills', `As at ${fmtDay(today())}`), cols, rows: rows as any }]} />
+          <PeriodPicker value={period} onChange={setPeriod} align="end" label="Bill dates" />
+          <ExportMenu name={`${inv.org.name} bills ${today()}`} disabled={!rows.length} sheets={() => [{ meta: meta('Bills', period.preset === 'all' ? `As at ${fmtDay(today())}` : periodText(period)), cols, rows: rows as any }]} />
           {(can(inv, 'keep_books') || can(inv, 'approve_pos')) && <button className="btn btn-primary btn-sm" onClick={() => setEditing('new')}><Icon name="plus" size={14} color="#fff" />Bill</button>}
         </div>
       </div>
@@ -71,7 +82,8 @@ export default function Bills() {
               <span><b>{b.number}</b><span className="faint" style={{ display: 'block', fontSize: 11 }}>{b.source === 'receipt' ? 'from stock' : b.source === 'prism' ? 'from Prism' : b.source === 'ai' ? 'read by AI' : ''}</span></span>
               <span className="ellipsis">{b.vendor_name}{b.vendor_ref ? <span className="faint" style={{ fontSize: 12 }}> · {b.vendor_ref}</span> : null}</span>
               <span className="muted">{fmtDay(b.bill_date)}</span>
-              <span><StatusChip s={(b as any).returned_reason ? 'returned' : b.status} />{Number(b.in_progress) > 0 && <span className="chip t-amber" style={{ marginLeft: 4 }}>paying</span>}</span>
+              <span><StatusChip s={(b as any).returned_reason ? 'returned' : b.status} />{Number(b.in_progress) > 0 && <span className="chip t-amber" style={{ marginLeft: 4 }}>paying</span>}
+                {(b as any).tin_hold && <span className="chip t-red" style={{ marginLeft: 4 }} title={holdText((b as any).tin_hold, b.vendor_name)}>{(b as any).tin_hold === 'no_tin' ? 'no Tax ID' : 'Tax ID check'}</span>}</span>
               <span className="right num">{N2(b.total)}</span>
               <span className="right num" style={{ color: Number(b.balance) ? '#C2410C' : undefined }}>{Number(b.balance) ? N2(b.balance) : '—'}</span>
               <span className="muted" style={{ fontSize: 12, color: Number(b.overdue_days) ? '#DC2626' : undefined }}>{Number(b.overdue_days) ? `${b.overdue_days} days late` : fmtDay(b.due_date)}</span>
@@ -88,6 +100,7 @@ export default function Bills() {
 
 function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: any[]; onClose: () => void; onEdit: (id: string) => void }) {
   const { data: inv } = useInventory();
+  const nav = useNavigate();
   const bill = useBill(id);
   const toast = useToast();
   const qc = useQueryClient();
@@ -117,18 +130,21 @@ function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: a
             {flags.missing_state && ['draft', 'approved', 'partially_paid'].includes(b.status) && (
               <MissingState b={b} canKeep={can(inv, 'keep_books')} onSendBack={() => setSendBack('missing_state')} onDone={refresh} />
             )}
-            {flags.missing_tin && ['draft', 'approved'].includes(b.status) && (
-              <Alert kind="amber" icon="alert">
-                {b.vendor?.name} has no Tax ID, so the withholding tax is doubled to {N2(b.wht_expected)}. Send the bill back for the Tax ID, or keep it and withhold at the double rate.
-                {flags.can_return && can(inv, 'keep_books') && <div style={{ marginTop: 8 }}><button className="btn btn-secondary btn-xs" onClick={() => setSendBack('missing_tin')}><Icon name="undo" size={12} />Send back for the Tax ID</button></div>}
-              </Alert>
+            {flags.tin_hold && ['draft', 'approved', 'partially_paid'].includes(b.status) && (
+              <TinHold bill={b} canKeep={can(inv, 'keep_books')} canCheck={can(inv, 'keep_books') || can(inv, 'make_payments')}
+                onSendBack={() => setSendBack('missing_tin')} onAddTin={() => nav(`/purchases/vendors?open=${b.vendor_id}&tab=details`)} />
+            )}
+            {flags.tin_differs && (
+              <Alert kind="amber" icon="alert">The invoice shows Tax ID <b className="mono">{flags.invoice_tin}</b>, but {b.vendor?.name} is on record with <b className="mono">{b.vendor?.tin}</b>. Check which is right before paying.</Alert>
             )}
             <div className="card" style={{ overflow: 'hidden', borderRadius: 12 }}>
               {(b.lines || []).map((l: any) => (
                 <div key={l.id} className="tr" style={{ gridTemplateColumns: 'minmax(0,1fr) 120px', padding: '9px 14px' }}>
                   <span style={{ minWidth: 0 }}>{l.description}<span className="faint" style={{ display: 'block', fontSize: 12 }}>{l.account_code} {l.account_name} · {Number(l.qty)} × {N2(l.unit_cost)}{l.vat_treatment === 'standard' ? ` · VAT ${N2(l.vat)}${l.vat_recoverable ? '' : ' (not recoverable)'}` : l.vat_treatment === 'none' ? '' : ` · ${l.vat_treatment}`}
                     {Number(l.wht) > 0 ? ` · WHT ${pct(l.wht_rate)} ${N2(l.wht)}${l.wht_category_effective && l.wht_category_effective !== b.wht_category ? ` (${whtRates.find((w) => w.code === l.wht_category_effective)?.name || l.wht_category_effective})` : ''}` : ''}
-                    {Number(l.reverse_charge_vat) > 0 ? ` · VAT self-charged ${N2(l.reverse_charge_vat)}` : ''}</span></span>
+                    {Number(l.reverse_charge_vat) > 0 ? ` · VAT self-charged ${N2(l.reverse_charge_vat)}` : ''}
+                    <VatInfo side="purchase" treatment={l.vat_treatment} name={l.description} day={b.bill_date} recoverable={l.vat_recoverable !== false}
+                      vatRegistered={inv?.org.vat_registered} foreignVendor={Number(l.reverse_charge_vat) > 0 || b.vendor?.resident === false} /></span></span>
                   <span className="right num">{N2(l.gross)}</span>
                 </div>
               ))}
@@ -162,7 +178,7 @@ function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: a
               {b.status === 'draft' && <button className="btn btn-secondary btn-sm" onClick={() => onEdit(b.id)}><Icon name="pencil" size={14} />Edit</button>}
               {b.status === 'draft' && can(inv, 'keep_books') && <button className="btn btn-primary btn-sm" disabled={!!flags.missing_state} title={flags.missing_state ? 'Add the supplier\'s state first' : undefined}
                 onClick={() => (flags.missing_tin ? setNoTin(true) : act(() => rpc('approve_bill', { p_bill: b.id }), `${b.number} approved and in the books`))}>Approve</button>}
-              {['approved', 'partially_paid'].includes(b.status) && can(inv, 'make_payments') && <button className="btn btn-primary btn-sm" disabled={!!flags.missing_state} title={flags.missing_state ? 'Add the supplier\'s state first' : undefined} onClick={() => setPay(true)}><Icon name="send" size={14} color="#fff" />Pay</button>}
+              {['approved', 'partially_paid'].includes(b.status) && can(inv, 'make_payments') && <button className="btn btn-primary btn-sm" disabled={!!flags.missing_state || !!flags.tin_hold} title={flags.tin_hold ? holdText(flags.tin_hold, b.vendor?.name || 'The supplier') : flags.missing_state ? 'Add the supplier\'s state first' : undefined} onClick={() => setPay(true)}><Icon name="send" size={14} color="#fff" />Pay</button>}
               {flags.can_return && can(inv, 'keep_books') && !flags.missing_tin && !flags.missing_state && <button className="btn btn-ghost btn-sm" onClick={() => setSendBack('other')}><Icon name="undo" size={14} />Send back</button>}
               {['approved', 'partially_paid', 'paid'].includes(b.status) && can(inv, 'keep_books') && <button className="btn btn-secondary btn-sm" onClick={() => setCrediting(true)}><Icon name="undo" size={14} />Credit note</button>}
               {['draft', 'approved'].includes(b.status) && can(inv, 'keep_books') && <button className="btn btn-ghost btn-sm" onClick={() => setVoiding(true)}>Void</button>}
@@ -178,12 +194,12 @@ function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: a
         <Modal onClose={() => setNoTin(false)} width={480}>
           <ModalHead title={`${b.vendor?.name} has no Tax ID`} sub={b.number} onClose={() => setNoTin(false)} />
           <div className="modal-body stack" style={{ gap: 10, fontSize: 14 }}>
-            <div>Without a Tax ID the withholding tax on this bill is doubled: <b className="num">{N2(b.wht_expected)}</b> instead of <b className="num">{N2(Number(b.wht_expected) / 2)}</b>.</div>
-            <div className="muted" style={{ fontSize: 13 }}>Send the bill back and the supplier is told to get the Tax ID at taxid.nrs.gov.ng. Or approve it now and withhold at the double rate.</div>
+            <div>Counta will not pay this bill until the supplier&apos;s Tax ID is on record and checked with the NRS: the withholding tax schedule needs it.</div>
+            <div className="muted" style={{ fontSize: 13 }}>Send the bill back and the supplier is told to get the Tax ID at taxid.nrs.gov.ng. Or approve it now (the books carry the withholding tax at the double rate, <span className="num">{N2(b.wht_expected)}</span>) and pay once the Tax ID is added and checked.</div>
           </div>
           <div className="modal-ft">
             <button className="btn btn-secondary" onClick={() => { setNoTin(false); setSendBack('missing_tin'); }}><Icon name="undo" size={14} />Send back for the Tax ID</button>
-            <button className="btn btn-primary" onClick={async () => { setNoTin(false); await act(() => rpc('approve_bill', { p_bill: b.id }), `${b.number} approved, WHT at the double rate`); }}>Approve at the double rate</button>
+            <button className="btn btn-primary" onClick={async () => { setNoTin(false); await act(() => rpc('approve_bill', { p_bill: b.id }), `${b.number} approved. It waits for the Tax ID before payment.`); }}>Approve, pay later</button>
           </div>
         </Modal>
       )}
@@ -350,6 +366,7 @@ interface BLine { key: string; description: string; account_code: string; qty: s
 
 function BillEditor({ id, draft, vendors, whtRates, assetClasses, onClose, onSaved }: { id: string | null; draft?: Drafts['bill'] | null; vendors: any[]; whtRates: any[]; assetClasses: any[]; onClose: () => void; onSaved: (id: string) => void }) {
   const { orgId } = useSession();
+  const { data: inv } = useInventory();
   const toast = useToast();
   const qc = useQueryClient();
   const existing = useBill(id);
@@ -432,7 +449,10 @@ function BillEditor({ id, draft, vendors, whtRates, assetClasses, onClose, onSav
               <input className="input input-sm num" inputMode="decimal" value={l.unit_cost} onChange={(e) => upd(l.key, { unit_cost: e.target.value })} aria-label="Unit cost" />
               <span className="stack" style={{ gap: 4 }}>
                 <select className="input input-sm" disabled={!f.vat_charged} value={l.vat_treatment} onChange={(e) => upd(l.key, { vat_treatment: e.target.value })}><option value="standard">{vatPct(f.bill_date)}</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select>
-                {f.vat_charged && l.vat_treatment === 'standard' && <label className="check" style={{ fontSize: 11 }}><input type="checkbox" checked={l.vat_recoverable} onChange={(e) => upd(l.key, { vat_recoverable: e.target.checked })} />Claim back</label>}
+                <span className="row" style={{ gap: 2, flexWrap: 'nowrap' }}>
+                  {f.vat_charged && l.vat_treatment === 'standard' && <label className="check" style={{ fontSize: 11 }}><input type="checkbox" checked={l.vat_recoverable} onChange={(e) => upd(l.key, { vat_recoverable: e.target.checked })} />Claim back</label>}
+                  <VatInfo side="purchase" treatment={f.vat_charged ? l.vat_treatment : 'none'} name={l.description} day={f.bill_date} recoverable={l.vat_recoverable} vatRegistered={inv?.org.vat_registered} />
+                </span>
               </span>
               <button className="btn btn-ghost btn-xs" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label="Remove line"><Icon name="trash" size={13} /></button>
             </div>

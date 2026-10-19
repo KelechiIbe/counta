@@ -9,6 +9,8 @@ import type { RCol } from '../lib/reports';
 import { lastMonthEnd, monthStart, today, useReport, yearStart } from '../lib/api';
 import { areport, periodLabel, prepRows, type ADef } from '../lib/accounting';
 import { addDays, fmtDay } from '../lib/format';
+import { PeriodPicker } from './PeriodPicker';
+import type { PeriodValue } from '../lib/period';
 
 export function acc(v: unknown, dp = 2): string {
   if (v == null || v === '') return '';
@@ -46,17 +48,15 @@ export function presets(fy = 1): { id: string; label: string; p: Period }[] {
   ];
 }
 
-export function PeriodBar({ value, onChange, asAt, extra }: { value: Period; onChange: (p: Period) => void; asAt?: boolean; extra?: ReactNode }) {
-  const { data: inv } = useInventory();
-  const list = presets(inv?.org.fiscal_year_start || 1);
-  const on = list.find((x) => x.p.from === value.from && x.p.to === value.to)?.id;
+export function PeriodBar({ value, onChange, asAt, extra }: { value: PeriodValue; onChange: (p: PeriodValue) => void; asAt?: boolean; extra?: ReactNode }) {
   return (
     <div className="row wrap" style={{ gap: 8 }}>
-      {!asAt && list.map((x) => <button key={x.id} className={'pill' + (on === x.id ? ' on' : '')} onClick={() => onChange(x.p)}>{x.label}</button>)}
-      {!asAt && <input className="input input-sm" type="date" value={value.from} max={value.to} onChange={(e) => e.target.value && onChange({ ...value, from: e.target.value })} style={{ width: 150 }} aria-label="From" />}
-      {!asAt && <span className="faint">to</span>}
-      {asAt && <span className="muted" style={{ fontSize: 13 }}>As at</span>}
-      <input className="input input-sm" type="date" value={value.to} min={asAt ? undefined : value.from} onChange={(e) => e.target.value && onChange({ ...value, to: e.target.value })} style={{ width: 150 }} aria-label={asAt ? 'As at' : 'To'} />
+      {asAt ? (
+        <>
+          <span className="muted" style={{ fontSize: 13 }}>As at</span>
+          <input className="input input-sm" type="date" value={value.to} onChange={(e) => e.target.value && onChange({ from: value.from <= e.target.value ? value.from : e.target.value, to: e.target.value, preset: null })} style={{ width: 150 }} aria-label="As at" />
+        </>
+      ) : <PeriodPicker value={value} onChange={onChange} presets={['mtd', 'lm', 'qtd', 'lq', 'ytd', 'ly', 'l12']} />}
       {extra}
     </div>
   );

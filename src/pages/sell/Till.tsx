@@ -11,6 +11,7 @@ import { N2, uuid, when } from '../../lib/format';
 import { store } from '../../lib/pwa';
 import type { Item } from '../../lib/types';
 import { Icon } from '../../components/Icon';
+import { VatInfo } from '../../components/VatInfo';
 import { ItemPicker } from '../../components/ItemPicker';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Spinner, Thumb } from '../../components/ui';
 import { Camera } from '../../mobile/Scan';
@@ -226,7 +227,8 @@ export default function Till() {
                           ) : <span className="num" style={{ fontSize: 13 }}>{N2(lp)}</span>}
                           <input className="input input-sm num" inputMode="decimal" placeholder="Discount" style={{ width: 90 }} value={l.discount || ''} aria-label="Line discount"
                             onChange={(e) => update(l.key, { discount: Math.max(0, money(e.target.value) || 0) })} />
-                          {l.item.vat_treatment !== 'standard' && <span className="chip t-grey">{l.item.vat_treatment === 'zero' ? 'Zero-rated' : 'Exempt'}</span>}
+                          {l.item.vat_treatment !== 'standard' && <span className="row" style={{ gap: 0 }}><span className="chip t-grey">{l.item.vat_treatment === 'zero' ? 'Zero-rated' : 'Exempt'}</span>
+                            <VatInfo side="sale" treatment={l.item.vat_treatment} name={l.item.name} item={l.item} vatRegistered={inv.org.vat_registered} /></span>}
                         </div>
                       </div>
                     </div>

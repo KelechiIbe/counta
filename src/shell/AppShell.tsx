@@ -24,7 +24,8 @@ const TITLES: Record<string, string> = {
   '/sell/till': 'Till', '/sell/sales': 'Sales', '/sell/customers': 'Customers', '/sell/orders': 'Orders & deliveries', '/sell/price-lists': 'Price lists', '/sell/shop': 'Online shop',
   '/payments': 'Payments', '/purchases/bills': 'Bills', '/purchases/vendors': 'Vendors',
   '/accounting/inbox': 'Books inbox', '/accounting/banking': 'Banking & reconciliation', '/accounting/statements': 'Financial statements',
-  '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close', '/accounting/tax': 'Tax returns',
+  '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close',
+  '/tax': 'Tax returns', '/tax/vat': 'VAT returns', '/tax/wht': 'Withholding tax', '/tax/cit': 'Companies income tax',
   '/accounting/journals': 'Journals', '/accounting/migrate': 'Move your books', '/assistant': 'AI Assistant', '/settings': 'Settings',
 };
 export const titleFor = (path: string) => TITLES[path] || TITLES[Object.keys(TITLES).filter((k) => path.startsWith(k + '/')).sort((x, y) => y.length - x.length)[0]] || 'Counta';
@@ -43,10 +44,35 @@ function useMedia(q: string) {
   }, [q]);
   return m;
 }
-function Group({ to, label, icon, subs, active, onClose, show = true, rail }: { to: string; label: string; icon: string; subs?: Sub[]; active: boolean; onClose: () => void; show?: boolean; rail?: boolean }) {
+function Group({ to, label, icon, subs, active, onClose, show = true, rail, drawer }: { to: string; label: string; icon: string; subs?: Sub[]; active: boolean; onClose: () => void; show?: boolean; rail?: boolean; drawer?: boolean }) {
   const [fly, setFly] = useState<HTMLElement | null>(null);
+  // In the slide-in menu a section with several pages opens its list first; the current section starts open.
+  const [expanded, setExpanded] = useState(active);
+  useEffect(() => { if (active) setExpanded(true); }, [active]);
   if (!show) return null;
   const count = subs?.reduce((a, x) => a + (x[2] || 0), 0) || 0;
+  if (drawer && (subs?.length || 0) > 1) {
+    const id = 'nav-sub-' + label.toLowerCase().replace(/[^a-z]+/g, '-');
+    return (
+      <>
+        <button type="button" className={'nav-item nav-toggle' + (active ? ' active' : '')} aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(!expanded)}>
+          <Icon name={icon} size={20} color={active ? '#111827' : '#6B7280'} /><span style={{ flex: 1, textAlign: 'left' }}>{label}</span>
+          {!expanded && count > 0 && <span className="nav-badge">{count}</span>}
+          <Icon name="chevron" size={16} color="#9CA3AF" style={{ transform: expanded ? 'rotate(180deg)' : undefined, transition: 'transform .15s ease-out' }} />
+        </button>
+        {expanded && (
+          <div className="nav-sub" id={id}>
+            {subs!.map(([path, l, badge]) => (
+              <NavLink key={path} to={path} end className={({ isActive }) => (isActive ? 'active' : '')} onClick={onClose}>
+                <span style={{ flex: 1 }}>{l}</span>
+                {(badge || 0) > 0 && <span className="nav-badge">{badge}</span>}
+              </NavLink>
+            ))}
+          </div>
+        )}
+      </>
+    );
+  }
   if (rail) {
     // Icons only: the pages of a section open in a small panel beside it.
     const hasSubs = (subs?.length || 0) > 1;
@@ -98,7 +124,7 @@ function Group({ to, label, icon, subs, active, onClose, show = true, rail }: { 
   );
 }
 
-function Sidebar({ open, onClose, rail, onRail }: { open: boolean; onClose: () => void; rail: boolean; onRail: () => void }) {
+function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClose: () => void; rail: boolean; onRail: () => void; drawer: boolean }) {
   const { data: inv } = useInventory();
   const { memberships, orgId, setOrgId, signOut } = useSession();
   const nav = useNavigate();
@@ -142,22 +168,24 @@ function Sidebar({ open, onClose, rail, onRail }: { open: boolean; onClose: () =
       </div>
       <div className="sidebar-section">{rail ? '' : 'MENU'}</div>
       <nav className="nav">
-        <Group to="/home" label="Home" icon="house" active={p === '/home'} onClose={onClose} rail={rail} />
+        <Group to="/home" label="Home" icon="house" active={p === '/home'} onClose={onClose} rail={rail} drawer={drawer} />
         {/* A business that only does services bills its clients: no till, orders or shop in the way. */}
-        <Group to={w.has_stock ? '/sell/till' : '/sell/sales'} label={w.has_stock ? 'Sell' : 'Billing'} icon="receipt" active={p.startsWith('/sell')} onClose={onClose} rail={rail} show={can(inv, 'record_sales') || money}
+        <Group to={w.has_stock ? '/sell/till' : '/sell/sales'} label={w.has_stock ? 'Sell' : 'Billing'} icon="receipt" active={p.startsWith('/sell')} onClose={onClose} rail={rail} drawer={drawer} show={can(inv, 'record_sales') || money}
           subs={w.has_stock
             ? [['/sell/till', 'Till'], ['/sell/sales', `${cap(w.sales)} & invoices`], ['/sell/customers', cap(w.customers)], ['/sell/orders', 'Orders & deliveries'],
               ['/sell/price-lists', 'Price lists'], ['/sell/shop', 'Online shop']]
             : [['/sell/sales', 'Invoices'], ['/sell/customers', cap(w.customers)], ['/sell/price-lists', 'Price lists']]} />
-        <Group to="/payments" label="Payments" icon="card" active={p.startsWith('/payments')} onClose={onClose} rail={rail} show={can(inv, 'record_sales') || money}
+        <Group to="/payments" label="Payments" icon="card" active={p.startsWith('/payments')} onClose={onClose} rail={rail} drawer={drawer} show={can(inv, 'record_sales') || money}
           subs={[['/payments', 'Wallet & payments', Number(ib?.payouts_to_approve || 0)]]} />
-        <Group to="/purchases/bills" label="Purchases" icon="file" active={p.startsWith('/purchases')} onClose={onClose} rail={rail} show={money || can(inv, 'approve_pos')}
+        <Group to="/purchases/bills" label="Purchases" icon="file" active={p.startsWith('/purchases')} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'approve_pos')}
           subs={[['/purchases/bills', 'Bills', Number(ib?.bills_to_approve || 0)], ['/purchases/vendors', 'Vendors']]} />
-        <Group to="/inventory" label="Inventory" icon="package" active={p.startsWith('/inventory')} onClose={onClose} rail={rail} subs={invSubs} show={w.has_stock || populated} />
-        <Group to="/accounting/inbox" label="Accounting" icon="book" active={p.startsWith('/accounting')} onClose={onClose} rail={rail} show={money}
+        <Group to="/inventory" label="Inventory" icon="package" active={p.startsWith('/inventory')} onClose={onClose} rail={rail} drawer={drawer} subs={invSubs} show={w.has_stock || populated} />
+        <Group to="/accounting/inbox" label="Accounting" icon="book" active={p.startsWith('/accounting')} onClose={onClose} rail={rail} drawer={drawer} show={money}
           subs={[['/accounting/inbox', 'Books inbox', questions], ['/accounting/banking', 'Banking'], ['/accounting/statements', 'Financial statements'],
             ['/accounting/ledgers', 'Ledgers & reports'], ['/accounting/cfo', 'CFO pack'], ['/accounting/journals', 'Journals'], ['/accounting/assets', 'Fixed assets', Number(ib?.assets_to_confirm || 0)],
-            ['/accounting/tax', 'Tax returns'], ['/accounting/close', 'Period close'], ['/accounting/migrate', 'Move your books']]} />
+            ['/accounting/close', 'Period close'], ['/accounting/migrate', 'Move your books']]} />
+        <Group to="/tax/vat" label="Tax returns" icon="percent" active={p.startsWith('/tax/') || p === '/tax'} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'file_tax')}
+          subs={[['/tax/vat', 'VAT'], ['/tax/wht', 'Withholding tax'], ['/tax/cit', 'Companies income tax']]} />
         {external('Taxes', 'landmark')}
         {link('/assistant', 'AI Assistant', 'sparkles')}
       </nav>
@@ -260,7 +288,7 @@ export default function AppShell() {
     <LocCtx.Provider value={value}>
       <div className="shell">
         {open && <div className="scrim" style={{ zIndex: 45 }} onClick={() => setOpen(false)} />}
-        <Sidebar open={open} onClose={() => setOpen(false)} rail={railPref && !narrow} onRail={toggleRail} />
+        <Sidebar open={open} onClose={() => setOpen(false)} rail={railPref && !narrow} onRail={toggleRail} drawer={narrow} />
         <main className="main">
           <Header onMenu={() => setOpen(true)} />
           <div className="content" id="content">

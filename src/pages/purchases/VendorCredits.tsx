@@ -8,6 +8,7 @@ import { rpc } from '../../lib/supabase';
 import { money, today, useBills, useChart, moneyAccounts } from '../../lib/api';
 import { N2, fmtDay } from '../../lib/format';
 import { Icon } from '../../components/Icon';
+import { VatInfo } from '../../components/VatInfo';
 import { Alert, Empty, Field, Modal, ModalHead, SkeletonRows, Spinner } from '../../components/ui';
 import { StatusChip } from '../sell/common';
 import { vatInside, vatPct } from '../../lib/vat';
@@ -106,7 +107,7 @@ export function VendorCreditModal({ bill, onClose }: { bill?: any; onClose: () =
             <Field label="Amount (with VAT)"><input className="input num" inputMode="decimal" value={free.amount} onChange={(e) => setFree({ ...free, amount: e.target.value })} /></Field>
             <Field label="It reduces"><select className="input" value={free.account_code} onChange={(e) => setFree({ ...free, account_code: e.target.value })}>
               <option value="">Choose the account</option>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select></Field>
-            <Field label="VAT"><select className="input" value={free.vat_treatment} onChange={(e) => setFree({ ...free, vat_treatment: e.target.value })}>
+            <Field label={<>VAT<VatInfo side="purchase" treatment={free.vat_treatment} name={free.description} day={f.credit_date} /></>}><select className="input" value={free.vat_treatment} onChange={(e) => setFree({ ...free, vat_treatment: e.target.value })}>
               <option value="standard">{vatPct(f.credit_date)} included</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option><option value="none">No VAT</option></select></Field>
           </div>
         )}

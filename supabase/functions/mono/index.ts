@@ -14,6 +14,8 @@
 //   cac_status_report { org_id }                        -> the owner's latest CAC status report (PDF) into the business's CAC folder
 //   nin_check { org_id, nin, conversation_id? }         -> the owner's NIN looked up and compared with the directors; only the outcome
 //                                                          and the last four digits are kept
+//   verify_tin { org_id, vendor_id? }                   -> the business's Tax ID (or a supplier's) checked with the NRS: found, and the
+//                                                          NRS name matches; the outcome goes on the business or the supplier
 // Mono:
 //   POST /mono/webhook                                  -> header mono-webhook-secret must equal MONO_WEBHOOK_SECRET
 // Database cron (header x-counta-hook: <PUSH_HOOK_SECRET>):
@@ -26,6 +28,7 @@
 // and the NRS return (svc_kyc_store), so nobody can type in a registry record. Directors' dates of birth, ID numbers,
 // phone numbers, emails and home addresses are dropped before anything is kept.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { fetchStart, isDay, windows } from './history.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -166,25 +169,36 @@ async function balance(monoId: string): Promise<number | null> {
   }
 }
 
-type FeedAccount = { id: string; org_id: string; mono_id: string; last_line_date?: string | null; linked_at?: string | null; books_start?: string | null };
-// Fetches from three days before the last line seen (banks post late), or, on the first fetch, from the start of the
-// books or 90 days back, whichever is later, and at most a year back.
-async function syncAccount(a: FeedAccount, realtime: boolean) {
+type FeedAccount = { id: string; org_id: string; mono_id: string; last_line_date?: string | null; history_to?: string | null; history_done?: boolean | null; data_status?: string | null;
+  linked_at?: string | null; books_start?: string | null };
+// Fetches window by window, oldest first, putting each window's lines in before asking for the next, so a long history
+// survives the time limit: the next run carries on from history_to.
+async function syncAccount(a: FeedAccount, realtime: boolean, budgetMs = 38_000) {
+  const started = Date.now();
   const to = new Date();
-  const yearBack = new Date(Date.now() - 365 * 86400_000);
-  let from: Date;
-  if (a.last_line_date) from = new Date(Date.parse(a.last_line_date) - 3 * 86400_000);
-  else {
-    const ninety = new Date(Date.now() - 90 * 86400_000);
-    const books = a.books_start ? new Date(Date.parse(a.books_start)) : null;
-    from = books && books > ninety ? books : ninety;
-  }
-  if (from < yearBack) from = yearBack;
+  const { from, history } = fetchStart(a, to);
+  const all = windows(from, to);
+  let fetched = 0, added = 0, fresh: string | null = null, reached: string | null = null, last: any = null, complete = true;
+  const day = (d: Date) => d.toISOString().slice(0, 10);
   try {
-    const { lines, fresh } = await transactions(a.mono_id, from, to, realtime);
-    const bal = await balance(a.mono_id);
-    const res = await svc('svc_feed_import', { p_bank_account: a.id, p_lines: lines, p_meta: { balance: bal, data_status: null } });
-    return { ...res, fetched: lines.length, fresh_data: fresh };
+    for (const [i, w] of all.entries()) {
+      const latest = i === all.length - 1;
+      const { lines, fresh: f } = await transactions(a.mono_id, w.from, w.to, realtime && latest);
+      if (latest) fresh = f;
+      fetched += lines.length;
+      if (lines.length || latest) {
+        const res: any = await svc('svc_feed_import', { p_bank_account: a.id, p_lines: lines,
+          p_meta: latest ? { balance: await balance(a.mono_id), data_status: null } : { data_status: null } });
+        added += Number(res?.added || 0); last = res;
+      }
+      reached = day(w.to);
+      if (history) {
+        await svc('svc_feed_status', { p_mono_id: a.mono_id, d: { history_to: reached, ...(i === 0 && !isDay(a.history_to) ? { history_from: day(w.from) } : {}),
+          ...(latest ? { history_done: true } : {}) } });
+      }
+      if (!latest && Date.now() - started > budgetMs) { complete = false; break; }
+    }
+    return { ...(last || {}), added, fetched, fresh_data: fresh, from: day(from), reached, history, complete };
   } catch (e) {
     if (e instanceof ReauthNeeded) {
       await svc('svc_feed_status', { p_mono_id: a.mono_id, d: { reauth_required: true, data_status: 'REAUTHORISATION_REQUIRED', last_error: (e as Error).message } });
@@ -203,7 +217,7 @@ async function syncAll() {
     if (Date.now() - started > 45_000) break;
     if (a.reauth_required) { out.skipped++; continue; }
     try {
-      const r: any = await syncAccount(a, false);
+      const r: any = await syncAccount(a, false, Math.max(5_000, 40_000 - (Date.now() - started)));
       out.synced++; out.added += Number(r.added || 0);
     } catch { out.failed++; }
   }
@@ -370,6 +384,32 @@ function taxRecord(b: any) {
   });
 }
 
+// The NRS record for a Tax ID or an RC number (Mono's Tax ID lookup), or null when the NRS has none.
+async function nrsLookup(number: string, channel: 'tin' | 'cac') {
+  let r: LookupResult;
+  try {
+    r = await lookup('/v3/lookup/tin', { method: 'POST', body: JSON.stringify({ number, channel }) });
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/not switched on/i.test(msg)) throw new UserError('Tax ID checks are not switched on yet. TaxStreem is setting them up.');
+    if (/not found|no record|does not exist|invalid (tin|tax)|no tin/i.test(msg)) return null;
+    throw new UserError('The NRS check did not go through just now. Try again in a minute.');
+  }
+  if (r.status === 404) return null;
+  const t = taxRecord(r.body);
+  return t.nrs_tin || t.taxpayer_name || t.firstin || t.jittin || t.tin_type ? t : null;
+}
+
+// Checks the business's Tax ID (no vendor) or a supplier's with the NRS. The database decides who may ask, counts the
+// lookups and compares the names; only the outcome, the NRS name, type and tax office are kept.
+async function verifyTin(mine: <T = any>(fn: string, args: Record<string, unknown>) => Promise<T>, orgId: string, vendorId: string | null) {
+  const target = await mine<any>('tin_check_target', { p_org: orgId, p_vendor: vendorId });
+  const rec: any = await nrsLookup(String(target.number), target.channel === 'cac' ? 'cac' : 'tin');
+  return await svc('svc_tin_result', { p_org: orgId, p_vendor: vendorId, p: {
+    check_id: target.check_id, found: Boolean(rec), nrs_tin: rec?.nrs_tin ?? null, taxpayer_name: rec?.taxpayer_name ?? null, tin_type: rec?.tin_type ?? null,
+    tax_office: rec?.tax_office ?? null, channel: target.channel, number: target.number } });
+}
+
 async function cacSearch(user: string, query: unknown) {
   const q = String(query ?? '').replace(/\s+/g, ' ').trim();
   if (q.length < 2 || q.length > 100) throw new UserError('Type at least two letters of the business name, or its RC number.');
@@ -485,8 +525,15 @@ async function webhook(req: Request) {
     if (status) await svc('svc_feed_status', { p_mono_id: monoId, d: { data_status: status } });
     return json({ ok: true, waiting: status || event });
   }
+  // Fetches made while the bank was still sending its history may have found the older months empty: once Mono says the
+  // data is all there, the history is walked again (lines already in are skipped).
+  let account = acc;
+  if (status === 'AVAILABLE' && acc.data_status && acc.data_status !== 'AVAILABLE') {
+    await svc('svc_feed_status', { p_mono_id: monoId, d: { history_done: false, history_to: '', data_status: status } });
+    account = { ...acc, history_done: false, history_to: null };
+  }
   try {
-    const r = await syncAccount(acc, false);
+    const r = await syncAccount(account, false, 20_000);
     return json({ ok: true, synced: r });
   } catch (e) {
     // Mono retries webhooks that fail; a fetch that failed is recorded on the account and picked up by the schedule.
@@ -536,6 +583,14 @@ Deno.serve(async (req) => {
         const result = await ninCheck(sb, u.user.id, orgId, body.nin, body.conversation_id);
         return json({ ok: true, result, identity: await mine('identity_state', { p_org: orgId }) });
       }
+      case 'verify_tin': {
+        const orgId = String(body.org_id || '');
+        const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!UUID.test(orgId)) throw new UserError('Choose the business first.');
+        const vendorId = body.vendor_id == null || body.vendor_id === '' ? null : String(body.vendor_id);
+        if (vendorId !== null && !UUID.test(vendorId)) throw new UserError('Choose the supplier.');
+        return json({ ok: true, ...(await verifyTin(mine, orgId, vendorId)) });
+      }
       case 'cac_status_report': {
         const orgId = String(body.org_id || '');
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgId)) throw new UserError('Choose the business first.');
@@ -565,7 +620,7 @@ Deno.serve(async (req) => {
         let sync: unknown = null; let syncError: string | null = null;
         try {
           const acc = await svc<FeedAccount>('svc_feed_account', { p_mono_id: monoId });
-          sync = await syncAccount({ ...acc, books_start: (await mine('bank_feed_account', { p_bank_account: acc.id })).books_start }, false);
+          sync = await syncAccount({ ...acc, books_start: (await mine('bank_feed_account', { p_bank_account: acc.id })).books_start }, false, 25_000);
         } catch (e) { syncError = (e as Error).message; }
         return json({ ok: true, account: linked, sync, sync_error: syncError,
           note: det.data_status && det.data_status !== 'AVAILABLE' ? 'The bank is still sending the history to Mono. Counta fetches it as soon as it arrives.' : null });
@@ -574,7 +629,7 @@ Deno.serve(async (req) => {
         const acc = await mine<any>('bank_feed_account', { p_bank_account: body.bank_account_id });
         if (acc.provider !== 'mono' || !acc.mono_id) throw new UserError('That account is not linked to a bank feed.');
         try {
-          return json({ ok: true, sync: await syncAccount({ id: acc.id, org_id: acc.org_id, mono_id: acc.mono_id, last_line_date: acc.last_line_date, books_start: acc.books_start }, true) });
+          return json({ ok: true, sync: await syncAccount({ id: acc.id, org_id: acc.org_id, mono_id: acc.mono_id, last_line_date: acc.last_line_date, history_to: acc.history_to, history_done: acc.history_done, books_start: acc.books_start }, true, 30_000) });
         } catch (e) {
           if (e instanceof ReauthNeeded) return json({ ok: false, reason: 'reauth', mono_id: acc.mono_id, error: 'The bank asks you to sign in again before it shares new transactions.' });
           throw e;
@@ -585,7 +640,7 @@ Deno.serve(async (req) => {
         if (acc.provider !== 'mono' || !acc.mono_id) throw new UserError('That account is not linked to a bank feed.');
         await svc('svc_feed_status', { p_mono_id: acc.mono_id, d: { reauth_required: false, data_status: 'AVAILABLE' } });
         try {
-          return json({ ok: true, sync: await syncAccount({ id: acc.id, org_id: acc.org_id, mono_id: acc.mono_id, last_line_date: acc.last_line_date, books_start: acc.books_start }, false) });
+          return json({ ok: true, sync: await syncAccount({ id: acc.id, org_id: acc.org_id, mono_id: acc.mono_id, last_line_date: acc.last_line_date, history_to: acc.history_to, history_done: acc.history_done, books_start: acc.books_start }, false, 30_000) });
         } catch (e) { return json({ ok: true, sync: null, sync_error: (e as Error).message }); }
       }
       case 'unlink': {

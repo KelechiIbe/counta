@@ -81,9 +81,11 @@ export interface AiProposal {
 }
 
 // ---------------------------------------------------------------- reads
-function useOrgQuery<T>(key: unknown[], fn: (org: string) => Promise<T>, enabled = true, refetchInterval?: number) {
+// keep: while a new period loads, the figures already on screen stay (for the same business).
+function useOrgQuery<T>(key: unknown[], fn: (org: string) => Promise<T>, enabled = true, refetchInterval?: number, keep = false) {
   const { orgId } = useSession();
-  return useQuery({ queryKey: [...key, orgId], enabled: !!orgId && enabled, queryFn: () => fn(orgId!), refetchInterval });
+  return useQuery<T>({ queryKey: [...key, orgId], enabled: !!orgId && enabled, queryFn: () => fn(orgId!), refetchInterval,
+    ...(keep ? { placeholderData: ((prev: T | undefined, q: any) => (q?.queryKey?.[q.queryKey.length - 1] === orgId ? prev : undefined)) as any } : {}) });
 }
 export const useTill = (loc: string | null) => useOrgQuery<Till>(['till', loc], (o) => rpc('get_till', { p_org: o, p_location: loc }), !!loc);
 export const useSales = (filter: Record<string, unknown>) => useOrgQuery<{ rows: SaleRow[]; pending_payments: any[]; orders_waiting: number }>(['sales', JSON.stringify(filter)], (o) => rpc('get_sales', { p_org: o, p_filter: filter }));
@@ -91,13 +93,17 @@ export const useSale = (id: string | null) => useQuery({ queryKey: ['sale', id],
 export const useCustomers = () => useOrgQuery<{ customers: Customer[]; price_lists: PriceList[] }>(['customers'], (o) => rpc('get_customers', { p_org: o }));
 export const useShifts = (days = 14) => useOrgQuery<Shift[]>(['shifts', days], (o) => rpc('get_shifts', { p_org: o, p_days: days }));
 export const useDeliveries = (days = 30) => useOrgQuery<any[]>(['deliveries', days], (o) => rpc('get_deliveries', { p_org: o, p_days: days }));
-export const usePayments = (enabled = true) => useOrgQuery<any>(['payments'], (o) => rpc('get_payments', { p_org: o }), enabled);
+export const usePayments = (enabled = true, period?: { from: string; to: string } | null) => useOrgQuery<any>(['payments', period?.from || null, period?.to || null],
+  (o) => rpc('get_payments', period ? { p_org: o, p_filter: { from: period.from, to: period.to } } : { p_org: o }), enabled, undefined, true);
 export const useBills = (filter: Record<string, unknown> = {}, enabled = true) => useOrgQuery<{ bills: Bill[]; vendors: any[]; [k: string]: any }>(['bills', JSON.stringify(filter)], (o) => rpc('get_bills', { p_org: o, p_filter: filter }), enabled);
 export const useBill = (id: string | null) => useQuery({ queryKey: ['bill', id], enabled: !!id, queryFn: () => rpc<any>('get_bill', { p_bill: id }) });
-export const useBanking = (enabled = true) => useOrgQuery<any>(['banking'], (o) => rpc('get_banking', { p_org: o }), enabled);
+export const useBanking = (enabled = true, period?: { from: string; to: string } | null) => useOrgQuery<any>(['banking', period?.from || null, period?.to || null],
+  (o) => rpc('get_banking', period ? { p_org: o, p_filter: { from: period.from, to: period.to } } : { p_org: o }), enabled, undefined, true);
 export const useInbox = (enabled = true) => useOrgQuery<any>(['inbox'], (o) => rpc('get_books_inbox', { p_org: o }), enabled, 60_000);
 export const useAssets = (enabled = true) => useOrgQuery<any>(['assets'], (o) => rpc('get_assets', { p_org: o }), enabled);
-export const useOverview = (enabled = true) => useOrgQuery<any>(['overview'], (o) => rpc('get_finance_overview', { p_org: o }), enabled);
+// Home's figures for a period (this month when none is given) and the balances at its end.
+export const useOverview = (enabled = true, from?: string | null, to?: string | null) => useOrgQuery<any>(['overview', from || null, to || null],
+  (o) => rpc('get_finance_overview', from || to ? { p_org: o, p_from: from || null, p_to: to || null } : { p_org: o }), enabled, undefined, true);
 export const useMessages = (sale: string | null = null) => useOrgQuery<any>(['messages', sale], (o) => rpc('get_messages', { p_org: o, p_sale: sale }));
 export const useChart = (enabled = true) => useOrgQuery<any>(['chart'], (o) => rpc('get_chart', { p_org: o }), enabled);
 export function useReport(report: string, from: string | null, to: string | null, options: Record<string, unknown> = {}, enabled = true) {

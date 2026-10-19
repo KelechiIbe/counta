@@ -4,7 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSession, useToast } from '../../state/session';
 import { edge } from '../../lib/api';
-import { N2, when } from '../../lib/format';
+import { N2, when, fmtDay } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Modal, ModalHead, Spinner } from '../../components/ui';
 
@@ -122,7 +122,7 @@ export function FeedControls({ account, canAct }: { account: any; canAct: boolea
     const r = await edge<any>('mono', { action: 'sync', bank_account_id: account.id });
     if (r.ok === false && r.reason === 'reauth') { setBusy(null); toast(r.error, 'err'); await refresh(); return; }
     if (r.ok === false) toast(r.error || 'The sync did not finish.', 'err');
-    else toast(`${r.sync.added} new transaction${r.sync.added === 1 ? '' : 's'}${r.sync.fresh_data === 'processing' ? '; the bank is still sending today\'s, they follow shortly' : ''}`);
+    else toast(`${r.sync.added} new transaction${r.sync.added === 1 ? '' : 's'}${r.sync.complete === false ? '; older months keep coming in the background' : r.sync.fresh_data === 'processing' ? '; the bank is still sending today\'s, they follow shortly' : ''}`);
     await refresh(); setBusy(null);
   }
   async function unlink() {
@@ -138,6 +138,9 @@ export function FeedControls({ account, canAct }: { account: any; canAct: boolea
         <span className={'chip ' + (f.reauth_required ? 't-amber' : 't-blue')}><Icon name="link" size={12} style={{ marginRight: 4, verticalAlign: -2 }} />{f.reauth_required ? 'Feed paused' : 'Bank feed'}{f.institution ? ` · ${f.institution}` : ''}</span>
         <span className="faint" style={{ fontSize: 12 }}>{f.last_synced_at ? `Synced ${when(f.last_synced_at)}` : 'Not synced yet'}{f.balance != null ? ` · bank ${N2(f.balance)}` : ''}</span>
       </div>
+      {!f.history_done ? (
+        <div className="faint" style={{ fontSize: 12 }}>Fetching the history back to {fmtDay(f.history_from || '2023-01-01')}{f.history_to ? `, now at ${fmtDay(f.history_to)}` : ''}. The rest follows on its own over the next few minutes.</div>
+      ) : f.first_feed_line ? <div className="faint" style={{ fontSize: 12 }}>The bank gave transactions from {fmtDay(f.first_feed_line)}.</div> : null}
       {f.reauth_required && <div style={{ fontSize: 12, color: '#B45309' }}>The bank asks you to sign in again before it shares new transactions.</div>}
       {!f.reauth_required && f.last_error && <div className="faint" style={{ fontSize: 12 }} title={f.last_error}>Last fetch: {String(f.last_error).slice(0, 90)}</div>}
       {canAct && (

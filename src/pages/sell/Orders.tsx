@@ -7,6 +7,8 @@ import { rpc } from '../../lib/supabase';
 import { money, useDeliveries, useSales, type Customer, type Sale } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { useScreenPeriod } from '../../lib/period';
 import { ItemPicker } from '../../components/ItemPicker';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows } from '../../components/ui';
 import type { Item } from '../../lib/types';
@@ -18,7 +20,9 @@ export default function Orders() {
   const [tab, setTab] = useState<'waiting' | 'all' | 'deliveries'>('waiting');
   const [open, setOpen] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const orders = useSales({ doc_type: 'order', limit: 300 });
+  const { orgId } = useSession();
+  const [period, setPeriod] = useScreenPeriod(orgId, 'orders', 'all', inv?.org.fiscal_year_start || 1);
+  const orders = useSales({ doc_type: 'order', limit: 300, from: period.preset === 'all' ? null : period.from, to: period.preset === 'all' ? null : period.to });
   const deliveries = useDeliveries(60);
   if (!inv) return null;
   const rows = (orders.data?.rows || []).filter((o) => tab === 'all' || (!o.confirmed && !['cancelled', 'void'].includes(o.status)));
@@ -26,7 +30,10 @@ export default function Orders() {
     <div className="container">
       <div className="row wrap" style={{ justifyContent: 'space-between' }}>
         <Pills value={tab} onChange={setTab} options={[{ id: 'waiting', label: 'Waiting to confirm', count: orders.data?.orders_waiting || undefined }, { id: 'all', label: 'All orders' }, { id: 'deliveries', label: 'Deliveries' }]} />
-        <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><Icon name="plus" size={14} color="#fff" />Take an order</button>
+        <div className="row wrap">
+          {tab !== 'deliveries' && <PeriodPicker value={period} onChange={setPeriod} align="end" />}
+          <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><Icon name="plus" size={14} color="#fff" />Take an order</button>
+        </div>
       </div>
       {tab !== 'deliveries' ? (
         <div className="card" style={{ overflow: 'hidden' }}>

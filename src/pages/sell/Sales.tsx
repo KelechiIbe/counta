@@ -8,6 +8,9 @@ import { DOC_LABEL, METHOD_LABEL, VAT_STATUS, money, today, useChart, useCustome
 import { countryName, isExport } from '../../lib/countries';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
+import { VatInfo } from '../../components/VatInfo';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { periodText, useScreenPeriod } from '../../lib/period';
 import { ItemPicker } from '../../components/ItemPicker';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import { ExportMenu, useMeta } from '../../components/Books';
@@ -23,7 +26,9 @@ export default function Sales() {
   const [params, setParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>(() => (params.get('tab') as Tab) || 'all');
   const [q, setQ] = useState('');
-  const [range, setRange] = useState({ from: '', to: '' });
+  const { orgId } = useSession();
+  const [period, setPeriod] = useScreenPeriod(orgId, 'sales', 'all', inv?.org.fiscal_year_start || 1);
+  const range = period.preset === 'all' ? { from: '', to: '' } : { from: period.from, to: period.to };
   const [vs, setVs] = useState('');
   const [editing, setEditing] = useState<{ id?: string; type: 'invoice' | 'quote'; draft?: Drafts['invoice'] } | null>(null);
   // An invoice Martina prepared opens in the editor for the person to check.
@@ -34,7 +39,7 @@ export default function Sales() {
     q: q || null, from: range.from || null, to: range.to || null,
     doc_type: tab === 'all' || tab === 'unpaid' || tab === 'confirm' ? (tab === 'unpaid' ? 'invoice,receipt,order' : null) : tab,
     status: tab === 'unpaid' ? 'open,partially_paid' : null, vat_status: vs || null, limit: 500,
-  }), [tab, q, range, vs]);
+  }), [tab, q, range.from, range.to, vs]);
   const sales = useSales(filter);
   const meta = useMeta();
   if (!inv) return null;
@@ -53,7 +58,7 @@ export default function Sales() {
         ]} />
         <div className="row wrap">
           <ExportMenu name={`${inv.org.name} sales ${today()}`} disabled={!rows.length}
-            sheets={() => [{ meta: meta('Sales and invoices', range.from ? `${fmtDay(range.from)} to ${fmtDay(range.to || today())}` : 'Latest 500'), cols,
+            sheets={() => [{ meta: meta('Sales and invoices', range.from ? periodText(period) : 'Latest 500'), cols,
               rows: rows.map((r) => ({ ...r, doc: DOC_LABEL[r.doc_type], status: r.status.replace(/_/g, ' '), vat_status: (r.vat_statuses || []).slice().sort().join(', '),
                 export_to: r.export ? countryName(r.customer_country) : '' })) }]} />
           <button className="btn btn-secondary btn-sm" onClick={() => setEditing({ type: 'quote' })}><Icon name="plus" size={14} />Quote</button>
@@ -65,9 +70,7 @@ export default function Sales() {
           <div className="card-hd">
             <div className="row" style={{ flex: '1 1 260px' }}><Icon name="search" size={15} color="#9CA3AF" /><input className="input input-sm" style={{ border: 0, boxShadow: 'none' }} placeholder="Number, customer, phone or reference" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search sales" /></div>
             <div className="row wrap">
-              <input className="input input-sm" type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} style={{ width: 150 }} aria-label="From" />
-              <span className="faint">to</span>
-              <input className="input input-sm" type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} style={{ width: 150 }} aria-label="To" />
+              <PeriodPicker value={period} onChange={setPeriod} align="end" />
               <select className="input input-sm" value={vs} onChange={(e) => setVs(e.target.value)} style={{ width: 170 }} aria-label="VAT status">
                 <option value="">Any VAT status</option>{[0, 1, 2].map((k) => <option key={k} value={k}>{k} · {VAT_STATUS[k].label}</option>)}
               </select>
@@ -483,8 +486,12 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
                   <select className="input input-sm" value={l.vat_treatment} onChange={(e) => upd(l.key, { vat_treatment: e.target.value })} aria-label="VAT"><option value="standard">VAT {vatPct(f.issue_date)}</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select>
                   <select className="input input-sm" value={l.revenue_account} onChange={(e) => upd(l.key, { revenue_account: e.target.value })} aria-label="Income account"><option value="">Usual income account</option>{revenue.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select>
                 </div>}
-                {exp ? <span className="faint" style={{ fontSize: 11 }}>Zero-rated export · VAT 2{l.vat_treatment !== 'zero' ? ` (normally ${l.vat_treatment === 'exempt' ? 'exempt' : 'VATable'})` : ''}</span>
-                  : l.item_id && l.vat_treatment !== 'standard' && <span className="faint" style={{ fontSize: 11 }}>{l.vat_treatment === 'zero' ? 'Zero-rated · VAT 2' : 'Exempt · VAT 1'}</span>}
+                <span className="faint row" style={{ fontSize: 11, gap: 0 }}>
+                  {exp ? <>Zero-rated export · VAT 2{l.vat_treatment !== 'zero' ? ` (normally ${l.vat_treatment === 'exempt' ? 'exempt' : 'VATable'})` : ''}</>
+                    : !inv.org.vat_registered ? 'No VAT' : l.vat_treatment === 'zero' ? 'Zero-rated · VAT 2' : l.vat_treatment === 'exempt' ? 'Exempt · VAT 1' : l.item_id ? `VAT ${vatPct(f.issue_date)}` : null}
+                  <VatInfo side="sale" treatment={l.vat_treatment} name={l.description} day={f.issue_date} exportSale={!!exp} vatRegistered={inv.org.vat_registered}
+                    item={inv.items.find((i) => i.id === l.item_id && i.vat_treatment === l.vat_treatment) || null} />
+                </span>
               </span>
               <input className="input input-sm num" inputMode="decimal" value={l.qty} onChange={(e) => upd(l.key, { qty: e.target.value })} aria-label="Quantity" />
               {l.item_id && l.pack > 1 ? <select className="input input-sm" value={l.unit} onChange={(e) => {

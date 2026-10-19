@@ -191,7 +191,8 @@ export function Popover({ anchor, onClose, children, width = 210, side = 'bottom
       if (ref.current?.contains(t) || anchor?.contains(t)) return;
       close.current();
     };
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { close.current(); anchor?.focus(); } };
+    // Escape closes this popover only, not the drawer or modal it sits in (those listen on window, after the document).
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close.current(); anchor?.focus(); } };
     document.addEventListener('mousedown', down);
     document.addEventListener('touchstart', down, { passive: true });
     document.addEventListener('keydown', key);

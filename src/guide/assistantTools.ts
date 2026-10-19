@@ -53,7 +53,7 @@ const SCREENS: Record<string, string> = {
   home: '/home', till: '/sell/till', sales: '/sell/sales', invoices: '/sell/sales', customers: '/sell/customers', orders: '/sell/orders',
   products: '/inventory/items', stock_counts: '/inventory/counts', reorder: '/inventory/reorder', receive_stock: '/inventory/receive', payments: '/payments',
   bills: '/purchases/bills', vendors: '/purchases/vendors', banking: '/accounting/banking', books: '/accounting/inbox', reports: '/accounting/ledgers',
-  tax: '/accounting/tax', vat: '/accounting/tax?tab=vat', wht: '/accounting/tax?tab=wht', cit: '/accounting/tax?tab=cit', team: '/settings#team', settings: '/settings',
+  tax: '/tax/vat', vat: '/tax/vat', wht: '/tax/wht', cit: '/tax/cit', team: '/settings#team', settings: '/settings',
   identity: '/settings#identity',
 };
 

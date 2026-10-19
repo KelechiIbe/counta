@@ -548,7 +548,7 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
 }
 
 // ---------------------------------------------------------------- score
-const ACTION_ROUTE: Record<string, string> = { settings: '/settings', vat: '/accounting/tax', wht: '/accounting/tax', cit: '/accounting/tax', account_number: '/home', bank: '/accounting/banking', first_sale: '/sell/till' };
+const ACTION_ROUTE: Record<string, string> = { settings: '/settings', vat: '/tax/vat', wht: '/tax/wht', cit: '/tax/cit', account_number: '/home', bank: '/accounting/banking', first_sale: '/sell/till' };
 function Ring({ score, total }: { score: number; total: number }) {
   const [n, setN] = useState(0);
   useEffect(() => {

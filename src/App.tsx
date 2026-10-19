@@ -70,6 +70,7 @@ function RequireAuth({ children, needOrg = true }: { children: ReactNode; needOr
 const money = (i: Inventory) => can(i, 'keep_books') || can(i, 'make_payments') || can(i, 'see_margins');
 const RULES: { prefix: string; ok: (i: Inventory) => boolean; who: string }[] = [
   { prefix: '/accounting', ok: money, who: 'people who keep the books, make payments or see margins' },
+  { prefix: '/tax/', ok: (i) => money(i) || can(i, 'file_tax'), who: 'people who keep the books or file tax returns' },
   { prefix: '/purchases', ok: (i) => money(i) || can(i, 'approve_pos'), who: 'people who keep the books, make payments or approve purchase orders' },
   { prefix: '/sell', ok: (i) => can(i, 'record_sales') || money(i), who: 'people who record sales' },
   { prefix: '/payments', ok: (i) => can(i, 'record_sales') || money(i), who: 'people who record sales or make payments' },
@@ -88,6 +89,15 @@ function Gate({ children }: { children: ReactNode }) {
       </div>
     </div>
   );
+}
+
+// Tax returns used to live under Accounting with ?tab=; old links and notifications still land on the right page.
+function OldTaxLink() {
+  const q = new URLSearchParams(useLocation().search);
+  const tab = ['vat', 'wht', 'cit'].includes(q.get('tab') || '') ? q.get('tab') : 'cit';
+  q.delete('tab');
+  const rest = q.toString();
+  return <Navigate to={`/tax/${tab}${rest ? '?' + rest : ''}`} replace />;
 }
 
 // Phones open the phone app unless the person chose the full app on this device.
@@ -156,7 +166,11 @@ export default function App() {
         <Route path="/accounting/journals" element={<Journals />} />
         <Route path="/accounting/assets" element={<Assets />} />
         <Route path="/accounting/close" element={<Close />} />
-        <Route path="/accounting/tax" element={<Tax />} />
+        <Route path="/accounting/tax" element={<OldTaxLink />} />
+        <Route path="/tax" element={<Navigate to="/tax/vat" replace />} />
+        <Route path="/tax/vat" element={<Tax tab="vat" />} />
+        <Route path="/tax/wht" element={<Tax tab="wht" />} />
+        <Route path="/tax/cit" element={<Tax tab="cit" />} />
         <Route path="/inventory" element={<Overview />} />
         <Route path="/inventory/items" element={<Items />} />
         <Route path="/inventory/receive" element={<Receive />} />

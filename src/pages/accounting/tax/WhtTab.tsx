@@ -8,6 +8,8 @@ import { rpc } from '../../../lib/supabase';
 import { N2, fmtDay } from '../../../lib/format';
 import { addMonths, authorityLabel, monthName, monthShort, pct, useWhtReceipts, useWithholding } from '../../../lib/tax';
 import { Icon } from '../../../components/Icon';
+import { PeriodPicker } from '../../../components/PeriodPicker';
+import { useScreenPeriod } from '../../../lib/period';
 import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner, Stat } from '../../../components/ui';
 import { ExportMenu, useMeta } from '../../../components/Books';
 import { downloadUrl, useTaxRefresh } from './CitTab';
@@ -17,9 +19,11 @@ type View = 'months' | 'receipts' | 'rates';
 
 export default function WhtTab() {
   const [view, setView] = useState<View>('months');
-  const [to, setTo] = useState(today().slice(0, 7));
-  const from = addMonths(to + '-01', -11);
-  const end = addMonths(to + '-01', 1);
+  const { orgId } = useSession();
+  const { data: inv } = useInventory();
+  const [period, setPeriod] = useScreenPeriod(orgId, 'wht-months', 'l12', inv?.org.fiscal_year_start || 1);
+  const from = period.from.slice(0, 7) + '-01';
+  const end = addMonths(period.to.slice(0, 7) + '-01', 1);
   const last = new Date(end + 'T12:00:00Z'); last.setUTCDate(0);
   const q = useWithholding(from, [last.toISOString().slice(0, 10), today()].sort()[0]);
   const d = q.data;
@@ -42,7 +46,7 @@ export default function WhtTab() {
           {mismatch && <Alert kind="amber" icon="alert">The ledger and the deductions differ. Something was posted to 2202 or 2211 by hand, or a payment to a tax authority was not recorded here.</Alert>}
           <div className="row wrap" style={{ justifyContent: 'space-between' }}>
             <Pills value={view} onChange={setView} options={[{ id: 'months', label: 'By month' }, { id: 'receipts', label: 'Receipts for suppliers' }, { id: 'rates', label: 'Rates' }]} />
-            {view === 'months' && <div className="row"><span className="muted" style={{ fontSize: 14 }}>Twelve months to</span><input className="input input-sm" type="month" value={to} max={today().slice(0, 7)} onChange={(e) => e.target.value && setTo(e.target.value)} style={{ width: 160 }} /></div>}
+            {view === 'months' && <PeriodPicker value={period} onChange={setPeriod} presets={['qtd', 'lq', 'ytd', 'ly', 'l12', 'all']} label="Months shown" align="end" />}
           </div>
           {view === 'months' && (
             <>

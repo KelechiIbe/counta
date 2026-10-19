@@ -6,10 +6,12 @@ import { useLoc } from '../../shell/AppShell';
 import { useCashStory, useNeedsAction, useSuggestions } from '../../shell/needsAction';
 import { useCounts, useLedger, useProposals } from '../../lib/queries';
 import { buildItems, suAbbr } from '../../lib/domain';
-import { K, P, N, when, plural } from '../../lib/format';
+import { K, P, N, when, plural, fmtDay } from '../../lib/format';
 import { moveBy, moveItem, moveQty, moveRef, typeLabel, typeTone } from '../../lib/ledger';
 import { askMartina, buildContext, localAnswer, type Answer } from '../../lib/martina';
 import { Icon } from '../../components/Icon';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { ROLLING, presetLabel, useScreenPeriod } from '../../lib/period';
 import { Kpi, Label, SkeletonRows, Spinner } from '../../components/ui';
 import JournalDrawer from '../../components/JournalDrawer';
 import ImportPanel from './ImportPanel';
@@ -137,18 +139,34 @@ export default function Overview() {
   });
   useEffect(() => { if (location.hash === '#needs-action') document.getElementById('needs-action')?.scrollIntoView({ behavior: 'smooth' }); }, [location.hash]);
   const items = useMemo(() => (inv ? buildItems(inv, loc) : []), [inv, loc]);
+  // Margin and top movers for a period: the last 30 days come with the stock figures; any other period asks the sales report.
+  const { orgId } = useSession();
+  const [period, setPeriod] = useScreenPeriod(orgId, 'inventory-overview', 'l30', inv?.org.fiscal_year_start || 1);
+  const custom = period.preset !== 'l30';
+  const sold = useQuery({
+    queryKey: ['report', 'sales_by_item', period.from, period.to, loc, orgId], enabled: !!inv && custom, staleTime: 30_000, placeholderData: (p) => p,
+    queryFn: () => rpc<{ rows: any[] }>('inventory_report', { p_org: orgId, p_report: 'sales_by_item', p_from: period.from, p_to: period.to,
+      p_location: loc === 'ALL' ? null : loc, p_item: null, p_accounts: null }),
+  });
   if (!inv) return null;
   if (!inv.items.length) return <EmptyState />;
   const costs = inv.can_see_costs;
   const value = items.reduce((a, i) => a + (i.value || 0), 0);
-  const rev = inv.items.reduce((a, i) => a + Number(i.revenue_30), 0);
-  const cogs = inv.items.reduce((a, i) => a + Number(i.cogs_30 || 0), 0);
+  const soldRows: any[] = custom ? sold.data?.rows || [] : [];
+  const rev = custom ? soldRows.reduce((a, r) => a + Number(r.revenue || 0), 0) : inv.items.reduce((a, i) => a + Number(i.revenue_30), 0);
+  const cogs = custom ? soldRows.reduce((a, r) => a + Number(r.cogs || 0), 0) : inv.items.reduce((a, i) => a + Number(i.cogs_30 || 0), 0);
+  const span = custom ? (period.preset ? presetLabel(period.preset, inv.org.fiscal_year_start || 1).toLowerCase() : `${fmtDay(period.from)} to ${fmtDay(period.to)}`) : 'last 30 days';
   const gm = rev > 0 ? ((rev - cogs) / rev) * 100 : null;
   const low = items.filter((i) => i.status === 'Low');
   const dead = items.filter((i) => i.status === 'Dead');
   const exp = items.flatMap((i) => i.batchesInScope.filter((b) => b.expiry_date && (Date.parse(b.expiry_date) - Date.parse(inv.today)) / 864e5 <= 30).map((b) => ({ b, i })));
   const expValue = exp.reduce((a, { b, i }) => a + Number(b.qty_remaining) * (i.wac || 0), 0);
-  const top = [...items].filter((i) => Number(i.revenue_30) > 0).sort((a, b) => Number(b.revenue_30) - Number(a.revenue_30)).slice(0, 5);
+  const days = Math.max(1, Math.round((Date.parse(period.to) - Date.parse(period.from)) / 864e5) + 1);
+  const top: { id: string; name: string; revenue: number; perDay: number | null; unit: string }[] = custom
+    ? soldRows.filter((r) => Number(r.revenue) > 0).sort((a, b) => Number(b.revenue) - Number(a.revenue)).slice(0, 5)
+      .map((r) => ({ id: String(r.item_id || r.item), name: String(r.item), revenue: Number(r.revenue), perDay: Number(r.qty) / days, unit: String(r.unit || '') }))
+    : [...items].filter((i) => Number(i.revenue_30) > 0).sort((a, b) => Number(b.revenue_30) - Number(a.revenue_30)).slice(0, 5)
+      .map((i) => ({ id: i.id, name: i.name, revenue: Number(i.revenue_30), perDay: i.vel, unit: suAbbr(i.selling_unit) }));
   const allRows = [...rows];
   if (voice.data) allRows.push({ key: 'voice', t: `${plural(voice.data, 'voice entry', 'voice entries')} to review`, d: 'Staff still earning trust on voice capture', cta: 'Review', to: '/inventory/locations', icon: 'mic', color: '#0072F5', bg: '#F0F7FF' });
   return (
@@ -156,7 +174,7 @@ export default function Overview() {
       <PromptBar />
       <div className="card card-pad m-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 20 }}>
         <Kpi label="Stock value" value={costs ? K(value) : '—'} sub={`${items.length} items · weighted average cost`} color="#111827" />
-        <Kpi label="Gross margin · 30d" value={costs ? P(gm) : '—'} sub="From actual sales and their cost" color="#15803D" />
+        <Kpi label={custom ? `Gross margin · ${span}` : 'Gross margin · 30d'} value={costs ? P(gm) : '—'} sub="From actual sales and their cost" color="#15803D" />
         <Kpi label="Low stock" value={String(low.length)} sub={low.map((i) => i.name.split(' ')[0]).slice(0, 4).join(', ') || 'Nothing below floor'} color="#C2410C" />
         <Kpi label="Expiring ≤ 30d" value={plural(exp.length, 'batch', 'batches')} sub={costs ? K(expValue) + ' at risk' : 'Sell these first'} color="#A16207" />
         <Kpi label="Dead stock" value={costs ? K(dead.reduce((a, i) => a + (i.value || 0), 0)) : String(dead.length)} sub={plural(dead.length, 'item') + ' unmoved 90+ days'} color="#4B5563" />
@@ -176,14 +194,17 @@ export default function Overview() {
           ))}
         </div>
         <div className="card card-pad">
-          <Label style={{ marginBottom: 12 }}>Top movers · 30-day revenue</Label>
+          <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+            <Label>Top movers · {custom ? span : '30-day'} revenue</Label>
+            <PeriodPicker value={period} onChange={setPeriod} presets={ROLLING} align="end" label="Sales in" />
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {!top.length && <div className="muted" style={{ fontSize: 14 }}>No sales recorded in the last 30 days.</div>}
+            {!top.length && <div className="muted" style={{ fontSize: 14 }}>{custom && sold.isLoading ? 'Loading…' : `No sales recorded in the ${span}.`}</div>}
             {top.map((t) => (
               <div key={t.id}>
-                <div className="row" style={{ justifyContent: 'space-between', fontSize: 13, marginBottom: 5 }}><span style={{ fontWeight: 500 }}>{t.name}</span><span style={{ fontWeight: 600 }}>{K(Number(t.revenue_30))}</span></div>
-                <div className="bar"><div style={{ width: `${Math.round((Number(t.revenue_30) / Number(top[0].revenue_30)) * 100)}%` }} /></div>
-                <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>{Math.round(t.vel * 10) / 10} {suAbbr(t.selling_unit)}/day</div>
+                <div className="row" style={{ justifyContent: 'space-between', fontSize: 13, marginBottom: 5 }}><span style={{ fontWeight: 500 }}>{t.name}</span><span style={{ fontWeight: 600 }}>{K(t.revenue)}</span></div>
+                <div className="bar"><div style={{ width: `${Math.round((t.revenue / top[0].revenue) * 100)}%` }} /></div>
+                {t.perDay != null && <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>{Math.round(t.perDay * 10) / 10} {t.unit}/day</div>}
               </div>
             ))}
           </div>

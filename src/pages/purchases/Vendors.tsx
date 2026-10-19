@@ -1,13 +1,17 @@
 // Vendors: what the business owes each, their Tax ID and withholding tax category, bank details for paying from the wallet,
 // the account their bills usually go to, and a statement.
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { edge, today, useBills, useChart } from '../../lib/api';
 import { N2, fmtDay } from '../../lib/format';
 import { Icon } from '../../components/Icon';
-import { Alert, Drawer, Empty, Field, Pills, SkeletonRows } from '../../components/ui';
+import { TinChip, TinOutcome, useTinCheck } from './TinCheck';
+import { PeriodPicker } from '../../components/PeriodPicker';
+import { useScreenPeriod } from '../../lib/period';
+import { Alert, Drawer, Empty, Field, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import { TAX_ID_HINT, isOldTin, taxIdError } from '../../lib/taxid';
 import { ENTITY_TYPES, matrixRate, pct, useTaxProfile, useVendorTax } from '../../lib/tax';
 import { COUNTRIES } from '../../lib/countries';
@@ -19,6 +23,14 @@ export default function Vendors() {
   const bills = useBills({}, true);
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<any | null>(null);
+  const [params, setParams] = useSearchParams();
+  const [openTab, setOpenTab] = useState<'statement' | 'details'>('statement');
+  // A bill held for its supplier's Tax ID links here to add or correct it.
+  useEffect(() => {
+    const id = params.get('open');
+    const v = id && (bills.data?.vendors || []).find((x: any) => x.id === id);
+    if (v) { setOpenTab(params.get('tab') === 'details' ? 'details' : 'statement'); setOpen(v); setParams({}, { replace: true }); }
+  }, [params, bills.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const list = useMemo(() => (bills.data?.vendors || []).filter((v: any) => !q.trim() || v.name.toLowerCase().includes(q.trim().toLowerCase()))
     .sort((a: any, b: any) => Number(b.balance) - Number(a.balance) || a.name.localeCompare(b.name)), [bills.data, q]);
   if (!inv) return null;
@@ -31,7 +43,8 @@ export default function Vendors() {
           {bills.isLoading ? <SkeletonRows n={6} /> : bills.error ? <div style={{ padding: 20 }}><Alert kind="yellow" icon="shield">{(bills.error as Error).message}</Alert></div> : !list.length ? <div style={{ padding: 20 }}><Empty>No vendors yet.</Empty></div> : list.map((v: any) => (
             <div key={v.id} className="tr click" onClick={() => setOpen(v)} style={{ gridTemplateColumns: 'minmax(180px,1.5fr) 140px minmax(160px,1fr) 150px 130px', minWidth: 800 }}>
               <b className="ellipsis">{v.name}</b>
-              <span className="muted">{v.tin ? <>{v.tin}{isOldTin(v.tin) && <span className="faint" style={{ display: 'block', fontSize: 11 }}>old TIN</span>}</> : <span style={{ color: '#C2410C' }}>No Tax ID</span>}</span>
+              <span className="muted">{v.tin ? <>{v.tin}{isOldTin(v.tin) && <span className="faint" style={{ display: 'block', fontSize: 11 }}>old TIN</span>}
+                {v.resident !== false && <span style={{ display: 'block', marginTop: 2 }}><TinChip status={v.tin_status} hasTin /></span>}</> : <span style={{ color: '#C2410C' }}>No Tax ID</span>}</span>
               <span className="muted ellipsis">{(bills.data?.wht_rates || []).find((w: any) => w.code === v.wht_category)?.name || 'Not set'}</span>
               <span className="muted">{v.account_number ? `${v.bank_name || v.bank_code} · ${v.account_number.slice(-4)}` : '—'}</span>
               <span className="right num" style={{ color: Number(v.balance) > 0 ? '#C2410C' : undefined }}>{Number(v.balance) ? N2(v.balance) : '—'}</span>
@@ -39,19 +52,20 @@ export default function Vendors() {
           ))}
         </div>
       </div>
-      {open && <VendorDrawer vendor={open} whtRates={bills.data?.wht_rates || []} onClose={() => setOpen(null)} />}
+      {open && <VendorDrawer vendor={open} whtRates={bills.data?.wht_rates || []} initialTab={openTab} onClose={() => { setOpen(null); setOpenTab('statement'); }} />}
     </div>
   );
 }
 
-function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: any[]; onClose: () => void }) {
+function VendorDrawer({ vendor, whtRates, onClose, initialTab = 'statement' }: { vendor: any; whtRates: any[]; onClose: () => void; initialTab?: 'statement' | 'details' }) {
   const { orgId } = useSession();
   const toast = useToast();
   const qc = useQueryClient();
   const chart = useChart();
   const meta = useMeta();
-  const [tab, setTab] = useState<'statement' | 'details'>('statement');
+  const [tab, setTab] = useState<'statement' | 'details'>(initialTab);
   const tax = useVendorTax(vendor.id);
+  const tin = useTinCheck();
   const prof = useTaxProfile();
   const states: string[] = (prof.data?.authorities || []).filter((a: any) => a.state).map((a: any) => a.state);
   const [f, setF] = useState({ tin: vendor.tin || '', rc_number: vendor.rc_number || '', wht_category: vendor.wht_category || '', bank_code: vendor.bank_code || '',
@@ -66,7 +80,10 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
     setLoaded(true);
   }, [tax.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const [banks, setBanks] = useState<{ code: string; name: string }[]>([]);
-  const st = useQuery({ queryKey: ['vstatement', vendor.id], enabled: tab === 'statement', queryFn: () => rpc<any>('vendor_statement', { p_vendor: vendor.id, p_from: null, p_to: null }) });
+  const { data: inv } = useInventory();
+  const [period, setPeriod] = useScreenPeriod(orgId, 'vendor-statement', 'all', inv?.org.fiscal_year_start || 1);
+  const pFrom = period.preset === 'all' ? null : period.from;
+  const st = useQuery({ queryKey: ['vstatement', vendor.id, pFrom, period.to], enabled: tab === 'statement', placeholderData: (prev, q) => (q?.queryKey[1] === vendor.id ? prev : undefined), queryFn: () => rpc<any>('vendor_statement', { p_vendor: vendor.id, p_from: pFrom, p_to: period.to }) });
   useEffect(() => { edge<{ banks: any[] }>('payments', { action: 'banks' }).then((r) => setBanks(r.banks || [])); }, []);
   useEffect(() => {
     if (!/^\d{10}$/.test(f.account_number) || !f.bank_code || f.account_name) return;
@@ -86,6 +103,9 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
       await rpc('save_vendor_details', { p_org: orgId, p_vendor: vendor.id, p_patch: { ...f, entity_type: f.entity_type || null, state: f.resident ? f.state || null : null,
         country: f.resident ? 'NG' : f.country, bank_name: banks.find((b) => b.code === f.bank_code)?.name || null } });
       toast('Vendor saved'); await Promise.all(['bills', 'bill', 'vendor-tax'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
+      // A Tax ID typed or changed is checked with the NRS straight away, for a supplier in Nigeria.
+      const typed = f.tin.replace(/[\s\-./]/g, '');
+      if (f.resident && typed && typed !== String(tax.data?.tin || '').replace(/[\s\-./]/g, '')) await tin.check(vendor.id);
     } catch (e) { toast((e as Error).message, 'err'); }
   }
   const s = st.data;
@@ -98,7 +118,20 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
         {tab === 'details' ? (
           <div className="stack" style={{ gap: 12 }}>
             {tax.error && <Alert kind="yellow" icon="shield">{(tax.error as Error).message}</Alert>}
-            {!f.tin && <Alert kind="yellow" icon="alert">Without a Tax ID, withholding tax on this vendor's bills is deducted at double the rate.</Alert>}
+            {!f.tin && f.resident && <Alert kind="yellow" icon="alert">Without a Tax ID, Counta will not pay this supplier's bills that carry withholding tax: the WHT schedule needs it.</Alert>}
+            {Number(tax.data?.bills_held || 0) > 0 && <Alert kind="red" icon="shield">{tax.data.bills_held} bill{Number(tax.data.bills_held) === 1 ? '' : 's'} from {vendor.name} {Number(tax.data.bills_held) === 1 ? 'waits' : 'wait'} for a checked Tax ID before payment.</Alert>}
+            {f.resident && tax.data && (tax.data.tin || tax.data.rc_number) && (
+              <div className="card card-pad stack" style={{ gap: 6, borderRadius: 12 }}>
+                <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
+                  <span className="row" style={{ gap: 8 }}><b style={{ fontSize: 14 }}>Tax ID with the NRS</b><TinChip status={tax.data.tin_status} hasTin={!!tax.data.tin} /></span>
+                  <span className="row" style={{ gap: 6 }}>
+                    {tax.data.tin_status === 'mismatch' && <button className="btn btn-secondary btn-xs" disabled={!!tin.busy} onClick={() => tin.confirm(vendor.id)}>It is the same business</button>}
+                    <button className="btn btn-secondary btn-xs" disabled={!!tin.busy} onClick={() => tin.check(vendor.id)}>{tin.busy === 'check' ? <Spinner small /> : <Icon name="shield" size={12} />}{tax.data.tin_status ? 'Check again' : tax.data.tin ? 'Check with the NRS' : 'Find the Tax ID from the RC number'}</button>
+                  </span>
+                </div>
+                <TinOutcome status={tax.data.tin_status} check={tax.data.tin_check} at={tax.data.tin_checked_at} />
+              </div>
+            )}
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="What kind of business"><select className="input" value={f.entity_type} onChange={(e) => setF({ ...f, entity_type: e.target.value })}>
                 <option value="">Not set{vendor.is_individual ? ' (an individual)' : ' (a company)'}</option>{ENTITY_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}</select></Field>
@@ -124,7 +157,7 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
               {!f.resident && <label className="check"><input type="checkbox" checked={f.digital_supplier} onChange={(e) => setF({ ...f, digital_supplier: e.target.checked })} />A digital service registered for Nigerian VAT (charges its own VAT)</label>}
               <label className="check"><input type="checkbox" checked={f.connected_person} onChange={(e) => setF({ ...f, connected_person: e.target.checked })} />A connected person (related company, director or shareholder)</label>
             </div>
-            <div className="faint" style={{ fontSize: 12 }}>{goesTo}.{!f.resident && !f.digital_supplier ? ' VAT on services they supply is self-charged at ${vatPct()} and paid to the NRS by the 14th.' : ''}
+            <div className="faint" style={{ fontSize: 12 }}>{goesTo}.{!f.resident && !f.digital_supplier ? ` VAT on services they supply is self-charged at ${vatPct()} and paid to the NRS by the 14th.` : ''}
               {tax.data?.state_needed && !f.state ? ' Without it, send their bills back to ask for the address.' : ''}</div>
             <Field label="Their bills usually go to"><select className="input" value={f.default_account} onChange={(e) => setF({ ...f, default_account: e.target.value })}><option value="">No default</option>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select></Field>
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -137,8 +170,9 @@ function VendorDrawer({ vendor, whtRates, onClose }: { vendor: any; whtRates: an
           </div>
         ) : !s ? <SkeletonRows n={5} /> : (
           <div className="stack" style={{ gap: 12 }}>
-            <div className="row" style={{ justifyContent: 'flex-end' }}>
-              <ExportMenu name={`${vendor.name} statement ${today()}`} sheets={() => [{ meta: meta(`Vendor statement · ${vendor.name}`, `${fmtDay(s.from)} to ${fmtDay(s.to)}`),
+            <div className="row wrap" style={{ justifyContent: 'space-between' }}>
+              <PeriodPicker value={period} onChange={setPeriod} label="Statement period" />
+              <ExportMenu name={`${vendor.name} statement ${period.to}`} sheets={() => [{ meta: meta(`Vendor statement · ${vendor.name}`, `${fmtDay(s.from)} to ${fmtDay(s.to)}`),
                 cols: [{ key: 'date', label: 'Date', type: 'date' }, { key: 'ref', label: 'Journal' }, { key: 'memo', label: 'Details' }, { key: 'credit', label: 'Billed', type: 'money' }, { key: 'debit', label: 'Paid', type: 'money' }, { key: 'balance', label: 'Balance', type: 'money' }],
                 rows: [{ memo: 'Opening balance', balance: s.opening, _style: 'subheading' }, ...s.lines, { memo: 'Closing balance', balance: s.closing, _style: 'total' }] }]} />
             </div>

@@ -9,25 +9,35 @@ import {
 } from '../lib/accounts';
 import { Alert, Drawer, Pills, SkeletonRows, XButton, Empty } from './ui';
 import { Icon } from './Icon';
+import { useWords } from '../lib/wording';
 
 const REFRESH = ['postingMap', 'itemAccounts', 'inv', 'ledger', 'activity'];
 
-// Settings: where each kind of stock entry lands in the TaxStreem chart.
+// The five entries a business looks at most, by whether it keeps stock. The rest sit behind "Show all".
+export const TOP_GOODS = ['sales_revenue', 'inventory', 'purchases', 'output_vat', 'cash_on_hand'];
+export const TOP_SERVICES = ['sales_revenue', 'receivables', 'output_vat', 'wht_receivable', 'expenses_default'];
+
+// Settings: where each kind of entry lands in the TaxStreem chart.
 export function PostingRules({ owner, onOpenChart }: { owner: boolean; onOpenChart: () => void }) {
   const map = usePostingMap();
   const accounts = useAccounts();
   const { run, busy } = useAction();
+  const w = useWords();
   const [pending, setPending] = useState<{ role: PostingRole; code: string } | null>(null);
+  const [all, setAll] = useState(false);
+  const top = w.has_stock ? TOP_GOODS : TOP_SERVICES;
+  const rows = map.data || [];
+  const shown = all ? rows : top.map((r) => rows.find((x) => x.role === r)).filter((x): x is PostingRole => !!x);
 
   return (
     <>
       <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>
-        Counta posts into TaxStreem&apos;s chart of accounts. Each kind of stock entry lands in the account shown here, and the same rules apply on the phone app.
+        Counta posts into TaxStreem&apos;s chart of accounts. {all ? 'Every kind of entry' : 'The entries that matter most to your business'} and the account each one lands in are shown below; the phone app follows the same rules.
       </div>
       <div className="card" style={{ borderRadius: 12, overflow: 'hidden' }}>
         <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: 'minmax(180px,1fr) minmax(220px,1.1fr)', padding: '8px 14px' }}><span>Entry</span><span>Account</span></div>
         {map.isLoading && <div style={{ padding: 14 }}><SkeletonRows n={4} /></div>}
-        {(map.data || []).map((r) => {
+        {shown.map((r) => {
           const choices = choicesFor(accounts.data, r.allowed);
           return (
             <div key={r.role} className="tr m-stack" style={{ gridTemplateColumns: 'minmax(180px,1fr) minmax(220px,1.1fr)', padding: '12px 14px', alignItems: 'start' }}>
@@ -46,6 +56,8 @@ export function PostingRules({ owner, onOpenChart }: { owner: boolean; onOpenCha
       </div>
       {pending && <PendingRule pending={pending} busy={busy} accounts={accounts.data} onCancel={() => setPending(null)} onDone={() => setPending(null)} run={run} />}
       <div className="row wrap">
+        {rows.length > shown.length && <button className="btn btn-secondary btn-sm" onClick={() => setAll(true)}><Icon name="list" size={14} />Show all {rows.length} entries</button>}
+        {all && rows.length > top.length && <button className="btn btn-secondary btn-sm" onClick={() => setAll(false)}><Icon name="list" size={14} />Show the main five</button>}
         <button className="btn btn-secondary btn-sm" onClick={onOpenChart}><Icon name="book" size={14} />View the chart of accounts</button>
       </div>
     </>
