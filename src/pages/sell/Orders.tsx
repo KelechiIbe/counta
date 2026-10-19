@@ -8,7 +8,7 @@ import { money, useDeliveries, useSales, type Customer, type Sale } from '../../
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { ItemPicker } from '../../components/ItemPicker';
-import { Alert, Drawer, Empty, Field, Pills, SkeletonRows } from '../../components/ui';
+import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows } from '../../components/ui';
 import type { Item } from '../../lib/types';
 import { CustomerPicker, StatusChip } from './common';
 import { SaleDrawer } from './Sales';
@@ -74,9 +74,10 @@ function Deliveries({ list, loading, onOpen }: { list: any[]; loading: boolean; 
   const [tab, setTab] = useState<'open' | 'done'>('open');
   const rows = list.filter((d) => (tab === 'open' ? ['pending', 'dispatched'].includes(d.status) : !['pending', 'dispatched'].includes(d.status)));
   const vans = (inv?.locations || []).filter((l: any) => l.kind === 'van');
+  const [receiving, setReceiving] = useState<any | null>(null);
   async function update(d: any, patch: Record<string, unknown>, ok: string) {
-    try { await rpc('save_delivery', { p_org: orgId, p_delivery: { id: d.id, sale_id: d.sale_id, ...patch } }); toast(ok); await qc.invalidateQueries({ queryKey: ['deliveries'] }); }
-    catch (e) { toast((e as Error).message, 'err'); }
+    try { await rpc('save_delivery', { p_org: orgId, p_delivery: { id: d.id, sale_id: d.sale_id, ...patch } }); toast(ok); await qc.invalidateQueries({ queryKey: ['deliveries'] }); return true; }
+    catch (e) { toast((e as Error).message, 'err'); return false; }
   }
   function printNote(d: any) {
     const w = window.open('', '_blank', 'width=720,height=900');
@@ -107,12 +108,14 @@ function Deliveries({ list, loading, onOpen }: { list: any[]; loading: boolean; 
             <span className="row wrap" style={{ gap: 4 }}>
               <button className="btn btn-ghost btn-xs" onClick={() => printNote(d)}><Icon name="printer" size={13} />Note</button>
               {d.status === 'pending' && <button className="btn btn-secondary btn-xs" onClick={() => update(d, { status: 'dispatched' }, 'On its way')}>Dispatched</button>}
-              {['pending', 'dispatched'].includes(d.status) && <button className="btn btn-primary btn-xs" onClick={() => { const who = prompt('Who received it?') || ''; update(d, { status: 'delivered', notes: who ? `Received by ${who}` : null }, 'Delivered'); }}>Delivered</button>}
+              {['pending', 'dispatched'].includes(d.status) && <button className="btn btn-primary btn-xs" onClick={() => setReceiving(d)}>Delivered</button>}
               {['pending', 'dispatched'].includes(d.status) && <button className="btn btn-ghost btn-xs" onClick={() => update(d, { status: 'failed' }, 'Marked as not delivered')}>Failed</button>}
             </span>
           </div>
         ))}
       </div>
+      {receiving && <ReceivedModal d={receiving} onClose={() => setReceiving(null)}
+        onSave={async (who, note) => { if (await update(receiving, { status: 'delivered', received_by: who, ...(note ? { notes: note } : {}) }, `${receiving.number} delivered`)) setReceiving(null); }} />}
       {!vans.length && <Alert kind="grey" icon="truck">Selling from vans? Add each van as a branch of kind "van" under Locations &amp; staff, transfer stock to it, and open the till on the van to sell from it.</Alert>}
     </div>
   );
@@ -166,5 +169,29 @@ function OrderEditor({ onClose, onSaved }: { onClose: () => void; onSaved: (id: 
       </div>
       <div className="drawer-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || !lines.length} onClick={save}>Save order</button></div>
     </Drawer>
+  );
+}
+
+// Who took the goods: the name is kept on the delivery note's record (the database insists on it).
+function ReceivedModal({ d, onClose, onSave }: { d: any; onClose: () => void; onSave: (who: string, note: string) => Promise<void> }) {
+  const [who, setWho] = useState(d.received_by || '');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ok = who.trim().length >= 2;
+  async function save() { if (!ok || busy) return; setBusy(true); await onSave(who.trim(), note.trim()); setBusy(false); }
+  return (
+    <Modal onClose={onClose} width={420}>
+      <ModalHead title={`Mark ${d.number} delivered`} sub={`${d.customer_name || 'Customer'}${d.address ? ' · ' + d.address : ''}`} onClose={onClose} />
+      <form className="modal-body" onSubmit={(e) => { e.preventDefault(); save(); }}>
+        <Field label="Received by" req hint="The name of the person who took the goods.">
+          <input className="input" autoFocus value={who} onChange={(e) => setWho(e.target.value)} placeholder="e.g. Mrs Adaeze Okafor" maxLength={120} />
+        </Field>
+        <Field label="Note"><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional, e.g. left with the gateman" maxLength={300} /></Field>
+        {Number(d.balance) > 0 && <Alert kind="amber" icon="dollar">There is {N2(d.balance)} to collect on this delivery. Record the payment on the sale.</Alert>}
+        <button type="submit" hidden />
+      </form>
+      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={save} disabled={!ok || busy}>{busy ? 'Saving…' : 'Delivered'}</button></div>
+    </Modal>
   );
 }

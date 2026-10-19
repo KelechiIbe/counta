@@ -1,7 +1,7 @@
 // Branding: logo, colour and one of three invoice templates, with what the documents print about the business.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useInventory, useSession, useToast } from '../state/session';
+import { useInventory, useSession, useToast, can } from '../state/session';
 import { photoUrl, rpc, supabase } from '../lib/supabase';
 import { Icon } from '../components/Icon';
 import { Alert, Field, Label } from '../components/ui';
@@ -66,7 +66,7 @@ export function BrandingSection() {
     brand_color: f.brand_color, invoice_template: f.invoice_template, website: f.website, invoice_footer: f.invoice_footer, payment_details: f.invoice_note,
     invoice_show: f.invoice_show }), [o, f]);
   if (!inv || !o || !f.brand_color) return null;
-  const owner = inv.me.role === 'owner';
+  const owner = can(inv, 'manage_settings');
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
 
   async function pickLogo(file?: File) {
@@ -94,7 +94,7 @@ export function BrandingSection() {
       <div>
         <Label>Branding</Label>
         <div className="muted" style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
-          Your logo, colour and template go on invoices, receipts, quotes and credit notes, the customer's online copy, emails and the PDF.{!owner && ' Only the owner can change them.'}
+          Your logo, colour and template go on invoices, receipts, quotes and credit notes, the customer's online copy, emails and the PDF.{!owner && ' Only people who can change settings edit them.'}
         </div>
       </div>
       <div className="brand-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 380px) minmax(0, 1fr)', gap: 24, alignItems: 'start' }}>

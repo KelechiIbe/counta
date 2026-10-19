@@ -12,6 +12,7 @@ import { ItemPicker } from '../../components/ItemPicker';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import { ExportMenu, useMeta } from '../../components/Books';
 import type { RCol } from '../../lib/reports';
+import { useDraft, type Drafts } from '../../lib/drafts';
 import { CustomerPicker, PaymentsList, PrintButtons, RecordPayment, RequestPayment, SaleLines, SendBox, StatusChip, docUrl, dueText } from './common';
 
 type Tab = 'all' | 'invoice' | 'receipt' | 'quote' | 'credit_note' | 'unpaid' | 'confirm';
@@ -23,7 +24,10 @@ export default function Sales() {
   const [q, setQ] = useState('');
   const [range, setRange] = useState({ from: '', to: '' });
   const [vs, setVs] = useState('');
-  const [editing, setEditing] = useState<{ id?: string; type: 'invoice' | 'quote' } | null>(null);
+  const [editing, setEditing] = useState<{ id?: string; type: 'invoice' | 'quote'; draft?: Drafts['invoice'] } | null>(null);
+  // An invoice Martina prepared opens in the editor for the person to check.
+  const draft = useDraft('invoice');
+  useEffect(() => { if (draft) setEditing({ type: 'invoice', draft }); }, [draft]);
   const open = params.get('open');
   const filter = useMemo(() => ({
     q: q || null, from: range.from || null, to: range.to || null,
@@ -91,7 +95,7 @@ export default function Sales() {
         </div>
       )}
       {open && <SaleDrawer id={open} onClose={() => setParams({})} onEdit={(s) => setEditing({ id: s.id, type: s.doc_type as 'invoice' | 'quote' })} />}
-      {editing && <DocEditor id={editing.id} type={editing.type} onClose={() => setEditing(null)} onSaved={(id) => { setEditing(null); setParams({ open: id }); }} />}
+      {editing && <DocEditor id={editing.id} type={editing.type} draft={editing.draft} onClose={() => setEditing(null)} onSaved={(id) => { setEditing(null); setParams({ open: id }); }} />}
     </div>
   );
 }
@@ -377,7 +381,7 @@ function PendingPayments({ rows }: { rows: any[] }) {
 // ---------------------------------------------------------------- invoice and quote editor
 interface ELine { key: string; item_id: string | null; description: string; qty: string; unit: 'selling' | 'purchase'; unit_price: string; discount: string; vat_treatment: string; revenue_account: string; pack: number; units: [string, string] }
 
-export function DocEditor({ id, type, onClose, onSaved }: { id?: string; type: 'invoice' | 'quote'; onClose: () => void; onSaved: (id: string) => void }) {
+export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; type: 'invoice' | 'quote'; draft?: Drafts['invoice']; onClose: () => void; onSaved: (id: string) => void }) {
   const { data: inv } = useInventory();
   const { orgId } = useSession();
   const toast = useToast();
@@ -404,6 +408,27 @@ export function DocEditor({ id, type, onClose, onSaved }: { id?: string; type: '
   useEffect(() => {
     if (existing.data && customers.data) setCustomer(customers.data.customers.find((c) => c.id === existing.data!.customer_id) || null);
   }, [existing.data?.id, customers.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Martina's draft: the lines she matched to products, the rest as service lines, and the customer when the name fits one.
+  const [unmatched, setUnmatched] = useState<string | null>(null);
+  useEffect(() => {
+    if (!draft || id || !inv) return;
+    setLines(draft.lines.map((d) => {
+      const it = d.item_id ? inv.items.find((i) => i.id === d.item_id) : undefined;
+      return it
+        ? { key: crypto.randomUUID(), item_id: it.id, description: it.name, qty: String(d.qty || 1), unit: 'selling', unit_price: String(d.unit_price ?? Number(it.price)), discount: '',
+            vat_treatment: it.vat_treatment, revenue_account: '', pack: it.pack_size, units: [it.selling_unit, it.purchase_unit] }
+        : { key: crypto.randomUUID(), item_id: null, description: d.name, qty: String(d.qty || 1), unit: 'selling', unit_price: d.unit_price != null ? String(d.unit_price) : '', discount: '',
+            vat_treatment: 'standard', revenue_account: '', pack: 1, units: ['unit', 'unit'] };
+    }));
+    setF((x) => ({ ...x, notes: draft.note || x.notes, due_date: draft.due_in_days ? new Date(Date.now() + draft.due_in_days * 86400_000).toISOString().slice(0, 10) : x.due_date }));
+  }, [draft, inv?.org.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!draft?.customer || id || !customers.data) return;
+    const n = draft.customer.trim().toLowerCase();
+    const list = customers.data.customers.filter((c) => !c.archived && !c.is_walk_in);
+    const hit = list.find((c) => c.name.toLowerCase() === n) || list.find((c) => c.name.toLowerCase().includes(n) || n.includes(c.name.toLowerCase()));
+    if (hit) setCustomer(hit); else setUnmatched(draft.customer);
+  }, [draft, customers.data]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!inv) return null;
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
   const upd = (k: string, patch: Partial<ELine>) => setLines((ls) => ls.map((l) => (l.key === k ? { ...l, ...patch } : l)));
@@ -437,6 +462,8 @@ export function DocEditor({ id, type, onClose, onSaved }: { id?: string; type: '
         <div className="muted" style={{ fontSize: 13 }}>{type === 'invoice' ? 'Issuing posts it: revenue, output VAT and the stock.' : 'A quote changes nothing in the books until it becomes an invoice.'}</div></div>
         <button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button></div>
       <div className="drawer-body stack" style={{ gap: 14 }}>
+        {draft && !id && <Alert kind="blue" icon="sparkles">Martina prepared this {type}. Check the {unmatched ? 'customer, ' : ''}lines and prices, then save it or issue it. Nothing is posted until you do.</Alert>}
+        {unmatched && !customer && <Alert kind="amber" icon="info">No customer called "{unmatched}" yet. Choose one, or add them from the customer box.</Alert>}
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 12 }}>
           <Field label="Customer" req hint={exp ? `Export${isExport(customer?.country) ? ` to ${countryName(customer?.country)}` : ''}: zero-rated for VAT.` : undefined}>
             <CustomerPicker value={customer} onChange={setCustomer} walkIn={false} placeholder="Choose the customer" /></Field>

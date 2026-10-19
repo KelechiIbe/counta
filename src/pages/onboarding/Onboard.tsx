@@ -14,9 +14,10 @@ import { Icon } from '../../components/Icon';
 import { Alert, Field, Spinner } from '../../components/ui';
 import { Orb } from '../../guide/GuideDock';
 import { useGuideTalk, type OnboardScreen } from '../../guide/GuideProvider';
+import { IdentityPanel, useIdentity } from './Identity';
 import '../../guide/guide.css';
 
-const ORDER: OnboardScreen[] = ['welcome', 'find', 'found', 'questions', 'summary', 'score', 'document', 'done'];
+const ORDER: OnboardScreen[] = ['welcome', 'find', 'found', 'questions', 'summary', 'score', 'identity', 'document', 'done'];
 const NG_STATES = ['Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno', 'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT', 'Gombe',
   'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara'];
 
@@ -45,14 +46,17 @@ export default function Onboard() {
   const first = (guide.data?.first_name || (session?.user?.user_metadata as any)?.full_name?.split(' ')[0] || '').trim();
   const lang = guide.data?.language || 'en';
   const [started, setStarted] = useState(false);
+  const [skippedId, setSkippedId] = useState(false);
+  const identity = useIdentity(k?.status === 'submitted' ? k.org_id : null);
+  const idOpen = !skippedId && ['pending', 'rejected'].includes(identity.data?.status || '') && !!identity.data?.can_check;
 
   const natural: OnboardScreen = useMemo(() => {
     if (!k) return 'welcome';
-    if (k.status === 'submitted') return fresh ? 'find' : k.doc?.path ? 'done' : 'score';
+    if (k.status === 'submitted') return fresh ? 'find' : idOpen ? 'identity' : k.doc?.path ? 'done' : 'score';
     if (!k.source) return started || k.search?.query ? 'find' : 'welcome';
     if (k.missing.length) return Object.keys(k.answers || {}).length ? 'questions' : k.source === 'cac' ? 'found' : 'questions';
     return 'summary';
-  }, [k, started, fresh]);
+  }, [k, started, fresh, idOpen]);
   const asked = params.get('screen') as OnboardScreen | null;
   const screen: OnboardScreen = g.screen || (asked && ORDER.includes(asked) ? asked : null) || natural;
   const go = (s: OnboardScreen) => { g.setScreen(s); if (asked) { params.delete('screen'); setParams(params, { replace: true }); } window.scrollTo({ top: 0, behavior: 'smooth' }); };
@@ -97,12 +101,32 @@ export default function Onboard() {
             : screen === 'found' ? <Found k={k} live={live} onNext={() => go('questions')} onBack={() => go('find')} />
             : screen === 'questions' ? <Questions k={k} live={live} onNext={() => go('summary')} />
             : screen === 'summary' ? <Summary k={k} live={live} onEdit={() => go('questions')} onDone={(org) => { setOrgId(org); go('score'); }} />
-            : screen === 'score' ? <ScoreView orgId={orgId} first={first} live={live} onNext={() => go('document')} />
+            : screen === 'score' ? <ScoreView orgId={orgId} first={first} live={live} next={idOpen ? 'Next: confirm a director' : 'Next: your CAC document'} onNext={() => go(idOpen ? 'identity' : 'document')} />
+            : screen === 'identity' ? <IdentityStep orgId={orgId} first={first} live={live} lang={lang} onNext={() => { setSkippedId(true); go('document'); }} />
             : screen === 'document' ? <Document k={k} orgId={orgId} live={live} onDone={() => go('done')} />
             : <Done first={first} orgName={k.business?.name} onGo={() => nav('/home', { replace: true })} />}
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- the director's NIN
+function IdentityStep({ orgId, first, live, lang, onNext }: { orgId: string | null | undefined; first: string; live: boolean; lang: string; onNext: () => void }) {
+  const g = useGuideTalk();
+  if (!orgId) return null;
+  const pcm = lang === 'pcm';
+  return (
+    <>
+      <Say live={live}>
+        {pcm ? `${first ? first + ', ' : ''}one last check before money fit move: make a director confirm im NIN. Type am for here, or call am out for me.`
+          : `${first ? first + ', o' : 'O'}ne last check before money moves through Counta: a director confirms their NIN. Type it below, or read it out to me.`}
+      </Say>
+      <div className="ob-card stack" style={{ gap: 14 }}>
+        <h2 className="ob-h2">Confirm you are a director</h2>
+        <IdentityPanel orgId={orgId} live={live} askOpen={g.uploadAsk?.kind === 'nin_slip' ? g.uploadAsk.at : undefined} onDone={onNext} onSkip={onNext} />
+      </div>
+    </>
   );
 }
 
@@ -542,7 +566,7 @@ function Ring({ score, total }: { score: number; total: number }) {
     </div>
   );
 }
-function ScoreView({ orgId, first, live, onNext }: { orgId: string | null | undefined; first: string; live: boolean; onNext: () => void }) {
+function ScoreView({ orgId, first, live, next, onNext }: { orgId: string | null | undefined; first: string; live: boolean; next: string; onNext: () => void }) {
   const nav = useNavigate();
   const sc = useScore(orgId);
   const s: Score | undefined = sc.data;
@@ -585,7 +609,7 @@ function ScoreView({ orgId, first, live, onNext }: { orgId: string | null | unde
           ))}
         </div>
       )}
-      <div className="ob-sticky"><button className="btn btn-primary" onClick={onNext} style={{ boxShadow: 'var(--shadow-cta)' }}>Next: your CAC document<Icon name="arrow" size={16} color="#fff" /></button></div>
+      <div className="ob-sticky"><button className="btn btn-primary" onClick={onNext} style={{ boxShadow: 'var(--shadow-cta)' }}>{next}<Icon name="arrow" size={16} color="#fff" /></button></div>
     </>
   );
 }

@@ -9,12 +9,16 @@
 //        | preview {voice_id, lang}
 //   { action: 'guide_token', text? }                   -> a signed token (or, for typing only, a signed URL) to talk to Martina from
 //                                                         the web app, with her opening line and what she knows about the person's progress
+//   { action: 'assistant_token', org_id, text?, page? } -> the same for Martina everywhere else, told what the person's role allows
+//   { action: 'forget' }                               -> deletes from ElevenLabs the person's conversations in which an NIN was said
 //   { action: 'call_vendor', po_id }                   -> phones the vendor on a purchase order
 //   { action: 'call_member', member_id, topic }        -> phones a team member about waiting work
 //   { action: 'sync', call_id }                        -> refreshes one call from ElevenLabs
 // Database cron (header x-counta-hook: <PUSH_HOOK_SECRET>):
 //   { action: 'sync_pending' }                         -> refreshes every call still in progress
-//   { action: 'guide_followups' }                      -> phones the people who asked Martina to call when they stopped mid-setup
+//   { action: 'guide_followups' }                      -> phones the people who asked Martina to call when they stopped mid-setup,
+//                                                         and deletes conversations in which an NIN was said
+//   { action: 'forget_pending' }                       -> only the deleting
 //   { action: 'refresh_voices' }                       -> reloads the Nigerian voices
 //
 // Secrets: ELEVENLABS_API_KEY (Edge Function secret or Vault). Optional: ELEVENLABS_VOICE_IDS (comma-separated voice ids to
@@ -23,7 +27,9 @@
 // when there are several). ELEVENLABS_BASE_URL is for tests.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
-import { FOLLOWUP_DATA, FOLLOWUP_PROMPT, firstMessage, GUIDE_PROMPT, GUIDE_TOOLS, stepLabel, toolConfig, whatWeKnow } from './guide.ts';
+import { FOLLOWUP_DATA, FOLLOWUP_PROMPT, firstMessage, GUIDE_PROMPT, GUIDE_TOOLS, stepLabel, toolConfig, type ToolDef, whatWeKnow } from './guide.ts';
+import { ASSISTANT_PROMPT, ASSISTANT_TOOLS, assistantFirst, PERM_WORDS } from './assistant.ts';
+import { wordingNote, wordsFor } from './wording.ts';
 import { cacheable, phrase, shortName } from './phrases.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -208,7 +214,8 @@ You are an AI assistant. Say so if anyone asks, and never pretend to be a person
 Never ask for or discuss bank details, card numbers, passwords or one-time codes. If payment comes up, say the owner will follow up.
 If the person is busy or asks you to call back, ask for a good time, thank them and end the call.`;
 
-type Agent = { name: string; prompt: string; first: string; maxSecs: number; data: Record<string, unknown>; criteria: unknown[]; web?: boolean; temperature?: number };
+type Agent = { name: string; prompt: string; first: string; maxSecs: number; data: Record<string, unknown>; criteria: unknown[]; web?: boolean; temperature?: number;
+  tools?: ToolDef[] };
 const AGENTS: Record<string, Agent> = {
   vendor_order: {
     name: 'Counta · vendor orders',
@@ -277,19 +284,35 @@ ${RULES}`,
     prompt: GUIDE_PROMPT,
     temperature: 0.6,
     web: true,
+    tools: GUIDE_TOOLS,
     data: {
       finished_profile: { type: 'boolean', description: 'True if the business profile was submitted in this conversation.' },
       sticking_point: { type: 'string', description: 'Anything that confused or blocked the person, in one sentence. Empty if nothing.' },
     },
     criteria: [{ id: 'progress', name: 'Progress made', type: 'prompt', conversation_goal_prompt: 'Did the person complete at least one onboarding step in this conversation?' }],
   },
+  assistant: {
+    name: 'Counta · Martina assistant',
+    first: 'Hi! Martina here. What can I help you with?',
+    maxSecs: 900,
+    prompt: ASSISTANT_PROMPT,
+    temperature: 0.4,
+    web: true,
+    tools: [...ASSISTANT_TOOLS, ...GUIDE_TOOLS.filter((t) => t.name === 'celebrate' || t.name === 'set_language')],
+    data: {
+      answered: { type: 'boolean', description: 'True if Martina answered what the person asked, or prepared what they wanted.' },
+      gap: { type: 'string', description: 'Anything the person wanted that Martina could not do, in one sentence. Empty if nothing.' },
+    },
+    criteria: [{ id: 'helped', name: 'Helped', type: 'prompt', conversation_goal_prompt: 'Did Martina answer the question or prepare what the person asked for, using the tools?' }],
+  },
 };
 
-// The guide's tools live in the ElevenLabs workspace; each is created once and updated when its definition changes.
-async function ensureTools(): Promise<string[]> {
+// Martina's tools live in the ElevenLabs workspace; each is created once and updated when its definition changes. The guide
+// and the assistant share the tools they have in common.
+async function ensureTools(list: ToolDef[]): Promise<string[]> {
   const { data: rows } = await admin.from('voice_tools').select('*');
   const ids: string[] = [];
-  for (const t of GUIDE_TOOLS) {
+  for (const t of list) {
     const cfg = toolConfig(t);
     const version = hashNum(JSON.stringify(cfg));
     const row = (rows || []).find((r) => r.name === t.name);
@@ -334,7 +357,7 @@ function agentBody(kind: string, voiceId: string, toolIds: string[] = []) {
 
 async function ensureAgent(kind: string): Promise<string> {
   const voiceId = await defaultVoice();
-  const toolIds = AGENTS[kind].web ? await ensureTools() : [];
+  const toolIds = AGENTS[kind].tools ? await ensureTools(AGENTS[kind].tools!) : [];
   const bodyObj = agentBody(kind, voiceId, toolIds);
   const body = JSON.stringify(bodyObj);
   const version = AGENT_VERSION * 100000 + hashNum(body);
@@ -459,7 +482,11 @@ async function guideFollowups() {
   const { data: due, error } = await admin.rpc('svc_guide_followups_due', { p_limit: 10 });
   if (error) return { ok: false, error: error.message };
   const out: unknown[] = [];
-  for (const d of (due as any[]) || []) out.push(await place('guide_followup', d, r.num));
+  for (const d of (due as any[]) || []) {
+    // The follow-up agent speaks in the business's own words too (revenue and clients for a law firm, sales and customers for a shop).
+    d.variables = { ...(d.variables || {}), wording: wordingNote(await businessWords(d.org_id || null, null)) };
+    out.push(await place('guide_followup', d, r.num));
+  }
   return { ok: true, placed: out };
 }
 
@@ -468,43 +495,127 @@ const lagosToday = () => new Date(Date.now() + 3600_000).toLocaleDateString('en-
 
 // Voice runs over WebRTC with a conversation token; typing only (no microphone, or the person prefers it) over a
 // websocket with a signed URL. Both expire within minutes and only start this agent.
+async function startToken(agentId: string, userId: string, textOnly: boolean) {
+  const t = textOnly
+    ? await xi(`/v1/convai/conversation/get-signed-url?${new URLSearchParams({ agent_id: agentId })}`)
+    : await xi(`/v1/convai/conversation/token?${new URLSearchParams({ agent_id: agentId, participant_name: userId })}`);
+  if (textOnly ? !t?.signed_url : !t?.token) return null;
+  return t;
+}
+
+// The business's words and kind, from what it recorded (or what the person answered in onboarding so far).
+async function businessWords(orgId: string | null, answers?: any) {
+  const { data: o } = orgId ? await admin.from('orgs').select('offering, category_id').eq('id', orgId).maybeSingle() : { data: null };
+  const offering = o?.offering || answers?.offering || null;
+  const category_id = o?.category_id || answers?.category || null;
+  const { data: c } = category_id ? await admin.from('business_categories').select('label').eq('id', category_id).maybeSingle() : { data: null };
+  return { offering, category_id, category_label: c?.label || null };
+}
+
 async function guideToken(sb: SupabaseClient, userId: string, textOnly = false, orgId: string | null = null) {
   if (!(await secret('ELEVENLABS_API_KEY'))) return { ok: false, reason: 'not_configured', error: VOICE_OFF };
   // The business the person has open (they must belong to it), else the newest one they own.
   const { data: g, error } = await sb.rpc('guide_state', orgId ? { p_org: orgId } : {});
   if (error) return { ok: false, error: error.message };
   const { data: k } = await sb.rpc('kyc_draft', g?.org?.id && g.org.is_owner ? { p_org: g.org.id } : {});
-  const { data: session } = await admin.rpc('svc_guide_session', { p_user: userId });
+  const { data: session } = await admin.rpc('svc_guide_session', { p_user: userId, p_kind: 'guide' });
   if (!session) return { ok: false, reason: 'limit', error: 'You have talked with Martina a lot today. Carry on by typing, or come back tomorrow.' };
   const agentId = await ensureAgent('guide');
-  const t = textOnly
-    ? await xi(`/v1/convai/conversation/get-signed-url?${new URLSearchParams({ agent_id: agentId })}`)
-    : await xi(`/v1/convai/conversation/token?${new URLSearchParams({ agent_id: agentId, participant_name: userId })}`);
-  if (textOnly ? !t?.signed_url : !t?.token) return { ok: false, error: 'Martina is not available just now. Try again in a minute.' };
+  const t = await startToken(agentId, userId, textOnly);
+  if (!t) return { ok: false, error: 'Martina is not available just now. Try again in a minute.' };
   if (t.conversation_id) await admin.rpc('svc_guide_session_set', { p_session: session, p_conversation: String(t.conversation_id) });
   const lang = g?.language === 'pcm' ? 'pcm' : 'en';
   const voice = g?.org?.voice_id && VOICE_ID.test(g.org.voice_id) ? g.org.voice_id : await defaultVoice();
   const next = String(g?.next || '');
   const phase = (g?.steps || []).find((s: any) => s.id === next)?.phase;
+  const bw = await businessWords(g?.org?.id || null, k?.answers);
   const dynamic_variables = {
     first_name: String(g?.first_name || '').slice(0, 40) || 'friend',
     business_name: String(g?.org?.name || k?.business?.name || 'not found yet').slice(0, 120),
     stage: g?.completed ? 'all done' : phase === 'first_steps' ? 'first steps in Counta' : 'setting up the business profile',
-    next_step: next ? stepLabel(next, 'en') : 'nothing left',
+    next_step: next ? stepLabel(next, 'en', bw.offering) : 'nothing left',
     steps_done: Number(g?.done || 0),
     steps_total: Number(g?.total || 0),
     language_style: lang === 'pcm' ? 'pidgin' : 'english',
     returning: g?.marks?.intro_heard || Number(g?.done || 0) > 0 ? 'yes' : 'no',
     what_we_know: whatWeKnow(k),
+    wording: wordingNote(bw),
     today: lagosToday(),
   };
   return {
-    ok: true, ...(textOnly ? { signed_url: t.signed_url } : { token: t.token }), conversation_id: t.conversation_id || null, agent_id: agentId,
+    ok: true, agent: 'guide', ...(textOnly ? { signed_url: t.signed_url } : { token: t.token }), conversation_id: t.conversation_id || null, agent_id: agentId,
     session_id: session, language: lang, text_only: textOnly,
     dynamic_variables,
-    overrides: { agent: { firstMessage: firstMessage(g, lang) }, ...(voice && !textOnly ? { tts: { voiceId: voice } } : {}),
+    overrides: { agent: { firstMessage: firstMessage(g, lang, bw.offering) }, ...(voice && !textOnly ? { tts: { voiceId: voice } } : {}),
       ...(textOnly ? { conversation: { textOnly: true } } : {}) },
   };
+}
+
+// Martina for everyday work in a business the person belongs to, told what their role allows.
+async function assistantToken(sb: SupabaseClient, userId: string, textOnly: boolean, orgId: string | null, page: string) {
+  if (!(await secret('ELEVENLABS_API_KEY'))) return { ok: false, reason: 'not_configured', error: VOICE_OFF };
+  if (!orgId) return { ok: false, error: 'Open a business first.' };
+  // get_team answers only to a member, with their own permissions.
+  const { data: team, error } = await sb.rpc('get_team', { p_org: orgId });
+  if (error) return { ok: false, error: error.message };
+  const me = (team?.members || []).find((m: any) => m.is_me) || {};
+  const perms: Record<string, boolean> = team?.my_perms || {};
+  const { data: org } = await admin.from('orgs').select('name, voice_id, voice_lang').eq('id', orgId).maybeSingle();
+  const { data: session } = await admin.rpc('svc_guide_session', { p_user: userId, p_kind: 'assistant' });
+  if (!session) return { ok: false, reason: 'limit', error: 'You have talked with Martina a lot today. Come back tomorrow.' };
+  const agentId = await ensureAgent('assistant');
+  const t = await startToken(agentId, userId, textOnly);
+  if (!t) return { ok: false, error: 'Martina is not available just now. Try again in a minute.' };
+  if (t.conversation_id) await admin.rpc('svc_guide_session_set', { p_session: session, p_conversation: String(t.conversation_id) });
+  const lang = org?.voice_lang === 'pcm' ? 'pcm' : 'en';
+  const voice = org?.voice_id && VOICE_ID.test(org.voice_id) ? org.voice_id : await defaultVoice();
+  const bw = await businessWords(orgId);
+  const first = String(me.display_name || '').trim().split(/\s+/)[0] || 'friend';
+  const can = Object.keys(PERM_WORDS).filter((k) => perms[k]).map((k) => PERM_WORDS[k]);
+  const cannot = Object.keys(PERM_WORDS).filter((k) => !perms[k]).map((k) => PERM_WORDS[k]);
+  const where = String(page || '').toLowerCase().replace(/[^a-z_ -]/g, '').slice(0, 40) || 'home';
+  const dynamic_variables = {
+    first_name: first.slice(0, 40), role: String(me.role_label || me.role || 'team member').slice(0, 30),
+    business_name: String(org?.name || 'the business').slice(0, 120),
+    can_do: can.length ? can.join('; ') : 'look things up',
+    cannot_do: cannot.length ? cannot.join('; ') : 'nothing: they hold every permission',
+    wording: wordingNote(bw), language_style: lang === 'pcm' ? 'pidgin' : 'english',
+    channel: textOnly ? 'typing' : 'voice', page: where, today: lagosToday(),
+  };
+  return {
+    ok: true, agent: 'assistant', ...(textOnly ? { signed_url: t.signed_url } : { token: t.token }), conversation_id: t.conversation_id || null, agent_id: agentId,
+    session_id: session, language: lang, text_only: textOnly, dynamic_variables,
+    overrides: { agent: { firstMessage: assistantFirst(first, lang, where.split(/[ /]/)[0], wordsFor(bw)) }, ...(voice && !textOnly ? { tts: { voiceId: voice } } : {}),
+      ...(textOnly ? { conversation: { textOnly: true } } : {}) },
+  };
+}
+
+// True when ElevenLabs says the conversation is with Martina (the guide or the assistant). A conversation ElevenLabs does
+// not know is not queued; a passing error queues it, and the schedule tries again.
+async function martinaConversation(id: string): Promise<boolean> {
+  const { data: rows } = await admin.from('voice_agents').select('agent_id').in('kind', ['guide', 'assistant']);
+  const ours = new Set((rows || []).map((r: any) => r.agent_id));
+  try {
+    const c = await xi(`/v1/convai/conversations/${encodeURIComponent(id)}`);
+    return ours.has(c?.agent_id);
+  } catch (e) {
+    return (e as any).status !== 404 && (e as any).status !== 400 && (e as any).status !== 422;
+  }
+}
+
+// Conversations in which an NIN was said are deleted from ElevenLabs. One person's now, or everyone's due on the schedule.
+async function forgetConversations(userId: string | null) {
+  if (!(await secret('ELEVENLABS_API_KEY'))) return { ok: true, deleted: 0 };
+  const { data: ids } = await admin.rpc('svc_forget_due', { p_user: userId, p_limit: 20 });
+  let deleted = 0;
+  for (const id of (ids as string[]) || []) {
+    let ok = false;
+    try { await xi(`/v1/convai/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }); ok = true; }
+    catch (e) { ok = (e as any).status === 404; if (!ok) console.warn('forget', id, (e as Error).message); }
+    await admin.rpc('svc_forget_done', { p_conversation: id, p_ok: ok });
+    if (ok) deleted++;
+  }
+  return { ok: true, deleted };
 }
 
 // ------------------------------------------------------------------ handler
@@ -518,7 +629,11 @@ Deno.serve(async (req) => {
     if (hook) {
       const expected = await secret('PUSH_HOOK_SECRET');
       if (!expected || !sameSecret(hook, expected)) return json({ ok: false, error: 'Not allowed.' }, 401);
-      if (body.action === 'guide_followups') return json(await guideFollowups());
+      if (body.action === 'guide_followups') {
+        const calls = await guideFollowups();
+        return json({ ...calls, forgotten: (await forgetConversations(null).catch(() => ({ deleted: 0 }))).deleted });
+      }
+      if (body.action === 'forget_pending') return json(await forgetConversations(null));
       if (body.action === 'refresh_voices') return json({ ok: true, ...(await refreshVoices()) });
       if (body.action !== 'sync_pending') return json({ ok: false, error: 'Unknown action.' }, 400);
       const since = new Date(Date.now() - 3 * 3600_000).toISOString();
@@ -556,6 +671,15 @@ Deno.serve(async (req) => {
         return json(await speak(sb, u.user.id, body));
       case 'guide_token':
         return json(await guideToken(sb, u.user.id, body.text === true, typeof body.org_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.org_id) ? body.org_id : null));
+      case 'assistant_token':
+        return json(await assistantToken(sb, u.user.id, body.text === true, typeof body.org_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.org_id) ? body.org_id : null,
+          String(body.page || '')));
+      case 'forget': {
+        // The app names the conversation in which an NIN was typed or said; it must be one of Martina's own.
+        const conv = typeof body.conversation_id === 'string' && /^[A-Za-z0-9_-]{6,80}$/.test(body.conversation_id) ? body.conversation_id : null;
+        if (conv && (await martinaConversation(conv))) await admin.rpc('svc_forget_add', { p_user: u.user.id, p_conversation: conv });
+        return json(await forgetConversations(u.user.id));
+      }
       case 'call_vendor': {
         const r = await ready();
         if (!r.ok) return json({ ok: false, reason: 'not_configured', error: r.error });

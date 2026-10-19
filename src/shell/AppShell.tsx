@@ -8,6 +8,8 @@ import { useNeedsAction } from './needsAction';
 import { InstallBanner } from '../components/InstallBanner';
 import { store } from '../lib/pwa';
 import { useInbox } from '../lib/api';
+import { useAmReviewer } from '../pages/Review';
+import { cap, useWords } from '../lib/wording';
 
 // ---------- location picker state shared by Overview, Items and Insights ----------
 const LocCtx = createContext<{ loc: string; setLoc: (l: string) => void }>({ loc: 'ALL', setLoc: () => {} });
@@ -102,6 +104,8 @@ function Sidebar({ open, onClose, rail, onRail }: { open: boolean; onClose: () =
   const loc = useLocation();
   const badges = useNeedsAction().badges;
   const [menu, setMenu] = useState(false);
+  const reviewer = useAmReviewer(menu).data === true;
+  const w = useWords();
   const populated = (inv?.items.length ?? 0) > 0;
   const current = memberships.find((m) => m.org_id === orgId);
   const p = loc.pathname;
@@ -138,14 +142,17 @@ function Sidebar({ open, onClose, rail, onRail }: { open: boolean; onClose: () =
       <div className="sidebar-section">{rail ? '' : 'MENU'}</div>
       <nav className="nav">
         <Group to="/home" label="Home" icon="house" active={p === '/home'} onClose={onClose} rail={rail} />
-        <Group to="/sell/till" label="Sell" icon="receipt" active={p.startsWith('/sell')} onClose={onClose} rail={rail} show={can(inv, 'record_sales') || money}
-          subs={[['/sell/till', 'Till'], ['/sell/sales', 'Sales & invoices'], ['/sell/customers', 'Customers'], ['/sell/orders', 'Orders & deliveries'],
-            ['/sell/price-lists', 'Price lists'], ['/sell/shop', 'Online shop']]} />
+        {/* A business that only does services bills its clients: no till, orders or shop in the way. */}
+        <Group to={w.has_stock ? '/sell/till' : '/sell/sales'} label={w.has_stock ? 'Sell' : 'Billing'} icon="receipt" active={p.startsWith('/sell')} onClose={onClose} rail={rail} show={can(inv, 'record_sales') || money}
+          subs={w.has_stock
+            ? [['/sell/till', 'Till'], ['/sell/sales', `${cap(w.sales)} & invoices`], ['/sell/customers', cap(w.customers)], ['/sell/orders', 'Orders & deliveries'],
+              ['/sell/price-lists', 'Price lists'], ['/sell/shop', 'Online shop']]
+            : [['/sell/sales', 'Invoices'], ['/sell/customers', cap(w.customers)], ['/sell/price-lists', 'Price lists']]} />
         <Group to="/payments" label="Payments" icon="card" active={p.startsWith('/payments')} onClose={onClose} rail={rail} show={can(inv, 'record_sales') || money}
           subs={[['/payments', 'Wallet & payments', Number(ib?.payouts_to_approve || 0)]]} />
         <Group to="/purchases/bills" label="Purchases" icon="file" active={p.startsWith('/purchases')} onClose={onClose} rail={rail} show={money || can(inv, 'approve_pos')}
           subs={[['/purchases/bills', 'Bills', Number(ib?.bills_to_approve || 0)], ['/purchases/vendors', 'Vendors']]} />
-        <Group to="/inventory" label="Inventory" icon="package" active={p.startsWith('/inventory')} onClose={onClose} rail={rail} subs={invSubs} />
+        <Group to="/inventory" label="Inventory" icon="package" active={p.startsWith('/inventory')} onClose={onClose} rail={rail} subs={invSubs} show={w.has_stock || populated} />
         <Group to="/accounting/inbox" label="Accounting" icon="book" active={p.startsWith('/accounting')} onClose={onClose} rail={rail} show={money}
           subs={[['/accounting/inbox', 'Books inbox', questions], ['/accounting/banking', 'Banking'], ['/accounting/statements', 'Financial statements'],
             ['/accounting/ledgers', 'Ledgers & reports'], ['/accounting/cfo', 'CFO pack'], ['/accounting/journals', 'Journals'], ['/accounting/assets', 'Fixed assets', Number(ib?.assets_to_confirm || 0)],
@@ -174,6 +181,7 @@ function Sidebar({ open, onClose, rail, onRail }: { open: boolean; onClose: () =
             <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/onboarding'); }}><Icon name="plus" size={16} color="#6B7280" />Add a business</button>
             <div style={{ height: 1, background: '#F3F4F6', margin: '4px 0' }} />
             <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/settings'); }}><Icon name="settings" size={16} color="#6B7280" />Settings</button>
+            {reviewer && <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/review'); }}><Icon name="shield" size={16} color="#6B7280" />Identity reviews</button>}
             <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={signOut}><Icon name="logout" size={16} color="#6B7280" />Sign out</button>
           </div>
         )}
@@ -197,9 +205,10 @@ function Header({ onMenu }: { onMenu: () => void }) {
   const nav = useNavigate();
   const { total } = useNeedsAction();
   const populated = (inv?.items.length ?? 0) > 0;
-  const title = titleFor(path);
+  const w = useWords();
+  const title = path === '/sell/sales' ? (w.has_stock ? `${cap(w.sales)} & invoices` : 'Invoices') : path === '/sell/customers' ? cap(w.customers) : path === '/sell/orders' && w.sale === 'order' ? 'Orders' : titleFor(path);
   const owner = inv?.me.role === 'owner';
-  const roleLabel = !inv ? '' : owner ? 'Owner view' : `${({ manager: 'Manager', cashier: 'Cashier', accountant: 'Accountant' } as Record<string, string>)[inv.me.role] || 'Staff'} view · ${inv.me.display_name.split(' ')[0]}`;
+  const roleLabel = !inv ? '' : owner ? 'Owner view' : `${({ admin: 'Admin', manager: 'Manager', cashier: 'Cashier', accountant: 'Accountant' } as Record<string, string>)[inv.me.role] || 'Staff'} view · ${inv.me.display_name.split(' ')[0]}`;
   return (
     <header className="header">
       <div className="row hdr-left" style={{ gap: 14, minWidth: 0, flex: '1 1 360px', flexWrap: 'wrap' }}>

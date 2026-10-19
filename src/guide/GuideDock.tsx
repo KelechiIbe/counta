@@ -67,7 +67,7 @@ export function Confetti({ fire }: { fire: number }) {
   return <canvas ref={ref} className="g-confetti" />;
 }
 
-const HIDDEN = /^\/(p|shop|sso|login|signup|reset|update-password)(\/|$)/;
+const HIDDEN = /^\/(p|shop|sso|login|signup|reset|update-password|join|review)(\/|$)/;
 
 export function GuideDock() {
   const g = useGuideTalk();
@@ -77,14 +77,20 @@ export function GuideDock() {
   const [text, setText] = useState('');
   const body = useRef<HTMLDivElement>(null);
   useEffect(() => { body.current?.scrollTo({ top: body.current.scrollHeight, behavior: 'smooth' }); }, [g.lines.length]);
-  const hidden = !session || HIDDEN.test(loc.pathname);
-  // The onboarding page and Home's checklist have their own buttons for Martina.
-  const onboarding = loc.pathname.startsWith('/onboarding') || loc.pathname === '/home';
+  // The phone app and the Martina page show the conversation themselves.
+  // On the phone app the launcher stays out of the way; a conversation already going shows everywhere but the chat screen.
+  const phone = /^\/m(\/|$)/.test(loc.pathname);
+  const hidden = !session || HIDDEN.test(loc.pathname) || (phone && (g.status === 'idle' || loc.pathname.startsWith('/m/chat')))
+    || (loc.pathname === '/assistant' && g.agent === 'assistant');
   const gs = guide.data;
-  // The launcher shows for the owner of a business set up in the last 30 days that is still getting going (the onboarding
-  // page and Home's checklist have their own buttons).
+  // For the owner of a business set up in the last 30 days that is still getting going, the launcher picks up the setup
+  // (Home's checklist has its own button for it). Everyone else, and every other page, gets Martina the assistant.
   const recent = gs?.org?.created_at ? Date.now() - Date.parse(gs.org.created_at) < 30 * 86400_000 : false;
-  const offer = !hidden && !onboarding && g.status === 'idle' && gs && !gs.completed && !gs.dismissed && gs.org?.is_owner && recent;
+  const setup = !!(gs && !gs.completed && !gs.dismissed && gs.org?.is_owner && recent);
+  // Home's checklist and the onboarding page start the setup guide themselves, and the Martina page is the conversation.
+  const where = loc.pathname.startsWith('/onboarding') || loc.pathname === '/assistant' || !orgId ? 'none'
+    : setup && loc.pathname !== '/home' ? 'guide' : 'assistant';
+  const offer = !hidden && g.status === 'idle' && where !== 'none';
   // While a drawer or a dialog is open, the panel moves to the left so it never covers their buttons.
   const [overlay, setOverlay] = useState(false);
   useEffect(() => {
@@ -98,12 +104,19 @@ export function GuideDock() {
     return (
       <>
         {extras}
-        {offer && (
-          <button className="g-launch" onClick={() => g.start()} aria-label="Talk to Martina, your Counta guide">
+        {offer && (where === 'guide' ? (
+          <button className="g-launch" onClick={() => g.start({ agent: 'guide' })} aria-label="Talk to Martina, your Counta guide">
             <Orb size={34} />
             <span>Talk to Martina<span className="faint" style={{ display: 'block', fontSize: 11, fontWeight: 500 }}>{gs!.done} of {gs!.total} done · your guide</span></span>
           </button>
-        )}
+        ) : (
+          <div className="g-launch g-launch-2" role="group" aria-label="Martina">
+            <button className="g-launch-main" onClick={() => g.start({ agent: 'assistant' })} aria-label="Talk to Martina">
+              <Orb size={34} /><span>Ask Martina<span className="faint" style={{ display: 'block', fontSize: 11, fontWeight: 500 }}>talk or type</span></span>
+            </button>
+            <button className="g-launch-type" onClick={() => g.start({ agent: 'assistant', text: true })} aria-label="Type to Martina" title="Type instead"><Icon name="chat" size={16} /></button>
+          </div>
+        ))}
       </>
     );
   }
@@ -119,7 +132,7 @@ export function GuideDock() {
         <div className="g-dock-hd">
           <Orb size={38} live={g.status === 'live'} />
           <div className="grow" style={{ minWidth: 0 }}>
-            <b style={{ fontSize: 15 }}>Martina</b>
+            <b style={{ fontSize: 15 }}>Martina<span className="faint" style={{ fontWeight: 500, fontSize: 12 }}>{g.agent === 'guide' ? ' · setting up' : ''}</span></b>
             <div className="row" style={{ gap: 6, fontSize: 12, color: 'var(--muted)' }}>
               <span className={'g-dot' + (g.status === 'live' ? '' : ' wait')} />
               {g.status === 'connecting' ? 'Connecting…' : g.status === 'ending' ? 'Saying bye…' : g.textOnly ? 'Typing' : g.speaking ? 'Speaking' : g.muted ? 'Muted' : 'Listening'}

@@ -11,19 +11,23 @@ import {
   webInsights, type Answers, type Category, type GuideState, type Kyc, type Score, type WebInsights,
 } from '../lib/onboard';
 import { fetchSpeech, playAudio } from '../lib/speech';
+import { assistantTools } from './assistantTools';
+import { checkNin } from '../pages/onboarding/Identity';
 
 export type Line = { role: 'agent' | 'user'; text: string; at: number };
 export type Status = 'idle' | 'connecting' | 'live' | 'ending';
 type Conv = {
   endSession: () => Promise<void>; sendUserMessage: (t: string) => void; sendContextualUpdate: (t: string) => void; setMicMuted: (m: boolean) => void;
-  getInputVolume: () => number; getOutputVolume: () => number; setVolume?: (o: { volume: number }) => void;
+  getInputVolume: () => number; getOutputVolume: () => number; setVolume?: (o: { volume: number }) => void; getId?: () => string;
 };
-export type OnboardScreen = 'welcome' | 'find' | 'found' | 'questions' | 'summary' | 'score' | 'document' | 'done';
+// Martina has two jobs: the onboarding guide, and the assistant for everything else in Counta.
+export type Agent = 'guide' | 'assistant';
+export type OnboardScreen = 'welcome' | 'find' | 'found' | 'questions' | 'summary' | 'score' | 'identity' | 'document' | 'done';
 type Wallet = { account_number: string | null; bank_name: string | null; account_name: string | null; status: string };
 
 interface GuideCtx {
-  status: Status; textOnly: boolean; speaking: boolean; muted: boolean; lines: Line[]; error: string | null; minimized: boolean;
-  start: (o?: { text?: boolean }) => Promise<void>; end: () => Promise<void>; send: (t: string) => void; toggleMute: () => void; setMinimized: (v: boolean) => void;
+  status: Status; textOnly: boolean; speaking: boolean; muted: boolean; lines: Line[]; error: string | null; minimized: boolean; agent: Agent;
+  start: (o?: { text?: boolean; agent?: Agent; first?: string }) => Promise<boolean>; end: () => Promise<void>; send: (t: string) => void; toggleMute: () => void; setMinimized: (v: boolean) => void;
   // What the person does on screen, told to Martina so she keeps up.
   notify: (t: string) => void;
   volumes: () => { input: number; output: number };
@@ -38,9 +42,11 @@ interface GuideCtx {
 const Ctx = createContext<GuideCtx>(null as any);
 export const useGuideTalk = () => useContext(Ctx);
 
-const ONBOARD: Record<string, OnboardScreen> = { questions: 'questions', summary: 'summary', score: 'score', document: 'document' };
+const ONBOARD: Record<string, OnboardScreen> = { questions: 'questions', summary: 'summary', score: 'score', identity: 'identity', document: 'document' };
 const ROUTES: Record<string, string> = { home: '/home', payments: '/payments', sell: '/sell/till', banking: '/accounting/banking', statements: '/accounting/banking',
   products: '/inventory/items', team: '/inventory/locations' };
+// Eleven digits in a row (spaces or dashes between groups allowed) are treated as an NIN.
+const looksLikeNin = (t: string) => /(^|\D)\d{11}(\D|$)/.test(String(t || '').replace(/(\d)[\s-]+(?=\d)/g, '$1'));
 const short = (o: unknown) => JSON.stringify(o, (_k, v) => (v === null || v === '' || (Array.isArray(v) && !v.length) ? undefined : v));
 
 // What CAC holds, as Martina reads it out: names and facts, never anyone's personal details.
@@ -76,7 +82,13 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   const [voicePicker, setVoicePicker] = useState(false);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [confetti, setConfetti] = useState(0);
+  const [agent, setAgent] = useState<Agent>('guide');
+  const agentRef = useRef<Agent>('guide');
   const conv = useRef<Conv | null>(null);
+  // An NIN said or typed to Martina: the conversation is deleted from ElevenLabs once it ends.
+  const saidNin = useRef(false);
+  // The ElevenLabs id of the conversation going on, kept after it ends so it can be deleted.
+  const convId = useRef<string | null>(null);
   const insightsP = useRef<Promise<WebInsights | null> | null>(null);
   // The tools read the latest values through refs, since the conversation keeps the functions it started with.
   const live = useRef({ orgId, nav, path: loc.pathname });
@@ -224,38 +236,78 @@ export function GuideProvider({ children }: { children: ReactNode }) {
         return g.call.consent ? { saved: true, number: g.call.phone } : { saved: true, consent: false };
       }),
       celebrate: safe(async () => { celebrate(); return 'Done.'; }),
+      verify_nin: safe(async ({ nin }) => {
+        const o = org();
+        saidNin.current = true;
+        if (live.current.path.startsWith('/onboarding')) goOnboard('identity'); else live.current.nav('/settings#identity');
+        const r = await checkNin(o, String(nin || ''), conv.current?.getId?.() || null);
+        refresh(); void qc.invalidateQueries({ queryKey: ['identity'] }); void qc.invalidateQueries({ queryKey: ['inv'] });
+        if (r.result.verified) celebrate();
+        return r.result.verified ? { verified: true, director: r.result.matched, note: 'Payments can now be switched on.' }
+          : { verified: false, why: r.result.reason, directors_on_record: r.result.people, next: 'Ask them to add their NIN slip (open_nin_upload), or skip if they are not a director.' };
+      }),
+      open_nin_upload: safe(async () => {
+        setUploadAsk({ kind: 'nin_slip', at: Date.now() });
+        if (live.current.path.startsWith('/onboarding')) goOnboard('identity'); else live.current.nav('/settings#identity');
+        return 'The NIN slip upload is on screen.';
+      }),
+      ...Object.fromEntries(Object.entries(assistantTools({ org, nav: (to: string) => live.current.nav(to), qc, celebrate })).map(([k, fn]) => [k, safe(fn)])),
     };
   }, [qc, refresh, goOnboard, markFilled, insights, celebrate, refreshMemberships, setOrgId, session]);
 
-  const start = useCallback(async (o: { text?: boolean } = {}) => {
-    if (conv.current || status === 'connecting') return;
-    setError(null); setStatus('connecting'); setMinimized(false);
+  const start = useCallback(async (o: { text?: boolean; agent?: Agent; first?: string } = {}) => {
+    if (conv.current || status === 'connecting') return false;
+    const which: Agent = o.agent || 'guide';
+    // Everyday conversations keep what was said on screen when Martina reconnects; the setup guide starts afresh.
+    const keep = which === 'assistant' && agentRef.current === 'assistant';
+    agentRef.current = which;
+    setError(null); setStatus('connecting'); setMinimized(false); setAgent(which); if (!keep) setLines([]);
     let text = Boolean(o.text);
     try {
       if (!text) {
         try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop()); }
         catch { text = true; setError('The microphone is blocked, so we can type instead. Allow the microphone for this site to talk.'); }
       }
-      const t = await edge<any>('voice', { action: 'guide_token', text, ...(live.current.orgId ? { org_id: live.current.orgId } : {}) });
+      const page = live.current.path.replace(/^\/m(\/|$)/, '/phone/').split('/').filter(Boolean).slice(0, 2).join(' ').replace('accounting tax', 'tax') || 'home';
+      const t = which === 'assistant'
+        ? await edge<any>('voice', { action: 'assistant_token', text, org_id: live.current.orgId, page })
+        : await edge<any>('voice', { action: 'guide_token', text, ...(live.current.orgId ? { org_id: live.current.orgId } : {}) });
       if (!t.ok) throw new Error(t.error || 'Martina is not available just now.');
       const { Conversation } = await import('@elevenlabs/client');
       setTextOnly(text);
       const base = {
         dynamicVariables: t.dynamic_variables, overrides: t.overrides, clientTools: tools,
-        onConnect: () => { setStatus('live'); void guideMark('intro_heard').catch(() => null); },
-        onDisconnect: () => { conv.current = null; setStatus('idle'); setSpeaking(false); },
+        onConnect: () => { setStatus('live'); if (which === 'guide') void guideMark('intro_heard').catch(() => null); },
+        onDisconnect: () => {
+          conv.current = null; setStatus('idle'); setSpeaking(false);
+          // ElevenLabs finishes the conversation first; anything it still holds is retried every quarter of an hour.
+          if (saidNin.current) {
+            saidNin.current = false;
+            const id = convId.current;
+            window.setTimeout(() => { void edge('voice', { action: 'forget', ...(id ? { conversation_id: id } : {}) }).catch(() => null); }, 8000);
+          }
+        },
         onError: (m: string) => setError(typeof m === 'string' ? m : 'The conversation dropped.'),
-        onMessage: (m: { message: string; source?: string; role?: string }) => add((m.role || m.source) === 'user' ? 'user' : 'agent', m.message),
+        onMessage: (m: { message: string; source?: string; role?: string }) => {
+          const who = (m.role || m.source) === 'user' ? 'user' : 'agent';
+          if (who === 'user' && looksLikeNin(m.message)) saidNin.current = true;
+          add(who, m.message);
+        },
         onModeChange: (m: { mode: string }) => setSpeaking(m.mode === 'speaking'),
       };
       const c = text
         ? await Conversation.startSession({ ...base, signedUrl: t.signed_url, textOnly: true, connectionType: 'websocket' } as any)
         : await Conversation.startSession({ ...base, conversationToken: t.token, connectionType: 'webrtc' } as any);
       conv.current = c as unknown as Conv;
+      convId.current = (() => { try { return (c as any).getId?.() || t.conversation_id || null; } catch { return t.conversation_id || null; } })();
       if (text) setStatus('live');
+      const first = String(o.first || '').trim();
+      if (first) { if (looksLikeNin(first)) saidNin.current = true; add('user', first); conv.current.sendUserMessage(first); }
+      return true;
     } catch (e) {
       conv.current = null; setStatus('idle');
       setError((e as Error).message || 'Could not reach Martina.');
+      return false;
     }
   }, [status, tools, add]);
 
@@ -268,6 +320,7 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   }, []);
   const send = useCallback((t: string) => {
     const v = t.trim(); if (!v || !conv.current) return;
+    if (looksLikeNin(v)) saidNin.current = true;
     add('user', v); conv.current.sendUserMessage(v);
   }, [add]);
   const notify = useCallback((t: string) => { try { conv.current?.sendContextualUpdate(t); } catch { /* not live */ } }, []);
@@ -287,9 +340,9 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   }, [tools, lines]);
 
   const value = useMemo<GuideCtx>(() => ({
-    status, textOnly, speaking, muted, lines, error, minimized, start, end, send, toggleMute, setMinimized, notify, volumes,
+    status, textOnly, speaking, muted, lines, error, minimized, agent, start, end, send, toggleMute, setMinimized, notify, volumes,
     screen, setScreen, filled, markFilled, uploadAsk, voicePicker, setVoicePicker, wallet, setWallet, confetti, celebrate, insights,
-  }), [status, textOnly, speaking, muted, lines, error, minimized, start, end, send, toggleMute, notify, volumes, screen, filled, markFilled, uploadAsk,
+  }), [status, textOnly, speaking, muted, lines, error, minimized, agent, start, end, send, toggleMute, notify, volumes, screen, filled, markFilled, uploadAsk,
     voicePicker, wallet, confetti, celebrate, insights]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

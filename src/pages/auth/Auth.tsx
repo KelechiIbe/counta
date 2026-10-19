@@ -5,7 +5,7 @@ import { useSession } from '../../state/session';
 import { Alert, Field, Spinner } from '../../components/ui';
 import { Icon } from '../../components/Icon';
 
-function BrandSide() {
+export function BrandSide() {
   return (
     <div className="auth-side">
       <img src="/logo-brand.svg" alt="TaxStreem" style={{ height: 26, filter: 'brightness(0) invert(1)', alignSelf: 'flex-start' }} />
@@ -48,10 +48,14 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
   const [sent, setSent] = useState<string | null>(null);
   // After sign-up: the six-digit code from the confirmation email (the link in it works too).
   const [codeFor, setCodeFor] = useState<string | null>(null);
-  const next = params.get('next') || '/';
+  // Where to go afterwards: a path inside Counta only (an invitation link brings people back to /join).
+  const asked = params.get('next') || '';
+  const next = asked.startsWith('/') && !asked.startsWith('//') ? asked : '/';
+  const joining = next.startsWith('/join');
+  const after = mode === 'signup' && !joining ? '/onboarding' : next;
 
-  if (ready && session && mode !== 'reset') return <Navigate to={mode === 'signup' ? '/onboarding' : next} replace />;
-  if (codeFor) return <CodeStep email={codeFor} onBack={() => setCodeFor(null)} onDone={async () => { await refreshMemberships().catch(() => []); nav('/onboarding', { replace: true }); }} />;
+  if (ready && session && mode !== 'reset') return <Navigate to={after} replace />;
+  if (codeFor) return <CodeStep email={codeFor} redirect={after} onBack={() => setCodeFor(null)} onDone={async () => { await refreshMemberships().catch(() => []); nav(after, { replace: true }); }} />;
 
   async function submit(e: FormEvent) {
     e.preventDefault(); setErr(null);
@@ -70,10 +74,10 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
       } else if (mode === 'signup') {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(), password,
-          options: { data: { full_name: name.trim(), ...(tel ? { phone: tel } : {}) }, emailRedirectTo: window.location.origin + '/onboarding' },
+          options: { data: { full_name: name.trim(), ...(tel ? { phone: tel } : {}) }, emailRedirectTo: window.location.origin + after },
         });
         if (error) throw error;
-        if (data.session) nav('/onboarding', { replace: true });
+        if (data.session) nav(after, { replace: true });
         else setCodeFor(email.trim());
       } else {
         const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin + '/update-password' });
@@ -96,7 +100,8 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
           <div>
             <h1 style={{ fontFamily: 'var(--font-brand)', fontSize: 28, fontWeight: 600, letterSpacing: '-.01em', margin: 0 }}>{title}</h1>
             <div className="muted" style={{ fontSize: 14, marginTop: 6, lineHeight: 1.5 }}>
-              {mode === 'login' ? 'Owners and staff use the same sign-in. Your role decides what you see.'
+              {joining && mode !== 'reset' ? (mode === 'login' ? 'Sign in with the email your invitation went to, then join the team.' : 'Create your account with the email your invitation went to, then join the team.')
+                : mode === 'login' ? 'Owners and staff use the same sign-in. Your role decides what you see.'
                 : mode === 'signup' ? 'One minute here, then Martina, your guide, sets up your business with you. By voice if you like.'
                 : 'We will email you a link to choose a new password.'}
             </div>
@@ -127,13 +132,13 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
           )}
           <div style={{ fontSize: 14, color: '#4B5563', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             {mode === 'login' ? (
-              <><span>New to Counta? <Link to={'/signup' + (email ? '?email=' + encodeURIComponent(email) : '')}>Create an account</Link></span><Link to="/reset">Forgot password?</Link></>
+              <><span>New to Counta? <Link to={'/signup?' + carry(email, joining ? next : '')}>Create an account</Link></span><Link to="/reset">Forgot password?</Link></>
             ) : (
-              <span>Already have an account? <Link to="/login">Sign in</Link></span>
+              <span>Already have an account? <Link to={'/login?' + carry(email, joining ? next : '')}>Sign in</Link></span>
             )}
           </div>
-          {mode === 'signup' && (
-            <div className="hint">Joining a team? Sign up with the email your manager added, and you will land straight in their business.</div>
+          {mode === 'signup' && !joining && (
+            <div className="hint">Joining a team? Open the link in your invitation email. It brings you back here and then into the business.</div>
           )}
         </form>
       </div>
@@ -142,7 +147,9 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
 }
 
 // The code from the confirmation email. Supabase's "Confirm signup" email carries both the code ({{ .Token }}) and the link.
-function CodeStep({ email, onBack, onDone }: { email: string; onBack: () => void; onDone: () => Promise<void> }) {
+const carry = (email: string, next: string) => new URLSearchParams({ ...(email ? { email } : {}), ...(next ? { next } : {}) }).toString();
+
+function CodeStep({ email, redirect, onBack, onDone }: { email: string; redirect: string; onBack: () => void; onDone: () => Promise<void> }) {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -159,7 +166,7 @@ function CodeStep({ email, onBack, onDone }: { email: string; onBack: () => void
   }
   async function resend() {
     setErr(null); setNote(null);
-    const { error } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: window.location.origin + '/onboarding' } });
+    const { error } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: window.location.origin + redirect } });
     if (error) setErr(cleanError(error)); else { setNote('A new code is on its way.'); setWait(45); }
   }
   return (

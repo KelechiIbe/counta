@@ -1,18 +1,27 @@
-export type Perm = 'record_sales' | 'receive_stock' | 'count_stock' | 'approve_adjustments' | 'edit_prices' | 'approve_pos' | 'transfer_stock' | 'see_margins' | 'issue_stock'
-  | 'keep_books' | 'make_payments';
-export const PERMS: { key: Perm; label: string }[] = [
-  { key: 'record_sales', label: 'Record sales' },
-  { key: 'receive_stock', label: 'Receive stock' },
-  { key: 'count_stock', label: 'Count stock' },
-  { key: 'approve_adjustments', label: 'Approve adjustments' },
-  { key: 'edit_prices', label: 'Edit costs & prices' },
-  { key: 'approve_pos', label: 'Approve POs' },
-  { key: 'transfer_stock', label: 'Transfer stock' },
-  { key: 'issue_stock', label: 'Issue to jobs' },
-  { key: 'see_margins', label: 'See margins' },
-  { key: 'keep_books', label: 'Keep the books' },
-  { key: 'make_payments', label: 'Make payments' },
+export type Perm = 'record_sales' | 'edit_prices' | 'add_items' | 'receive_stock' | 'count_stock' | 'transfer_stock' | 'issue_stock'
+  | 'approve_adjustments' | 'approve_pos' | 'make_payments' | 'approve_payments' | 'keep_books' | 'see_margins' | 'file_tax'
+  | 'manage_team' | 'manage_settings';
+// Every permission, grouped as the settings screen lists them, in the order the database keeps them (private.perm_keys).
+export const PERMS: { key: Perm; label: string; group: string; hint: string }[] = [
+  { key: 'record_sales', label: 'Record sales', group: 'Sales', hint: 'Sell at the till, raise invoices and quotes, take payments.' },
+  { key: 'edit_prices', label: 'Edit costs & prices', group: 'Sales', hint: 'Change prices, costs and price lists, and give larger discounts.' },
+  { key: 'add_items', label: 'Add products', group: 'Sales', hint: 'Add products, including from photos on the phone. Changing a price still needs Edit costs & prices.' },
+  { key: 'receive_stock', label: 'Receive stock', group: 'Stock', hint: 'Record supplier deliveries.' },
+  { key: 'count_stock', label: 'Count stock', group: 'Stock', hint: 'Do stock counts.' },
+  { key: 'transfer_stock', label: 'Transfer stock', group: 'Stock', hint: 'Move stock between branches and vans.' },
+  { key: 'issue_stock', label: 'Issue to jobs', group: 'Stock', hint: 'Issue materials to production and jobs.' },
+  { key: 'approve_adjustments', label: 'Approve adjustments', group: 'Stock', hint: 'Approve counts, write-offs and stock adjustments.' },
+  { key: 'approve_pos', label: 'Approve POs', group: 'Stock', hint: 'Approve and send purchase orders.' },
+  { key: 'make_payments', label: 'Make payments', group: 'Money', hint: 'Pay bills, ask for payouts and refunds, upload bulk payments.' },
+  { key: 'approve_payments', label: 'Approve payouts', group: 'Money', hint: 'Approve payouts and bulk payments someone else asked for.' },
+  { key: 'keep_books', label: 'Keep the books', group: 'Books & tax', hint: 'Bank reconciliation, journals, bills, reports and preparing tax returns.' },
+  { key: 'see_margins', label: 'See costs & profit', group: 'Books & tax', hint: 'See costs, margins and profit.' },
+  { key: 'file_tax', label: 'File tax returns', group: 'Books & tax', hint: 'Approve, file and reopen VAT and income tax returns.' },
+  { key: 'manage_team', label: 'Manage the team', group: 'Admin', hint: 'Invite people, change roles and set what each role can do (never more than they can do themselves).' },
+  { key: 'manage_settings', label: 'Change settings', group: 'Admin', hint: 'Business details, branding, stock rules and the chart of accounts.' },
 ];
+export type Role = 'owner' | 'admin' | 'manager' | 'staff' | 'cashier' | 'accountant';
+export const ROLE_LABEL: Record<Role, string> = { owner: 'Owner', admin: 'Admin', manager: 'Manager', accountant: 'Accountant', staff: 'Staff', cashier: 'Cashier' };
 
 export interface Org {
   id: string; name: string; email: string | null; phone: string | null; timezone: string; vat_registered: boolean;
@@ -32,6 +41,7 @@ export interface Org {
   directors?: { name: string; role?: string; frc_number?: string; appointed?: string; resigned?: string }[]; company_secretary?: string | null; auditors?: string | null;
   audit_exempt?: boolean; bankers?: string | null; solicitors?: string | null; registered_office?: string | null; incorporation_date?: string | null;
   share_info?: Record<string, any>; fs_narrative?: Record<string, any>;
+  offering?: 'goods' | 'services' | 'both' | null; category_id?: string | null; identity_status?: string; payments_open?: boolean;
 }
 export interface Location { id: string; org_id: string; name: string; code: string; address: string | null; is_main: boolean; state?: string | null; lga?: string | null; }
 export interface Vendor {
@@ -39,7 +49,7 @@ export interface Vendor {
   vat_registered: boolean; lead_time_days: number; credit_days: number; fill_rate: number | null; price_stability: 'High' | 'Medium' | 'Low' | null; notes: string | null;
 }
 export interface Member {
-  id: string; display_name: string; role: 'owner' | 'manager' | 'staff' | 'cashier' | 'accountant'; title: string | null; location_id: string | null;
+  id: string; display_name: string; role: Role; role_label?: string; title: string | null; location_id: string | null;
   status: string; email: string | null; phone: string | null; has_login: boolean; is_me: boolean; voice_confirmed: number;
   perms: Record<Perm, boolean>;
 }
@@ -47,6 +57,7 @@ export interface MeRow {
   id: string; org_id: string; role: Member['role']; display_name: string; location_id: string | null; voice_confirmed: number;
   p_record_sales: boolean; p_receive_stock: boolean; p_count_stock: boolean; p_approve_adjustments: boolean; p_edit_prices: boolean;
   p_approve_pos: boolean; p_transfer_stock: boolean; p_see_margins: boolean; p_issue_stock?: boolean; p_keep_books?: boolean; p_make_payments?: boolean;
+  p_add_items?: boolean; p_approve_payments?: boolean; p_file_tax?: boolean; p_manage_team?: boolean; p_manage_settings?: boolean;
 }
 export interface Item {
   id: string; name: string; photo_path: string | null; barcode: string | null; sku: string | null; qr_code: string; category: string;

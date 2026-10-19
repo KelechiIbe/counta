@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useInventory, useSession, useToast } from '../state/session';
+import { can, useInventory, useSession, useToast } from '../state/session';
 import { useAction } from '../lib/queries';
 import { must, rpc, supabase, SUPABASE_URL } from '../lib/supabase';
 import { aiCheck, aiStatus } from '../lib/martina';
@@ -15,7 +15,10 @@ import { disablePush, enablePush, usePwaState } from '../lib/pwa';
 import { BooksSection, MessagesSection, TaxStreemSection } from './SettingsBooks';
 import { BrandingSection } from './SettingsBranding';
 import { useVoiceSettings, VoicePicker } from '../guide/VoicePicker';
+import { useGuideTalk } from '../guide/GuideProvider';
 import { saveVoice } from '../lib/onboard';
+import { PeopleCard, RolesCard } from './settings/Team';
+import { IdentityPanel, useIdentity } from './onboarding/Identity';
 
 function Section({ id, title, sub, children }: { id?: string; title: string; sub?: string; children: ReactNode }) {
   return (
@@ -125,6 +128,32 @@ function CallsSection({ owner }: { owner: boolean }) {
   );
 }
 
+// Who is on the team, and what each role may do. Everyone sees the list; people who manage the team change it.
+function TeamSection() {
+  return (
+    <Section id="team" title="Team and roles" sub="Invite people by email with a one-time link. Each role has its own permissions; a change reaches everyone in that role, and one person can still have their own exceptions.">
+      <PeopleCard />
+      <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+        <div className="mini-label" style={{ marginBottom: 10 }}>Roles and permissions</div>
+        <RolesCard />
+      </div>
+    </Section>
+  );
+}
+
+// The director's NIN check. Until it passes (or TaxStreem approves the slip), the wallet, payment links and payouts wait.
+function IdentitySection() {
+  const { orgId } = useSession();
+  const id = useIdentity(orgId);
+  const g = useGuideTalk();
+  if (!orgId || !id.data || id.data.status === 'not_required') return null;
+  return (
+    <Section id="identity" title="Business identity" sub="A director confirms who they are with their NIN. Only the result and the last four digits are kept.">
+      <IdentityPanel orgId={orgId} live={g.status === 'live'} askOpen={g.uploadAsk?.kind === 'nin_slip' ? g.uploadAsk.at : undefined} />
+    </Section>
+  );
+}
+
 export default function Settings() {
   const { data: inv } = useInventory();
   const { session, signOut, refreshMemberships, setOrgId } = useSession();
@@ -135,6 +164,8 @@ export default function Settings() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ['aiStatus'], queryFn: aiStatus, staleTime: 60_000 });
   const owner = inv?.me.role === 'owner';
+  // Changing the business's settings is a permission of its own (owners and admins by default).
+  const edit = can(inv, 'manage_settings');
   const [f, setF] = useState<Record<string, any>>({});
   const [pw, setPw] = useState('');
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -142,7 +173,7 @@ export default function Settings() {
   useEffect(() => {
     if (!inv) return;
     const o = inv.org;
-    setF({ name: o.name, industry: o.industry || 'retail', email: o.email || '', phone: o.phone || '', vat_registered: o.vat_registered, margin_threshold: String(o.margin_threshold), safety_days: String(o.safety_days),
+    setF({ name: o.name, industry: o.industry || 'retail', offering: o.offering || 'goods', email: o.email || '', phone: o.phone || '', vat_registered: o.vat_registered, margin_threshold: String(o.margin_threshold), safety_days: String(o.safety_days),
       cover_days: String(o.cover_days), cash_available: o.cash_available == null ? '' : String(o.cash_available), voice_trust_threshold: String(o.voice_trust_threshold) });
   }, [inv?.org]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -160,7 +191,7 @@ export default function Settings() {
     if (!(mt >= 0 && mt < 100)) { toast('Margin threshold must be between 0 and 99%.', 'err'); return; }
     if (!(sd >= 0) || !(cd >= 1) || !(vt >= 0)) { toast('Days must be whole numbers; cover needs at least 1 day.', 'err'); return; }
     await run(() => must(supabase.from('orgs').update({
-      name: f.name.trim(), industry: f.industry || 'retail', email: f.email.trim() || null, phone: f.phone.trim() || null, vat_registered: !!f.vat_registered, margin_threshold: mt, safety_days: sd, cover_days: cd,
+      name: f.name.trim(), industry: f.industry || 'retail', offering: f.offering || 'goods', email: f.email.trim() || null, phone: f.phone.trim() || null, vat_registered: !!f.vat_registered, margin_threshold: mt, safety_days: sd, cover_days: cd,
       cash_available: f.cash_available === '' ? null : Math.max(0, Number(f.cash_available)), voice_trust_threshold: vt,
     }).eq('id', inv!.org.id).select().single()), { ok: 'Settings saved', invalidate: ['inv'] });
     refreshMemberships().catch(() => {});
@@ -177,34 +208,44 @@ export default function Settings() {
 
   return (
     <div className="container" style={{ maxWidth: 1000 }}>
-      <Section title="Business" sub={owner ? 'Shown on purchase orders and labels.' : 'Only the owner can change these.'}>
+      <Section id="business" title="Business" sub={edit ? 'Shown on purchase orders and labels.' : 'Only people who can change settings edit these.'}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
-          <Field label="Business name"><input className="input" disabled={!owner} value={f.name || ''} onChange={(e) => set('name', e.target.value)} /></Field>
-          <Field label="Email"><input className="input" disabled={!owner} value={f.email || ''} onChange={(e) => set('email', e.target.value)} /></Field>
-          <Field label="Phone"><input className="input" disabled={!owner} value={f.phone || ''} onChange={(e) => set('phone', e.target.value)} /></Field>
+          <Field label="Business name"><input className="input" disabled={!edit} value={f.name || ''} onChange={(e) => set('name', e.target.value)} /></Field>
+          <Field label="Email"><input className="input" disabled={!edit} value={f.email || ''} onChange={(e) => set('email', e.target.value)} /></Field>
+          <Field label="Phone"><input className="input" disabled={!edit} value={f.phone || ''} onChange={(e) => set('phone', e.target.value)} /></Field>
         </div>
         <Field label="Kind of business" hint={`Sets the item fields, units and import template. ${industryOf(f.industry).blurb}.`}>
-          <select className="input" disabled={!owner} value={f.industry || 'retail'} onChange={(e) => set('industry', e.target.value)} style={{ maxWidth: 420 }}>
+          <select className="input" disabled={!edit} value={f.industry || 'retail'} onChange={(e) => set('industry', e.target.value)} style={{ maxWidth: 420 }}>
             {INDUSTRIES.map((i) => <option key={i.id} value={i.id}>{i.label}</option>)}
           </select>
         </Field>
-        <label className="check"><input type="checkbox" disabled={!owner} checked={!!f.vat_registered} onChange={(e) => set('vat_registered', e.target.checked)} />VAT-registered business (claims input VAT on purchases)</label>
+        <Field label="What the business sells" hint="Martina and the main screens use your words: revenue and clients for services, sales and customers for goods.">
+          <select className="input" disabled={!edit} value={f.offering || 'goods'} onChange={(e) => set('offering', e.target.value)} style={{ maxWidth: 420 }}>
+            <option value="goods">Goods: products we stock and sell</option>
+            <option value="services">Services: work we do for clients</option>
+            <option value="both">Both goods and services</option>
+          </select>
+        </Field>
+        <label className="check"><input type="checkbox" disabled={!edit} checked={!!f.vat_registered} onChange={(e) => set('vat_registered', e.target.checked)} />VAT-registered business (claims input VAT on purchases)</label>
+        {edit && <div><button className="btn btn-primary" onClick={saveOrg} disabled={busy}>Save business details</button></div>}
       </Section>
       <BrandingSection />
+      <TeamSection />
+      <IdentitySection />
       <Section title="Stock rules" sub="These drive reorder suggestions, price proposals and voice review.">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
-          <Field label="Margin threshold (%)" hint="Prices under this margin get a proposal. Default 8%."><input className="input" type="number" min={0} max={99} disabled={!owner} value={f.margin_threshold || ''} onChange={(e) => set('margin_threshold', e.target.value)} /></Field>
-          <Field label="Safety stock (days)" hint="Extra days added to each vendor's lead time."><input className="input" type="number" min={0} disabled={!owner} value={f.safety_days || ''} onChange={(e) => set('safety_days', e.target.value)} /></Field>
-          <Field label="Order cover (days)" hint="How many days of sales a suggested order should cover."><input className="input" type="number" min={1} disabled={!owner} value={f.cover_days || ''} onChange={(e) => set('cover_days', e.target.value)} /></Field>
-          <Field label="Cash set aside for stock (₦)" hint="Suggestions are capped by it. Leave blank for no cap."><input className="input" type="number" min={0} disabled={!owner} value={f.cash_available ?? ''} onChange={(e) => set('cash_available', e.target.value)} /></Field>
-          <Field label="Voice entries before trust" hint="Each person's voice sales are reviewed until this many go through clean."><input className="input" type="number" min={0} disabled={!owner} value={f.voice_trust_threshold || ''} onChange={(e) => set('voice_trust_threshold', e.target.value)} /></Field>
+          <Field label="Margin threshold (%)" hint="Prices under this margin get a proposal. Default 8%."><input className="input" type="number" min={0} max={99} disabled={!edit} value={f.margin_threshold || ''} onChange={(e) => set('margin_threshold', e.target.value)} /></Field>
+          <Field label="Safety stock (days)" hint="Extra days added to each vendor's lead time."><input className="input" type="number" min={0} disabled={!edit} value={f.safety_days || ''} onChange={(e) => set('safety_days', e.target.value)} /></Field>
+          <Field label="Order cover (days)" hint="How many days of sales a suggested order should cover."><input className="input" type="number" min={1} disabled={!edit} value={f.cover_days || ''} onChange={(e) => set('cover_days', e.target.value)} /></Field>
+          <Field label="Cash set aside for stock (₦)" hint="Suggestions are capped by it. Leave blank for no cap."><input className="input" type="number" min={0} disabled={!edit} value={f.cash_available ?? ''} onChange={(e) => set('cash_available', e.target.value)} /></Field>
+          <Field label="Voice entries before trust" hint="Each person's voice sales are reviewed until this many go through clean."><input className="input" type="number" min={0} disabled={!edit} value={f.voice_trust_threshold || ''} onChange={(e) => set('voice_trust_threshold', e.target.value)} /></Field>
         </div>
-        {owner && <div><button className="btn btn-primary" onClick={saveOrg} disabled={busy}>Save settings</button></div>}
+        {edit && <div><button className="btn btn-primary" onClick={saveOrg} disabled={busy}>Save settings</button></div>}
       </Section>
       <BooksSection />
       <MessagesSection />
-      <Section title="Chart of accounts" sub={owner ? 'TaxStreem standard chart. Change where an entry lands; stock value moves with it.' : 'TaxStreem standard chart. Only the owner can change the rules.'}>
-        <PostingRules owner={!!owner} onOpenChart={() => setChart(true)} />
+      <Section title="Chart of accounts" sub={edit ? 'TaxStreem standard chart. Change where an entry lands; stock value moves with it.' : 'TaxStreem standard chart. Only people who can change settings change the rules.'}>
+        <PostingRules owner={edit} onOpenChart={() => setChart(true)} />
       </Section>
       <Section title="AI reading" sub="Invoice OCR, voice entry, Martina's open answers and the bookkeeper run on Gemini through Vertex AI in Google Cloud.">
         {status.isLoading ? <div className="skel" style={{ height: 40 }} /> : status.data?.configured ? (

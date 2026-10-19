@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { rpc } from '../lib/supabase';
 import { useAction } from '../lib/queries';
-import { useInventory } from '../state/session';
+import { can, useInventory } from '../state/session';
 import {
   CATEGORIES, accountName, acct, chartCsv, choicesFor, useAccounts, useItemAccounts, usePostingMap,
   type Account, type PostingRole,
@@ -151,7 +151,7 @@ export function ItemAccountCard({ itemId, itemName }: { itemId: string; itemName
   const { run, busy } = useAction();
   const [choice, setChoice] = useState<string | null>(null);
   if (!inv) return null;
-  const owner = inv.me.role === 'owner';
+  const owner = can(inv, 'manage_settings');
   const dflt = acct(map.data, 'inventory');
   const own = overrides.data?.[itemId] || null;
   const current = own || dflt.code;

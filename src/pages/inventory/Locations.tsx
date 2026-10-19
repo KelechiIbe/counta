@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { can, useInventory, useSession } from '../../state/session';
 import { useAction, useActivity, useTransfers } from '../../lib/queries';
@@ -6,12 +7,13 @@ import { must, rpc, supabase } from '../../lib/supabase';
 import { K, N, initials, when } from '../../lib/format';
 import { buildItems, qtyLabel } from '../../lib/domain';
 import { moveItem, moveQty, typeLabel, typeTone } from '../../lib/ledger';
-import { PERMS, type Location, type Member, type Perm } from '../../lib/types';
+import { type Location, type Member } from '../../lib/types';
 import { Icon } from '../../components/Icon';
 import { Alert, Chip, Field, Label, Modal, ModalHead, SkeletonRows } from '../../components/ui';
 import { StateLga } from '../../components/Places';
 import TransferModal from '../../components/TransferModal';
 import { ReminderCallModal } from '../../components/Calls';
+import { PeopleCard } from '../settings/Team';
 
 const ROLE: Record<string, string> = { owner: 'Owner', manager: 'Manager', staff: 'Staff', cashier: 'Cashier', accountant: 'Accountant' };
 
@@ -22,7 +24,7 @@ export default function Locations() {
   const { run, busy } = useAction();
   const [transfer, setTransfer] = useState(false);
   const [branch, setBranch] = useState<Location | 'new' | null>(null);
-  const [person, setPerson] = useState<Member | 'new' | null>(null);
+  const nav = useNavigate();
   const [calling, setCalling] = useState<Member | null>(null);
   const items = useMemo(() => (inv ? buildItems(inv, 'ALL') : []), [inv]);
   const voice = useQuery({
@@ -113,36 +115,12 @@ export default function Locations() {
         </div>
       )}
 
-      <div className="card" style={{ overflow: 'hidden' }}>
-        <div className="card-hd">
-          <Label>Staff &amp; permissions</Label>
-          <div className="row wrap">
-            <span className="faint row" style={{ fontSize: 12, gap: 6 }}><Icon name="shield" size={14} color="#9CA3AF" />Whoever records sales can never edit quantities, costs or prices</span>
-            {owner && <button className="btn btn-primary btn-sm" onClick={() => setPerson('new')}><Icon name="plus" size={14} color="#fff" />Invite person</button>}
-          </div>
+      <div className="card card-pad stack" style={{ gap: 12 }}>
+        <div className="row wrap" style={{ justifyContent: 'space-between' }}>
+          <Label>Team</Label>
+          <a className="btn btn-ghost btn-xs" href="/settings#team" onClick={(e) => { e.preventDefault(); nav('/settings#team'); }}><Icon name="shield" size={14} />Roles and permissions</a>
         </div>
-        <div className="tbl">
-          <div className="th hide-sm" style={{ display: 'grid', gridTemplateColumns: `minmax(220px,1.4fr) repeat(${PERMS.length},minmax(84px,1fr))`, gap: 8, padding: '10px 20px', minWidth: 1320, alignItems: 'end', fontSize: 10 }}>
-            <span>Person</span>{PERMS.map((p) => <span key={p.key} style={{ textAlign: 'center', lineHeight: 1.3 }}>{p.label}</span>)}
-          </div>
-          {inv.members.map((m) => (
-            <div key={m.id} className="perm-row" style={{ display: 'grid', gridTemplateColumns: `minmax(220px,1.4fr) repeat(${PERMS.length},minmax(84px,1fr))`, gap: 8, padding: '10px 20px', borderTop: '1px solid #F3F4F6', fontSize: 13, alignItems: 'center', minWidth: 1320 }}>
-              <div className="row" style={{ gap: 8, minWidth: 0 }}>
-              <button className="row grow" style={{ gap: 10, border: 0, background: 'transparent', padding: 0, cursor: owner && m.role !== 'owner' ? 'pointer' : 'default', textAlign: 'left', font: 'inherit', minWidth: 0 }} onClick={() => owner && m.role !== 'owner' && setPerson(m)}>
-                <span style={{ width: 32, height: 32, borderRadius: 8, background: '#F3F4F6', display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700, color: '#4B5563', flex: 'none' }}>{initials(m.display_name)}</span>
-                <span style={{ minWidth: 0 }}>
-                  <span style={{ display: 'block', fontWeight: 600 }}>{m.display_name}{m.is_me ? ' (you)' : ''}</span>
-                  <span className="faint" style={{ display: 'block', fontSize: 11 }}>{m.title || ROLE[m.role]} · {locName(m.location_id) === '—' ? 'All branches' : locName(m.location_id)}{m.status === 'invited' ? ' · invited' : !m.has_login ? ' · no login' : ''}</span>
-                </span>
-              </button>
-              {(inv.me.role === 'owner' || inv.me.role === 'manager') && !m.is_me && m.status === 'active' && m.phone && (
-                <button className="icon-btn" title={`Have Martina call ${m.display_name.split(' ')[0]}`} aria-label={`Call ${m.display_name}`} onClick={() => setCalling(m)}><Icon name="call" size={15} color="#6B7280" /></button>
-              )}
-              </div>
-              {PERMS.map((p) => <PermCell key={p.key} m={m} p={p.key} editable={owner && m.role !== 'owner'} />)}
-            </div>
-          ))}
-        </div>
+        <PeopleCard onCall={inv.me.role === 'owner' || inv.me.role === 'manager' || inv.me.role === 'admin' ? (m) => setCalling(m as unknown as Member) : undefined} />
       </div>
 
       <div className="card" style={{ overflow: 'hidden' }}>
@@ -164,25 +142,7 @@ export default function Locations() {
       </div>
       {transfer && <TransferModal onClose={() => setTransfer(false)} />}
       {branch && <BranchModal branch={branch === 'new' ? null : branch} onClose={() => setBranch(null)} />}
-      {person && <PersonModal member={person === 'new' ? null : person} onClose={() => setPerson(null)} />}
       {calling && <ReminderCallModal member={calling} onClose={() => setCalling(null)} />}
-    </div>
-  );
-}
-
-function PermCell({ m, p, editable }: { m: Member; p: Perm; editable: boolean }) {
-  const { run, busy } = useAction();
-  const on = m.role === 'owner' || m.perms[p];
-  const conflict = !on && ((p === 'record_sales' && (m.perms.edit_prices || m.perms.approve_adjustments)) || ((p === 'edit_prices' || p === 'approve_adjustments') && m.perms.record_sales));
-  const title = m.role === 'owner' ? 'The owner keeps every permission' : conflict ? 'Someone who records sales cannot also edit prices or approve adjustments' : editable ? (on ? 'Click to remove' : 'Click to allow') : '';
-  return (
-    <div className="perm-cell" style={{ display: 'flex', justifyContent: 'center' }}>
-      <button disabled={!editable || busy || conflict} title={title} aria-pressed={on} aria-label={`${PERMS.find((x) => x.key === p)?.label} for ${m.display_name}`}
-        onClick={() => run(() => rpc('update_member', { p_member: m.id, p_patch: { perms: { [p]: !on } } }), { invalidate: ['inv'] })}
-        style={{ width: 22, height: 22, borderRadius: 6, border: 0, display: 'grid', placeItems: 'center', background: on ? '#F0F7FF' : '#FAFAFA', color: '#D1D5DB', fontSize: 12, cursor: editable && !conflict ? 'pointer' : 'default', opacity: conflict ? 0.4 : 1 }}>
-        {on ? <Icon name="check" size={14} color="#0072F5" sw={2.5} /> : '—'}
-      </button>
-      <span className="show-sm perm-lbl">{PERMS.find((x) => x.key === p)?.label}</span>
     </div>
   );
 }
@@ -217,62 +177,6 @@ function BranchModal({ branch, onClose }: { branch: Location | null; onClose: ()
         {!branch && <div className="hint">Stock at the new branch starts at zero. Move stock in with a transfer or receive straight into it.</div>}
       </div>
       <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={busy}>Save branch</button></div>
-    </Modal>
-  );
-}
-
-function PersonModal({ member, onClose }: { member: Member | null; onClose: () => void }) {
-  const { orgId } = useSession();
-  const { data: inv } = useInventory();
-  const { run, busy } = useAction();
-  const [f, setF] = useState({ name: member?.display_name || '', email: member?.email || '', phone: member?.phone || '', role: member?.role || 'staff', title: member?.title || '', location_id: member?.location_id || inv?.locations[0]?.id || '' });
-  const [err, setErr] = useState<string | null>(null);
-  const [confirmOff, setConfirmOff] = useState(false);
-  const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
-  async function save() {
-    if (!f.name.trim()) { setErr('Enter the person\'s name.'); return; }
-    if (f.email && !/^\S+@\S+\.\S+$/.test(f.email.trim())) { setErr('That email address does not look right.'); return; }
-    const r = await run(() => member
-      ? rpc('update_member', { p_member: member.id, p_patch: { display_name: f.name, role: f.role, title: f.title, phone: f.phone, location_id: f.location_id || '' } })
-      : rpc('invite_member', { p_org: orgId, p_name: f.name, p_email: f.email || null, p_role: f.role, p_title: f.title || null, p_location: f.location_id || null, p_phone: f.phone || null }),
-    { ok: member ? 'Saved' : f.email ? `${f.name.split(' ')[0]} invited · they join when they sign up with ${f.email.trim()}` : `${f.name.split(' ')[0]} added without a login`, invalidate: ['inv'] });
-    if (r !== undefined) onClose();
-  }
-  async function disable() {
-    if (!member) return;
-    if (!confirmOff) { setConfirmOff(true); return; }
-    const r = await run(() => rpc('update_member', { p_member: member.id, p_patch: { status: 'disabled' } }), { ok: `${member.display_name.split(' ')[0]} no longer has access`, invalidate: ['inv'] });
-    if (r !== undefined) onClose();
-  }
-  const roleNote: Record<string, string> = {
-    manager: 'Receives, counts, transfers and approves orders and adjustments. Sees margins.',
-    staff: 'Records sales, receives stock and counts. Costs and margins stay hidden.',
-    cashier: 'Records sales only. Cannot change quantities, costs or prices.',
-  };
-  return (
-    <Modal onClose={onClose} width={500}>
-      <ModalHead title={member ? member.display_name : 'Invite person'} sub={member ? undefined : 'They sign up with this email and land straight in your business.'} onClose={onClose} />
-      <div className="modal-body">
-        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <Field label="Full name" req><input className="input" value={f.name} onChange={(e) => set('name', e.target.value)} /></Field>
-          <Field label="Job title"><input className="input" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Store assistant" /></Field>
-        </div>
-        {!member && <Field label="Email" hint="Leave blank for someone who will not sign in (their name still appears on counts and voice entries)."><input className="input" type="email" value={f.email} onChange={(e) => set('email', e.target.value)} /></Field>}
-        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <Field label="Phone (WhatsApp)"><input className="input" inputMode="tel" value={f.phone} onChange={(e) => set('phone', e.target.value)} placeholder="0803…" /></Field>
-          <Field label="Branch"><select className="input" value={f.location_id} onChange={(e) => set('location_id', e.target.value)}><option value="">All branches</option>{inv?.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
-        </div>
-        <Field label="Role" hint={roleNote[f.role]}>
-          <select className="input" value={f.role} onChange={(e) => set('role', e.target.value)}><option value="manager">Manager</option><option value="staff">Staff</option><option value="cashier">Cashier</option><option value="accountant">Accountant</option></select>
-        </Field>
-        {member && <div className="hint">Changing the role resets permissions to that role's template. Fine-tune them in the matrix.</div>}
-        {err && <Alert kind="red" icon="alert">{err}</Alert>}
-      </div>
-      <div className="modal-ft">
-        {member && <button className="btn btn-danger" onClick={disable} disabled={busy} style={{ marginRight: 'auto' }}>{confirmOff ? 'Tap again to remove' : 'Remove access'}</button>}
-        <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={save} disabled={busy}>{member ? 'Save' : 'Send invite'}</button>
-      </div>
     </Modal>
   );
 }

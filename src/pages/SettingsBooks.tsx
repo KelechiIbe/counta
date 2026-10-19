@@ -1,7 +1,7 @@
 // Settings for the books (statements, AI posting, tax), customer messages, and the link with TaxStreem.
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useInventory, useSession, useToast } from '../state/session';
+import { useInventory, useSession, useToast, can } from '../state/session';
 import { rpc } from '../lib/supabase';
 import { edge, money, useMessages } from '../lib/api';
 import { when } from '../lib/format';
@@ -40,7 +40,7 @@ export function BooksSection() {
       invoice_note: o.invoice_note || '', books_start: o.books_start || '', wht_small_company: !!o.wht_small_company });
   }, [inv?.org]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!inv) return null;
-  const owner = inv.me.role === 'owner';
+  const owner = can(inv, 'manage_settings');
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
   const tinErr = taxIdError(f.tin, inv.org.tin);
   const start = Number(f.fiscal_year_start || 1);
@@ -57,7 +57,7 @@ export function BooksSection() {
     } catch (e) { toast((e as Error).message, 'err'); }
   }
   return (
-    <Section id="books" title="Books and tax" sub={owner ? 'How the statements are prepared and when Atlas may post on its own.' : 'Only the owner can change these.'}>
+    <Section id="books" title="Books and tax" sub={owner ? 'How the statements are prepared and when Atlas may post on its own.' : 'Only people who can change settings edit these.'}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
         <Field label="Tax ID" error={tinErr} hint={!tinErr && isOldTin(f.tin) ? 'An old TIN. Replace it with your 13-digit Tax ID.' : !tinErr ? TAX_ID_HINT : undefined}>
           <input className="input" disabled={!owner} inputMode="numeric" maxLength={20} placeholder="13 digits" value={f.tin || ''} onChange={(e) => set('tin', e.target.value)} /></Field>
@@ -100,7 +100,7 @@ export function MessagesSection() {
   const [f, setF] = useState({ reminders_enabled: false, reminder_days: '-3, 0, 3, 7, 14', reply_to_email: '' });
   useEffect(() => { if (s) setF({ reminders_enabled: !!s.reminders_enabled, reminder_days: (s.reminder_days || []).join(', '), reply_to_email: s.reply_to_email || '' }); }, [s?.reminders_enabled, s?.reply_to_email]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!inv) return null;
-  const owner = inv.me.role === 'owner';
+  const owner = can(inv, 'manage_settings');
   async function save() {
     try {
       await rpc('update_message_settings', { p_org: orgId, p_patch: { reminders_enabled: f.reminders_enabled, reply_to_email: f.reply_to_email,

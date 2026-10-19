@@ -10,6 +10,8 @@ import { N } from '../../lib/format';
 import { sumQty } from '../../lib/domain';
 import { ITEM_TYPES, defaultVat, fieldsFor, industryOf, typeSells, type FieldDef, type ItemType } from '../../lib/industries';
 import type { Item } from '../../lib/types';
+import type { Drafts } from '../../lib/drafts';
+import { shrinkImage } from '../../lib/images';
 
 // Kept for screens that still offer the older fixed lists.
 export const CATEGORIES = ['Staples', 'Noodles', 'Dairy', 'Beverages', 'Drinks', 'Household', 'Personal care', 'OTC medicine', 'Breakfast', 'Snacks', 'Baby', 'Frozen', 'General'];
@@ -44,7 +46,9 @@ export function AttrInput({ f, value, onChange }: { f: FieldDef; value: any; onC
   );
 }
 
-export default function ItemForm({ item, onClose, onSaved }: { item?: Item | null; onClose: () => void; onSaved?: (id: string) => void }) {
+export default function ItemForm({ item, draft, note, onClose, onSaved }: {
+  item?: Item | null; draft?: Drafts['product'] | null; note?: string; onClose: () => void; onSaved?: (id: string) => void;
+}) {
   const { data: inv } = useInventory();
   const { orgId } = useSession();
   const toast = useToast();
@@ -55,12 +59,16 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
   const ind = industryOf(inv?.org.industry);
   const indFields = ind.fields;
   const commonFields = fieldsFor(ind.id).filter((f) => !indFields.some((x) => x.key === f.key));
+  // A new item can start from a draft: Martina's, or what the phone read from the product's photos.
+  const d = !item ? draft : null;
+  const dType = d?.item_type && ITEM_TYPES.some((t) => t.id === d.item_type) ? (d.item_type as ItemType) : null;
   const [f, setF] = useState({
-    name: item?.name || '', item_type: (item?.item_type as ItemType) || ind.types[0], category: item?.category || ind.categories[0],
-    brand: item?.brand || '', description: item?.description || '', vat_treatment: item ? item.vat_treatment : 'auto',
-    purchase_unit: item?.purchase_unit || ind.purchaseUnits[0], pack_size: item ? String(item.pack_size) : '', selling_unit: item?.selling_unit || ind.sellingUnits[0],
-    cost: item?.wac != null ? String(Math.round(Number(item.wac) * 100) / 100) : '', price: item && Number(item.price) > 0 ? String(item.price) : '',
-    track_batches: item ? item.track_batches : ind.batches, barcode: item?.barcode || '', sku: item?.sku || '', nafdac_no: item?.nafdac_no || '',
+    name: item?.name || d?.name || '', item_type: (item?.item_type as ItemType) || dType || ind.types[0], category: item?.category || d?.category || ind.categories[0],
+    brand: item?.brand || d?.brand || '', description: item?.description || d?.description || '', vat_treatment: item ? item.vat_treatment : 'auto',
+    purchase_unit: item?.purchase_unit || d?.purchase_unit || ind.purchaseUnits[0], pack_size: item ? String(item.pack_size) : d?.pack_size ? String(d.pack_size) : '',
+    selling_unit: item?.selling_unit || d?.unit || ind.sellingUnits[0],
+    cost: item?.wac != null ? String(Math.round(Number(item.wac) * 100) / 100) : d?.cost ? String(d.cost) : '', price: item && Number(item.price) > 0 ? String(item.price) : d?.price ? String(d.price) : '',
+    track_batches: item ? item.track_batches : ind.batches, barcode: item?.barcode || d?.barcode || '', sku: item?.sku || '', nafdac_no: item?.nafdac_no || d?.nafdac_no || '',
     reorder_floor: item ? String(item.reorder_floor) : '', preferred_vendor_id: item?.preferred_vendor_id || '', alt_vendor_id: item?.alt_vendor_id || '',
     import_priced: item?.import_priced || false,
   });
@@ -74,7 +82,8 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
       .then(({ data }) => { const v = (data as any)?.shop_description || ''; setShopText(v); setShopLoaded(v); });
   }, [item?.id]);
   const [err, setErr] = useState<Record<string, string>>({});
-  const [more, setMore] = useState(editing);
+  const [more, setMore] = useState(editing || !!(d?.barcode || d?.nafdac_no));
+  const taken = f.barcode.trim() ? inv?.items.find((i) => i.barcode === f.barcode.trim() && i.id !== item?.id) : undefined;
   const set = (k: keyof typeof f, v: any) => { setF({ ...f, [k]: v }); setErr({ ...err, [k]: '' }); };
   const sells = typeSells(f.item_type);
   const cost = parseFloat(f.cost); const price = parseFloat(f.price); const pack = Number(f.pack_size);
@@ -118,6 +127,17 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
         : f.barcode ? 'Item created · barcode linked' : 'Item created · QR label ready to print',
     });
     if (!id) return;
+    // The front photo from the phone becomes the item's picture.
+    if (d?.photo) {
+      try {
+        const pic = await shrinkImage(new File([d.photo], 'front.jpg', { type: d.photo_type || d.photo.type || 'image/jpeg' }));
+        const path = `${orgId}/${id}-${Date.now()}.${pic.ext}`;
+        const { error } = await supabase.storage.from('item-photos').upload(path, pic.blob, { contentType: pic.type, cacheControl: '31536000' });
+        if (error) throw new Error(error.message);
+        await rpc('set_item_photo', { p_item: id, p_path: path });
+        qc.invalidateQueries({ queryKey: ['inv'] });
+      } catch (e) { toast(`Saved, but the photo did not upload: ${(e as Error).message}`, 'err'); }
+    }
     if (sells && shopText.trim() !== shopLoaded.trim()) {
       await rpc('set_item_shop_details', { p_item: id, p: { shop_description: shopText } }).catch((e) => toast((e as Error).message, 'err'));
       qc.invalidateQueries({ queryKey: ['shop'] });
@@ -145,6 +165,7 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
     <Drawer onClose={onClose} width={560}>
       <div className="drawer-hd" style={{ alignItems: 'center' }}><div className="drawer-title grow">{editing ? 'Edit item' : 'New item'}</div><XButton onClick={onClose} /></div>
       <div className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {d && <Alert kind="blue" icon="sparkles">{note || 'Martina prepared this item. Check it, add anything missing, then save it.'}</Alert>}
         <Field label="Product name" req error={err.name}>
           <input className={'input' + (err.name ? ' err' : '')} value={f.name} onChange={(e) => set('name', e.target.value)} placeholder={String(ind.example[0]?.name || 'e.g. Golden Penny Spaghetti 500g')} autoFocus={!editing} />
         </Field>
@@ -229,7 +250,7 @@ export default function ItemForm({ item, onClose, onSaved }: { item?: Item | nul
         {more && (
           <>
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <Field label="Barcode (EAN / UPC)"><input className="input" value={f.barcode} onChange={(e) => set('barcode', e.target.value)} placeholder="Leave blank to use a QR label" /></Field>
+              <Field label="Barcode (EAN / UPC)" error={taken ? `${taken.name} already uses this barcode` : undefined}><input className="input" value={f.barcode} onChange={(e) => set('barcode', e.target.value)} placeholder="Leave blank to use a QR label" /></Field>
               <Field label="Catalogue ID / SKU"><input className="input" value={f.sku} onChange={(e) => set('sku', e.target.value)} /></Field>
               <Field label={`Reorder floor (${f.selling_unit}s)`} error={err.reorder_floor}><input className="input" type="number" value={f.reorder_floor} onChange={(e) => set('reorder_floor', e.target.value)} placeholder="0" /></Field>
               {showNafdac && <Field label="NAFDAC number"><input className="input" value={f.nafdac_no} onChange={(e) => set('nafdac_no', e.target.value)} placeholder="e.g. A4-0271" /></Field>}

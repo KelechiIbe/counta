@@ -164,3 +164,39 @@ export function cacDocChecks(x: ReturnType<typeof cleanCacDoc>, business: any, k
   }
   return checks;
 }
+
+// ---------------------------------------------------------------- NIN slips
+export const NIN_SLIP_SYSTEM = [
+  'You read an identity document a business owner in Nigeria uploaded to confirm they are a director of their business.',
+  'It should be a NIMC National Identification Number slip (the paper slip or the improved slip) or a national identity card.',
+  'Return the names exactly as printed: first name, middle name and surname. Leave a name empty when it is not printed.',
+  'Return only the LAST FOUR digits of the NIN in nin_last4, never the whole number.',
+  'Never return the date of birth, address, photograph, signature, phone number or any other number.',
+  'document_type: nin_slip, improved_nin_slip, national_id_card, other_id (another ID such as a passport or driver\'s licence)',
+  'or not_id (not an identity document). is_nin_document is true only for nin_slip, improved_nin_slip or national_id_card.',
+  'Add a warning for anything a reviewer should know: the picture is blurred or cut off, the names are hard to read, it looks edited.',
+].join(NL);
+
+export const NIN_SLIP_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    document_type: { type: 'STRING', enum: ['nin_slip', 'improved_nin_slip', 'national_id_card', 'other_id', 'not_id'] },
+    is_nin_document: { type: 'BOOLEAN' },
+    first_name: nstr, middle_name: nstr, surname: nstr,
+    nin_last4: { type: 'STRING', nullable: true, description: 'Only the last four digits' },
+    warnings: { type: 'ARRAY', items: { type: 'STRING' } },
+  },
+  required: ['document_type', 'is_nin_document', 'warnings'],
+};
+
+export function cleanNinSlip(d: any) {
+  const kind = ['nin_slip', 'improved_nin_slip', 'national_id_card', 'other_id', 'not_id'].includes(d?.document_type) ? d.document_type : 'not_id';
+  const name = (v: unknown) => line(v, 60).replace(/[^\p{L}\s'.-]/gu, '').trim() || null;
+  return {
+    document_type: kind,
+    is_nin_document: d?.is_nin_document === true && ['nin_slip', 'improved_nin_slip', 'national_id_card'].includes(kind),
+    first_name: name(d?.first_name), middle_name: name(d?.middle_name), surname: name(d?.surname),
+    nin_last4: String(d?.nin_last4 ?? '').replace(/\D/g, '').slice(-4) || null,
+    warnings: (Array.isArray(d?.warnings) ? d.warnings : []).map((w: unknown) => line(w, 200)).filter(Boolean).slice(0, 4),
+  };
+}
