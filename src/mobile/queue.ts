@@ -6,7 +6,7 @@ import { rpc } from '../lib/supabase';
 import { readInvoice, startReceipt, uploadDocument, type Source } from '../lib/receive';
 import { uuid } from '../lib/format';
 
-export type OpKind = 'sale' | 'count' | 'receipt' | 'transfer_receive' | 'issue';
+export type OpKind = 'sale' | 'till' | 'count' | 'receipt' | 'transfer_receive' | 'issue';
 export interface Op {
   id: string; org: string; kind: OpKind; label: string; detail: string; created_at: string; queued_offline: boolean;
   status: 'queued' | 'posting' | 'posted' | 'failed'; error?: string; result?: string; payload: any; author: string;
@@ -68,6 +68,14 @@ async function runOp(op: Op): Promise<string> {
         p_offline: op.queued_offline, p_recorded_at: op.created_at,
       });
       return r?.journal_ref ? `Posted · ${r.journal_ref}${r.review_status === 'pending' ? ' · owner will review' : ''}` : 'Posted';
+    }
+    case 'till': {
+      // A basket scanned at the phone till: one receipt, paid in full by one method. The client UUID keeps a retry from posting twice.
+      const r = await rpc<any>('till_checkout', { p_org: op.org, p_sale: {
+        client_uuid: op.id, location_id: p.location_id, channel: 'phone', recorded_at: op.created_at, device: deviceId(), offline: op.queued_offline,
+        lines: p.lines, pay_in_full: p.method, notes: p.note ?? null,
+      } });
+      return r?.number ? `Posted · ${r.number}${p.method === 'cash' ? '' : ' · payment to confirm'}` : 'Posted';
     }
     case 'count': {
       const r = await rpc<any>('submit_count', { p_session: p.session_id, p_lines: p.lines, p_device: deviceId(), p_offline: op.queued_offline, p_client_uuid: op.id });

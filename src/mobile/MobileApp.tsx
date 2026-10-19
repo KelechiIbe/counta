@@ -17,6 +17,8 @@ import ReceiveScreen from './ReceivePhone';
 import { CountList, CountSheet } from './CountPhone';
 import ChatScreen from './ChatPhone';
 import IssueScreen from './IssuePhone';
+import { TillScreen } from './TillPhone';
+import { AddScreen } from './AddPhone';
 
 export default function MobileApp() {
   const { data: inv, isLoading } = useInventory();
@@ -42,7 +44,7 @@ export default function MobileApp() {
   const tabs: [string, string, string, boolean][] = [
     ['/m', 'Today', 'house', true],
     ['/m/scan', 'Scan', 'scan', true],
-    ['/m/sell', 'Sell', 'mic', can(inv, 'record_sales')],
+    ['/m/till', 'Sell', 'receipt', can(inv, 'record_sales')],
     ['/m/receive', 'Receive', 'camera', can(inv, 'receive_stock')],
     ['/m/count', 'Count', 'list', can(inv, 'count_stock')],
     ['/m/chat', 'Martina', 'chat', true],
@@ -57,6 +59,8 @@ export default function MobileApp() {
             <Route index element={<Today />} />
             <Route path="scan" element={<ScanScreen />} />
             <Route path="sell" element={<SellScreen />} />
+            <Route path="till" element={<TillScreen />} />
+            <Route path="add" element={<AddScreen />} />
             <Route path="receive" element={<ReceiveScreen />} />
             <Route path="count" element={<CountList />} />
             <Route path="count/:id" element={<CountSheet />} />
@@ -66,7 +70,7 @@ export default function MobileApp() {
         </div>
         <nav className="m-tabs" style={{ gridTemplateColumns: `repeat(${shown.length}, 1fr)` }}>
           {shown.map(([to, label, icon]) => {
-            const on = to === '/m' ? path === '/m' || path === '/m/' : path.startsWith(to);
+            const on = to === '/m' ? path === '/m' || path === '/m/' : path.startsWith(to) || (to === '/m/till' && path.startsWith('/m/sell'));
             return <NavLink key={to} to={to} end={to === '/m'} className={'m-tab' + (on ? ' on' : '')}><Icon name={icon} size={20} color={on ? '#0072F5' : '#6B7280'} />{label}</NavLink>;
           })}
         </nav>
@@ -111,6 +115,8 @@ function Today() {
   const low = items.filter((i) => i.vel > 0 && i.q <= Number(i.reorder_floor)).sort((a, b) => (a.cover ?? 0) - (b.cover ?? 0)).slice(0, 5);
   const ops = [...queue.ops].reverse().slice(0, 12);
   const quick: [string, string, string, boolean][] = [
+    ['receipt', 'Scan to sell', '/m/till', can(inv, 'record_sales')],
+    ['camera', 'Add a product from photos', '/m/add', can(inv, 'add_items') || can(inv, 'edit_prices')],
     ['scan', 'Scan an item', '/m/scan', true],
     ['mic', 'Talk to record a sale', '/m/sell', can(inv, 'record_sales')],
     ['camera', 'Photograph an invoice', '/m/receive', can(inv, 'receive_stock')],

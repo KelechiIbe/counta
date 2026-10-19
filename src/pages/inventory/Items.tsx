@@ -9,6 +9,7 @@ import { moveQty, moveRef, typeLabel, typeTone } from '../../lib/ledger';
 import { Icon } from '../../components/Icon';
 import { Chip, Drawer, Pills, Stat, Thumb, XButton, Alert, Empty, SkeletonRows } from '../../components/ui';
 import ItemForm from './ItemForm';
+import { useDraft, type Drafts } from '../../lib/drafts';
 import ImportPanel from './ImportPanel';
 import { ALL_FIELDS, ITEM_TYPES, fieldsFor, formatAttr, industryOf, typeLabel as kindLabel, typeSells } from '../../lib/industries';
 import { downloadBlob, itemsXlsx, safeName } from '../../lib/exporters';
@@ -31,6 +32,10 @@ export default function Items() {
   const [filter, setFilter] = useState<'all' | Status | 'review'>((location.state as any)?.filter || 'all');
   const [sel, setSel] = useState<string | null>((location.state as any)?.item || null);
   const [add, setAdd] = useState(false);
+  // A product Martina prepared opens in the new-item form.
+  const draft = useDraft('product');
+  const [itemDraft, setItemDraft] = useState<Drafts['product'] | null>(null);
+  useEffect(() => { if (draft) { setItemDraft(draft); setAdd(true); } }, [draft]);
   const [upload, setUpload] = useState(false);
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
@@ -93,7 +98,7 @@ export default function Items() {
         </div>
       </div>
       {selected && <ItemDrawer item={selected} onClose={() => setSel(null)} />}
-      {add && <ItemForm onClose={() => setAdd(false)} onSaved={(id) => setSel(id)} />}
+      {add && <ItemForm draft={itemDraft} onClose={() => { setAdd(false); setItemDraft(null); }} onSaved={(id) => setSel(id)} />}
       {upload && <ImportPanel onClose={() => setUpload(false)} />}
     </div>
   );

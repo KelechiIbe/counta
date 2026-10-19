@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { METHOD_LABEL, money, useChart, useSales, useTill, type Customer, type PayRequest, type Sale, type Shift } from '../../lib/api';
+import { METHOD_LABEL, money, useChart, useCustomers, useSales, useTill, type Customer, type PayRequest, type Sale, type Shift } from '../../lib/api';
 import { N2, uuid, when } from '../../lib/format';
 import { store } from '../../lib/pwa';
 import type { Item } from '../../lib/types';
@@ -15,6 +15,7 @@ import { ItemPicker } from '../../components/ItemPicker';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Spinner, Thumb } from '../../components/ui';
 import { Camera } from '../../mobile/Scan';
 import { CustomerPicker, PayWait, ReceiptModal, StatusChip } from './common';
+import { useDraft } from '../../lib/drafts';
 
 type Unit = 'selling' | 'purchase';
 interface Line { key: string; item: Item; qty: number; unit: Unit; override: number | null; discount: number }
@@ -56,6 +57,10 @@ export default function Till() {
   const [panel, setPanel] = useState<'shift' | 'sales' | null>(null);
   const [opening, setOpening] = useState(false);
   const clientRef = useRef(uuid());
+  // A sale Martina prepared: its products go into the cart for the cashier to check and take payment.
+  const draft = useDraft('sale');
+  const customers = useCustomers();
+  const [fromMartina, setFromMartina] = useState(0);
 
   // A customer's own price list applies unless the cashier picks another.
   useEffect(() => { setListId(customer?.price_list_id || ''); }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -93,9 +98,28 @@ export default function Till() {
     });
   }
   const update = (k: string, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === k ? { ...l, ...patch } : l)));
+  useEffect(() => {
+    if (!draft || !inv) return;
+    let n = 0;
+    for (const d of draft.lines) {
+      const it = d.item_id ? inv.items.find((i) => i.id === d.item_id) : undefined;
+      if (!it) continue;
+      n++;
+      const price = d.unit_price != null && canPrice && Math.abs(Number(d.unit_price) - Number(it.price)) > 0.004 ? Number(d.unit_price) : null;
+      if (price == null) add(it, d.qty || 1);
+      else setLines((ls) => [...ls, { key: uuid(), item: it, qty: d.qty || 1, unit: 'selling', override: price, discount: 0 }]);
+    }
+    setFromMartina(n);
+  }, [draft, inv?.org.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!draft?.customer || !customers.data || customer) return;
+    const q = draft.customer.trim().toLowerCase();
+    const hit = customers.data.customers.find((c) => !c.archived && (c.name.toLowerCase() === q || c.name.toLowerCase().includes(q)));
+    if (hit) setCustomer(hit);
+  }, [draft, customers.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const remove = (k: string) => setLines((ls) => ls.filter((l) => l.key !== k));
   function reset() {
-    setLines([]); setCustomer(null); setListId(''); setCartDiscount(''); setTenders([{ method: 'cash', amount: '' }]); clientRef.current = uuid();
+    setLines([]); setCustomer(null); setListId(''); setCartDiscount(''); setTenders([{ method: 'cash', amount: '' }]); clientRef.current = uuid(); setFromMartina(0);
   }
   // With one way of paying, it covers the whole sale unless the cashier types an amount.
   const effTenders = tenders.length === 1 && !tenders[0].amount ? [{ ...tenders[0], amount: String(total) }] : tenders;
@@ -164,6 +188,7 @@ export default function Till() {
             <div className="grow"><ItemPicker items={sellable} onPick={(i) => add(i)} autoFocus placeholder="Scan a barcode, or type a name or SKU" /></div>
             <button className="btn btn-secondary btn-sm" onClick={() => setScan(!scan)}><Icon name="scan" size={14} />{scan ? 'Close camera' : 'Camera'}</button>
           </div>
+          {fromMartina > 0 && lines.length > 0 && <div style={{ padding: '10px 16px 0' }}><Alert kind="blue" icon="sparkles">Martina put {fromMartina} {fromMartina === 1 ? 'product' : 'products'} in the cart. Check the quantities and prices, then take payment.</Alert></div>}
           {scan && <Camera paused={false} onCode={(code) => {
             const it = inv.items.find((i) => i.barcode === code || i.qr_code === code || i.sku === code);
             if (it) { add(it); navigator.vibrate?.(50); } else toast(`No item uses the code ${code}`, 'err');

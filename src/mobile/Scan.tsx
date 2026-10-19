@@ -12,6 +12,7 @@ import { makeDetector } from '../lib/barcode';
 
 export default function ScanScreen() {
   const { data: inv } = useInventory();
+  const nav = useNavigate();
   const [item, setItem] = useState<Item | null>(null);
   const [miss, setMiss] = useState<string | null>(null);
   const [selling, setSelling] = useState(false);
@@ -31,7 +32,13 @@ export default function ScanScreen() {
           <div className="stack" style={{ flex: 1 }}>
             <Camera onCode={found} paused={!!item} />
             <div className="m-pad stack" style={{ gap: 10 }}>
-              {miss && <div className="alert alert-yellow">No item uses the code <span className="mono">{miss}</span>. Search by name below, or ask the owner to add the barcode to the item.</div>}
+              {miss && (
+                <div className="alert alert-yellow" style={{ display: 'block' }}>
+                  No item uses the code <span className="mono">{miss}</span>. {inv && (can(inv, 'add_items') || can(inv, 'edit_prices'))
+                    ? <button className="btn btn-primary btn-xs" style={{ marginLeft: 6 }} onClick={() => nav(`/m/add?barcode=${encodeURIComponent(miss)}`)}>Add it from photos</button>
+                    : 'Search by name below, or ask the owner to add the barcode to the item.'}
+                </div>
+              )}
               <div className="muted" style={{ fontSize: 12, textAlign: 'center' }}>No barcode? Scan the QR label we printed, or search by name.</div>
               <ItemSearch onPick={(i) => { setItem(i); setMiss(null); }} />
             </div>
@@ -41,8 +48,11 @@ export default function ScanScreen() {
   );
 }
 
-export function Camera({ onCode, paused }: { onCode: (c: string) => void; paused: boolean }) {
+export function Camera({ onCode, paused, height = 300 }: { onCode: (c: string) => void; paused: boolean; height?: number }) {
   const video = useRef<HTMLVideoElement>(null);
+  // The reader runs on a timer that outlives renders, so it reads the latest handler and pause state through refs.
+  const cb = useRef(onCode); cb.current = onCode;
+  const held = useRef(paused); held.current = paused;
   const [state, setState] = useState<'idle' | 'on' | 'unsupported' | 'denied'>('idle');
   const supported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
   useEffect(() => {
@@ -59,11 +69,11 @@ export function Camera({ onCode, paused }: { onCode: (c: string) => void; paused
         let last = '';
         const tick = async () => {
           if (stop) return;
-          if (video.current && video.current.readyState >= 2 && !paused) {
+          if (video.current && video.current.readyState >= 2 && !held.current) {
             try {
               const codes = await det.detect(video.current);
               const v = codes?.[0]?.rawValue;
-              if (v && v !== last) { last = v; onCode(v); setTimeout(() => { last = ''; }, 2500); }
+              if (v && v !== last) { last = v; cb.current(v); setTimeout(() => { last = ''; }, 2500); }
             } catch { /* frame not ready */ }
           }
           timer = window.setTimeout(tick, 280);
@@ -82,7 +92,7 @@ export function Camera({ onCode, paused }: { onCode: (c: string) => void; paused
     );
   }
   return (
-    <div style={{ background: '#111827', position: 'relative', height: 300, overflow: 'hidden' }}>
+    <div style={{ background: '#111827', position: 'relative', height, overflow: 'hidden' }}>
       <video ref={video} playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
       <div style={{ position: 'absolute', inset: '18% 12%', border: '2px solid rgba(255,255,255,.75)', borderRadius: 12 }} />
       <div style={{ position: 'absolute', left: '12%', right: '12%', height: 2, background: '#0072F5', boxShadow: '0 0 12px #3E88FF', animation: 'tsScan 2.4s ease-in-out infinite' }} />

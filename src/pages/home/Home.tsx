@@ -8,6 +8,8 @@ import { Icon } from '../../components/Icon';
 import { Empty, SkeletonRows } from '../../components/ui';
 import { StatusChip } from '../sell/common';
 import { GuideChecklist } from './GuideChecklist';
+import { PaymentsLock } from '../onboarding/Identity';
+import { cap, useWords } from '../../lib/wording';
 
 export default function Home() {
   const { data: inv } = useInventory();
@@ -17,6 +19,8 @@ export default function Home() {
   const inbox = useInbox(money);
   const sales = useSales({ limit: 8 });
   const { rows } = useNeedsAction();
+  // The business's own words: a law firm sees revenue and clients, a shop sales and customers.
+  const w = useWords();
   if (!inv) return null;
   const o = ov.data || {};
   const ib = inbox.data;
@@ -30,10 +34,10 @@ export default function Home() {
     ...rows.map((r) => ({ key: r.key, t: r.t, d: r.d, to: r.to, icon: r.icon, color: r.color, bg: r.bg, cta: r.cta })),
   ];
   const tiles: [string, string, string, string?][] = [
-    ['Sales this month', N2(o.revenue_mtd), '/accounting/cfo', o.revenue_last_month != null ? `${K(o.revenue_last_month)} last month` : undefined],
+    [`${cap(w.revenue)} this month`, N2(o.revenue_mtd), '/accounting/cfo', o.revenue_last_month != null ? `${K(o.revenue_last_month)} last month` : undefined],
     ['Profit this month', N2(o.profit_mtd), '/accounting/statements', o.gross_profit_mtd != null ? `gross profit ${K(o.gross_profit_mtd)}` : undefined],
     ['Cash and bank', N2(o.cash), '/accounting/banking', o.runway_months != null ? (Number(o.runway_months) > 0 ? `${o.runway_months} months at this rate` : 'Spending more than coming in') : undefined],
-    ['Customers owe', N2(o.receivables), '/sell/customers', Number(o.receivables_overdue) ? `${K(o.receivables_overdue)} overdue` : 'none overdue'],
+    [`${cap(w.customers)} owe`, N2(o.receivables), '/sell/customers', Number(o.receivables_overdue) ? `${K(o.receivables_overdue)} overdue` : 'none overdue'],
     ['We owe suppliers', N2(o.payables), '/purchases/bills', o.bills_to_pay ? `${o.bills_to_pay} bills to pay` : undefined],
     Number(o.vat_payable) >= 0 ? ['VAT to pay', N2(o.vat_payable), '/accounting/ledgers', 'due by the 21st of next month']
       : ['VAT credit', N2(-o.vat_payable), '/accounting/ledgers', 'input VAT to carry forward'],
@@ -44,13 +48,14 @@ export default function Home() {
         <div><div style={{ fontSize: 22, fontWeight: 600 }}>Good {hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}, {first}</div>
           <div className="muted" style={{ fontSize: 13 }}>{inv.org.name}{o.closed_through ? ` · books closed to ${fmtDay(o.closed_through)}` : ''}</div></div>
         <div className="row wrap">
-          {can(inv, 'record_sales') && <button className="btn btn-primary btn-sm" onClick={() => nav('/sell/till')}><Icon name="receipt" size={14} color="#fff" />Sell</button>}
-          {can(inv, 'record_sales') && <button className="btn btn-secondary btn-sm" onClick={() => nav('/sell/sales')}><Icon name="file" size={14} />Invoice</button>}
+          {can(inv, 'record_sales') && w.has_stock && <button className="btn btn-primary btn-sm" onClick={() => nav('/sell/till')}><Icon name="receipt" size={14} color="#fff" />Sell</button>}
+          {can(inv, 'record_sales') && <button className={'btn btn-sm ' + (w.has_stock ? 'btn-secondary' : 'btn-primary')} onClick={() => nav('/sell/sales')}><Icon name="file" size={14} color={w.has_stock ? undefined : '#fff'} />Invoice</button>}
           {(can(inv, 'keep_books') || can(inv, 'approve_pos')) && <button className="btn btn-secondary btn-sm" onClick={() => nav('/purchases/bills')}><Icon name="paperclip" size={14} />Bill</button>}
           {can(inv, 'keep_books') && <button className="btn btn-secondary btn-sm" onClick={() => nav('/accounting/banking')}><Icon name="upload" size={14} />Bank statement</button>}
         </div>
       </div>
       <GuideChecklist />
+      <PaymentsLock />
       {money && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))', gap: 12 }}>
           {ov.isLoading ? <SkeletonRows n={3} /> : tiles.map(([l, v, to, s]) => (
@@ -72,8 +77,8 @@ export default function Home() {
           ))}
         </div>
         <div className="card" style={{ overflow: 'hidden' }}>
-          <div className="card-hd"><b>Latest sales</b><Link to="/sell/sales" className="btn btn-ghost btn-xs">All</Link></div>
-          {sales.isLoading ? <SkeletonRows n={4} /> : !(sales.data?.rows || []).length ? <div style={{ padding: 20 }}><Empty>No sales yet. Open the till to start.</Empty></div> : sales.data!.rows.map((s) => (
+          <div className="card-hd"><b>Latest {w.sales}</b><Link to="/sell/sales" className="btn btn-ghost btn-xs">All</Link></div>
+          {sales.isLoading ? <SkeletonRows n={4} /> : !(sales.data?.rows || []).length ? <div style={{ padding: 20 }}><Empty>{w.has_stock ? `No ${w.sales} yet. Open the till to start.` : `No ${w.sales} yet. Raise an invoice to start.`}</Empty></div> : sales.data!.rows.map((s) => (
             <Link key={s.id} to={`/sell/sales?open=${s.id}`} className="tr click" style={{ gridTemplateColumns: 'minmax(0,1fr) auto', color: 'inherit' }}>
               <span style={{ minWidth: 0 }}><b>{s.number}</b> <span className="muted">{s.customer_name}</span><span className="faint" style={{ display: 'block', fontSize: 11 }}>{when(s.created_at)}</span></span>
               <span className="row" style={{ gap: 8 }}><StatusChip s={s.status} /><b className="num">{N2(s.total)}</b></span>

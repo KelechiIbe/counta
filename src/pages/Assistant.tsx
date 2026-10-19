@@ -8,7 +8,9 @@ import { buildItems } from '../lib/domain';
 import { aiStatus, buildContext, chatMartina, localAnswer, type ChatMsg } from '../lib/martina';
 import { fmtTime } from '../lib/format';
 import { Icon } from '../components/Icon';
-import { Spinner } from '../components/ui';
+import { Alert, Spinner } from '../components/ui';
+import { useAssistantChat } from '../guide/useAssistantChat';
+import { Orb } from '../guide/GuideDock';
 
 export function useMartina() {
   const { data: inv } = useInventory();
@@ -34,9 +36,12 @@ export function useMartina() {
   return { msgs, send, busy, clear: () => setMsgs([]), push, items, inv, suggestions };
 }
 
-export default function Assistant() {
+// The stock-only chat from the records on this device, used when Martina's live line cannot be reached.
+function RecordsChat({ initial, onRetry }: { initial: string; onRetry: () => void }) {
   const nav = useNavigate();
   const { msgs, send, busy, clear, items, inv, suggestions } = useMartina();
+  const asked = useRef(false);
+  useEffect(() => { if (initial && !asked.current && inv) { asked.current = true; void send(initial); } }, [initial, inv]); // eslint-disable-line react-hooks/exhaustive-deps
   const status = useQuery({ queryKey: ['aiStatus'], queryFn: aiStatus, staleTime: 5 * 60 * 1000 });
   const [q, setQ] = useState('');
   const end = useRef<HTMLDivElement>(null);
@@ -58,11 +63,15 @@ export default function Assistant() {
             <span style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg,#0072F5,#7C3AED 55%,#DB2779)', display: 'grid', placeItems: 'center' }}><Icon name="sparkles" size={18} color="#fff" /></span>
             <div>
               <div style={{ fontSize: 15, fontWeight: 600 }}>Martina</div>
-              <div className="muted" style={{ fontSize: 12 }}>{status.data == null ? 'Checking…' : status.data.configured ? `Answers from your records · Gemini` : 'Answers from your records · add a Gemini key in Settings for open questions'}</div>
+              <div className="muted" style={{ fontSize: 12 }}>{status.data == null ? 'Checking…' : status.data.configured ? `Answers from your stock records · Gemini` : 'Answers from your stock records'}</div>
             </div>
           </div>
-          {msgs.length > 0 && <button className="btn btn-ghost btn-xs" onClick={clear}>New chat</button>}
+          <div className="row" style={{ gap: 6 }}>
+            {msgs.length > 0 && <button className="btn btn-ghost btn-xs" onClick={clear}>New chat</button>}
+            <button className="btn btn-secondary btn-xs" onClick={onRetry}>Try the live line again</button>
+          </div>
         </div>
+        <div style={{ padding: '10px 16px 0' }}><Alert kind="amber" icon="info">Martina's live line is not reachable just now, so she is answering from the stock records on this device. Sales, payments and the books come back with the live line.</Alert></div>
         <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12, background: '#FAFAFA' }}>
           {!msgs.length && (
             <div style={{ margin: 'auto', textAlign: 'center', maxWidth: 520 }}>
@@ -94,6 +103,69 @@ export default function Assistant() {
         <form onSubmit={(e) => { e.preventDefault(); send(q); setQ(''); }} className="row" style={{ padding: 16, gap: 10 }}>
           <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask Martina…" aria-label="Message Martina" />
           <button className="btn btn-primary" type="submit" disabled={busy || !q.trim()} aria-label="Send"><Icon name="send" size={16} color="#fff" /></button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+export default function Assistant() {
+  const nav = useNavigate();
+  const c = useAssistantChat();
+  const { data: inv } = useInventory();
+  const [q, setQ] = useState('');
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [c.lines.length, c.waiting]);
+  if (!inv) return null;
+  if (c.fallback !== null) return <RecordsChat initial={c.fallback} onRetry={c.clearFallback} />;
+  const g = c.g;
+  const submit = () => { const v = q; setQ(''); void c.ask(v); };
+  return (
+    <div className="container" style={{ maxWidth: 860, height: 'calc(100vh - 150px)', minHeight: 480, gap: 0 }}>
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+        <div className="card-hd">
+          <div className="row" style={{ gap: 12, minWidth: 0 }}>
+            <Orb size={40} live={c.voice && g.speaking} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Martina</div>
+              <div className="muted ellipsis" style={{ fontSize: 12 }}>
+                {c.connecting ? 'Connecting…' : c.voice ? (g.speaking ? 'Speaking' : 'Listening') : c.live ? 'Typing with you' : 'Talk or type · sales, payments, books, tax and stock'}
+              </div>
+            </div>
+          </div>
+          <div className="row" style={{ gap: 6 }}>
+            {c.voice && <button className="btn btn-ghost btn-xs" onClick={g.toggleMute}>{g.muted ? 'Unmute' : 'Mute'}</button>}
+            {c.live && <button className="btn btn-secondary btn-xs" onClick={() => void c.end()}>End</button>}
+          </div>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12, background: '#FAFAFA' }}>
+          {c.busyElsewhere && <Alert kind="blue" icon="info">Martina is helping you set up the business in the corner. End that conversation to ask about something else.</Alert>}
+          {!c.lines.length && !c.connecting && (
+            <div style={{ margin: 'auto', textAlign: 'center', maxWidth: 560 }}>
+              <div style={{ fontFamily: 'var(--font-brand)', fontSize: 22, fontWeight: 600 }}>Ask Martina anything about the business</div>
+              <div className="ink3" style={{ fontSize: 14, marginTop: 6, lineHeight: 1.5 }}>
+                She looks up sales, payments, bills, the books, tax and stock, and opens the right screen. She can prepare an invoice, a sale, a bill or a payment link for you to check;
+                nothing is saved, sent or paid until you confirm it.
+              </div>
+              <div className="row wrap" style={{ justifyContent: 'center', marginTop: 16 }}>
+                {c.starters.map((s) => <button key={s} className="pill" style={{ color: '#111827' }} disabled={c.busyElsewhere} onClick={() => void c.ask(s)}>{s}</button>)}
+              </div>
+            </div>
+          )}
+          {c.lines.map((m, i) => (
+            <div key={i} style={{ alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '82%' }}>
+              <div style={{ background: m.role === 'user' ? '#0072F5' : '#fff', color: m.role === 'user' ? '#fff' : '#111827', border: m.role === 'user' ? 0 : '1px solid #E6E6E6', borderRadius: m.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px', padding: '10px 14px', fontSize: 14, lineHeight: 1.5, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{m.text}</div>
+              <div className="faint" style={{ fontSize: 10, marginTop: 3, textAlign: m.role === 'user' ? 'right' : 'left' }}>{fmtTime(new Date(m.at).toISOString())}</div>
+            </div>
+          ))}
+          {(c.connecting || c.waiting) && <div className="row muted" style={{ fontSize: 13 }}><Spinner small />{c.connecting ? 'Connecting to Martina…' : 'Martina is looking…'}</div>}
+          {c.error && !c.connecting && <Alert kind="amber" icon="info">{c.error}</Alert>}
+          <div ref={end} />
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); submit(); }} className="row" style={{ padding: 16, gap: 10 }}>
+          <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask Martina…" aria-label="Message Martina" disabled={c.busyElsewhere} />
+          {!c.live && <button type="button" className="btn btn-secondary" aria-label="Talk to Martina" title="Talk instead" disabled={c.connecting || c.busyElsewhere} onClick={() => void c.talk()}><Icon name="mic" size={16} /></button>}
+          <button className="btn btn-primary" type="submit" disabled={c.connecting || c.busyElsewhere || !q.trim()} aria-label="Send"><Icon name="send" size={16} color="#fff" /></button>
         </form>
       </div>
     </div>

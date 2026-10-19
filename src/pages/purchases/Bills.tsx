@@ -15,6 +15,7 @@ import type { RCol } from '../../lib/reports';
 import { StatusChip } from '../sell/common';
 import { authorityLabel, pct, useTaxProfile } from '../../lib/tax';
 import { CreditsList, UseCredits, VendorCreditModal } from './VendorCredits';
+import { useDraft, type Drafts } from '../../lib/drafts';
 
 type Tab = 'all' | 'draft' | 'unpaid' | 'overdue' | 'paid' | 'credits' | 'returned';
 
@@ -24,6 +25,10 @@ export default function Bills() {
   const [tab, setTab] = useState<Tab>('unpaid');
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<string | 'new' | null>(null);
+  // A bill Martina prepared opens in the editor for the person to check and save.
+  const draft = useDraft('bill');
+  const [billDraft, setBillDraft] = useState<Drafts['bill'] | null>(null);
+  useEffect(() => { if (draft) { setBillDraft(draft); setEditing('new'); } }, [draft]);
   const bills = useBills({}, true);
   const meta = useMeta();
   const open = params.get('open');
@@ -74,8 +79,8 @@ export default function Bills() {
         </div>
       </div>}
       {open && <BillDrawer id={open} whtRates={bills.data?.wht_rates || []} onClose={() => setParams({})} onEdit={(id) => setEditing(id)} />}
-      {editing && <BillEditor id={editing === 'new' ? null : editing} vendors={bills.data?.vendors || []} whtRates={bills.data?.wht_rates || []} assetClasses={bills.data?.asset_classes || []}
-        onClose={() => setEditing(null)} onSaved={(id) => { setEditing(null); setParams({ open: id }); }} />}
+      {editing && <BillEditor id={editing === 'new' ? null : editing} draft={editing === 'new' ? billDraft : null} vendors={bills.data?.vendors || []} whtRates={bills.data?.wht_rates || []} assetClasses={bills.data?.asset_classes || []}
+        onClose={() => { setEditing(null); setBillDraft(null); }} onSaved={(id) => { setEditing(null); setBillDraft(null); setParams({ open: id }); }} />}
     </div>
   );
 }
@@ -342,7 +347,7 @@ function PayBill({ bill, onClose, onDone }: { bill: any; onClose: () => void; on
 
 interface BLine { key: string; description: string; account_code: string; qty: string; unit_cost: string; vat_treatment: string; vat_recoverable: boolean; asset_life_months: string; wht_category: string }
 
-function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: { id: string | null; vendors: any[]; whtRates: any[]; assetClasses: any[]; onClose: () => void; onSaved: (id: string) => void }) {
+function BillEditor({ id, draft, vendors, whtRates, assetClasses, onClose, onSaved }: { id: string | null; draft?: Drafts['bill'] | null; vendors: any[]; whtRates: any[]; assetClasses: any[]; onClose: () => void; onSaved: (id: string) => void }) {
   const { orgId } = useSession();
   const toast = useToast();
   const qc = useQueryClient();
@@ -361,6 +366,14 @@ function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: {
       vat_treatment: l.vat_treatment === 'none' ? 'standard' : l.vat_treatment, vat_recoverable: l.vat_recoverable, asset_life_months: l.asset_life_months ? String(l.asset_life_months) : '',
       wht_category: l.wht_category && l.wht_category !== b.wht_category ? l.wht_category : '' })));
   }, [existing.data?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!draft || id) return;
+    const n = draft.vendor.trim().toLowerCase();
+    const v = vendors.find((x) => x.name.toLowerCase() === n) || vendors.find((x) => n && (x.name.toLowerCase().includes(n) || n.includes(x.name.toLowerCase())));
+    setVendor(v ? { id: v.id, name: v.name, tin: v.tin || '' } : { id: '', name: draft.vendor, tin: '' });
+    setF((x) => ({ ...x, due_date: draft.due_date || x.due_date, ...(v?.wht_category ? { wht_category: v.wht_category } : {}) }));
+    setLines([{ key: crypto.randomUUID(), description: draft.description, account_code: '', qty: '1', unit_cost: String(draft.amount || ''), vat_treatment: 'standard', vat_recoverable: true, asset_life_months: '', wht_category: '' }]);
+  }, [draft, vendors.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const accounts = (chart.data?.accounts || []).filter((a: any) => !a.is_group && a.active && (/^[56]/.test(a.code) || /^(120[1-6]|15[0-2]|160)/.test(a.code)));
   const assetCodes = new Set(assetClasses.map((c) => c.cost_account));
   const upd = (k: string, p: Partial<BLine>) => setLines((ls) => ls.map((l) => (l.key === k ? { ...l, ...p } : l)));
@@ -385,6 +398,7 @@ function BillEditor({ id, vendors, whtRates, assetClasses, onClose, onSaved }: {
       <div className="drawer-hd"><div className="grow"><div className="drawer-title">{id ? `Edit ${existing.data?.number || ''}` : 'New bill'}</div><div className="muted" style={{ fontSize: 13 }}>Stock you received is billed from Receive stock; this is for everything else.</div></div>
         <button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button></div>
       <div className="drawer-body stack" style={{ gap: 14 }}>
+        {draft && !id && <Alert kind="blue" icon="sparkles">Martina prepared this bill{vendor.id ? '' : ' for a new vendor'}. Choose the account it belongs to, check VAT and the amount, then save it. Nothing is posted or paid until it is approved.</Alert>}
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 12 }}>
           <Field label="Vendor" req>
             <input className="input" list="bill-vendors" value={vendor.name} onChange={(e) => { const v = vendors.find((x) => x.name === e.target.value); setVendor(v ? { id: v.id, name: v.name, tin: v.tin || '' } : { id: '', name: e.target.value, tin: vendor.tin }); if (v?.wht_category) setF((x) => ({ ...x, wht_category: v.wht_category })); }} placeholder="Type or pick" />

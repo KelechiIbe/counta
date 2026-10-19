@@ -7,9 +7,13 @@ import { pluralUnit, poMessage, waLink } from '../lib/domain';
 import { useMartina } from '../pages/Assistant';
 import { Icon } from '../components/Icon';
 import { useM } from './ctx';
+import { useAssistantChat } from '../guide/useAssistantChat';
 
-export default function ChatScreen() {
+// The stock-only chat from the copy on this phone, used offline or when Martina's live line cannot be reached.
+function RecordsChat({ initial }: { initial: string }) {
   const { msgs, send, busy, push, inv, suggestions } = useMartina();
+  const asked = useRef(false);
+  useEffect(() => { if (initial && !asked.current && inv) { asked.current = true; void send(initial); } }, [initial, inv]); // eslint-disable-line react-hooks/exhaustive-deps
   const { queue } = useM();
   const { run, busy: posting } = useAction();
   const [q, setQ] = useState('');
@@ -68,6 +72,61 @@ export default function ChatScreen() {
         <form className="row" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); send(q); setQ(''); }}>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Message" aria-label="Message Martina" style={{ flex: 1, background: '#fff', border: 0, borderRadius: 999, padding: '10px 14px', fontSize: 14, outline: 'none' }} />
           <button type="submit" aria-label="Send" disabled={!q.trim() || busy} style={{ width: 40, height: 40, borderRadius: '50%', background: '#25D366', display: 'grid', placeItems: 'center', border: 0, cursor: 'pointer' }}><Icon name="send" size={16} color="#fff" /></button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+export default function ChatScreen() {
+  const c = useAssistantChat();
+  const { queue } = useM();
+  const [q, setQ] = useState('');
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [c.lines.length, c.waiting]);
+  // Offline, or the live line failed: answer from the copy on this phone.
+  if (!queue.online || c.fallback !== null) return <RecordsChat initial={c.fallback || ''} />;
+  const g = c.g;
+  const submit = () => { const v = q; setQ(''); void c.ask(v); };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, background: '#ECE5DD', minHeight: 0 }}>
+      <div className="row" style={{ gap: 10, padding: '10px 14px', paddingTop: 'max(10px, env(safe-area-inset-top))', background: '#075E54', color: '#fff', position: 'sticky', top: 0, zIndex: 5 }}>
+        <span style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#0072F5,#7C3AED 55%,#DB2779)', display: 'grid', placeItems: 'center', flex: 'none' }}><Icon name="sparkles" size={16} color="#fff" /></span>
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>Martina · TaxStreem</div>
+          <div style={{ fontSize: 11, opacity: 0.85 }}>{c.connecting ? 'connecting…' : c.voice ? (g.speaking ? 'speaking' : 'listening') : c.waiting ? 'typing…' : 'online'}</div>
+        </div>
+        {c.voice && <button onClick={g.toggleMute} aria-label={g.muted ? 'Unmute' : 'Mute'} style={{ background: 'rgba(255,255,255,.15)', border: 0, color: '#fff', borderRadius: 999, padding: '6px 10px', fontSize: 12 }}>{g.muted ? 'Unmute' : 'Mute'}</button>}
+        {c.live && <button onClick={() => void c.end()} style={{ background: 'rgba(255,255,255,.15)', border: 0, color: '#fff', borderRadius: 999, padding: '6px 10px', fontSize: 12 }}>End</button>}
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ alignSelf: 'center', background: '#FFF5C4', color: '#6B7280', fontSize: 11, borderRadius: 8, padding: '4px 10px', textAlign: 'center' }}>Ask about sales, payments, the books, tax or stock. Martina prepares; you confirm.</div>
+        {c.busyElsewhere && <div style={{ alignSelf: 'center', background: '#fff', color: '#4B5563', fontSize: 12, borderRadius: 8, padding: '6px 10px' }}>Martina is helping set up the business. End that conversation first.</div>}
+        {c.lines.map((m, i) => (
+          <div key={i} style={{ alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '86%', background: m.role === 'user' ? '#DCF8C6' : '#fff', borderRadius: m.role === 'user' ? '10px 10px 2px 10px' : '10px 10px 10px 2px', padding: '8px 12px', fontSize: 13, lineHeight: 1.45, boxShadow: '0 1px 1px rgba(0,0,0,.08)' }}>
+            <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{m.text}</div>
+            <div style={{ fontSize: 10, color: '#9CA3AF', textAlign: 'right', marginTop: 2 }}>{fmtTime(new Date(m.at).toISOString())}</div>
+          </div>
+        ))}
+        {(c.connecting || c.waiting) && <div style={{ alignSelf: 'flex-start', background: '#fff', borderRadius: 10, padding: '8px 12px', fontSize: 13, color: '#6B7280' }}>{c.connecting ? 'connecting…' : 'typing…'}</div>}
+        {c.error && !c.connecting && <div style={{ alignSelf: 'center', background: '#FFF7ED', color: '#9A3412', fontSize: 12, borderRadius: 8, padding: '6px 10px' }}>{c.error}</div>}
+        <div ref={end} />
+      </div>
+      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8, background: '#F0F0F0', paddingBottom: 10 }}>
+        {!c.lines.length && !c.connecting && (
+          <div className="row wrap" style={{ gap: 6 }}>
+            {c.starters.map((x) => (
+              <button key={x} disabled={c.busyElsewhere} onClick={() => void c.ask(x)} style={{ border: '1px solid #D1D5DB', background: '#fff', color: '#4B5563', borderRadius: 999, padding: '7px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>{x}</button>
+            ))}
+          </div>
+        )}
+        <form className="row" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Message" aria-label="Message Martina" disabled={c.busyElsewhere} style={{ flex: 1, minWidth: 0, background: '#fff', border: 0, borderRadius: 999, padding: '10px 14px', fontSize: 14, outline: 'none' }} />
+          {q.trim() || c.live ? (
+            <button type="submit" aria-label="Send" disabled={!q.trim() || c.connecting} style={{ width: 40, height: 40, flex: 'none', borderRadius: '50%', background: '#25D366', display: 'grid', placeItems: 'center', border: 0, cursor: 'pointer' }}><Icon name="send" size={16} color="#fff" /></button>
+          ) : (
+            <button type="button" aria-label="Talk to Martina" disabled={c.connecting || c.busyElsewhere} onClick={() => void c.talk()} style={{ width: 40, height: 40, flex: 'none', borderRadius: '50%', background: '#25D366', display: 'grid', placeItems: 'center', border: 0, cursor: 'pointer' }}><Icon name="mic" size={16} color="#fff" /></button>
+          )}
         </form>
       </div>
     </div>

@@ -122,6 +122,15 @@ async function deliver(id: string) {
   const { data: m, error } = await admin.rpc('svc_message', { p_id: id });
   if (error) throw new Error(error.message);
   if (!m) return { id, skipped: true };
+  // An invitation gets its one-time link now, so no usable link rests in the database.
+  if (m.template === 'invite') {
+    const { data: inv, error: ie } = await admin.rpc('svc_invite', { p_member: m.params?.member_id });
+    if (ie || !inv) {
+      await admin.rpc('svc_message_update', { p_id: id, p_status: 'failed', p_provider_id: null, p_error: ie?.message || 'This person has already joined or was removed.' });
+      return { id, status: 'failed' };
+    }
+    m.params = { ...m.params, ...inv, customer_name: inv.name };
+  }
   try {
     const providerId = m.channel === 'email' ? await sendEmail(m) : await sendWhatsApp(m);
     await admin.rpc('svc_message_update', { p_id: id, p_status: 'sent', p_provider_id: providerId || null, p_error: null });

@@ -2,6 +2,7 @@
 // transfer, link and QR, payouts with approval, and the nightly reconciliation of the wallet against the books.
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { PaymentsLock } from '../onboarding/Identity';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
@@ -9,7 +10,9 @@ import { METHOD_LABEL, edge, edgeOk, money, useChart, useCustomers, usePayments,
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
-import { StatusChip } from '../sell/common';
+import { CustomerPicker, PayWait, StatusChip } from '../sell/common';
+import { useDraft, type Drafts } from '../../lib/drafts';
+import type { Customer, PayRequest } from '../../lib/api';
 import { BatchList, BatchModal, BulkPayModal, TemplateButton } from './BulkPay';
 
 export default function Payments() {
@@ -25,6 +28,10 @@ export default function Payments() {
   const openBatch = params.get('batch');
   const setOpenBatch = (id: string | null) => { const n = new URLSearchParams(params); if (id) { n.set('tab', 'bulk'); n.set('batch', id); } else n.delete('batch'); setParams(n, { replace: true }); };
   const [payout, setPayout] = useState(false);
+  // A payment link Martina prepared opens for the person to check the customer and amount before it is made.
+  const linkDraft = useDraft('payment_link');
+  const [link, setLink] = useState<Drafts['payment_link'] | 'new' | null>(null);
+  useEffect(() => { if (linkDraft) setLink(linkDraft); }, [linkDraft]);
   const [bulk, setBulk] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [live, setLive] = useState<{ available: number; ledger: number } | null>(null);
@@ -52,13 +59,14 @@ export default function Payments() {
   const money_ = can(inv, 'keep_books') || can(inv, 'make_payments') || can(inv, 'see_margins');
   return (
     <div className="container">
+      <PaymentsLock />
       {pay.isLoading ? <SkeletonRows n={4} /> : !w || w.status !== 'active' ? (
         <div className="card card-pad stack" style={{ gap: 12, maxWidth: 760 }}>
           <div style={{ fontSize: 18, fontWeight: 600 }}>Open the business wallet</div>
           <div className="muted" style={{ fontSize: 14, lineHeight: 1.6 }}>The wallet is an account number in your business's name{d?.rail ? ` at ${d.rail.name}` : ''}. Money customers pay by transfer, link or QR lands in it and is confirmed the moment it arrives; you pay suppliers and staff from it, and withdraw to your bank whenever you like. TaxStreem holds the funds with {d?.rail?.code === 'flutterwave' || !d?.rail ? 'Flutterwave' : d.rail.name}, a licensed payments company.</div>
           {w?.status === 'failed' && <Alert kind="red" icon="alert">{w.error || 'The last attempt failed.'}</Alert>}
           {w?.status === 'creating' && <Alert kind="blue" icon="clock">Opening…</Alert>}
-          {d?.can?.open_wallet ? <div><button className="btn btn-primary" disabled={!!busy} onClick={openWallet}>{busy === 'open' ? 'Opening…' : 'Open the wallet'}</button></div>
+          {d?.can?.open_wallet ? <div><button className="btn btn-primary" disabled={!!busy || inv.org.payments_open === false} onClick={openWallet}>{busy === 'open' ? 'Opening…' : 'Open the wallet'}</button></div>
             : <Alert kind="grey" icon="shield">The owner or someone who keeps the books opens the wallet.</Alert>}
         </div>
       ) : (
@@ -95,6 +103,10 @@ export default function Payments() {
           { id: 'reconciliations' as const, label: 'Reconciliations' }] : []),
         ...(d?.can?.settings ? [{ id: 'settings' as const, label: 'Settings' }] : []),
       ]} />
+      {tab === 'collections' && can(inv, 'record_sales') && inv.org.payments_open !== false && w?.status === 'active' && (
+        <div><button className="btn btn-secondary btn-sm" onClick={() => setLink('new')}><Icon name="link" size={14} />Payment link</button></div>
+      )}
+      {link && <LinkModal draft={link === 'new' ? null : link} onClose={() => { setLink(null); void refresh(); }} />}
       {tab === 'collections' && (
         <div className="card" style={{ overflow: 'hidden' }}>
           {!(d?.requests || []).length ? <div style={{ padding: 20 }}><Empty>Payments asked for at the till, on invoices and in the online shop appear here with their status.</Empty></div> : d.requests.map((r: any) => (
@@ -159,6 +171,50 @@ export default function Payments() {
       {bulk && <BulkPayModal onClose={() => setBulk(false)} onCreated={(b) => { setBulk(false); setTabState('bulk'); setOpenBatch(b.id); }} />}
       {openBatch && <BatchModal id={openBatch} onClose={() => setOpenBatch(null)} />}
     </div>
+  );
+}
+
+// A payment link for a customer, on their account: card, transfer or USSD on a checkout page.
+function LinkModal({ draft, onClose }: { draft: Drafts['payment_link'] | null; onClose: () => void }) {
+  const { orgId } = useSession();
+  const customers = useCustomers();
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [amount, setAmount] = useState(draft?.amount ? String(draft.amount) : '');
+  const [miss, setMiss] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [req, setReq] = useState<PayRequest | null>(null);
+  useEffect(() => {
+    if (!draft?.customer || !customers.data || customer) return;
+    const q = draft.customer.trim().toLowerCase();
+    const hit = customers.data.customers.find((c) => !c.archived && !c.is_walk_in && (c.name.toLowerCase() === q || c.name.toLowerCase().includes(q)));
+    if (hit) setCustomer(hit); else setMiss(draft.customer);
+  }, [draft, customers.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  async function make() {
+    const a = money(amount);
+    if (!customer) { setErr('Choose who is paying.'); return; }
+    if (!a || a <= 0) { setErr('Enter the amount.'); return; }
+    setBusy(true); setErr(null);
+    try { const r = await edgeOk<{ request: PayRequest }>('payments', { action: 'request', org_id: orgId, customer_id: customer.id, method: 'link', amount: a }); setReq(r.request); }
+    catch (e) { setErr((e as Error).message); }
+    setBusy(false);
+  }
+  if (req) return <PayWait request={req} onPaid={() => {}} onClose={onClose} />;
+  return (
+    <Modal onClose={onClose} width={460}>
+      <ModalHead title="Payment link" sub="The customer pays by card, transfer or USSD. It lands in the wallet and on their account." onClose={onClose} />
+      <div className="modal-body">
+        {draft && <Alert kind="blue" icon="sparkles">Martina filled this in{draft.description ? ` for ${draft.description}` : ''}. Check it, then make the link.</Alert>}
+        <Field label="Customer" req><CustomerPicker value={customer} onChange={(c) => { setCustomer(c); setMiss(null); }} walkIn={false} placeholder="Choose the customer" /></Field>
+        {miss && !customer && <Alert kind="amber" icon="info">No customer called "{miss}" yet. Choose one, or add them from the box above.</Alert>}
+        <Field label="Amount (₦)" req><input className="input num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" /></Field>
+        {err && <Alert kind="red" icon="alert">{err}</Alert>}
+      </div>
+      <div className="modal-ft">
+        <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy} onClick={make}>{busy ? <Spinner small /> : <Icon name="link" size={14} color="#fff" />}Make the link</button>
+      </div>
+    </Modal>
   );
 }
 

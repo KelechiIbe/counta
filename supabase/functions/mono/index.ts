@@ -12,6 +12,8 @@
 //   cac_select { cac_id }                               -> one of those: its profile, directors, shareholders, persons with significant
 //                                                          control, secretary and its Tax ID from the NRS, written to the profile
 //   cac_status_report { org_id }                        -> the owner's latest CAC status report (PDF) into the business's CAC folder
+//   nin_check { org_id, nin, conversation_id? }         -> the owner's NIN looked up and compared with the directors; only the outcome
+//                                                          and the last four digits are kept
 // Mono:
 //   POST /mono/webhook                                  -> header mono-webhook-secret must equal MONO_WEBHOOK_SECRET
 // Database cron (header x-counta-hook: <PUSH_HOOK_SECRET>):
@@ -318,6 +320,40 @@ function companyProfile(raw: any, c: any, extra: { directors?: unknown; sharehol
   });
 }
 
+// The director's NIN. Mono looks it up; only the names on the record and the last four digits go on to the database, which
+// compares them with the directors on the CAC record. The NIN itself, the photo, date of birth and address stop here.
+async function ninCheck(sb: SupabaseClient, user: string, orgId: string, nin: unknown, conversation: unknown) {
+  const { data: st, error } = await sb.rpc('identity_state', { p_org: orgId });
+  if (error) throw new UserError(error.message);
+  if (!st?.can_check) throw new UserError('Only the owner confirms a director\'s identity.');
+  const conv = typeof conversation === 'string' && /^[A-Za-z0-9_-]{6,80}$/.test(conversation) ? conversation : null;
+  // A conversation in which the NIN was said is deleted from ElevenLabs once the check is done, whatever the outcome.
+  if (conv) await svc('svc_forget_add', { p_user: user, p_conversation: conv });
+  if (['verified', 'approved', 'not_required'].includes(st.status)) return { verified: true, already: true, matched: st.matched };
+  const n = digits(nin);
+  if (n.length !== 11) throw new UserError('An NIN has 11 digits. Check it and try again.');
+  if (!(await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'nin' }))) {
+    throw new UserError('That is enough NIN checks for today. Try again tomorrow, or add the NIN slip instead.');
+  }
+  let r: LookupResult;
+  try {
+    r = await lookup('/v3/lookup/nin', { method: 'POST', body: JSON.stringify({ nin: n }) });
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/not switched on/i.test(msg)) throw new UserError('The NIN check is not switched on yet. Add the NIN slip instead.');
+    throw new UserError(/not found|invalid|no record|does not exist/i.test(msg) ? 'NIMC has no record of that NIN. Check the 11 digits.'
+      : 'The NIN check did not go through just now. Try again in a minute, or add the NIN slip instead.');
+  }
+  if (r.status === 404) throw new UserError('NIMC has no record of that NIN. Check the 11 digits.');
+  const d = r.body?.data && typeof r.body.data === 'object' && !Array.isArray(r.body.data) ? r.body.data : r.body;
+  const first = text(pick(d, 'firstname', 'first_name', 'firstName'), 80);
+  const middle = text(pick(d, 'middlename', 'middle_name', 'middleName', 'othername', 'other_names'), 80);
+  const last = text(pick(d, 'surname', 'lastname', 'last_name', 'lastName'), 80);
+  if (!last || (!first && !middle)) throw new UserError('The NIN record came back without a full name. Add the NIN slip instead.');
+  return await svc('svc_identity_nin', { p_user: user, p_org: orgId, p_last4: n.slice(-4), p_first: first, p_middle: middle, p_last: last,
+    p_conversation: conv });
+}
+
 function taxRecord(b: any) {
   const d = b?.data && typeof b.data === 'object' && !Array.isArray(b.data) ? b.data : b;
   const nrs = digits(pick(d, 'nrs_tin', 'tin'));
@@ -493,6 +529,12 @@ Deno.serve(async (req) => {
       case 'cac_select': {
         const draft = await mine('kyc_draft', {});
         return json({ ok: true, ...(await cacSelect(u.user.id, draft, body.cac_id)) });
+      }
+      case 'nin_check': {
+        const orgId = String(body.org_id || '');
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgId)) throw new UserError('Choose the business first.');
+        const result = await ninCheck(sb, u.user.id, orgId, body.nin, body.conversation_id);
+        return json({ ok: true, result, identity: await mine('identity_state', { p_org: orgId }) });
       }
       case 'cac_status_report': {
         const orgId = String(body.org_id || '');

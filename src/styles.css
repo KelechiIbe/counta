@@ -301,3 +301,18 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 .bulk-table tr.off td { opacity: .55; }
 .bulk-progress { height: 8px; border-radius: 4px; background: #EEF0F3; overflow: hidden; display: flex; }
 .bulk-progress > span { display: block; height: 100%; }
+
+/* Team and permissions */
+.tgl { width: 40px; height: 24px; border-radius: 12px; border: 0; background: #E5E7EB; position: relative; cursor: pointer; flex: none; padding: 0; transition: background .15s; }
+.tgl span { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 9px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .15s; }
+.tgl.on { background: #0072F5; }
+.tgl.on span { transform: translateX(16px); }
+.tgl:disabled { opacity: .45; cursor: default; }
+.perm-list { display: grid; gap: 14px; }
+.perm-group { border: 1px solid var(--row); border-radius: 12px; padding: 8px 14px; }
+.perm-line { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 0; border-top: 1px solid var(--row); }
+.perm-group .mini-label + .perm-line { border-top: 0; }
+.perm-own summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.people { display: flex; flex-direction: column; border: 1px solid var(--row); border-radius: 12px; overflow: hidden; }
+.person-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--row); flex-wrap: wrap; }
+.person-row:first-child { border-top: 0; }

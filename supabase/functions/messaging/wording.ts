@@ -21,6 +21,8 @@ export type Msg = { id: string; channel: 'email' | 'whatsapp'; to_address: strin
 // The business's colour when it is a usable hex colour, Counta blue otherwise.
 export const brandColor = (c?: string) => (/^#[0-9a-f]{6}$/i.test(String(c || '')) ? String(c) : '#0072F5');
 
+const ROLE_PHRASE: Record<string, string> = { admin: 'an admin', manager: 'a manager', accountant: 'an accountant', staff: 'a member of staff', cashier: 'a cashier' };
+
 // One place for what each message says, so email and WhatsApp agree.
 export function wording(m: Msg) {
   const p = m.params || {}, biz = p.business || m.org?.name || 'Your supplier';
@@ -81,6 +83,17 @@ export function wording(m: Msg) {
         lines: [`${biz} has returned your invoice ${p.number} for ${naira(total)} without paying it.`, ...String(p.note || '').split(/\n+/)],
         button: '', link: '',
         wa: { name: 'counta_bill_returned', params: [first(p.customer_name), biz, p.number, why] },
+      };
+    }
+    case 'invite': {
+      // A team invitation: email only, with a one-time link made as it is sent.
+      const until = p.expires_at ? new Date(p.expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Africa/Lagos' }) : '';
+      return {
+        heading: `Join ${biz} on Counta`,
+        lines: [`${p.invited_by ? `${p.invited_by} has invited you` : 'You have been invited'} to join ${biz} on Counta as ${ROLE_PHRASE[String(p.role_label || '').toLowerCase()] || 'part of the team'}.`,
+          `Use the button to sign up, or sign in, with ${p.email || m.to_address}. The link works once${until ? `, until ${until}` : ''}.`,
+          'If you were not expecting this, you can ignore the email.'],
+        button: 'Join the team', link: p.link, wa: null,
       };
     }
     default:

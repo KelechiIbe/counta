@@ -6,7 +6,9 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 import { cleanVat, numens, VAT_SCHEMA, VAT_SYSTEM, type VatAnswer, type VatItem, vatPrompt } from './vat.ts';
 import { catalogueText, CIT_MAP_SCHEMA, CIT_MAP_SYSTEM, cleanCitLines, type TbRow, tbText, type TemplateLine } from './cit.ts';
-import { CAC_DOC_SCHEMA, CAC_DOC_SYSTEM, cacDocChecks, type Category, cleanCacDoc, cleanInsight, INSIGHT_SYSTEM, insightPrompt, looseJson } from './kyc.ts';
+import { CAC_DOC_SCHEMA, CAC_DOC_SYSTEM, cacDocChecks, type Category, cleanCacDoc, cleanInsight, cleanNinSlip, INSIGHT_SYSTEM, insightPrompt, looseJson,
+  NIN_SLIP_SCHEMA, NIN_SLIP_SYSTEM } from './kyc.ts';
+import { cleanProduct, PRODUCT_SCHEMA, PRODUCT_SYSTEM, validBarcode } from './product.ts';
 import { accessProblem, CredentialError, fallbackModels, type GeminiConfig, geminiConfig, generateContent, quotaMessage, thinkingConfig } from './google.ts';
 
 let MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
@@ -693,6 +695,59 @@ async function readCacDocument(sb: SupabaseClient, admin: SupabaseClient, body: 
   return json({ ok: true, kyc, extract, checks });
 }
 
+// The NIN slip the owner added when their NIN did not match a director: read, then compared with the directors by the database.
+async function readNinSlip(sb: SupabaseClient, admin: SupabaseClient, body: any, userId: string) {
+  if (!aiOn()) return json(notConfigured());
+  const orgId = String(body.org_id || '');
+  const { data: st, error } = await sb.rpc('identity_state', { p_org: orgId });
+  if (error) return json({ ok: false, error: error.message });
+  if (!st?.can_check) return json({ ok: false, error: 'Only the owner adds the NIN slip.' });
+  const path = String(st?.slip?.path || '');
+  if (!path.startsWith(`${orgId}/kyc/nin-slip-`)) return json({ ok: false, error: 'Add the NIN slip first.' });
+  const { data: allowed } = await admin.rpc('svc_kyc_take', { p_user: userId, p_kind: 'nin_slip' });
+  if (!allowed) return json({ ok: false, reason: 'limit', error: 'Counta has read a few NIN slips for you today already. Try again tomorrow.' });
+  // Downloaded as the person: only the owner may read the business's identity folder.
+  const { data: blob, error: dErr } = await sb.storage.from('documents').download(path);
+  if (dErr || !blob) return json({ ok: false, error: 'Could not open the NIN slip.' });
+  if (blob.size > 10_000_000) return json({ ok: false, error: 'The file is larger than 10 MB. Take a photo of the slip instead.' });
+  const mime = blob.type && blob.type !== 'application/octet-stream' ? blob.type : path.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+  if (!/^(application\/pdf|image\/(jpeg|png|webp))$/.test(mime)) return json({ ok: false, error: 'Add the NIN slip as a PDF or a photo.' });
+  const { data } = await gemini(NIN_SLIP_SYSTEM, [{ text: 'Read this identity document.' },
+    { inlineData: { mimeType: mime, data: encodeBase64(new Uint8Array(await blob.arrayBuffer())) } }], NIN_SLIP_SCHEMA, 0, { timeoutMs: 60_000 });
+  const extract = cleanNinSlip(data);
+  const { data: identity, error: e2 } = await admin.rpc('svc_identity_slip', { p_user: userId, p_org: orgId, p_extract: extract });
+  if (e2) return json({ ok: false, error: e2.message });
+  return json({ ok: true, identity, document_type: extract.document_type });
+}
+
+// A product from photos of its front and back, for someone who may add products to the business.
+async function readProduct(sb: SupabaseClient, admin: SupabaseClient, body: any, userId: string) {
+  if (!aiOn()) return json(notConfigured());
+  const orgId = String(body.org_id || '');
+  const { data: me } = await sb.from('members').select('role, p_add_items, p_edit_prices').eq('org_id', orgId).eq('user_id', userId).eq('status', 'active').maybeSingle();
+  if (!me || !(me.role === 'owner' || me.p_add_items || me.p_edit_prices)) return json({ ok: false, error: 'Your role does not add products. Ask the owner for "Add products".' });
+  const images: { mime: string; data: string }[] = (Array.isArray(body.images) ? body.images : []).slice(0, 3)
+    .filter((i: any) => i && /^image\/(jpeg|png|webp)$/.test(String(i.mime)) && typeof i.data === 'string' && i.data.length < 6_000_000);
+  if (!images.length) return json({ ok: false, error: 'Take a photo of the product first.' }, 400);
+  const { data: allowed } = await admin.rpc('svc_kyc_take', { p_user: userId, p_kind: 'product' });
+  if (!allowed) return json({ ok: false, reason: 'limit', error: 'That is a lot of products for one day. Add the rest by typing them in.' });
+  const categories: string[] = (Array.isArray(body.categories) ? body.categories : []).slice(0, 60).map((c: unknown) => String(c).slice(0, 40));
+  const device = validBarcode(body.barcode);
+  const parts: Part[] = [{ text: [`The business: ${String(body.industry || 'retail').slice(0, 40)}.`, `Its categories: ${categories.join(', ') || 'none yet'}.`,
+    device ? `The phone read this barcode on the back: ${device}.` : 'The phone could not read a barcode.',
+    images.length > 1 ? 'The first photo is the front of the product, the second the back.' : 'One photo of the product.'].join(NL) }];
+  for (const im of images) parts.push({ inlineData: { mimeType: im.mime, data: im.data } });
+  try {
+    const { data, model } = await gemini(PRODUCT_SYSTEM, parts, PRODUCT_SCHEMA, 0.1, { thinking: 'low', timeoutMs: 45_000 });
+    const product = cleanProduct(data, device, categories);
+    if (!product.name) return json({ ok: false, error: 'The photo did not show the product name clearly. Take it again closer, or type it in.' });
+    return json({ ok: true, product, model });
+  } catch (e) {
+    if (e instanceof CredentialError) throw e;
+    return json({ ok: false, reason: 'error', error: 'The photos could not be read just now. Type the product in, or try again.' });
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
@@ -759,6 +814,8 @@ Deno.serve(async (req) => {
       case 'cit_map': return await citMap(sb, body);
       case 'business_insights': return await businessInsights(sb, admin, body, u.user.id);
       case 'read_cac_document': return await readCacDocument(sb, admin, body, u.user.id);
+      case 'read_nin_slip': return await readNinSlip(sb, admin, body, u.user.id);
+      case 'read_product': return await readProduct(sb, admin, body, u.user.id);
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }
   } catch (e) {
