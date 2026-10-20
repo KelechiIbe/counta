@@ -139,6 +139,15 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 /* ---------- tables (CSS grid rows) ---------- */
 .tbl { overflow-x: auto; }
 .tr { display: grid; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--row); font-size: 13px; align-items: center; }
+/* What Rev360 asks for, part by part, beside Counta's figures */
+.flux-recon { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 13px; max-width: 560px; }
+.flux-recon-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(76px, auto) minmax(76px, auto) 16px; gap: 10px; padding: 6px 10px; align-items: center; }
+.flux-recon-row + .flux-recon-row { border-top: 1px solid var(--row); }
+.flux-recon-row .num { text-align: right; white-space: nowrap; }
+.flux-recon-total { font-weight: 700; background: var(--canvas); }
+.flux-recon-fold summary { padding: 2px 0; }
+.flux-recon-fold[open] summary { margin-bottom: 6px; }
+@media (max-width: 480px) { .flux-recon-row { grid-template-columns: minmax(0, 1fr) auto auto 14px; gap: 6px; padding: 6px 8px; font-size: 12px; } }
 .tr.head { border-top: 0; padding: 10px 20px; }
 .tr.head.shade { background: var(--canvas); padding: 12px 20px; }
 .tr.click { cursor: pointer; } .tr.click:hover { background: var(--canvas); } .tr.click.blue:hover { background: var(--primary-soft); }
