@@ -86,4 +86,6 @@ Counta answers `200 { ok: true, status, flux_status }`, `401` for a bad signatur
 ## Paying it
 
 Once Rev360 gives the PRN for the return, Flux posts it to `/flux/payment` with `"tax": "cit"` and `accounting_year`, as for VAT and WHT
-(docs/flux-tax-returns.md). Counta pays it from the tax wallet when it agrees with the approved return, or holds it for the owner.
+(docs/flux-tax-returns.md), with the `breakdown`: `tax` as the tax before WHT credit notes, `credit_applied` as the credit notes
+Rev360 took off, and any penalty, interest or Flutterwave charge. Counta pays it from the tax wallet when each part agrees with the
+approved return, or holds it for the owner. When it is paid, the credit notes Rev360 used come off WHT Credit Notes (1401).

@@ -1,7 +1,9 @@
 // What Rev360 asks to be paid after TaxStreem Flux files a return: the payment reference (PRN), the amount and the account its
-// payment page gives for that one payment. Counta pays it from the tax wallet by itself when it agrees with the return; anything
-// else waits here for the owner, who pays it from the tax wallet with a tap, or by transfer from a bank and marks it paid, or
-// asks Flux for a new account when the last one expired. Also the line on the VAT and WHT returns that sends them to Flux.
+// payment page gives for that one payment. Flux also says what the amount is made of (the tax, credit Rev360 took off, penalties
+// and interest it added, Flutterwave's charge), and each part is shown beside Counta's own figure. Counta pays it from the tax
+// wallet by itself when every part is explained; anything else waits here for the owner, who pays it from the tax wallet with a
+// tap, or by transfer from a bank and marks it paid, or asks Flux for a new account when the last one expired. Also the line on
+// the VAT and WHT returns that sends them to Flux.
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSession, useToast } from '../../state/session';
@@ -17,8 +19,14 @@ type Instruction = {
   bank_name: string; account_number: string; account_name: string; resolved_name: string | null; expires_at: string | null; status: string; reason: string | null;
   auto: boolean; paid_outside: boolean; receipt_ref: string | null; confirmed_at: string | null; received_at: string; label: string; when: string;
   payment_status: string | null; payment_error: string | null; journal_ref: string | null; journal_id: string | null; expired: boolean; message: string | null;
-  wallet_ok: boolean;
+  wallet_ok: boolean; reconciliation: Reconciliation | null;
 };
+type ReconRow = { key: string; label: string; rev360: number; counta?: number | null; ok?: boolean };
+type Reconciliation = {
+  has_breakdown: boolean; explained: boolean; reason?: string | null; rows: ReconRow[]; late?: boolean; due?: string | null; filed_on?: string | null;
+  additions?: number; charges?: number; charge_limit?: number;
+};
+const ADDED = ['penalty', 'interest', 'late_filing_penalty'];
 
 const STATE: Record<string, { label: string; tone: string }> = {
   received: { label: 'Checking', tone: 't-grey' }, paying: { label: 'Paying', tone: 't-amber' }, needs_approval: { label: 'Waiting for you', tone: 't-red' },
@@ -45,6 +53,7 @@ export function FluxPayments({ taxes, year, period }: { taxes?: string[]; year?:
   const [busy, setBusy] = useState<string | null>(null);
   const [mark, setMark] = useState<Instruction | null>(null);
   const [auto, setAuto] = useState<boolean | null>(null);
+  const [pens, setPens] = useState<boolean | null>(null);
   const d = q.data;
   const all: Instruction[] = d?.instructions || [];
   const list = all.filter((i) => (!taxes || taxes.includes(i.tax)) && (year == null || i.accounting_year === year) && (!period || i.period === period));
@@ -76,25 +85,42 @@ export function FluxPayments({ taxes, year, period }: { taxes?: string[]; year?:
     catch (e) { toast((e as Error).message, 'err'); setAuto(null); }
     await refresh(); setBusy(null); setAuto(null);
   }
+  async function autopayPenalties(on: boolean) {
+    setBusy('penalties'); setPens(on);
+    try { await rpc('set_tax_autopay_penalties', { p_org: orgId, p_on: on }); toast(on ? 'Penalties on a late return are paid with the tax' : 'Anything with a penalty now waits for you'); }
+    catch (e) { toast((e as Error).message, 'err'); setPens(null); }
+    await refresh(); setBusy(null); setPens(null);
+  }
+  const autoOn = auto ?? !!d.autopay;
 
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
       <div className="card-hd row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
         <span><b>Payments Rev360 asked for</b>{!filtered && <span className="faint" style={{ fontSize: 12, marginLeft: 8 }}>From returns TaxStreem Flux filed</span>}</span>
         {!filtered && can.autopay && (
-          <label className="check" style={{ fontSize: 13, alignItems: 'flex-start', maxWidth: 420 }}>
-            <input type="checkbox" checked={auto ?? !!d.autopay} disabled={busy === 'autopay'} onChange={(e) => autopay(e.target.checked)} style={{ flexShrink: 0, marginTop: 2 }} />
-            <span>Pay from the tax wallet by itself when the amount agrees with the return</span>
-          </label>
+          <div className="stack" style={{ gap: 6, maxWidth: 440 }}>
+            <label className="check" style={{ fontSize: 13, alignItems: 'flex-start' }}>
+              <input type="checkbox" checked={autoOn} disabled={busy === 'autopay'} onChange={(e) => autopay(e.target.checked)} style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>Pay from the tax wallet by itself when Rev360's amount agrees with the return</span>
+            </label>
+            {autoOn && (
+              <label className="check" style={{ fontSize: 13, alignItems: 'flex-start', paddingLeft: 28 }}>
+                <input type="checkbox" checked={pens ?? d.autopay_penalties !== false} disabled={busy === 'penalties'} onChange={(e) => autopayPenalties(e.target.checked)}
+                  style={{ flexShrink: 0, marginTop: 2 }} />
+                <span>Also pay the penalties and interest Rev360 adds to a return filed late</span>
+              </label>
+            )}
+          </div>
         )}
       </div>
       {!list.length ? (
         <div style={{ padding: 20 }}><Empty>When Flux files a VAT, WHT or CIT return on Rev360, the payment it asks for comes here with its PRN and the account to pay.
-          {d.autopay ? ' If it agrees with the return and the tax wallet holds enough, Counta pays it by itself.' : ''}</Empty></div>
+          {d.autopay ? ' If it agrees with the return and the tax wallet holds enough, Counta pays it by itself.' : ''} Flutterwave's charge, penalties on a late return and
+          any input VAT credit Rev360 takes off are shown beside Counta's figures.</Empty></div>
       ) : list.map((i) => {
         const st = STATE[i.status] || { label: i.status, tone: 't-grey' };
         const open = ['received', 'needs_approval', 'expired', 'renewing'].includes(i.status);
-        const differs = i.expected != null && Math.abs(Number(i.amount) - Number(i.expected)) >= 1;
+        const differs = !i.reconciliation && i.expected != null && Math.abs(Number(i.amount) - Number(i.expected)) >= 1;
         const recorded = Boolean(i.journal_id) || i.status === 'paid';
         const canRecord = can.record && !recorded && i.status !== 'paying';
         const canPay = can.approve && d.tax_wallet && i.wallet_ok && ['needs_approval', 'received'].includes(i.status) && !i.expired;
@@ -122,6 +148,7 @@ export function FluxPayments({ taxes, year, period }: { taxes?: string[]; year?:
                   className={i.expired || i.status === 'expired' ? undefined : 'faint'}>{i.expired || i.status === 'expired' ? 'Expired' : 'Expires'} {when(i.expires_at)}</span>}
               </div>
             </div>
+            {i.reconciliation?.has_breakdown && <Breakdown r={i.reconciliation} open={open} />}
             {i.reason && open && <Alert kind={i.status === 'renewing' ? 'blue' : 'amber'} icon="info">{i.reason}</Alert>}
             {i.reason && i.status === 'confirmed' && !i.journal_id && <Alert kind="amber" icon="info">{i.reason}</Alert>}
             {i.payment_status === 'failed' && i.payment_error && open && !i.reason?.includes(i.payment_error) && <Alert kind="red" icon="alert">{i.payment_error}</Alert>}
@@ -144,6 +171,41 @@ export function FluxPayments({ taxes, year, period }: { taxes?: string[]; year?:
       )}
       {mark && <MarkPaid i={mark} onClose={() => setMark(null)} onDone={async () => { setMark(null); await refresh(); }} />}
     </div>
+  );
+}
+
+// What Rev360's amount is made of, each part beside Counta's figure. Open while it waits; folded once it is paid.
+function Breakdown({ r, open }: { r: Reconciliation; open: boolean }) {
+  const note = (x: ReconRow) => {
+    if (ADDED.includes(x.key)) return r.late ? 'Filed late' : 'Filed on time';
+    if (x.key === 'charges') return r.charge_limit != null ? `Up to ${N2(r.charge_limit)}` : '';
+    return x.counta == null ? '' : N2(x.key === 'credit' ? -Number(x.counta) : Number(x.counta));
+  };
+  const table = (
+    <div className="flux-recon" role="table" aria-label="What Rev360 asks for, against Counta">
+      <div className="flux-recon-row faint" role="row" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em' }}>
+        <span role="columnheader">Part</span><span role="columnheader" className="num">Rev360</span><span role="columnheader" className="num">Counta</span><span />
+      </div>
+      {r.rows.map((x) => {
+        const total = x.key === 'total';
+        return (
+          <div key={x.key} className={'flux-recon-row' + (total ? ' flux-recon-total' : '')} role="row">
+            <span role="cell">{x.label}</span>
+            <span role="cell" className="num">{N2(x.key === 'credit' ? -Number(x.rev360) : Number(x.rev360))}</span>
+            <span role="cell" className={'num' + (ADDED.includes(x.key) || x.key === 'charges' ? ' faint' : '')} style={{ fontSize: ADDED.includes(x.key) || x.key === 'charges' ? 12 : undefined }}>{note(x)}</span>
+            <span role="cell" aria-label={total || x.ok == null ? undefined : x.ok ? 'Agrees' : 'Does not agree'}>
+              {!total && x.ok != null && <Icon name={x.ok ? 'check' : 'alert'} size={13} color={x.ok ? '#15803D' : '#B45309'} />}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+  if (open) return table;
+  return (
+    <details className="flux-recon-fold">
+      <summary className="faint" style={{ fontSize: 12, cursor: 'pointer' }}>What Rev360's amount was made of</summary>
+      {table}
+    </details>
   );
 }
 

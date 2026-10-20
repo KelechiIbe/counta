@@ -7,8 +7,9 @@ time, so Counta cannot pay a fixed NRS account. Instead:
 1. Counta sends Flux the month's return: VAT (once the month is filed in Counta), WHT to the NRS, or withholding VAT.
    The CIT return goes as before (docs/flux-cit-handoff.md).
 2. Flux files it and reports back on the return.
-3. Flux posts the PRN, the amount and the account its RPA copied from the payment page. Counta checks the account with the
-   bank and pays it from the business's tax wallet when everything agrees, or holds it for the owner.
+3. Flux posts the PRN, the amount, what the amount is made of, and the account its RPA copied from the payment page. Counta
+   checks the account with the bank and each part of the amount against its own figures, and pays it from the business's tax
+   wallet when everything is explained, or holds it for the owner.
 4. Counta tells Flux each payment it makes, and Flux tells Counta when Rev360 confirms it.
 
 Settings, signatures and the five-minute clock window are the same as for CIT: `FLUX_URL`, `FLUX_SECRET`, and on every request
@@ -84,7 +85,8 @@ answer". While a return is with Flux (sent, processing or filed) Counta will not
   "accounting_year": 2025,
   "authority": "NRS",
   "prn": "PRN-1234567890",
-  "amount": 5000.00,
+  "amount": 15053.75,
+  "breakdown": { "tax": 8000.00, "credit_applied": 3000.00, "penalty": 10000.00, "interest": 0, "late_filing_penalty": 0, "charges": 53.75 },
   "account": { "number": "9900001111", "bank_name": "Wema Bank", "bank_code": "035 (optional)", "name": "NIGERIA REVENUE SERVICE REV360" },
   "expires_at": "2026-10-13T09:30:00Z",
   "ref": "Flux's reference for this payment",
@@ -97,6 +99,16 @@ answer". While a return is with Flux (sent, processing or filed) Counta will not
 - `account.number` must be the 10-digit account; `bank_name` as the page shows it (Counta finds the bank code from
   Flutterwave's bank list, or uses `bank_code` when it is one Flutterwave knows); `name` as the page shows it.
 - `expires_at` when the page says the account stops taking money, if it says.
+- `breakdown`: what Rev360's amount is made of, as the RPA reads it from Rev360 and the payment page. Send it every time;
+  without it Counta can only compare the bare amount with the return, and anything above or below waits for the owner.
+  - `tax`: the tax Rev360 worked out on the return, before any credit is taken off.
+  - `credit_applied`: credit Rev360 took off the tax. For VAT, the input VAT credit carried forward on the business's Rev360
+    account; for CIT, the WHT credit notes. Zero otherwise.
+  - `penalty`, `interest`, `late_filing_penalty`: what Rev360 added, usually because the return was late.
+  - `charges`: Flutterwave's charge, added when the payment page opened the account.
+  - Each part is a number of naira, none below zero, and `amount` must equal
+    `tax - credit_applied + penalty + interest + late_filing_penalty + charges` to within a naira. A breakdown that does not
+    add up is refused (`422`, saying what the parts come to). Parts left out count as zero; `tax` is required.
 
 Counta answers at once:
 
@@ -111,9 +123,22 @@ What Counta does with it:
    these hold: the account has more than two minutes left; the business has an open tax wallet and is not a sample business;
    the bank was found and its name for the account matches `account.name`; that name looks like a tax collection account
    (it mentions revenue, NRS, FIRS, Rev360 or tax); the return is not paid already and no other payment for it is on its way;
-   the amount is within ₦1 of the return in Counta (VAT filed for the month, WHT or withholding VAT deducted for the NRS that
-   month, or the approved CIT return's tax payable); the tax wallet holds enough; and the business has not switched automatic
+   the amount is explained by the return (below); the tax wallet holds enough; and the business has not switched automatic
    payment off.
+
+   With a `breakdown`, the amount is explained when every part is:
+
+   - `tax` agrees with the return in Counta to within a naira (for VAT, a kobo for each VAT line of the month when that is
+     more, since the template works VAT out on totals and Counta line by line). The return is the VAT filed for the month
+     before credit, the WHT or withholding VAT deducted for the NRS that month, or the approved CIT return's tax before credit.
+   - `credit_applied` agrees with the credit Counta took off to within a naira: the input VAT credit brought forward that the
+     month used, or the WHT credit notes on the CIT return.
+   - `penalty`, `interest` and `late_filing_penalty` are zero, or the return was filed after its due date and the owner has
+     left "Also pay the penalties and interest Rev360 adds to a return filed late" on (it is on unless switched off). The
+     filing date is the `filed_at` Flux reported on the return (section 2), or when the PRN came if Flux did not report one.
+   - `charges` is at most 2% of the rest of the amount, at least ₦100 and never more than ₦5,000.
+
+   Without a `breakdown` the amount must be within ₦1 of what the return leaves to pay.
 3. Otherwise it waits for the owner (`needs_approval`, with the reason), who is told by push, email and WhatsApp. The owner can
    pay it from the tax wallet with a tap, pay it by transfer from any bank and mark it paid, or ask Flux for a new account.
    The tax wallet never pays an account the bank says belongs to someone else, or one that is not a tax collection account.
@@ -123,8 +148,19 @@ Posting the same PRN again with the same account and amount while it is being pa
 A new account for the same PRN (after the last expired) replaces the old one while it is not being paid. A new PRN for the
 same return replaces an older unpaid one.
 
-What Rev360 asks above the return is booked as a penalty or interest. For CIT, the payment clears what the books provided for
-(Current Income Tax Payable, then Development Levy Payable) and the rest is the year's tax expense.
+Each part is booked to its own account when the payment is made, from the tax wallet or marked paid from a bank:
+
+- VAT, WHT and withholding VAT: what the return in Counta left to pay clears the liability (Output VAT 2201, WHT Payable 2202,
+  Withholding VAT Payable 2211). Tax Rev360 worked out above or below the return goes to Other Statutory Charges (6512).
+- VAT credit: input VAT credit Rev360 took off that the books did not have is credited to Opening Balance Equity (3999), since
+  it came from before the books in Counta; credit Counta used that Rev360 did not allow is a charge to 6512.
+- CIT: the tax before credits clears what the books provided for (Current Income Tax Payable 2208, then Development Levy
+  Payable 2209) and anything not provided for is the year's tax expense (7501). The WHT credit notes Rev360 took off come off
+  WHT Credit Notes (1401), and any beyond what 1401 holds go to 3999.
+- `penalty`, `late_filing_penalty` and `interest`: Penalties (6514), each on its own line.
+- `charges` and the transfer fee: Bank Charges (6701).
+
+Without a `breakdown`, the return's amount clears the liability and anything above it is booked to Penalties (6514).
 
 ## 4. Counta to Flux: a new account, and each payment made
 
@@ -163,5 +199,6 @@ Answer `2xx`. Counta retries every five minutes for a week until it gets one.
 
 ## Testing
 
-`supabase/migrations/20261028000100_flux_tax_payments.sql` holds the database side. The edge tests post every request above
+`supabase/migrations/20261028000100_flux_tax_payments.sql` holds the database side, and
+`supabase/migrations/20261028000200_flux_reconcile.sql` the breakdown, the checks on each part and how each is booked. The edge tests post every request above
 against a mock Flux and Flutterwave, through the transfer relay.
