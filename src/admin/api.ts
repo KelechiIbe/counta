@@ -57,7 +57,7 @@ export const GROUPS: { id: string; title: string; what: string; test?: boolean }
   { id: 'whatsapp', title: 'WhatsApp Business', what: 'Invoices, receipts and reminders by WhatsApp.', test: true },
   { id: 'numens', title: 'Numens', what: 'TaxStreem\'s tax model for the VAT treatment of items. Gemini stands in without it.', test: true },
   { id: 'taxstreem', title: 'TaxStreem', what: 'Single sign-on from TaxStreem, and Flux, which files returns on Rev360.', test: true },
-  { id: 'counta', title: 'Counta', what: 'The web address in links, and the contact for push notifications.' },
+  { id: 'counta', title: 'Counta', what: 'The web address in links, the contact for push notifications, and where word of a NIN slip to review goes.' },
 ];
 
 export const pct = (v: number | null | undefined, dp = 2) => (v == null ? '—' : `${(Math.round(Number(v) * 100 * 10 ** dp) / 10 ** dp).toString()}%`);

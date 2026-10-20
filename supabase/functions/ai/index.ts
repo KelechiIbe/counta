@@ -828,7 +828,35 @@ async function readNinSlip(sb: SupabaseClient, admin: SupabaseClient, body: any,
   const extract = cleanNinSlip(data);
   const { data: identity, error: e2 } = await admin.rpc('svc_identity_slip', { p_user: userId, p_org: orgId, p_extract: extract });
   if (e2) return json({ ok: false, error: e2.message });
+  // A slip that matches no director waits for TaxStreem: the review address and the reviewers hear of it.
+  if (identity?.status === 'review') await tellReviewers(admin, orgId);
   return json({ ok: true, identity, document_type: extract.document_type });
+}
+
+// An email to the review address (KYC_REVIEW_EMAIL, admin@taxstreem.com unless set in the admin portal) and every reviewer.
+// It names the business and links to the review page; the NIN and what the slip says stay in the portal. Best effort: the
+// owner's answer never waits on it or fails because of it.
+const RESEND = (Deno.env.get('RESEND_BASE_URL') || 'https://api.resend.com').replace(/\/$/, '');
+async function tellReviewers(admin: SupabaseClient, orgId: string) {
+  try {
+    const key = await svcSecret(admin, 'RESEND_API_KEY');
+    const from = String(await svcSecret(admin, 'RESEND_FROM')).match(/[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/i)?.[0];
+    if (!key || !from) { console.warn('nin review: email is not set up'); return; }
+    const { data: to } = await admin.rpc('svc_review_recipients');
+    const list = (Array.isArray(to) ? to : []).filter((e: unknown) => typeof e === 'string').slice(0, 20);
+    if (!list.length) return;
+    const { data: org } = await admin.from('orgs').select('name').eq('id', orgId).maybeSingle();
+    const name = String(org?.name || 'A business').replace(/[\r\n]+/g, ' ').slice(0, 120);
+    const app = (String(await svcSecret(admin, 'APP_URL')) || 'https://counta-taxstreem.netlify.app').replace(/\/$/, '');
+    const text = [`${name} added a NIN slip, and Counta could not match it to a director on the business's CAC record.`,
+      'Payments, payment links and payouts stay locked for the business until a reviewer decides.', '',
+      `Review it in the admin portal: ${app}/admin/reviews`, '',
+      'This email carries no NIN and nothing from the slip. Those are in the portal, behind your authenticator code.'].join(NL);
+    const r = await fetch(`${RESEND}/emails`, { method: 'POST', signal: AbortSignal.timeout(10_000),
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': `nin-review-${orgId}-${new Date().toISOString().slice(0, 16)}` },
+      body: JSON.stringify({ from: `Counta <${from}>`, to: list, subject: `NIN slip to review: ${name}`, text }) });
+    if (!r.ok) console.warn('nin review email', r.status, (await r.text()).slice(0, 200));
+  } catch (e) { console.warn('nin review email', (e as Error).message); }
 }
 
 // A product from photos of its front and back, for someone who may add products to the business.

@@ -37,6 +37,18 @@ The stages, worked out from the person's profile (`kyc_draft`) unless Martina or
 
 **Allowances.** Per person per day: 20 CAC searches, 6 company lookups, 6 Tax ID lookups, 3 status reports, 8 web searches and 6 document readings (`svc_kyc_take`).
 
+## A director's NIN, and TaxStreem's review
+
+After the score, onboarding asks a director to type or say their NIN. Mono looks it up and the database compares the names
+with the directors on the CAC record; only the outcome and the last four digits are kept. If it does not match, the owner
+adds the NIN slip, which Gemini reads and the database compares again. A slip that still matches no director waits for
+TaxStreem (`identity_status = 'review'`), and the business's wallet, payment links and payouts stay locked until then.
+
+When a slip waits, Counta emails the review address and every reviewer on the admin portal's Team page. The review address
+is "Email for NIN slip reviews" under Keys and services, Counta, and is admin@taxstreem.com when left empty. The email names
+the business and links to `/admin/reviews`; it carries no NIN and nothing from the slip. A reviewer needs a Counta account
+and an authenticator code, and is added by an admin on the Team page.
+
 ## The checklist on Home
 
 Steps are checked from what really happened (`private.guide_steps`): business found, questions answered, profile submitted, CAC document on file (optional), an active business account number, a voice chosen, a first sale, a bank linked (optional), a bank statement uploaded (optional), products added (optional), another team member (optional). The owner can skip optional steps, hide the checklist, and agree to one follow-up call.

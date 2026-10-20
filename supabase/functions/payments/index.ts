@@ -130,7 +130,9 @@ const TRANSFER_PATH = /^\/(transfers|bulk-transfers)(\/|\?|$)/;
 const WHITELIST = /whitelist/i;
 
 async function relayConfig(): Promise<{ url: string; key: string } | null> {
-  const url = await secret('FLW_RELAY_URL'), key = await secret('FLW_RELAY_SECRET');
+  const url = await secret('FLW_RELAY_URL'), raw = await secret('FLW_RELAY_SECRET');
+  // The relay's secret is 64 hex characters; a value saved with the server's prompt or "RELAY_SECRET=" around it still works.
+  const key = raw.match(/[0-9a-f]{64}/i)?.[0].toLowerCase() || raw;
   return url && key ? { url: url.replace(/\/$/, ''), key } : null;
 }
 // Whether Counta can send transfers now: through the relay, or straight when the account needs no whitelisting. Partner

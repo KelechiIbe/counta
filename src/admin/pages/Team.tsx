@@ -92,7 +92,8 @@ export default function Team() {
             <Pills value={role} onChange={setRole} options={[{ id: 'reviewer', label: 'Reviewer' }, { id: 'admin', label: 'Admin' }]} />
             <button className="btn btn-primary" type="submit" disabled={busy !== null}>{busy === 'add' ? <Spinner small /> : <Icon name="plus" size={14} color="#fff" />}Add</button>
           </div>
-          <div className="faint" style={{ fontSize: 12 }}>They need a Counta account first. An admin cannot remove themselves.</div>
+          <div className="faint" style={{ fontSize: 12 }}>They need a Counta account first. An admin cannot remove themselves. Reviewers get an email whenever a NIN slip waits
+            for review, as does the address under Keys and services, Counta (admin@taxstreem.com unless changed).</div>
           {err && <Alert kind="red" icon="alert">{err}</Alert>}
         </form>
       </Card>
