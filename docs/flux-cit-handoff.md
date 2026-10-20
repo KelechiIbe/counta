@@ -82,3 +82,8 @@ Counta answers `200 { ok: true, status, flux_status }`, `401` for a bad signatur
 - Downloading the draft or approved template, attaching the audited accounts and editing a draft year: anyone who keeps the books.
 - Approving, reopening and sending to Flux: the owner, or someone who keeps the books and approves adjustments.
 - A year that Flux has submitted or filed cannot be reopened; an amended return is filed on Rev360 instead.
+
+## Paying it
+
+Once Rev360 gives the PRN for the return, Flux posts it to `/flux/payment` with `"tax": "cit"` and `accounting_year`, as for VAT and WHT
+(docs/flux-tax-returns.md). Counta pays it from the tax wallet when it agrees with the approved return, or holds it for the owner.

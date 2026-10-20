@@ -13,6 +13,13 @@
 // Flux (TaxStreem's filing engine) reporting on a companies income tax return Counta sent it (docs/flux-cit-handoff.md):
 //   POST /taxstreem/flux/cit-status     body { counta_org_id, accounting_year, status: processing|sent|filed|rejected, ref,
 //                                              message, acknowledgement_ref, filed_at, rev360_computation }
+// and on the VAT, WHT and withholding VAT returns, and the payment Rev360 asks for after each return (docs/flux-tax-returns.md):
+//   POST /taxstreem/flux/return-status  body { counta_org_id, tax: vat|wht|wvat, period: 'YYYY-MM', status, ref, message,
+//                                              acknowledgement_ref, filed_at }
+//   POST /taxstreem/flux/payment        body { counta_org_id, tax: vat|wht|wvat|cit, period | accounting_year, prn, amount,
+//                                              account: { number, bank_name, bank_code?, name }, expires_at, ref, message }
+//                                       -> stored, checked with the bank and, when everything agrees, paid from the tax wallet
+//   POST /taxstreem/flux/payment-status body { counta_org_id, prn, status: confirmed|not_received|expired, receipt_ref, message }
 //   Header: x-counta-signature, the same scheme signed with FLUX_SECRET.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { SsoError, verifyBody, verifySsoToken } from './sso.ts';
@@ -76,6 +83,68 @@ async function prism(path: string, raw: string, sig: string | null) {
   return json({ ok: false, error: 'Unknown path.' }, 404);
 }
 
+// The database's hook secret, which the payments function takes from its own Edge Function secret first.
+async function hookSecret(): Promise<string> {
+  const env = (Deno.env.get('PUSH_HOOK_SECRET') || '').trim();
+  if (env) return env;
+  const v = await secret('PUSH_HOOK_SECRET');
+  if (v) return v;
+  const { data } = await admin.rpc('app_secret', { p_name: 'PUSH_HOOK_SECRET' });
+  return typeof data === 'string' ? data.trim() : '';
+}
+
+async function signedJson(raw: string, sig: string | null): Promise<{ body: any } | Response> {
+  if (!(await verifyBody(raw, sig, await secret('FLUX_SECRET')))) return json({ ok: false, error: 'Bad signature.' }, 401);
+  try { return { body: JSON.parse(raw) }; } catch { return json({ ok: false, error: 'Invalid JSON.' }, 400); }
+}
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function fluxReturn(raw: string, sig: string | null) {
+  const v = await signedJson(raw, sig);
+  if (v instanceof Response) return v;
+  const b = v.body;
+  const period = String(b.period || '').slice(0, 7);
+  if (!UUID.test(String(b.counta_org_id || '')) || !['vat', 'wht', 'wvat'].includes(String(b.tax)) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+    return json({ ok: false, error: 'counta_org_id, tax (vat, wht or wvat) and period (YYYY-MM) are required.' }, 400);
+  }
+  const status = String(b.status || '');
+  if (!['processing', 'sent', 'filed', 'rejected'].includes(status)) return json({ ok: false, error: 'status must be processing, sent, filed or rejected.' }, 400);
+  const p: Record<string, unknown> = { status };
+  for (const k of ['ref', 'message', 'acknowledgement_ref', 'filed_at']) if (b[k] != null && b[k] !== '') p[k] = String(b[k]);
+  if (Array.isArray(b.files)) p.files = b.files.slice(0, 20);
+  const { data, error } = await admin.rpc('svc_flux_return_update', { p_org: b.counta_org_id, p_tax: b.tax, p_period: `${period}-01`, p_authority: 'NRS', p });
+  if (error) return json({ ok: false, error: error.message }, 422);
+  return json({ ok: true, status: data.status });
+}
+
+// A PRN and the account Rev360's payment page gave. Stored first; then the payments function checks the account with the
+// bank and pays it from the tax wallet when everything agrees. If that step does not answer in time, the five-minute
+// work does it, so Flux gets its answer quickly either way.
+async function fluxPayment(raw: string, sig: string | null) {
+  const v = await signedJson(raw, sig);
+  if (v instanceof Response) return v;
+  const { data, error } = await admin.rpc('svc_flux_payment_instruction', { p: v.body });
+  if (error) return json({ ok: false, error: error.message }, 422);
+  const out: Record<string, unknown> = { ok: true, id: data.id, status: data.status, duplicate: data.duplicate };
+  if (data.duplicate || data.status !== 'received') return json(out);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/payments`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-counta-hook': await hookSecret(), Authorization: `Bearer ${SERVICE}` },
+      body: JSON.stringify({ action: 'tax_instruction', instruction_id: data.id }), signal: AbortSignal.timeout(25_000) });
+    const r = await res.json().catch(() => ({}));
+    if (r?.ok && r.result) Object.assign(out, { status: r.result.status, decision: r.result.decision, reason: r.result.reason ?? undefined });
+  } catch (e) { console.log('flux payment check later', data.id, (e as Error).message); }
+  return json(out);
+}
+
+async function fluxPaymentStatus(raw: string, sig: string | null) {
+  const v = await signedJson(raw, sig);
+  if (v instanceof Response) return v;
+  const { data, error } = await admin.rpc('svc_flux_payment_status', { p: v.body });
+  if (error) return json({ ok: false, error: error.message }, 422);
+  return json({ ok: true, status: data.status });
+}
+
 async function flux(raw: string, sig: string | null) {
   if (!(await verifyBody(raw, sig, await secret('FLUX_SECRET')))) return json({ ok: false, error: 'Bad signature.' }, 401);
   let body: any;
@@ -100,6 +169,9 @@ Deno.serve(async (req) => {
   try {
     if (/\/prism\/(bills|bill-status)$/.test(path)) return await prism(path, await req.text(), req.headers.get('x-taxstreem-signature'));
     if (/\/flux\/cit-status$/.test(path)) return await flux(await req.text(), req.headers.get('x-counta-signature'));
+    if (/\/flux\/return-status$/.test(path)) return await fluxReturn(await req.text(), req.headers.get('x-counta-signature'));
+    if (/\/flux\/payment$/.test(path)) return await fluxPayment(await req.text(), req.headers.get('x-counta-signature'));
+    if (/\/flux\/payment-status$/.test(path)) return await fluxPaymentStatus(await req.text(), req.headers.get('x-counta-signature'));
     let body: any;
     try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
     if (body.action === 'sso') return json(await sso(String(body.token || '')));

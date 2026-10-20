@@ -11,9 +11,15 @@
 //   { action: 'vat_file', org_id, period: 'YYYY-MM' }
 //                                        -> the month's NRS VAT return (Form VAT 002, schedules A to F) and how each line of the
 //                                           form ties to Counta's VAT for the month.
+//   { action: 'flux_send', org_id, tax: 'vat'|'wht'|'wvat', period: 'YYYY-MM' }
+//                                        -> sends a month's VAT return (filed in Counta), WHT schedule for the NRS or withholding
+//                                           VAT schedule to Flux, which files it on Rev360 and sends back the payment reference
+//                                           (PRN) and the account to pay (docs/flux-tax-returns.md).
+//   { action: 'flux_new_account', instruction_id }
+//                                        -> asks Flux for a new payment account for a PRN whose account expired.
 // Flux settings (admin portal, or Edge Function secrets): FLUX_URL (base URL) and FLUX_SECRET (shared HMAC secret). Requests carry
 //   x-counta-signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">; Flux reports back on
-//   /functions/v1/taxstreem/flux/cit-status with the same signature (docs/flux-cit-handoff.md).
+//   /functions/v1/taxstreem/flux/... with the same signature (docs/flux-cit-handoff.md, docs/flux-tax-returns.md).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { type CitPack, fillCit } from './cit.ts';
 import { sha256Hex, template, TEMPLATES, templatesBase } from './templates.ts';
@@ -148,7 +154,7 @@ async function whtFiles(sb: SupabaseClient, orgId: string, period: string, autho
     const path = `${orgId}/tax/wht/${period}/${f.name}`;
     const { error: up } = await admin.storage.from('documents').upload(path, f.bytes, { contentType: XLSX, upsert: true });
     if (up) throw new Error(`Could not store ${f.name}: ${up.message}`);
-    out.push({ name: f.name, url: await signed(path, 1800, f.name), rows: f.rows, total: f.total, template_total: f.template_total, mismatches: f.mismatches });
+    out.push({ name: f.name, path, url: await signed(path, 1800, f.name), rows: f.rows, total: f.total, template_total: f.template_total, mismatches: f.mismatches });
   }
   return { ok: true, authority, period, files: out, checks: s.checks };
 }
@@ -162,8 +168,105 @@ async function vatFile(sb: SupabaseClient, orgId: string, period: string) {
   const path = `${orgId}/tax/vat/${period}/${s.file_name}`;
   const { error: up } = await admin.storage.from('documents').upload(path, bytes, { contentType: XLSX, upsert: true });
   if (up) throw new Error(`Could not store ${s.file_name}: ${up.message}`);
-  return { ok: true, period, file_name: s.file_name, url: await signed(path, 1800, s.file_name), ties, rows, checks: s.checks,
+  return { ok: true, period, file_name: s.file_name, path, url: await signed(path, 1800, s.file_name), ties, rows, checks: s.checks,
     lines: s.lines, counta: s.counta, difference: s.difference, tolerance: s.tolerance };
+}
+
+// ------------------------------------------------------------------ VAT, WHT and withholding VAT through Flux
+async function fluxConfig() {
+  const url = (await vaultFirst('FLUX_URL')).replace(/\/$/, '');
+  const secret = await vaultFirst('FLUX_SECRET');
+  return url && secret ? { url, secret } : null;
+}
+const NOT_CONNECTED = { ok: false, reason: 'not_configured', error: 'TaxStreem Flux is not connected yet. Download the file and file it on Rev360, or ask TaxStreem to connect Flux.' };
+
+async function postFlux(cfg: { url: string; secret: string }, path: string, body: unknown): Promise<{ ok: true; out: any } | { ok: false; error: string; reason: string }> {
+  const raw = JSON.stringify(body);
+  let res: Response;
+  try {
+    res = await fetch(`${cfg.url}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-counta-signature': await sign(raw, cfg.secret) }, body: raw,
+      signal: AbortSignal.timeout(30_000) });
+  } catch (e) {
+    return { ok: false, reason: 'flux_unreachable', error: `Flux did not answer: ${(e as Error).message}` };
+  }
+  const out = await res.json().catch(() => ({}));
+  // Flux or the network in front of it is down: the same as no answer.
+  if (res.status >= 500 && !out.error) return { ok: false, reason: 'flux_unreachable', error: `Flux answered ${res.status}` };
+  if (!res.ok || out.ok === false) return { ok: false, reason: 'flux_refused', error: String(out.error || out.message || `Flux answered ${res.status}`).slice(0, 500) };
+  return { ok: true, out };
+}
+
+const TAX_NAMES: Record<string, string> = { vat: 'VAT return', wht: 'WHT schedule', wvat: 'withholding VAT schedule' };
+
+async function fluxSend(sb: SupabaseClient, orgId: string, tax: string, period: string) {
+  const cfg = await fluxConfig();
+  if (!cfg) return NOT_CONNECTED;
+  const week = 7 * 24 * 3600;
+  // The files first, made as the person asking (the database checks they may), so nothing is marked sent that cannot be filed.
+  const files: { name: string; url: string; content_type: string; rows?: number; total?: number; expires_in: number }[] = [];
+  let schedule: unknown = null, checks: unknown = null;
+  if (tax === 'vat') {
+    const f = await vatFile(sb, orgId, period);
+    if (!f.ok) return f;
+    files.push({ name: f.file_name!, url: await signed(f.path!, week, f.file_name), content_type: XLSX, expires_in: week });
+    schedule = { lines: f.lines, counta: f.counta };
+    checks = f.checks;
+  } else if (tax === 'wht') {
+    const f = await whtFiles(sb, orgId, period, 'NRS');
+    if (!f.ok) return f;
+    for (const x of f.files!) files.push({ name: x.name, url: await signed(x.path, week, x.name), content_type: XLSX, rows: x.rows, total: x.total, expires_in: week });
+    const { data } = await sb.rpc('wht_schedule', { p_org: orgId, p_period: `${period}-01`, p_authority: 'NRS', p_kind: 'wht' });
+    schedule = { rows: (data as WhtSchedule)?.rows || [], total: (data as WhtSchedule)?.total ?? null };
+    checks = f.checks;
+  } else {
+    const { data, error } = await sb.rpc('wht_schedule', { p_org: orgId, p_period: `${period}-01`, p_authority: 'NRS', p_kind: 'wvat' });
+    if (error) throw new UserError(error.message);
+    const s = data as WhtSchedule;
+    if (!s.rows?.length) return { ok: false, error: `No withholding VAT was deducted for the NRS in ${period}.` };
+    const blocks = (s.checks || []).filter((c) => c.severity === 'block');
+    if (blocks.length) return { ok: false, error: blocks.map((c) => c.text).join(' '), checks: s.checks };
+    schedule = { rows: s.rows, total: s.total };
+    checks = s.checks;
+  }
+  const { data: pk, error: pe } = await sb.rpc('flux_return_pack', { p_org: orgId, p_tax: tax, p_period: `${period}-01`, p_authority: 'NRS' });
+  if (pe) throw new UserError(pe.message);
+  const body = {
+    event: 'tax.return.ready',
+    counta_org_id: orgId, taxstreem_org_id: pk.org?.taxstreem_org_id ?? null,
+    company: { name: pk.org?.name, tin: pk.org?.tin, rc_number: pk.org?.rc_number, address: pk.org?.address },
+    tax, period, authority: 'NRS', amount: pk.amount, to_pay: pk.to_pay, due: pk.due, sent_by: pk.sent_by,
+    summary: pk.summary, schedule, checks, files,
+    callback_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/return-status`,
+    payment_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/payment`,
+    payment_status_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/payment-status`,
+  };
+  const r = await postFlux(cfg, '/counta/tax-returns', body);
+  const fileList = files.map((f) => ({ name: f.name }));
+  if (!r.ok) {
+    await svc('svc_flux_return_update', { p_org: orgId, p_tax: tax, p_period: `${period}-01`, p_authority: 'NRS',
+      p: { status: 'send_failed', message: r.reason === 'flux_unreachable' ? 'Flux did not answer. Try again in a few minutes.' : r.error, files: fileList } });
+    return { ok: false, reason: r.reason, error: r.reason === 'flux_unreachable' ? 'Flux did not answer. Try again in a few minutes.' : r.error };
+  }
+  const row = await svc('svc_flux_return_update', { p_org: orgId, p_tax: tax, p_period: `${period}-01`, p_authority: 'NRS',
+    p: { status: 'sent', ref: String(r.out.ref || r.out.id || ''), message: r.out.message ? String(r.out.message) : `Flux has the ${TAX_NAMES[tax]}.`, files: fileList } });
+  return { ok: true, status: row.status, flux_ref: row.flux_ref, message: row.message };
+}
+
+async function fluxNewAccount(sb: SupabaseClient, id: string) {
+  const { data: p, error } = await sb.rpc('flux_instruction_renew', { p_id: id });
+  if (error) throw new UserError(error.message);
+  const cfg = await fluxConfig();
+  if (!cfg) return NOT_CONNECTED;
+  const r = await postFlux(cfg, '/counta/tax-payments', { event: 'tax.payment.account_requested', ...p, instruction_id: p.id,
+    payment_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/payment` });
+  if (!r.ok) {
+    const msg = r.reason === 'flux_unreachable' ? 'Counta could not reach Flux to ask for a new account. Try again in a few minutes.' : `Flux could not give a new account: ${r.error}`;
+    await svc('svc_tax_instruction_note', { p_id: id, p_status: null, p_reason: msg });
+    return { ok: false, reason: r.reason, error: msg };
+  }
+  const when = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  await svc('svc_tax_instruction_note', { p_id: id, p_status: 'renewing', p_reason: `Asked Flux for a new account at ${when}. Counta pays it when it comes.` });
+  return { ok: true, status: 'renewing' };
 }
 
 Deno.serve(async (req) => {
@@ -179,8 +282,17 @@ Deno.serve(async (req) => {
     if (body.action === 'templates') {
       return json({ ok: true, base: templatesBase(), templates: Object.entries(TEMPLATES).map(([id, t]) => ({ id, ...t, url: `${templatesBase()}/${t.file}` })) });
     }
+    if (body.action === 'flux_new_account') {
+      if (!/^[0-9a-f-]{36}$/i.test(String(body.instruction_id || ''))) return json({ ok: false, error: 'Choose the payment.' }, 400);
+      return json(await fluxNewAccount(sb, String(body.instruction_id)));
+    }
     const orgId = String(body.org_id || ''), year = Number(body.year);
     if (!/^[0-9a-f-]{36}$/i.test(orgId)) return json({ ok: false, error: 'Choose the business.' }, 400);
+    if (body.action === 'flux_send') {
+      const period = String(body.period || '').slice(0, 7), tax = String(body.tax || '');
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period) || !['vat', 'wht', 'wvat'].includes(tax)) return json({ ok: false, error: 'Choose the tax and the month.' }, 400);
+      return json(await fluxSend(sb, orgId, tax, period));
+    }
     if (body.action === 'wht_files') {
       const period = String(body.period || '').slice(0, 7), authority = String(body.authority || '');
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period) || !/^(NRS|SIRS:[A-Z]{2})$/.test(authority)) return json({ ok: false, error: 'Choose the month and the tax authority.' }, 400);

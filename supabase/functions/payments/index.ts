@@ -24,7 +24,9 @@
 //   POST /payments/webhook/rail/<code>             -> header x-counta-signature: sha256=<HMAC of the body with the rail's webhook secret>
 // Database cron (header x-counta-hook: <PUSH_HOOK_SECRET>):
 //   { action: 'poll' }       -> re-checks unpaid requests, retries sweeps, re-checks payouts in progress, carries on
-//                               sending bulk payments and reads Flutterwave bulk transfers' results
+//                               sending bulk payments and reads Flutterwave bulk transfers' results; checks and pays the
+//                               tax payments Flux posted and tells Flux of each one made
+//   { action: 'tax_instruction', instruction_id } -> (from the taxstreem function) checks one payment request from Flux
 //   { action: 'reconcile' }  -> compares every wallet with the books
 //
 // Nothing a webhook says is trusted on its own: Counta asks the rail for the transaction before recording money.
@@ -669,6 +671,130 @@ async function checkTaxPayments() {
   return n;
 }
 
+// ------------------------------------------------------------------ tax payments Rev360 asks for, through Flux
+// Rev360's payment page (through Flutterwave) gives an account for each payment. Flux's RPA copies it and posts it with the
+// PRN; Counta checks the account with the bank, then pays it from the tax wallet when the amount agrees with the return,
+// the wallet holds enough and the names match. Anything else waits for the owner (svc_tax_instruction_decide says which).
+const BANK_WORDS = /\b(bank|plc|limited|ltd|nigeria|nig|of|the|microfinance|mfb|mfbank|international|intl|and|&)\b/g;
+const BANK_ALIASES: Record<string, string[]> = {
+  'gtbank': ['guaranty trust', 'gtb', 'gt'], 'uba': ['united africa', 'united for africa'], 'fcmb': ['first city monument'],
+  'first': ['firstbank', 'fbn'], 'stanbic ibtc': ['stanbic'], 'access': ['access diamond', 'diamond'], 'polaris': ['skye'],
+  'union': ['union nigeria'], 'ecobank': ['eco'], 'wema': ['alat'], 'keystone': [], 'providus': [], 'sterling': [], 'zenith': [], 'fidelity': [],
+};
+function bankKey(name: string) {
+  return name.toLowerCase().replace(/[^a-z0-9& ]/g, ' ').replace(BANK_WORDS, ' ').replace(/\s+/g, ' ').trim();
+}
+// The bank code for the bank Flux names (or the code it gave, when the rail knows it). Null when it is not one clear bank.
+export function bankCodeFor(banks: { code: string; name: string }[], name: string, code?: string | null): string | null {
+  if (code && banks.some((b) => b.code === code)) return code;
+  const want = bankKey(name || '');
+  if (!want) return null;
+  const keyed = banks.map((b) => ({ ...b, key: bankKey(b.name) }));
+  const exact = keyed.filter((b) => b.key === want);
+  if (exact.length === 1) return exact[0].code;
+  for (const [k, alts] of Object.entries(BANK_ALIASES)) {
+    if (want === k || alts.includes(want)) {
+      const hit = keyed.filter((b) => b.key === k || alts.includes(b.key) || b.key.startsWith(k + ' '));
+      if (hit.length === 1) return hit[0].code;
+    }
+  }
+  const part = keyed.filter((b) => b.key.startsWith(want + ' ') || want.startsWith(b.key + ' '));
+  return part.length === 1 ? part[0].code : null;
+}
+const NAME_WORDS = /\b(ltd|limited|plc|nig|nigeria|the|of|and|flw|account|acct|collection|collections)\b/g;
+function nameTokens(n: string) {
+  return n.toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').toLowerCase().replace(NAME_WORDS, ' ').split(/\s+/).filter((t) => t.length > 1);
+}
+// Whether the name the bank holds is the name Flux read off the payment page: the same words, one inside the other, or most
+// of the shorter name's words in the longer.
+export function namesMatch(a: string, b: string): boolean {
+  const x = nameTokens(a), y = nameTokens(b);
+  if (!x.length || !y.length) return false;
+  const jx = x.join(''), jy = y.join('');
+  if (jx === jy || jx.includes(jy) || jy.includes(jx)) return true;
+  const [short, long] = x.length <= y.length ? [x, new Set(y)] : [y, new Set(x)];
+  return short.filter((t) => long.has(t)).length / short.length >= 0.75;
+}
+
+async function checkInstruction(id: string) {
+  const ctx = await svc('svc_tax_instruction_context', { p_id: id });
+  const i = ctx?.instruction;
+  if (!i || !['received', 'needs_approval'].includes(i.status)) return { id, status: i?.status ?? 'unknown', decision: 'none' };
+  const { rail } = await railFor(ctx.tax_wallet?.rail || 'flutterwave');
+  let bankCode: string | null = null, resolved = '', nameOk: boolean | null = null;
+  try { bankCode = bankCodeFor(await rail.banks(), i.bank_name, i.bank_code); } catch (e) { console.log('banks', (e as Error).message); }
+  if (bankCode) {
+    try {
+      resolved = (await rail.resolveAccount(i.account_number, bankCode)).trim();
+      nameOk = resolved ? namesMatch(i.account_name, resolved) : false;
+    } catch (e) {
+      // The bank said it has no such account: a misread number, so the owner checks it. No answer: it cannot be checked.
+      if (e instanceof UserError && /invalid|not found|could not resolve|unable to resolve|does not exist/i.test(e.message)) nameOk = false;
+      console.log('resolve tax account', id, (e as Error).message);
+    }
+  }
+  const d = await svc('svc_tax_instruction_decide', { p_id: id, p: { bank_code: bankCode, resolved_name: resolved, ...(nameOk === null ? {} : { name_ok: nameOk }) } });
+  if (d.decision === 'pay' && d.payment_id) {
+    const sent = await sendTaxPaymentAuto(String(d.payment_id));
+    return { id, ...d, status: sent.status === 'failed' ? 'needs_approval' : d.status, payment: sent };
+  }
+  return { id, ...d };
+}
+
+// Sends a tax payment Counta approved by itself (or one a person approved while transfers were off). Without transfers it
+// stays approved and the five-minute work sends it once they are on.
+async function sendTaxPaymentAuto(paymentId: string): Promise<{ status: string; error?: string }> {
+  const { data: pre } = await admin.from('tax_payments').select('wallet:tax_wallets(rail)').eq('id', paymentId).maybeSingle();
+  const railCode = (pre as any)?.wallet?.rail || 'flutterwave';
+  if (!(await transfersReady((await railFor(railCode)).row.kind))) return { status: 'approved', error: TRANSFERS_OFF };
+  const data = await svc('svc_tax_payment_to_send', { p_payment: paymentId });
+  const p = data.payment;
+  const { rail } = await railFor(data.rail);
+  try {
+    const r = await rail.payout({ ...p, purpose: 'tax' }, data.tax_wallet || {});
+    const u = await svc('svc_tax_payment_update', { p_reference: p.reference, d: { status: r.status, provider_ref: r.provider_ref, fee: r.fee, error: r.error } });
+    return { status: u.status };
+  } catch (e) {
+    if (e instanceof UserError || e instanceof NotConfigured) {
+      await svc('svc_tax_payment_update', { p_reference: p.reference, d: { status: 'failed', error: (e as Error).message } });
+      return { status: 'failed', error: (e as Error).message };
+    }
+    // No answer: it stays "processing" until the rail says what happened.
+    return { status: 'processing', error: (e as Error).message };
+  }
+}
+
+async function fluxConfig() {
+  const url = (await secret('FLUX_URL')).replace(/\/$/, ''), key = await secret('FLUX_SECRET');
+  return url && key ? { url, key } : null;
+}
+
+// The five-minute work: requests not yet checked, payments to send, and Flux told of each payment made.
+async function taxInstructionWork() {
+  const out = { checked: 0, sent: 0, told: 0 };
+  const w = await svc('svc_tax_instruction_work', {});
+  for (const id of w.to_check || []) {
+    try { await checkInstruction(String(id)); out.checked++; } catch (e) { console.log('tax instruction check', id, (e as Error).message); }
+  }
+  for (const p of w.to_send || []) {
+    try { if ((await sendTaxPaymentAuto(String(p.payment_id))).status !== 'approved') out.sent++; else break; }
+    catch (e) { console.log('tax instruction send', p.payment_id, (e as Error).message); }
+  }
+  const cfg = (w.to_notify || []).length ? await fluxConfig() : null;
+  for (const n of cfg ? w.to_notify : []) {
+    try {
+      const raw = JSON.stringify({ event: 'tax.payment.made', instruction_id: n.id, counta_org_id: n.counta_org_id, prn: n.prn, tax: n.tax, amount: n.amount,
+        paid_at: n.paid_at, from: n.from, transfer_reference: n.transfer_reference ?? null, provider_ref: n.provider_ref ?? null });
+      const t = Math.floor(Date.now() / 1000);
+      const res = await fetch(`${cfg!.url}/counta/tax-payments`, { method: 'POST', body: raw, signal: AbortSignal.timeout(15_000),
+        headers: { 'Content-Type': 'application/json', 'x-counta-signature': `t=${t},v1=${await hmacHex(cfg!.key, `${t}.${raw}`)}` } });
+      if (res.ok) { await svc('svc_tax_instruction_notified', { p_id: n.id }); out.told++; }
+      else console.log('flux tax payment notice', n.prn, res.status);
+    } catch (e) { console.log('flux tax payment notice', n.prn, (e as Error).message); }
+  }
+  return out;
+}
+
 // Opens a business's tax wallet at its rail (after its business wallet).
 async function openTaxWallet(orgId: string, memberId: string) {
   const t = await svc('svc_tax_wallet_to_open', { p_org: orgId, p_member: memberId });
@@ -755,6 +881,7 @@ async function poll() {
   // The tax: moved into the tax wallets, and tax payments followed up.
   try { out.tax_transfers = await sendTaxTransfers(); } catch (e) { console.log('poll tax transfers', (e as Error).message); }
   try { out.tax_payments = await checkTaxPayments(); } catch (e) { console.log('poll tax payments', (e as Error).message); }
+  try { out.tax_instructions = await taxInstructionWork(); } catch (e) { console.log('poll tax instructions', (e as Error).message); }
   return out;
 }
 
@@ -894,9 +1021,11 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
     const action = String(body.action || '');
 
-    if (action === 'poll' || action === 'reconcile') {
+    if (action === 'poll' || action === 'reconcile' || action === 'tax_instruction') {
       const hook = req.headers.get('x-counta-hook') || '';
       if (!hook || !timingSafeEqual(hook, await secret('PUSH_HOOK_SECRET'))) return json({ ok: false, error: 'Not allowed.' }, 401);
+      // A payment request Flux has just posted (the taxstreem function passes it on): check it and pay it if everything agrees.
+      if (action === 'tax_instruction') return json({ ok: true, result: await checkInstruction(String(body.instruction_id || '')) });
       return json({ ok: true, result: action === 'poll' ? await poll() : await reconcile() });
     }
 

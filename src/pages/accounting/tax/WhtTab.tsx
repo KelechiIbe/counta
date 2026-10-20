@@ -14,6 +14,7 @@ import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner, St
 import { ExportMenu, useMeta } from '../../../components/Books';
 import { downloadUrl, useTaxRefresh } from './CitTab';
 import { PayFrom } from './VatTab';
+import { FluxPayments, FluxSend } from '../../payments/FluxPayments';
 
 type View = 'months' | 'receipts' | 'rates';
 
@@ -142,6 +143,10 @@ function ScheduleModal({ g, authorities, onClose, onPay }: { g: any; authorities
               </div>
             )}
             {(files || []).some((f) => (f.mismatches || []).length) && <Alert kind="amber" icon="alert">The template's own formula gives a different WHT on some lines. Check the supplier's Tax ID and type before uploading.</Alert>}
+            {g.authority === 'NRS' && <>
+              <FluxSend tax={g.kind === 'wht' ? 'wht' : 'wvat'} period={g.period} ready={!blocks.length && rows.length > 0} notReady={blocks.length ? 'Fix the points above first.' : 'Nothing to file this month.'} />
+              <FluxPayments taxes={[g.kind === 'wht' ? 'wht' : 'wvat']} period={g.period.slice(0, 7) + '-01'} />
+            </>}
           </>
         )}
       </div>

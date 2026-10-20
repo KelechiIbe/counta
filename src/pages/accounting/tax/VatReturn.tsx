@@ -15,6 +15,7 @@ import { NrsLabelSelect, StateLga } from '../../../components/Places';
 import { PayFrom } from './VatTab';
 import { downloadUrl, useTaxRefresh } from './CitTab';
 import { vatPct, vatRateOn } from '../../../lib/vat';
+import { FluxPayments, FluxSend } from '../../payments/FluxPayments';
 
 const LINES: [string, string, 'in' | 'sub' | 'total'][] = [
   ['10', 'Total sales and income, excluding VAT', 'in'], ['15', 'Less exempt sales', 'in'], ['20', 'Less zero-rated sales', 'in'], ['22', 'Less sales adjustments (credit notes)', 'in'],
@@ -90,6 +91,9 @@ export function VatReturnModal({ period, onClose }: { period: string; onClose: (
               </div>
             </div>
             {off.length > 0 && <Alert kind="red" icon="alert">The template's own formulas differ from Counta on line{off.length > 1 ? 's' : ''} {off.map((t) => t.line).join(', ')}. Do not upload this file; tell TaxStreem.</Alert>}
+            <FluxSend tax="vat" period={period} ready={!!s.counta?.filed && !s.blocked}
+              notReady={s.blocked ? 'Fix the points above first.' : 'File the month in Counta first: filing freezes the figures Flux files.'} />
+            <FluxPayments taxes={['vat']} period={period.slice(0, 7) + '-01'} />
             {ties && !off.length && <Alert kind="green" icon="check">Downloaded. Every line of the form agrees with Counta. Upload it on the NRS portal with the month's VAT payment.</Alert>}
           </>
         )}
