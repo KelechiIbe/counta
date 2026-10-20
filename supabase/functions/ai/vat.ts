@@ -27,7 +27,11 @@ export const NRS_LABELS: { zero: string[]; exempt: string[] } = {
     'Medical services',
     'Tuition relating to nursery, primary, secondary or tertiary education'
   ],
+  // The first two are the Act's words for exempt goods the template's list lacks (s.186(1)(o) and (d)); TaxStreem chose to
+  // describe them as the Act does.
   'exempt': [
+    'Assistive devices and disability-related products including hearing aids, wheelchairs, and braille materials',
+    'Baby products',
     'Crude Petroleum Oil and feed gas for all processed gas',
     'Goods or services supplied to a diplomatic mission, diplomat or person recognised under the Diplomatic Immunities and Privileges Act whose activity is in public interest, and not for profit',
     'Goods purchased for use in humanitarian donor funded projects',
