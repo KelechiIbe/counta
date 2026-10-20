@@ -20,85 +20,77 @@ forwards only Flutterwave's transfer paths, keeps nothing on disk and logs only 
 Until the relay is set up, Counta keeps working: collections are recorded as before, and transfers wait (a payout stays
 approved, a sweep pending, a tax wallet move queued) and go once the relay works. Nothing needs to be redone.
 
-## Setting it up (about an hour)
+## Setting it up (about half an hour)
 
-### 1. Rent a small server with a fixed IP address
+### 1. Rent a small server
 
-Any provider works. The smallest plan is enough (1 CPU, 1 GB of memory, about US$5 a month), with Ubuntu 24.04.
+On DigitalOcean: Create, Droplets. Region London, image Ubuntu 24.04 (LTS), the Basic plan with a Regular CPU at about
+US$6 a month (1 GB of memory). Authentication: a long root password, kept in a password manager. Name it `counta-relay`.
 
-- DigitalOcean: create a Droplet, then Networking, Reserved IPs, assign one to the Droplet.
-- AWS Lightsail: create an instance, then Networking, attach a static IP.
-- Hetzner: create a server; its primary IPv4 address is fixed.
+The Droplet's page shows its **ipv4** address. It stays the same for as long as the Droplet exists, and it is the address
+Flutterwave sees: a Droplet sends its traffic from its own address. A DigitalOcean Reserved IP is not needed (outgoing traffic
+uses one only after extra routing changes on the server). If you ever replace the Droplet, whitelist the new one's address on
+Flutterwave before deleting the old one.
 
-Write down the fixed IP address. Allow incoming ports 22 (SSH, ideally only from your office), 80 and 443 in the provider's
-firewall.
+Other providers work the same way (AWS Lightsail with a static IP, Hetzner): the address the server's outgoing traffic comes
+from is the one to whitelist. The relay always connects to Flutterwave over IPv4 (`RELAY_IP_FAMILY`, default 4), so a server
+that also has IPv6 still sends from its IPv4 address.
 
 ### 2. Give it a name
 
-In TaxStreem's DNS, add an `A` record such as `relay.taxstreem.com` pointing to the fixed IP address.
+taxstreem.com's DNS is at Namecheap: Domain List, Manage beside taxstreem.com, Advanced DNS, Host Records, Add New Record,
+**A Record**, Host `relay`, Value the server's address, TTL Automatic, then the green tick. `relay.taxstreem.com` then points
+at the server.
 
-### 3. Install the relay
+### 3. Run the setup
 
-Sign in to the server (`ssh root@<the IP address>`) and run, one block at a time:
+On DigitalOcean open the Droplet, then Access, Launch Droplet Console (it signs you in as root). Paste this one line:
 
 ```bash
-# Node.js 22 and Caddy (the web server that handles HTTPS)
-apt-get update && apt-get install -y curl debian-keyring debian-archive-keyring apt-transport-https gnupg
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs
-curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list
-apt-get update && apt-get install -y caddy
-
-# A user of its own, and the program
-useradd --system --no-create-home --shell /usr/sbin/nologin counta-relay
-mkdir -p /opt/counta-relay
-curl -fsSL https://raw.githubusercontent.com/KelechiIbe/counta/main/relay/server.mjs -o /opt/counta-relay/server.mjs
-curl -fsSL https://raw.githubusercontent.com/KelechiIbe/counta/main/relay/counta-relay.service -o /etc/systemd/system/counta-relay.service
-curl -fsSL https://raw.githubusercontent.com/KelechiIbe/counta/main/relay/Caddyfile -o /etc/caddy/Caddyfile
+curl -fsSL https://raw.githubusercontent.com/KelechiIbe/counta/main/relay/setup.sh | bash -s relay.taxstreem.com
 ```
 
-(If the repository is private, copy the three files from `relay/` with `scp` instead.)
+It takes a few minutes. It installs Node.js 22 and Caddy (the web server that gets and renews the HTTPS certificate), the
+relay as a locked-down service, a firewall that lets in only SSH, HTTP and HTTPS, and a new random secret in
+`/etc/counta-relay.env` (readable by root only). It ends by printing the address to whitelist, whether the name points at
+the server yet, and what to save in Counta. Running it again updates the relay and keeps the secret.
 
-### 4. The secret
+To see the secret when you save it in Counta (step 6):
 
 ```bash
-openssl rand -hex 32
+cat /etc/counta-relay.env
 ```
 
-Keep the 64 characters it prints for the next two steps; do not email them or paste them into a chat. Then:
+The 64 characters after `RELAY_SECRET=` are the secret. Do not email them or paste them into a chat.
+
+Once the name points at the server (a few minutes after step 2), this should print `{"ok":true,"version":"1"}`:
 
 ```bash
-printf 'RELAY_SECRET=%s\n' '<the 64 characters>' > /etc/counta-relay.env
-chmod 600 /etc/counta-relay.env
-```
-
-### 5. Start it
-
-Edit `/etc/caddy/Caddyfile` and change `relay.taxstreem.com` to the name from step 2. Then:
-
-```bash
-systemctl daemon-reload
-systemctl enable --now counta-relay
-systemctl restart caddy
 curl https://relay.taxstreem.com/health
 ```
 
-The last line should print `{"ok":true,"version":"1"}`. Caddy gets and renews the HTTPS certificate by itself.
+### 4. By hand, instead of the setup line
 
-### 6. Whitelist it on Flutterwave
+Everything `relay/setup.sh` does can be done by hand on any Ubuntu server: install Node.js 20 or later and Caddy, copy
+`relay/server.mjs` to `/opt/counta-relay/`, `relay/counta-relay.service` to `/etc/systemd/system/` and `relay/Caddyfile` to
+`/etc/caddy/Caddyfile` (with the relay's name in place of `relay.taxstreem.com`), add a `counta-relay` system user, put
+`RELAY_SECRET=<output of openssl rand -hex 32>` in `/etc/counta-relay.env` (chmod 600), then
+`systemctl daemon-reload && systemctl enable --now counta-relay && systemctl restart caddy`.
 
-In the Flutterwave dashboard: Settings, Whitelisted IP addresses, add the fixed IP address from step 1. Flutterwave may ask
+### 5. Whitelist it on Flutterwave
+
+In the Flutterwave dashboard: Settings, Whitelisted IP addresses, add the server's address from step 1 (the setup prints it too). Flutterwave may ask
 for a code sent to the account owner.
 
 While there, check Settings, Webhooks: switch on "Enable payout subaccounts wallet funding hook", so a transfer to a
 business's own number reaches Counta at once.
 
-### 7. Tell Counta
+### 6. Tell Counta
 
 In Counta's admin portal, Keys and services, Flutterwave:
 
 - `FLW_RELAY_URL`: `https://relay.taxstreem.com` (the name from step 2)
-- `FLW_RELAY_SECRET`: the 64 characters from step 4
+- `FLW_RELAY_SECRET`: the 64 characters after `RELAY_SECRET=` (step 3)
 
 Then press Test. It should say "Transfers go through the relay (version 1)". From then on payouts, bulk payments, sweeps,
 tax wallet moves and tax payments go out, including any that were waiting.
@@ -106,8 +98,8 @@ tax wallet moves and tax payments go out, including any that were waiting.
 ## Looking after it
 
 - Logs: `journalctl -u counta-relay -n 100` shows each request's time, method, path and Flutterwave's status code.
-- Updating: download `server.mjs` again (step 3) and run `systemctl restart counta-relay`.
-- Changing the secret: make a new one (step 4), restart the relay, then save the new value in the admin portal. Transfers
+- Updating: run the setup line from step 3 again. It keeps the secret.
+- Changing the secret: `rm /etc/counta-relay.env`, run the setup line again, then save the new value in the admin portal. Transfers
   sent in the minute between the two are refused by the relay, nothing leaves anyone's wallet, and they go on the next try.
 - If the server's address ever changes, whitelist the new one on Flutterwave before removing the old one.
 - `RELAY_FLW_KEY` in `/etc/counta-relay.env` keeps Flutterwave's secret key on the relay instead of letting Counta send it
