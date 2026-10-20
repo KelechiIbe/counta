@@ -16,6 +16,8 @@
 //   RELAY_ALLOW          default ^/(transfers|bulk-transfers)(/|\?|$)   (a regular expression on the path)
 //   RELAY_FLW_KEY        optional: Flutterwave's secret key kept here instead of travelling with each request
 //   RELAY_LOCAL_ADDRESS  optional: the local address to send from, on a machine with several
+//   RELAY_IP_FAMILY      default 4: connect to Flutterwave over IPv4, so requests leave from the whitelisted IPv4 address
+//                        (0 lets the system choose, 6 forces IPv6)
 //
 // Run: node server.mjs   (Node 18 or later, no packages needed)
 import http from 'node:http';
@@ -29,6 +31,7 @@ const UPSTREAM = new URL((process.env.RELAY_UPSTREAM || 'https://api.flutterwave
 const ALLOW = new RegExp(process.env.RELAY_ALLOW || '^/(transfers|bulk-transfers)(/|\\?|$)');
 const OWN_KEY = process.env.RELAY_FLW_KEY || '';
 const LOCAL_ADDRESS = process.env.RELAY_LOCAL_ADDRESS || undefined;
+const FAMILY = [0, 4, 6].includes(Number(process.env.RELAY_IP_FAMILY ?? 4)) ? Number(process.env.RELAY_IP_FAMILY ?? 4) : 4;
 const VERSION = '1';
 const MAX_BODY = 1024 * 1024;
 const WINDOW_S = 300;
@@ -85,7 +88,7 @@ function forward(method, path, body, auth) {
     const lib = target.protocol === 'https:' ? https : http;
     const headers = { Authorization: auth, 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': 'counta-relay/' + VERSION };
     if (method !== 'GET') headers['Content-Length'] = Buffer.byteLength(body);
-    const r = lib.request(target, { method, headers, localAddress: LOCAL_ADDRESS, timeout: 30000 }, (up) => {
+    const r = lib.request(target, { method, headers, localAddress: LOCAL_ADDRESS, family: FAMILY || undefined, timeout: 30000 }, (up) => {
       const parts = [];
       up.on('data', (c) => parts.push(c));
       up.on('end', () => resolve({ status: up.statusCode || 502, text: Buffer.concat(parts).toString('utf8') }));
