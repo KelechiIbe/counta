@@ -9,6 +9,7 @@ import { ai, rpc, signedDoc, supabase } from '../../../lib/supabase';
 import { edge, money } from '../../../lib/api';
 import { N2, fmtDay, when } from '../../../lib/format';
 import { CA_CATEGORIES, CIT_STATUS, SECTIONS, SOURCE_LABEL, TAX_KEYS, WVAT_AGENTS, lawLong, lawShort, useCitYear, useCitYears, useTaxProfile } from '../../../lib/tax';
+import { FluxPayments } from '../../payments/FluxPayments';
 import { TB_FIELDS, tbRows } from '../../../lib/moveBooks';
 import { Icon } from '../../../components/Icon';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner, Stat } from '../../../components/ui';
@@ -164,6 +165,7 @@ function CitYear({ year }: { year: number }) {
         </div>
         {row.status === 'approved' && <div className="faint" style={{ fontSize: 12 }}>Approved by {row.approved_by || 'someone'} ({when(row.approved_at)}). The figures are frozen; reopen the year to change them.</div>}
         {(row.flux_status || ['sent', 'filed', 'rejected'].includes(row.status)) && <FluxState row={row} />}
+        <FluxPayments taxes={['cit']} year={year} />
         {flux && <Alert kind="blue" icon="info">{flux}</Alert>}
       </div>
 

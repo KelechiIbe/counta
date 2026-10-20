@@ -1,6 +1,7 @@
 // The tax wallet: a second account number in the business's name that holds the tax it has collected or kept back (the
 // VAT on what customers pay into the business wallet, and the WHT kept back when suppliers are paid from it). Money
-// leaves it only to pay tax, to an account TaxStreem lists for that tax, with the payment reference from the tax office.
+// leaves it only to pay tax: to the account Rev360 gives for a return TaxStreem Flux filed (FluxPayments), or to an
+// account TaxStreem lists for that tax, with the payment reference from the tax office.
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSession, useToast } from '../../state/session';
@@ -10,9 +11,10 @@ import { N2, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Empty, Field, Modal, ModalHead, SkeletonRows, Spinner } from '../../components/ui';
 import { StatusChip } from '../sell/common';
+import { FluxPayments, useFluxTax } from './FluxPayments';
 
 type Due = { kind: 'vat' | 'wht' | 'wvat'; period: string; amount: number; authority?: string | null };
-const TAX: Record<string, string> = { vat: 'VAT', wht: 'WHT', wvat: 'Withholding VAT' };
+const TAX: Record<string, string> = { vat: 'VAT', wht: 'WHT', wvat: 'Withholding VAT', cit: 'CIT' };
 const monthOf = (d: string) => new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
 export function useTaxWallet(orgId: string | null, on = true) {
@@ -24,6 +26,7 @@ export function TaxWalletPanel() {
   const toast = useToast();
   const qc = useQueryClient();
   const q = useTaxWallet(orgId);
+  const flux = useFluxTax(orgId);
   const [busy, setBusy] = useState<string | null>(null);
   const [paying, setPaying] = useState<Due | null>(null);
   const [live, setLive] = useState<number | null>(null);
@@ -59,8 +62,13 @@ export function TaxWalletPanel() {
     ...(d.due?.vat || []).map((x: any) => ({ kind: 'vat' as const, period: x.period, amount: Number(x.payable) })),
     ...(d.due?.wht || []).map((x: any) => ({ kind: x.kind, period: x.period, amount: Number(x.amount), authority: x.authority })),
   ];
+  // A return Flux filed whose payment request is open here: paid from that request, not from a listed account.
+  const asked = (x: Due) => (flux.data?.instructions || []).find((i: any) => i.tax === x.kind && i.period === x.period && (x.kind !== 'wht' || x.authority === 'NRS')
+    && ['received', 'needs_approval', 'paying', 'expired', 'renewing'].includes(i.status));
   if (!t || t.status !== 'active') {
     return (
+      <div className="stack" style={{ gap: 16 }}>
+      <FluxPayments />
       <div className="card card-pad stack" style={{ gap: 12, maxWidth: 760 }}>
         <div style={{ fontSize: 18, fontWeight: 600 }}>Open the tax wallet</div>
         <div className="muted" style={{ fontSize: 14, lineHeight: 1.6 }}>A second account number in your business&apos;s name, kept for tax. The VAT in every payment that reaches the business wallet moves into it on its own, with the WHT you keep back when you pay suppliers from the wallet. It pays only tax, to the tax offices&apos; accounts, so the money is there on the 21st.</div>
@@ -69,6 +77,7 @@ export function TaxWalletPanel() {
         {d.can?.open && d.business_wallet
           ? <div><button className="btn btn-primary" disabled={!!busy} onClick={open}>{busy === 'open' ? 'Opening…' : 'Open the tax wallet'}</button></div>
           : d.business_wallet && <Alert kind="grey" icon="shield">The owner or someone who keeps the books opens it.</Alert>}
+      </div>
       </div>
     );
   }
@@ -95,6 +104,7 @@ export function TaxWalletPanel() {
           </div>
         </div>
       </div>
+      <FluxPayments />
       {short > 0.004 && (
         <Alert kind="amber" icon="info">The tax wallet holds {N2(held)} against {N2(owed)} owed. Top it up with {N2(short)}: transfer to {t.account_number} ({t.bank_name}). Tax collected into your bank accounts, not the wallet, stays there until you move it.</Alert>
       )}
@@ -104,7 +114,8 @@ export function TaxWalletPanel() {
           <div key={`${x.kind}-${x.period}-${x.authority || ''}`} className="tr" style={{ gridTemplateColumns: 'minmax(0,1.4fr) 140px auto' }}>
             <span><b>{TAX[x.kind]}{x.authority && x.kind === 'wht' ? ` to ${x.authority}` : ''}</b><span className="faint" style={{ display: 'block', fontSize: 12 }}>{monthOf(x.period)} · due on the 21st of the next month</span></span>
             <span className="right num">{N2(x.amount)}</span>
-            <span>{d.can?.pay ? <button className="btn btn-primary btn-xs" onClick={() => setPaying(x)}>Pay from the tax wallet</button> : <span className="faint" style={{ fontSize: 12 }}>Paid by someone who approves payments</span>}</span>
+            <span>{asked(x) ? <span className="faint" style={{ fontSize: 12 }}>Rev360 asked for it: see above</span>
+              : d.can?.pay ? <button className="btn btn-primary btn-xs" onClick={() => setPaying(x)}>Pay from the tax wallet</button> : <span className="faint" style={{ fontSize: 12 }}>Paid by someone who approves payments</span>}</span>
           </div>
         ))}
       </div>
@@ -112,7 +123,7 @@ export function TaxWalletPanel() {
         <div className="card-hd"><b>Tax payments</b></div>
         {!(d.payments || []).length ? <div style={{ padding: 20 }}><Empty>Tax paid from the tax wallet appears here with its reference.</Empty></div> : d.payments.map((p: any) => (
           <div key={p.id} className="tr" style={{ gridTemplateColumns: 'minmax(0,1.4fr) 120px 130px auto' }}>
-            <span className="ellipsis"><b>{TAX[p.kind]} {monthOf(p.period)}</b><span className="faint" style={{ display: 'block', fontSize: 12 }}>{p.account_name} · {p.account_number} · ref {p.tax_reference}</span>
+            <span className="ellipsis"><b>{TAX[p.kind]} {p.kind === 'cit' ? p.period.slice(0, 4) : monthOf(p.period)}</b><span className="faint" style={{ display: 'block', fontSize: 12 }}>{p.account_name} · {p.account_number} · ref {p.tax_reference}</span>
               <span className="faint" style={{ display: 'block', fontSize: 12 }}>By {p.requested_by_name || '—'} · {when(p.created_at)}{p.journal_ref ? ` · ${p.journal_ref}` : ''}</span>
               {p.error && <span style={{ display: 'block', fontSize: 12, color: '#DC2626' }}>{p.error}</span>}</span>
             <span><StatusChip s={p.status} /></span>
