@@ -17,8 +17,10 @@
 //   POST /taxstreem/flux/return-status  body { counta_org_id, tax: vat|wht|wvat, period: 'YYYY-MM', status, ref, message,
 //                                              acknowledgement_ref, filed_at }
 //   POST /taxstreem/flux/payment        body { counta_org_id, tax: vat|wht|wvat|cit, period | accounting_year, prn, amount,
+//                                              breakdown: { tax, credit_applied, penalty, interest, late_filing_penalty, charges },
 //                                              account: { number, bank_name, bank_code?, name }, expires_at, ref, message }
-//                                       -> stored, checked with the bank and, when everything agrees, paid from the tax wallet
+//                                       -> stored, reconciled with the return, checked with the bank and, when everything
+//                                          agrees, paid from the tax wallet
 //   POST /taxstreem/flux/payment-status body { counta_org_id, prn, status: confirmed|not_received|expired, receipt_ref, message }
 //   Header: x-counta-signature, the same scheme signed with FLUX_SECRET.
 import { createClient } from 'npm:@supabase/supabase-js@2';
