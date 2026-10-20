@@ -19,11 +19,13 @@ import Currency from './pages/Currency';
 import Limits from './pages/Limits';
 import Tax from './pages/Tax';
 import Team from './pages/Team';
+import Alerts from './pages/Alerts';
 
 const NAV: [string, string, string][] = [
   ['', 'Overview', 'house'], ['businesses', 'Businesses', 'building'], ['people', 'People', 'users'], ['activity', 'Activity', 'radar'],
   ['reviews', 'Identity reviews', 'shield'], ['keys', 'Keys and services', 'lock'], ['martina', 'Martina and voices', 'volume'],
-  ['currency', 'Currency', 'dollar'], ['limits', 'Limits and switches', 'zap'], ['tax', 'Tax rules', 'landmark'], ['team', 'Admin team', 'history'],
+  ['currency', 'Currency', 'dollar'], ['limits', 'Limits and switches', 'zap'], ['alerts', 'Alerts and tax wallets', 'bell'], ['tax', 'Tax rules', 'landmark'],
+  ['team', 'Admin team', 'history'],
 ];
 
 function Centre({ children }: { children: ReactNode }) {
@@ -166,6 +168,7 @@ export default function AdminApp() {
             <Route path="martina" element={<Martina />} />
             <Route path="currency" element={<Currency />} />
             <Route path="limits" element={<Limits />} />
+            <Route path="alerts" element={<Alerts />} />
             <Route path="tax" element={<Tax />} />
             <Route path="team" element={<Team />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />

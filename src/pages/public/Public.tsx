@@ -78,6 +78,9 @@ export function PublicDoc() {
               <div className="muted" style={{ fontSize: 13 }}>Transfer exactly {N2(req.amount)} to</div>
               <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: '.06em', margin: '6px 0' }}>{req.account_number}</div>
               <div style={{ fontWeight: 600 }}>{req.bank_name}</div><div className="muted" style={{ fontSize: 13 }}>{req.account_name}</div>
+              {req.direct && req.pay_ref && (
+                <div style={{ marginTop: 10, fontSize: 14 }}>Write <b style={{ letterSpacing: '.02em' }}>{req.pay_ref}</b> in the transfer&apos;s description so it is matched to this {d.doc_type === 'order' ? 'order' : 'invoice'}.</div>
+              )}
               <div className="row" style={{ justifyContent: 'center', gap: 8, marginTop: 12, color: '#6B7280', fontSize: 13 }}><Spinner small />This page updates when the money lands.</div>
             </div>
           ) : req && req.status === 'pending' && req.method === 'qr' ? (

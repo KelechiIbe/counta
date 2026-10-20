@@ -30,12 +30,12 @@ export default function Inbox() {
     else toast(r.result?.items ? `Atlas looked at ${r.result.items} line${r.result.items === 1 ? '' : 's'}: ${r.result.posted} posted, ${r.result.asked} asked` : 'Nothing waiting for the bookkeeper');
     await qc.invalidateQueries({ queryKey: ['inbox'] }); setRunning(false);
   }
-  const counters: [number, string, string][] = d ? [
-    [Number(d.payments_to_confirm), 'payment to confirm against the bank', '/sell/sales?tab=confirm'],
-    [Number(d.bills_to_approve), 'bill to approve', '/purchases/bills'],
-    [Number(d.assets_to_confirm), 'fixed asset to confirm', '/accounting/assets'],
-    [Number(d.payouts_to_approve), 'payout to approve', '/payments'],
-  ].filter(([n]) => Number(n) > 0) as [number, string, string][] : [];
+  const counters: [number, string, string, string][] = d ? [
+    [Number(d.payments_to_confirm), 'payment', 'to confirm against the bank', '/sell/sales?tab=confirm'],
+    [Number(d.bills_to_approve), 'bill', 'to approve', '/purchases/bills'],
+    [Number(d.assets_to_confirm), 'fixed asset', 'to confirm', '/accounting/assets'],
+    [Number(d.payouts_to_approve), 'payout', 'to approve', '/payments'],
+  ].filter(([n]) => Number(n) > 0) as [number, string, string, string][] : [];
   return (
     <div className="container" style={{ maxWidth: 1100 }}>
       <div className="row wrap" style={{ justifyContent: 'space-between' }}>
@@ -47,7 +47,7 @@ export default function Inbox() {
       </div>
       {counters.length > 0 && (
         <div className="row wrap" style={{ gap: 8 }}>
-          {counters.map(([n, l, to]) => <Link key={l} className="pill" to={to}>{n} {l}{n === 1 ? '' : 's'}<Icon name="chevR" size={13} /></Link>)}
+          {counters.map(([n, l, rest, to]) => <Link key={l} className="pill" to={to}>{n} {l}{n === 1 ? '' : 's'} {rest}<Icon name="chevR" size={13} /></Link>)}
         </div>
       )}
       {inbox.isLoading ? <SkeletonRows n={6} /> : inbox.error ? <Alert kind="yellow" icon="shield">{(inbox.error as Error).message}</Alert>
@@ -128,22 +128,42 @@ function Question({ p }: { p: AiProposal }) {
   const amt = Number(l.amount || 0);
   const match = p.proposal?.kind === 'invoice_match' || p.proposal?.kind === 'bill_match' ? p.proposal : null;
   if (match && !other) {
+    // The documents this payment could settle, best first, each with why: the name or number in the narration, and the
+    // amount as it stands, less WHT (a customer deducts it before paying), or less a bank charge.
+    const cands: any[] = Array.isArray(match.candidates) && match.candidates.length ? match.candidates
+      : [{ kind: match.kind === 'invoice_match' ? 'sale' : 'bill', id: match.sale_id || match.bill_id, number: match.number, party_name: match.customer_name || match.vendor_name, reasons: [] }];
+    const isIn = match.kind === 'invoice_match';
+    const how = (c: any) => c.basis === 'less_wht' ? `${N2(c.due)} owed${Number(c.wht) ? `, less ${N2(c.wht)} WHT` : ''}${Number(c.wvat) ? `${Number(c.wht) ? ' and' : ', less'} ${N2(c.wvat)} VAT withheld` : ''}`
+      : c.basis === 'bank_charge' ? `${N2(c.due)} owed, ${N2(c.fee)} ${isIn ? 'less' : 'more'} for bank charges`
+      : c.basis === 'less_wht_charge' ? `${N2(c.due)} owed, less ${N2(c.wht)} WHT and ${N2(c.fee)} charges`
+      : c.basis === 'part' ? `Part of ${N2(c.due)} owed` : c.basis === 'over' ? `More than the ${N2(c.due)} owed; the extra is held as credit`
+      : c.basis === 'several' ? `${N2(c.due)} owed on these invoices together` : `${N2(c.due)} owed`;
     return (
       <div className="card card-pad stack" style={{ gap: 10 }}>
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 600 }}>{p.question || p.title}</div>
-            <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{fmtDay(l.date)} · {l.account} · “{l.narration}”</div>
+            <div style={{ fontWeight: 600 }}>{p.title}</div>
+            <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{fmtDay(l.date)} · {l.account} · “{l.narration}”{l.counterparty ? ` · ${l.counterparty}` : ''}</div>
           </div>
           <b className="num" style={{ color: amt > 0 ? '#15803D' : '#111827', whiteSpace: 'nowrap' }}>{amt > 0 ? '+' : '−'}{N2(Math.abs(amt))}</b>
         </div>
-        <div className="muted" style={{ fontSize: 13 }}>{match.kind === 'invoice_match' ? `${match.customer_name} has one open invoice for this amount (${match.number}), as it stands or less WHT.`
-          : `${match.vendor_name} has one open bill for this amount (${match.number}), as it stands or less WHT.`} Nothing in the narration names it, so a person confirms.</div>
+        <div className="muted" style={{ fontSize: 13 }}>Counta found {cands.length === 1 ? 'a document' : `${cands.length} documents`} this {isIn ? 'payment' : 'payment out'} could settle. Nothing is recorded until you confirm.</div>
+        <div className="stack" style={{ gap: 6 }}>
+          {cands.map((c, i) => (
+            <div key={(c.id || c.number) + i} className="row wrap" style={{ justifyContent: 'space-between', gap: 10, border: '1px solid var(--line)', borderRadius: 10, padding: '8px 10px', background: i === 0 ? '#F8FAFC' : undefined }}>
+              <div style={{ minWidth: 0, flex: '1 1 260px' }}>
+                <b>{c.number}</b> <span className="muted">· {c.party_name}</span>
+                <div className="faint" style={{ fontSize: 12 }}>{how(c)}{(c.reasons || []).length ? ` · ${(c.reasons as string[]).filter((r) => !/owed|charge|More than|Part of/.test(r)).join(' · ')}` : ''}</div>
+              </div>
+              {canAnswer && <button className={'btn btn-sm ' + (i === 0 ? 'btn-primary' : 'btn-secondary')} disabled={busy}
+                onClick={() => act(() => rpc('resolve_proposal', { p_proposal: p.id, p: { action: 'approve', candidate: i } }), `${c.number} settled`)}>
+                Yes, it {isIn ? 'pays' : 'paid'} {c.kind === 'sales' ? 'these' : c.number}
+              </button>}
+            </div>
+          ))}
+        </div>
         {canAnswer ? (
           <div className="row wrap">
-            <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => act(() => rpc('resolve_proposal', { p_proposal: p.id, p: { action: 'approve' } }), `${match.number} settled`)}>
-              Yes, it {match.kind === 'invoice_match' ? 'pays' : 'paid'} {match.number}
-            </button>
             <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => { setOther(true); setCode(''); }}>No, it was something else</button>
             <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => answer('ignore')} title="A duplicate on the statement, or a transfer that was reversed">Not a real transaction</button>
           </div>

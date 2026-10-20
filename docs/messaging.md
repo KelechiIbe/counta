@@ -41,7 +41,7 @@ Webhook in the Meta app (WhatsApp, Configuration): callback URL `https://krtqqhn
 
 ### Templates to submit to Meta
 
-Messages to customers and suppliers start outside the 24-hour window, so each one uses an approved template. Submit these six in the Utility category, language English. The variables are filled in this order.
+Messages to customers and suppliers start outside the 24-hour window, so each one uses an approved template. Submit these six in the Utility category, language English (and the three alert templates below). The variables are filled in this order.
 
 **counta_document** (5 variables)
 
@@ -90,6 +90,46 @@ Sent with Counta.
 ```
 
 Example: Bisi, Bright Pharmacy Ltd, BCS-118, your Tax ID is missing. You can get it at taxid.nrs.gov.ng; please send it to us with an invoice that shows it
+
+### Alerts to the business's owner
+
+Counta also writes to the owner of each business when something needs doing: a tax return due, invoices due or overdue, and
+transactions to confirm before the month's returns. These go from Counta (no reply-to), only to the owner, at most once per
+alert and channel. TaxStreem sets when they go in the admin portal (Alerts and tax wallets); each business can stop email,
+WhatsApp and calls to itself in Settings, Alerts. Sample businesses are never messaged. Submit these three as well, in the
+Utility category, language English.
+
+**counta_tax_deadline** (6 variables)
+
+```
+Hello {{1}}, {{2}}'s {{3}} for {{4}} is due on {{5}}. Amount: {{6}}. Open Counta to check it and file on time.
+Sent by Counta.
+```
+
+Example: Ada, Bright Pharmacy Ltd, vat return, September 2026, 21 Oct 2026, ₦184,250.00
+
+**counta_invoices_due** (5 variables)
+
+```
+Hello {{1}}, {{2}} has {{3}} invoices due or overdue, {{4}} in all. The oldest is {{5}}. Open Counta to send reminders or statements.
+Sent by Counta.
+```
+
+Example: Ada, Bright Pharmacy Ltd, 4, ₦1,240,000.00, INV-0031
+
+**counta_confirm_items** (5 variables)
+
+```
+Hello {{1}}, {{2}} has {{3}} transactions from {{4}} to confirm before the VAT and WHT returns due on {{5}}. Open the books inbox in Counta to confirm them.
+Sent by Counta.
+```
+
+Example: Ada, Bright Pharmacy Ltd, 12, September 2026, 21 Oct
+
+Which channel each alert uses, cheapest first: the red number in the menu and a push notification are free and cover
+everything; email (a fraction of a kobo) carries the important ones; WhatsApp (a paid utility conversation) the same, a
+little less often; and a call from Martina (the dearest) only the day before a tax return is due, plus, when a business
+turns it on, a polite follow-up of a customer's invoice that is at least a week overdue after a reminder went unanswered.
 
 Meta refuses templates that begin or end with a variable, which is why each one ends with a short line of plain text. If Meta asks for changes, keep the number and order of the variables; the wording around them can change without touching Counta.
 

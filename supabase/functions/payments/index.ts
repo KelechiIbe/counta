@@ -11,6 +11,9 @@
 //   send_batch { batch_id }                        -> sends an approved bulk payment (as much as fits in ~40 seconds; the
 //                                                     five-minute poll carries on with the rest), returns the batch
 //   balance { org_id }                             -> the rail's balance for the wallet, compared with the books
+//   open_tax_wallet { org_id }                     -> opens the business's tax wallet (a second payout subaccount) next to its wallet
+//   tax_wallet_balance { org_id }                  -> the rail's balance for the tax wallet
+//   send_tax_payment { payment_id }                -> sends an approved tax payment from the tax wallet
 //   banks {}                                       -> Nigerian banks for payouts
 //   resolve_account { account_number, bank_code }  -> the account name the bank holds
 // Anyone holding a document link (no sign-in):
@@ -26,6 +29,11 @@
 //
 // Nothing a webhook says is trusted on its own: Counta asks the rail for the transaction before recording money.
 // Secrets: FLW_SECRET_KEY, FLW_WEBHOOK_HASH (Edge Function secrets or Supabase Vault); partner rail keys are named on payment_rails.
+// Transfers: Flutterwave takes transfer requests only from IP addresses whitelisted on TaxStreem's account, and Supabase's
+// servers have no fixed address. FLW_RELAY_URL and FLW_RELAY_SECRET name TaxStreem's relay (relay/ in the repository): a small
+// server with one fixed address that forwards the signed requests. Without it, transfers (sweeps, payouts, bulk payments,
+// moves into the tax wallet and tax payments) wait. FLW_DIRECT_TRANSFERS=1 sends them straight, for an account that needs no
+// whitelisting (an Edge Function secret, set only for tests or a Flutterwave account set up otherwise).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -45,12 +53,13 @@ class UserError extends Error {}
 class NotConfigured extends UserError {}
 
 const secrets = new Map<string, { v: string; at: number }>();
+const SECRET_CACHE_MS = Number(Deno.env.get('SECRET_CACHE_MS') || 60_000);
 // Keys set in the admin portal (Supabase Vault) come first; the Edge Function secrets are the fallback.
 async function secret(name: string): Promise<string> {
   // The database's hook secret keeps its old order: the Edge Function secret first.
   if (name === 'PUSH_HOOK_SECRET' && Deno.env.get(name)) return Deno.env.get(name)!.trim();
   const hit = secrets.get(name);
-  if (hit && Date.now() - hit.at < 60_000) return hit.v;
+  if (hit && Date.now() - hit.at < SECRET_CACHE_MS) return hit.v;
   let v = '';
   const a = await admin.rpc('svc_secret', { p_name: name });
   if (typeof a.data === 'string') v = a.data.trim();
@@ -95,7 +104,7 @@ type PayoutResult = { status: 'processing' | 'successful' | 'failed'; provider_r
 type Credit = { reference: string; amount: number; at?: string; narration?: string; sender?: Record<string, unknown> };
 interface Rail {
   configured(): Promise<boolean>;
-  openWallet(org: { id: string; name: string; email?: string; phone?: string }): Promise<{ account_ref: string; barter_id?: string; account_number: string; bank_name: string; account_name: string }>;
+  openWallet(org: { id: string; name: string; email?: string; phone?: string; purpose?: string }): Promise<{ account_ref: string; barter_id?: string; account_number: string; bank_name: string; account_name: string }>;
   collect(ctx: any, method: string): Promise<Collected>;
   verifyCollection(txRef: string): Promise<Verified | null>;
   payout(p: any, wallet: { account_ref?: string }): Promise<PayoutResult>;
@@ -107,23 +116,100 @@ interface Rail {
   sweep?(barterId: string, amount: number, reference: string, narration: string): Promise<'sent' | 'done' | 'failed'>;
   // Money that reached the wallet, as the rail's own statement shows it (used when a webhook cannot say which wallet).
   credits?(accountRef: string, from: string, to: string): Promise<Credit[]>;
+  // Moves money between the business wallet and its tax wallet.
+  moveFunds(fromRef: string, to: { barter_id?: string; account_ref?: string }, amount: number, reference: string, narration: string): Promise<{ status: 'sent' | 'failed'; provider_ref?: string; error?: string }>;
   banks(): Promise<{ code: string; name: string }[]>;
   resolveAccount(accountNumber: string, bankCode: string): Promise<string>;
 }
 
-async function flw(path: string, init: RequestInit = {}): Promise<any> {
-  const key = await secret('FLW_SECRET_KEY');
-  if (!key) throw new NotConfigured('Payments are not switched on yet. TaxStreem is setting them up.');
-  const res = await fetch(FLW + path, { ...init, headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
-    signal: AbortSignal.timeout(30_000) });
+class TransfersOff extends NotConfigured {}
+const TRANSFERS_OFF = 'Transfers are not switched on yet: TaxStreem is setting up the server Flutterwave accepts them from. Nothing has left the wallet.';
+const TRANSFER_PATH = /^\/(transfers|bulk-transfers)(\/|\?|$)/;
+const WHITELIST = /whitelist/i;
+
+async function relayConfig(): Promise<{ url: string; key: string } | null> {
+  const url = await secret('FLW_RELAY_URL'), key = await secret('FLW_RELAY_SECRET');
+  return url && key ? { url: url.replace(/\/$/, ''), key } : null;
+}
+// Whether Counta can send transfers now: through the relay, or straight when the account needs no whitelisting. Partner
+// rails take transfers from anywhere.
+async function transfersReady(kind = 'flutterwave'): Promise<boolean> {
+  if (kind !== 'flutterwave') return true;
+  return Boolean(await relayConfig()) || Deno.env.get('FLW_DIRECT_TRANSFERS') === '1';
+}
+
+async function readFlw(res: Response) {
   const text = await res.text();
   let body: any = text;
   try { body = JSON.parse(text); } catch { /* not json */ }
   if (!res.ok || (body && body.status === 'error')) {
     const msg = typeof body === 'string' ? body : body?.message || JSON.stringify(body);
+    if (WHITELIST.test(String(msg))) throw new TransfersOff(TRANSFERS_OFF);
     throw new UserError(`Flutterwave: ${String(msg).slice(0, 300)}`);
   }
   return body;
+}
+
+// The relay forwards one request to Flutterwave from its fixed address. Each request is signed with the relay secret
+// (timestamp, method, path and body), so nobody else can use it, and a copy cannot be replayed after five minutes.
+async function viaRelay(relay: { url: string; key: string }, path: string, init: RequestInit, key: string) {
+  const method = String(init.method || 'GET').toUpperCase();
+  const body = typeof init.body === 'string' ? init.body : '';
+  const ts = String(Math.floor(Date.now() / 1000));
+  const sig = await hmacHex(relay.key, `${ts}\n${method}\n${path}\n${body}`);
+  let res: Response;
+  try {
+    res = await fetch(`${relay.url}/forward${path}`, { method, body: method === 'GET' ? undefined : body,
+      headers: { 'Content-Type': 'application/json', 'X-Relay-Timestamp': ts, 'X-Relay-Signature': sig, 'X-Flw-Authorization': `Bearer ${key}` },
+      signal: AbortSignal.timeout(35_000) });
+  } catch (e) {
+    // Could not connect at all: nothing reached Flutterwave. A timeout is different: the transfer may have gone.
+    const name = (e as Error).name;
+    if (name !== 'TimeoutError' && name !== 'AbortError') throw new TransfersOff(`The transfer relay is not reachable: ${(e as Error).message}`);
+    throw new Error(`The transfer relay did not answer in time: ${(e as Error).message}`);
+  }
+  const text = await res.text();
+  let msg = '';
+  try { msg = String(JSON.parse(text)?.message || ''); } catch { /* not json */ }
+  // The relay's own answers start "Relay:". It could not reach Flutterwave in time: the transfer may have gone.
+  if (msg.startsWith('Relay:') && res.status === 504) throw new Error(`The transfer relay got no answer from Flutterwave: ${msg}`);
+  // It refused the request itself (signature, path, size): nothing was sent.
+  if (msg.startsWith('Relay:')) {
+    throw new TransfersOff(/signature|unsigned|stale|replayed/.test(msg)
+      ? 'The transfer relay refused Counta\'s signature. Check FLW_RELAY_SECRET in the admin portal and the clock on the relay server.'
+      : `The transfer relay refused the request (${msg.slice(7).trim()}).`);
+  }
+  return readFlw(new Response(text, { status: res.status }));
+}
+
+// The admin portal's check that the relay answers and that Counta's secret matches it.
+async function relayCheck() {
+  const relay = await relayConfig();
+  if (!relay) return { ok: false, error: 'FLW_RELAY_URL and FLW_RELAY_SECRET are not both set.' };
+  const ts = String(Math.floor(Date.now() / 1000)), body = '{}';
+  const sig = await hmacHex(relay.key, `${ts}\nPOST\n/check\n${body}`);
+  try {
+    const r = await fetch(`${relay.url}/check`, { method: 'POST', body, headers: { 'Content-Type': 'application/json', 'X-Relay-Timestamp': ts, 'X-Relay-Signature': sig },
+      signal: AbortSignal.timeout(10_000) });
+    const j = await r.json().catch(() => ({}));
+    return r.ok && j.ok ? { ok: true, version: j.version, upstream: j.upstream } : { ok: false, error: String(j.message || `The relay answered ${r.status}.`) };
+  } catch (e) { return { ok: false, error: `The relay is not reachable: ${(e as Error).message}` }; }
+}
+
+async function flw(path: string, init: RequestInit = {}): Promise<any> {
+  const key = await secret('FLW_SECRET_KEY');
+  if (!key) throw new NotConfigured('Payments are not switched on yet. TaxStreem is setting them up.');
+  const relay = await relayConfig();
+  if (relay && TRANSFER_PATH.test(path)) return viaRelay(relay, path, init, key);
+  const res = await fetch(FLW + path, { ...init, headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
+    signal: AbortSignal.timeout(30_000) });
+  try {
+    return await readFlw(res);
+  } catch (e) {
+    // Another service turned out to need the whitelisted address too: the relay carries it.
+    if (e instanceof TransfersOff && relay) return viaRelay(relay, path, init, key);
+    throw e;
+  }
 }
 
 // Flutterwave returns dates such as "2026-10-17 06:12:00 AM" (Lagos time) or ISO strings.
@@ -154,7 +240,9 @@ function ngPhone(p?: string | null): string | undefined {
 const flutterwave: Rail = {
   async configured() { return Boolean(await secret('FLW_SECRET_KEY')); },
   async openWallet(org) {
-    const email = (org.email || `wallet-${org.id.slice(0, 8)}@counta.ng`).toLowerCase();
+    // The tax wallet is a second payout subaccount; Flutterwave keeps one per email, so it takes a tagged address.
+    const base = (org.email || `wallet-${org.id.slice(0, 8)}@counta.ng`).toLowerCase();
+    const email = org.purpose === 'tax' ? base.replace('@', `+tax${org.id.slice(0, 6)}@`) : base;
     const payload = (e: string) => JSON.stringify({ account_name: org.name.slice(0, 60), email: e, mobilenumber: ngPhone(org.phone), country: 'NG' });
     let r: any;
     try { r = await flw('/payout-subaccounts', { method: 'POST', body: payload(email) }); }
@@ -162,7 +250,7 @@ const flutterwave: Rail = {
       // Flutterwave keeps one wallet per email: a business sharing an email with another gets a tagged address.
       if (!/email/i.test((e as Error).message)) throw e;
       const [local, domain] = email.split('@');
-      r = await flw('/payout-subaccounts', { method: 'POST', body: payload(`${local}+counta${org.id.slice(0, 6)}@${domain}`) });
+      r = await flw('/payout-subaccounts', { method: 'POST', body: payload(`${local}+counta${org.purpose === 'tax' ? 't' : ''}${org.id.slice(0, 6)}@${domain}`) });
     }
     const d = r.data || {};
     let nuban = d.nuban, bank = d.bank_name;
@@ -266,6 +354,7 @@ const flutterwave: Rail = {
         currency: 'NGN', debit_currency: 'NGN', narration: narration.slice(0, 80), reference }) });
       return 'sent';
     } catch (e) {
+      if (e instanceof NotConfigured) throw e;
       // No answer: the transfer may have gone, so it counts as sent and the wallet statement or the webhook settles it.
       // Sending again blind could pay the wallet twice out of TaxStreem's balance.
       if (!(e instanceof UserError)) { console.log('sweep without an answer', reference, (e as Error).message); return 'sent'; }
@@ -287,6 +376,21 @@ const flutterwave: Rail = {
       if (!info || num(info.current_page) >= num(info.total_pages)) break;
     }
     return out;
+  },
+  async moveFunds(fromRef, to, amount, reference, narration) {
+    if (!to.barter_id) return { status: 'failed', error: 'The receiving wallet has no Flutterwave id.' };
+    try {
+      const r = await flw('/transfers', { method: 'POST', body: JSON.stringify({ account_bank: 'flutterwave', account_number: to.barter_id, amount: Math.round(amount * 100) / 100,
+        currency: 'NGN', debit_currency: 'NGN', debit_subaccount: fromRef, narration: narration.slice(0, 80), reference }) });
+      return { status: 'sent', provider_ref: String(r?.data?.id || '') };
+    } catch (e) {
+      if (e instanceof NotConfigured) throw e;
+      // No answer: it may have gone. Counted as sent; the wallet's statement or the webhook settles it, and sending it again
+      // blind could move it twice.
+      if (!(e instanceof UserError)) { console.log('wallet move without an answer', reference, (e as Error).message); return { status: 'sent' }; }
+      if (/duplicate|already exist/i.test(e.message)) return { status: 'sent' };
+      return { status: 'failed', error: e.message };
+    }
   },
   async banks() {
     if (bankCache && Date.now() - bankCache.at < 24 * 3600_000) return bankCache.list;
@@ -318,7 +422,7 @@ function httpRail(rail: any): Rail {
   return {
     async configured() { return Boolean(rail.api_key_secret && (await secret(rail.api_key_secret))); },
     async openWallet(org) {
-      const r = await call('/accounts', { method: 'POST', body: JSON.stringify({ business_id: org.id, name: org.name, email: org.email, phone: org.phone }) });
+      const r = await call('/accounts', { method: 'POST', body: JSON.stringify({ business_id: org.id, name: org.name, email: org.email, phone: org.phone, purpose: org.purpose || 'main' }) });
       return { account_ref: r.account_ref, account_number: r.account_number, bank_name: r.bank_name, account_name: r.account_name || org.name };
     },
     async collect(ctx, method) {
@@ -347,6 +451,16 @@ function httpRail(rail: any): Rail {
     async balance(accountRef) {
       const r = await call(`/accounts/${encodeURIComponent(accountRef)}/balance`);
       return { available: num(r?.available), ledger: num(r?.ledger ?? r?.available) };
+    },
+    async moveFunds(fromRef, to, amount, reference, narration) {
+      try {
+        const r = await call(`/accounts/${encodeURIComponent(fromRef)}/move`, { method: 'POST', body: JSON.stringify({ to_account_ref: to.account_ref, amount, reference, narration }) });
+        if (!r) return { status: 'failed', error: `${rail.name} cannot move money between a business's accounts yet.` };
+        return { status: r.status === 'failed' ? 'failed' : 'sent', provider_ref: r.provider_ref, error: r.error };
+      } catch (e) {
+        if (!(e instanceof UserError)) return { status: 'sent' };
+        return { status: 'failed', error: (e as Error).message };
+      }
     },
     async banks() { return (await call('/banks')) || []; },
     async resolveAccount(accountNumber, bankCode) {
@@ -394,14 +508,21 @@ async function settle(txRef: string, railCode: string, eventPayer?: Record<strin
   }
   const res = await svc('svc_payment_confirmed', { p_tx_ref: txRef, d: { amount: v.amount, fee: v.fee, provider_ref: v.provider_ref, paid_at: v.paid_at,
     payer: { ...(eventPayer || {}), ...(v.payer || {}) } } });
-  if (res?.sweep && rail.sweep) {
-    const s = await rail.sweep(res.sweep.barter_id, num(res.sweep.amount), res.sweep.reference, `Counta ${res.sweep.reference}`);
-    await svc('svc_sweep_update', { p_tx_ref: txRef, p_status: s, p_error: s === 'failed' ? 'Sweep failed; retried by the poll' : null });
+  if (res?.sweep && rail.sweep && (await transfersReady())) {
+    // The money is recorded either way; a sweep that cannot go now waits for the poll.
+    try {
+      const s = await rail.sweep(res.sweep.barter_id, num(res.sweep.amount), res.sweep.reference, `Counta ${res.sweep.reference}`);
+      await svc('svc_sweep_update', { p_tx_ref: txRef, p_status: s, p_error: s === 'failed' ? 'Sweep failed; retried by the poll' : null });
+    } catch (e) { console.log('sweep after payment', txRef, (e as Error).message); }
   }
   return { paid: Boolean(res?.ok), request: res?.request, duplicate: Boolean(res?.duplicate) };
 }
 
 async function sendPayout(sb: SupabaseClient, payoutId: string) {
+  // Checked first, so a payout waiting for transfers to be switched on stays approved instead of failing.
+  const { data: pre } = await admin.from('payouts').select('wallet:wallets(rail)').eq('id', payoutId).maybeSingle();
+  const railCode = (pre as any)?.wallet?.rail;
+  if (railCode && !(await transfersReady((await railFor(railCode)).row.kind))) throw new TransfersOff(TRANSFERS_OFF);
   const { data, error } = await sb.rpc('payout_to_send', { p_payout: payoutId });
   if (error) throw new UserError(error.message);
   const p = data.payout;
@@ -427,6 +548,7 @@ async function sendPayout(sb: SupabaseClient, payoutId: string) {
 async function pushBatch(b: { id: string; rail: string; bulk?: boolean; title?: string; wallet: { account_ref?: string } }, budgetMs: number) {
   const { rail, row } = await railFor(b.rail);
   if (!(await rail.configured())) throw new NotConfigured(row.kind === 'flutterwave' ? 'Payments are not switched on yet. TaxStreem is setting them up.' : `The ${row.name} payment rail has no API key yet.`);
+  if (!(await transfersReady(row.kind))) throw new TransfersOff(TRANSFERS_OFF);
   const bulk = Boolean(b.bulk && rail.bulkPayout);
   const start = Date.now();
   let sent = 0, failed = 0;
@@ -472,10 +594,15 @@ const day = (d: Date) => d.toISOString().slice(0, 10);
 
 // Reads each wallet's statement at the rail and records money that came in directly (customers paying the business's own
 // account number, owner top-ups, sweeps landing). Each credit is recorded once, by the rail's reference.
-async function syncWallets(days = 2, only?: string) {
+// which: 'all' (every business wallet), 'direct' (wallets with a sale waiting for a transfer to the business's number),
+// 'tax' (the tax wallets).
+async function syncWallets(days = 2, only?: string, which: 'all' | 'direct' | 'tax' | 'all_and_tax' = 'all') {
   const out = { wallets: 0, credits: 0, recorded: 0 };
   const to = new Date(), from = new Date(Date.now() - days * 86400_000);
-  for (const w of (await svc<any[]>('svc_work', { p_kind: 'wallets' })) || []) {
+  const kinds = which === 'all_and_tax' ? ['wallets', 'tax_wallets'] : which === 'direct' ? ['direct_wallets'] : which === 'tax' ? ['tax_wallets'] : ['wallets'];
+  const list: any[] = [];
+  for (const k of kinds) list.push(...((await svc<any[]>('svc_work', { p_kind: k })) || []));
+  for (const w of list) {
     if (only && w.id !== only) continue;
     try {
       const { rail } = await railFor(w.rail);
@@ -490,6 +617,75 @@ async function syncWallets(days = 2, only?: string) {
     } catch (e) { console.log('wallet sync', w.id, (e as Error).message); }
   }
   return out;
+}
+
+const walletChecks = new Map<string, number>();
+async function syncOneWallet(walletId: string, everyMs = 12_000) {
+  const last = walletChecks.get(walletId) || 0;
+  if (Date.now() - last < everyMs) return null;
+  walletChecks.set(walletId, Date.now());
+  if (walletChecks.size > 5000) walletChecks.clear();
+  return syncWallets(1, walletId);
+}
+
+// Moves the tax waiting in business wallets to their tax wallets (and back what is released), in one transfer each way.
+async function sendTaxTransfers() {
+  const out = { sent: 0, failed: 0, waiting: 0 };
+  const due = (await svc<any[]>('svc_work', { p_kind: 'tax_transfers' })) || [];
+  for (const t of due) {
+    if (!(await transfersReady((await railFor(t.rail)).row.kind))) {
+      await svc('svc_tax_transfer_update', { p_reference: t.reference, p_status: 'waiting', p_error: TRANSFERS_OFF });
+      out.waiting++;
+      continue;
+    }
+    // A failed attempt used up its reference at the rail; a retry gets a new one that still starts with the transfer's own.
+    const ref = num(t.attempts) > 0 ? `${t.reference}-${Date.now().toString(36).toUpperCase()}` : t.reference;
+    try {
+      const { rail } = await railFor(t.rail);
+      const r = await rail.moveFunds(String(t.from_ref), { barter_id: t.to_barter, account_ref: t.to_account_ref }, num(t.amount), ref, `Counta ${ref}`);
+      await svc('svc_tax_transfer_update', { p_reference: ref, p_status: r.status, p_error: r.error || null, p_provider_ref: r.provider_ref || null });
+      if (r.status === 'sent') out.sent++; else out.failed++;
+    } catch (e) {
+      if (e instanceof NotConfigured) {
+        await svc('svc_tax_transfer_update', { p_reference: t.reference, p_status: 'waiting', p_error: (e as Error).message });
+        out.waiting++;
+        if (e instanceof TransfersOff) break;
+      } else console.log('tax transfer', t.reference, (e as Error).message);
+    }
+  }
+  return out;
+}
+
+// Tax payments sent from tax wallets: what the rail says became of them.
+async function checkTaxPayments() {
+  let n = 0;
+  for (const p of (await svc<any[]>('svc_work', { p_kind: 'tax_payments' })) || []) {
+    try {
+      const { rail } = await railFor(p.rail);
+      const v = await rail.verifyPayout(p.reference, p.provider_ref);
+      if (v && v.status !== 'processing') { await svc('svc_tax_payment_update', { p_reference: p.reference, d: v }); n++; }
+    } catch (e) { console.log('tax payment check', p.reference, (e as Error).message); }
+  }
+  return n;
+}
+
+// Opens a business's tax wallet at its rail (after its business wallet).
+async function openTaxWallet(orgId: string, memberId: string) {
+  const t = await svc('svc_tax_wallet_to_open', { p_org: orgId, p_member: memberId });
+  if (t.ready) return t.tax_wallet;
+  const { rail } = await railFor(t.rail.code);
+  try {
+    return await svc('svc_tax_wallet_ready', { p_wallet: t.tax_wallet.id, d: await rail.openWallet(t.org) });
+  } catch (e) {
+    await svc('svc_tax_wallet_ready', { p_wallet: t.tax_wallet.id, d: { error: (e as Error).message } });
+    throw e;
+  }
+}
+
+async function memberOf(sb: SupabaseClient, orgId: string, userId: string) {
+  const { data: m } = await sb.from('members').select('id').eq('org_id', orgId).eq('user_id', userId).eq('status', 'active').maybeSingle();
+  if (!m) throw new UserError('You are not a member of this business.');
+  return m.id as string;
 }
 
 // Work that should not hold up a webhook reply.
@@ -508,15 +704,24 @@ async function poll() {
       if ((await settle(r.tx_ref, r.rail, undefined, r.id)).paid) out.paid = (out.paid as number) + 1;
     } catch (e) { console.log('poll request', r.tx_ref, (e as Error).message); }
   }
-  for (const s of (await svc<any[]>('svc_work', { p_kind: 'sweeps' })) || []) {
-    if (s.status === 'sent') continue;
-    const { rail } = await railFor('flutterwave');
-    if (!rail.sweep) continue;
-    // A failed attempt used up its reference at the rail; each retry gets a new one that still carries the request's tx_ref.
-    const ref = s.status === 'failed' ? `${s.reference}-${Date.now().toString(36).toUpperCase()}` : s.reference;
-    const st = await rail.sweep(s.barter_id, num(s.amount), ref, `Counta ${ref}`);
-    await svc('svc_sweep_update', { p_tx_ref: s.tx_ref, p_status: st, p_error: st === 'failed' ? 'Sweep failed again' : null, p_ref: ref });
-    out.sweeps = (out.sweeps as number) + 1;
+  // Card, USSD and QR payments land in TaxStreem's Flutterwave balance and are swept to the business wallet. Sweeps are
+  // transfers: without the relay (or another route Flutterwave accepts) they wait, and nothing is lost.
+  if (await transfersReady()) {
+    for (const s of (await svc<any[]>('svc_work', { p_kind: 'sweeps' })) || []) {
+      if (s.status === 'sent') continue;
+      try {
+        const { rail } = await railFor('flutterwave');
+        if (!rail.sweep) continue;
+        // A failed attempt used up its reference at the rail; each retry gets a new one that still carries the request's tx_ref.
+        const ref = s.status === 'failed' ? `${s.reference}-${Date.now().toString(36).toUpperCase()}` : s.reference;
+        const st = await rail.sweep(s.barter_id, num(s.amount), ref, `Counta ${ref}`);
+        await svc('svc_sweep_update', { p_tx_ref: s.tx_ref, p_status: st, p_error: st === 'failed' ? 'Sweep failed again' : null, p_ref: ref });
+        out.sweeps = (out.sweeps as number) + 1;
+      } catch (e) {
+        console.log('sweep', s.tx_ref, (e as Error).message);
+        if (e instanceof NotConfigured) break;
+      }
+    }
   }
   for (const p of (await svc<any[]>('svc_work', { p_kind: 'payouts' })) || []) {
     try {
@@ -543,15 +748,20 @@ async function poll() {
       out.batches = (out.batches as number) + 1;
     } catch (e) { console.log('poll batch', b.id, (e as Error).message); }
   }
-  // Twice an hour, read the wallets' own statements for money paid straight into them.
-  if (new Date().getUTCMinutes() % 30 < 5) out.wallets = await syncWallets(1);
+  // Every run, the wallets with a sale waiting for a transfer to the business's number; twice an hour, every wallet and
+  // tax wallet, for money paid straight into them.
+  try { out.direct = await syncWallets(1, undefined, 'direct'); } catch (e) { console.log('poll direct', (e as Error).message); }
+  if (new Date().getUTCMinutes() % 30 < 5) out.wallets = await syncWallets(1, undefined, 'all_and_tax');
+  // The tax: moved into the tax wallets, and tax payments followed up.
+  try { out.tax_transfers = await sendTaxTransfers(); } catch (e) { console.log('poll tax transfers', (e as Error).message); }
+  try { out.tax_payments = await checkTaxPayments(); } catch (e) { console.log('poll tax payments', (e as Error).message); }
   return out;
 }
 
 async function reconcile() {
   const out: any[] = [];
   // Record everything the rail shows first, so the comparison is about real differences.
-  await syncWallets(3);
+  await syncWallets(3, undefined, 'all_and_tax');
   for (const w of (await svc<any[]>('svc_work', { p_kind: 'wallets' })) || []) {
     try {
       const { rail } = await railFor(w.rail);
@@ -560,6 +770,15 @@ async function reconcile() {
       const r = await svc('svc_wallet_balance', { p_wallet: w.id, p_available: b.available, p_ledger: b.ledger });
       out.push({ wallet: w.id, status: r.status, difference: r.difference });
     } catch (e) { out.push({ wallet: w.id, error: (e as Error).message }); }
+  }
+  for (const t of (await svc<any[]>('svc_work', { p_kind: 'tax_wallets' })) || []) {
+    try {
+      const { rail } = await railFor(t.rail);
+      if (!(await rail.configured())) continue;
+      const b = await rail.balance(t.account_ref);
+      const r = await svc('svc_tax_wallet_balance', { p_wallet: t.id, p_available: b.available, p_ledger: b.ledger });
+      out.push({ tax_wallet: t.id, difference: r.difference });
+    } catch (e) { out.push({ tax_wallet: t.id, error: (e as Error).message }); }
   }
   return out;
 }
@@ -582,8 +801,9 @@ async function flutterwaveWebhook(req: Request) {
       const r = await settle(String(d.tx_ref), 'flutterwave', { name: d.customer?.name, email: d.customer?.email });
       outcome = r.paid ? 'paid' : `not_paid:${r.status}`;
     } else if (event === 'charge.completed') {
-      // Not a Counta checkout: most likely a transfer into a wallet's own account.
-      later(syncWallets(1));
+      // Not a Counta checkout: most likely a transfer into a wallet's own account. The wallets with a sale waiting for a
+      // transfer are read first, so the till sees it at once; then the rest.
+      later(syncWallets(1, undefined, 'direct').then(() => syncWallets(1, undefined, 'all_and_tax')));
       outcome = 'wallet_sync';
     } else if (event === 'transfer.completed') {
       const ref = String(d.reference || '');
@@ -592,6 +812,16 @@ async function flutterwaveWebhook(req: Request) {
         const v = await rail.verifyPayout(ref, String(d.id || ''));
         if (v) await svc('svc_payout_update', { p_reference: ref, d: v });
         outcome = `payout:${v?.status}`;
+      } else if (ref.startsWith('TAXB-')) {
+        const ok = String(d.status).toUpperCase() === 'SUCCESSFUL';
+        await svc('svc_tax_transfer_update', { p_reference: ref, p_status: ok ? 'done' : 'failed', p_error: ok ? null : d.complete_message || 'The transfer failed.',
+          p_provider_ref: String(d.id || '') });
+        outcome = 'tax_transfer';
+      } else if (ref.startsWith('CNTX-')) {
+        const { rail } = await railFor('flutterwave');
+        const v = await rail.verifyPayout(ref, String(d.id || ''));
+        if (v) await svc('svc_tax_payment_update', { p_reference: ref, d: v });
+        outcome = `tax_payment:${v?.status}`;
       } else if (ref.startsWith('SWP-')) {
         const tx = ref.match(/^SWP-(CNT-[A-Z0-9]{16})/)?.[1];
         const ok = String(d.status).toUpperCase() === 'SUCCESSFUL';
@@ -600,7 +830,7 @@ async function flutterwaveWebhook(req: Request) {
       } else {
         // Money paid into a business wallet's own account number (reference PSA_...). The event does not say reliably which
         // wallet it reached, so Counta reads the wallets' statements at Flutterwave instead of trusting the event's fields.
-        later(syncWallets(1));
+        later(syncWallets(1, undefined, 'direct').then(() => syncWallets(1, undefined, 'all_and_tax')));
         outcome = 'wallet_sync';
       }
     }
@@ -627,8 +857,11 @@ async function railWebhook(req: Request, code: string) {
     if (event === 'collection.paid' && d.tx_ref) outcome = (await settle(String(d.tx_ref), code)).paid ? 'paid' : 'not_paid';
     else if ((event === 'payout.completed' || event === 'payout.failed') && d.reference) {
       const v = await rail.verifyPayout(String(d.reference));
-      if (v) await svc('svc_payout_update', { p_reference: d.reference, d: v });
+      if (v) await svc(String(d.reference).startsWith('CNTX-') ? 'svc_tax_payment_update' : 'svc_payout_update', { p_reference: d.reference, d: v });
       outcome = `payout:${v?.status}`;
+    } else if ((event === 'move.completed' || event === 'move.failed') && String(d.reference || '').startsWith('TAXB-')) {
+      await svc('svc_tax_transfer_update', { p_reference: String(d.reference), p_status: event === 'move.completed' ? 'done' : 'failed', p_error: d.error || null });
+      outcome = 'tax_transfer';
     } else if (event === 'wallet.funded' && d.account_ref) {
       await svc('svc_wallet_inflow', { p_rail: code, p_account_ref: String(d.account_ref), d: { amount: num(d.amount), reference: d.reference,
         provider_ref: d.provider_ref || d.reference, narration: d.narration, sender: d.sender, at: d.at } });
@@ -644,7 +877,8 @@ const publicChecks = new Map<string, number>();
 function publicView(r: any) {
   if (!r) return null;
   return { method: r.method, status: r.status, amount: r.amount, account_number: r.account_number, bank_name: r.bank_name, account_name: r.account_name,
-    link_url: r.link_url, qr_image: r.qr_image, expires_at: r.expires_at, error: r.status === 'failed' ? 'This way of paying is not available right now.' : undefined };
+    link_url: r.link_url, qr_image: r.qr_image, expires_at: r.expires_at, direct: Boolean(r.direct), pay_ref: r.direct ? r.pay_ref : undefined,
+    error: r.status === 'failed' ? 'This way of paying is not available right now.' : undefined };
 }
 
 // ------------------------------------------------------------------ entry
@@ -682,7 +916,8 @@ Deno.serve(async (req) => {
         publicChecks.set(token, Date.now());
         if (publicChecks.size > 5000) publicChecks.clear();
         const ctx = await svc('svc_request_context', { p_request: st.request.id });
-        if (ctx) await settle(st.request.tx_ref, ctx.rail, undefined, st.request.id);
+        if (ctx && st.request.direct) { if (ctx.wallet?.id) await syncOneWallet(ctx.wallet.id, 15_000); }
+        else if (ctx) await settle(st.request.tx_ref, ctx.rail, undefined, st.request.id);
         const again = await anon.rpc('public_payment_status', { p_token: token });
         return json({ ok: true, status: again.data?.status, balance: again.data?.balance, request: publicView(again.data?.request) });
       }
@@ -708,16 +943,54 @@ Deno.serve(async (req) => {
           secret_set: Boolean(webhookSecret && (await secret(webhookSecret))), last_event: last || null } });
       }
       case 'open_wallet': {
-        const { data: m } = await sb.from('members').select('id').eq('org_id', body.org_id).eq('user_id', u.user.id).eq('status', 'active').maybeSingle();
-        if (!m) throw new UserError('You are not a member of this business.');
-        const w = await svc('svc_wallet_to_open', { p_org: body.org_id, p_member: m.id });
-        if (w.ready) return json({ ok: true, wallet: w.wallet });
-        const { rail } = await railFor(w.rail.code);
+        const mid = await memberOf(sb, body.org_id, u.user.id);
+        const w = await svc('svc_wallet_to_open', { p_org: body.org_id, p_member: mid });
+        let wallet = w.wallet;
+        if (!w.ready) {
+          const { rail } = await railFor(w.rail.code);
+          try {
+            wallet = await svc('svc_wallet_ready', { p_wallet: w.wallet.id, d: await rail.openWallet(w.org) });
+          } catch (e) {
+            await svc('svc_wallet_ready', { p_wallet: w.wallet.id, d: { error: (e as Error).message } });
+            throw e;
+          }
+        }
+        // Every business gets its tax wallet with its wallet. If that part fails, the wallet still works and the
+        // Payments page offers to open the tax wallet again.
+        let taxWallet: any = null, taxError: string | null = null;
+        try { taxWallet = await openTaxWallet(body.org_id, mid); } catch (e) { taxError = (e as Error).message; }
+        return json({ ok: true, wallet, tax_wallet: taxWallet, tax_error: taxError });
+      }
+      case 'open_tax_wallet': {
+        const mid = await memberOf(sb, body.org_id, u.user.id);
+        return json({ ok: true, tax_wallet: await openTaxWallet(body.org_id, mid) });
+      }
+      case 'tax_wallet_balance': {
+        const { data, error } = await sb.rpc('get_tax_wallet', { p_org: body.org_id });
+        if (error) throw new UserError(error.message);
+        const t = data?.tax_wallet;
+        if (!t || t.status !== 'active') throw new UserError('Open the tax wallet first.');
+        const { rail } = await railFor(t.rail);
+        const b = await rail.balance(t.account_ref);
+        return json({ ok: true, balance: b, reconciliation: await svc('svc_tax_wallet_balance', { p_wallet: t.id, p_available: b.available, p_ledger: b.ledger }) });
+      }
+      case 'send_tax_payment': {
+        // Checked before anything changes: without transfers switched on, the payment stays approved, ready to send later.
+        const { data: pre } = await admin.from('tax_payments').select('wallet:tax_wallets(rail)').eq('id', body.payment_id).maybeSingle();
+        const railCode = (pre as any)?.wallet?.rail;
+        if (railCode && !(await transfersReady((await railFor(railCode)).row.kind))) throw new TransfersOff(TRANSFERS_OFF);
+        const { data, error } = await sb.rpc('tax_payment_to_send', { p_payment: body.payment_id });
+        if (error) throw new UserError(error.message);
+        const p = data.payment;
+        const { rail } = await railFor(data.rail);
         try {
-          const opened = await rail.openWallet(w.org);
-          return json({ ok: true, wallet: await svc('svc_wallet_ready', { p_wallet: w.wallet.id, d: opened }) });
+          const r = await rail.payout({ ...p, purpose: 'tax' }, data.tax_wallet || {});
+          return json({ ok: true, payment: await svc('svc_tax_payment_update', { p_reference: p.reference, d: { status: r.status, provider_ref: r.provider_ref, fee: r.fee, error: r.error } }) });
         } catch (e) {
-          await svc('svc_wallet_ready', { p_wallet: w.wallet.id, d: { error: (e as Error).message } });
+          // Refused: nothing left the tax wallet. No answer: it stays "processing" until the rail says what happened.
+          if (e instanceof UserError || e instanceof NotConfigured) {
+            await svc('svc_tax_payment_update', { p_reference: p.reference, d: { status: 'failed', error: (e as Error).message } });
+          }
           throw e;
         }
       }
@@ -736,6 +1009,13 @@ Deno.serve(async (req) => {
       case 'check': {
         const { data: r, error } = await sb.rpc('get_payment_request', { p_request: body.request_id });
         if (error) throw new UserError(error.message);
+        if (r.status === 'pending' && r.direct) {
+          // A transfer to the business's own number: read the wallet's statement (at most every few seconds).
+          const ctx = await svc('svc_request_context', { p_request: r.id });
+          if (ctx?.wallet?.id) await syncOneWallet(ctx.wallet.id);
+          const again = await sb.rpc('get_payment_request', { p_request: body.request_id });
+          return json({ ok: true, request: again.data });
+        }
         if (r.status === 'pending') {
           await settle(r.tx_ref, r.rail, undefined, r.id);
           const again = await sb.rpc('get_payment_request', { p_request: body.request_id });
@@ -753,6 +1033,12 @@ Deno.serve(async (req) => {
         const { rail } = await railFor(data.wallet.rail);
         const b = await rail.balance(data.wallet.account_ref);
         return json({ ok: true, balance: b, reconciliation: await svc('svc_wallet_balance', { p_wallet: data.wallet.id, p_available: b.available, p_ledger: b.ledger }) });
+      }
+      case 'relay_check': {
+        // TaxStreem's staff only (the admin portal's Test button).
+        const { data: me } = await sb.rpc('admin_me');
+        if (!me?.admin || !me?.aal2) throw new UserError('This is only for TaxStreem\'s admins.');
+        return json({ ok: true, relay: await relayCheck(), transfers_ready: await transfersReady() });
       }
       case 'banks': {
         const { rail } = await railFor(String(body.rail || 'flutterwave'));

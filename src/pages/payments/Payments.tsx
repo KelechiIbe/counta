@@ -17,6 +17,7 @@ import { useDraft, type Drafts } from '../../lib/drafts';
 import type { Customer, PayRequest } from '../../lib/api';
 import { BatchList, BatchModal, BulkPayModal, TemplateButton } from './BulkPay';
 import { isOn, PAUSED, useFeatures } from '../../lib/features';
+import { TaxWalletPanel } from './TaxWallet';
 
 export default function Payments() {
   const { data: inv } = useInventory();
@@ -26,9 +27,9 @@ export default function Payments() {
   const [period, setPeriod] = useScreenPeriod(orgId, 'payments', 'all', inv?.org.fiscal_year_start || 1);
   const pay = usePayments(true, period.preset === 'all' ? null : period);
   const feats = useFeatures();
-  type Tab = 'collections' | 'payouts' | 'bulk' | 'reconciliations' | 'settings';
+  type Tab = 'collections' | 'payouts' | 'bulk' | 'tax' | 'reconciliations' | 'settings';
   const [params, setParams] = useSearchParams();
-  const [tab, setTabState] = useState<Tab>(() => (['collections', 'payouts', 'bulk', 'reconciliations', 'settings'].includes(params.get('tab') || '') ? params.get('tab') as Tab : 'collections'));
+  const [tab, setTabState] = useState<Tab>(() => (['collections', 'payouts', 'bulk', 'tax', 'reconciliations', 'settings'].includes(params.get('tab') || '') ? params.get('tab') as Tab : 'collections'));
   const setTab = (t: Tab) => { setTabState(t); const n = new URLSearchParams(params); n.set('tab', t); n.delete('batch'); setParams(n, { replace: true }); };
   const openBatch = params.get('batch');
   const setOpenBatch = (id: string | null) => { const n = new URLSearchParams(params); if (id) { n.set('tab', 'bulk'); n.set('batch', id); } else n.delete('batch'); setParams(n, { replace: true }); };
@@ -45,9 +46,10 @@ export default function Payments() {
   const refresh = () => qc.invalidateQueries({ queryKey: ['payments'] });
   async function openWallet() {
     setBusy('open');
-    const r = await edge('payments', { action: 'open_wallet', org_id: orgId });
+    const r = await edge<{ tax_wallet?: any; tax_error?: string | null }>('payments', { action: 'open_wallet', org_id: orgId });
     if (r.ok === false) toast(r.reason === 'not_configured' ? 'Payments are not available yet. TaxStreem is setting them up.' : r.error || 'Could not open the wallet.', 'err');
-    else toast('The wallet is open');
+    else toast(r.tax_wallet ? 'The wallet and the tax wallet are open' : 'The wallet is open. Open the tax wallet from its tab.');
+    void qc.invalidateQueries({ queryKey: ['tax_wallet'] });
     await refresh(); setBusy(null);
   }
   async function checkBalance() {
@@ -83,7 +85,7 @@ export default function Payments() {
             <div style={{ fontSize: 14, opacity: .9 }}>{w.account_name}</div>
             <div className="row" style={{ marginTop: 10 }}>
               <button className="btn btn-sm" style={{ background: 'rgba(255,255,255,.15)', color: '#fff' }} onClick={() => navigator.clipboard?.writeText(w.account_number).then(() => toast('Copied'))}><Icon name="copy" size={14} color="#fff" />Copy</button>
-              <span style={{ fontSize: 12, opacity: .8 }}>Customers can pay straight into this account. Atlas matches each payment to the customer.</span>
+              <span style={{ fontSize: 12, opacity: .8 }}>Customers pay straight into this account, at the till and from invoices. Each payment is matched to its sale, and its VAT moves to the tax wallet.</span>
             </div>
           </div>
           <div className="card card-pad stack" style={{ gap: 8 }}>
@@ -106,6 +108,7 @@ export default function Payments() {
         { id: 'collections', label: 'Collections' },
         ...(money_ ? [{ id: 'payouts' as const, label: 'Payouts', count: (d?.payouts || []).filter((p: any) => p.status === 'pending_approval').length || undefined },
           { id: 'bulk' as const, label: 'Bulk payments', count: (d?.batches || []).filter((b: any) => b.status === 'pending_approval').length || undefined },
+          { id: 'tax' as const, label: 'Tax wallet' },
           { id: 'reconciliations' as const, label: 'Reconciliations' }] : []),
         ...(d?.can?.settings ? [{ id: 'settings' as const, label: 'Settings' }] : []),
       ]} />
@@ -173,6 +176,7 @@ export default function Payments() {
           ))}
         </div>
       )}
+      {tab === 'tax' && money_ && <TaxWalletPanel />}
       {tab === 'settings' && d?.can?.settings && <PaymentSettings data={d} onSaved={refresh} />}
       {payout && <PayoutModal onClose={() => setPayout(false)} />}
       {bulk && <BulkPayModal onClose={() => setBulk(false)} onCreated={(b) => { setBulk(false); setTabState('bulk'); setOpenBatch(b.id); }} />}

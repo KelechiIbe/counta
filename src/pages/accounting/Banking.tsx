@@ -15,6 +15,7 @@ import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows } from '../.
 import { StatusChip } from '../sell/common';
 import StatementUpload, { STAGE } from './BankStatement';
 import { ConnectBank, FeedControls } from './BankFeeds';
+import { ClaimInvoicesModal } from './tax/VatSources';
 
 
 // Returns are filed from January 2023 (or from when the books start): a bank account whose lines start later needs the
@@ -40,6 +41,7 @@ export default function Banking() {
   const [acct, setAcct] = useState<string>('all');
   const [status, setStatus] = useState<'all' | 'unmatched' | 'proposed' | 'done'>('all');
   const [upload, setUpload] = useState<any | null>(null);
+  const [claim, setClaim] = useState<any | null>(null);
   const [recon, setRecon] = useState<any | null>(null);
   const [adding, setAdding] = useState(false);
   const [connect, setConnect] = useState<string | null>(null);
@@ -106,7 +108,11 @@ export default function Banking() {
               <b className="right num" style={{ color: Number(l.amount) > 0 ? '#15803D' : undefined }}>{Number(l.amount) > 0 ? '+' : '−'}{N2(Math.abs(l.amount))}</b>
               <span><StatusChip s={l.status === 'proposed' ? 'pending' : l.status === 'unmatched' ? 'draft' : l.status === 'ignored' ? 'void' : 'confirmed'} />{l.confidence != null && l.stage === 'ai' && <span className="faint" style={{ fontSize: 11 }}> {Math.round(Number(l.confidence) * 100)}%</span>}</span>
               <span className="muted" style={{ fontSize: 12 }}>{STAGE[l.stage] || (l.status === 'unmatched' ? 'Waiting for Atlas' : '—')}</span>
-              <span className="muted mono" style={{ fontSize: 12 }}>{l.journal_ref || ''}</span>
+              <span className="muted mono" style={{ fontSize: 12 }}>{l.journal_ref || ''}
+                {/* A payment out with no Counta bill behind it: attach the supplier's invoice to claim its input VAT. */}
+                {Number(l.amount) < 0 && !['matched', 'ignored'].includes(l.status) && inv.org.vat_registered && (can(inv, 'keep_books') || can(inv, 'file_tax')) && (
+                  <button className="btn btn-ghost btn-xs" style={{ display: 'block', marginTop: 2 }} onClick={() => setClaim(l)} title="Attach the supplier's invoice to claim its input VAT">Attach invoice</button>
+                )}</span>
             </div>
           ))}
         </div>
@@ -122,6 +128,7 @@ export default function Banking() {
         </div>
       )}
       {upload && <StatementUpload account={upload} onClose={() => setUpload(null)} />}
+      {claim && <ClaimInvoicesModal bankLine={claim} onClose={() => setClaim(null)} />}
       {recon && <Reconcile account={recon} onClose={() => setRecon(null)} />}
       {adding && <AddAccount onClose={() => setAdding(false)} />}
       {connect != null && <ConnectBank accounts={accounts} preselect={connect || undefined} onClose={() => setConnect(null)} />}

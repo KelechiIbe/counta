@@ -1,0 +1,36 @@
+# systemd unit for the Counta transfer relay. Copy to /etc/systemd/system/counta-relay.service, put the secret in
+# /etc/counta-relay.env (RELAY_SECRET=...), then: systemctl daemon-reload && systemctl enable --now counta-relay
+[Unit]
+Description=Counta transfer relay (Flutterwave transfers from a fixed IP address)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=counta-relay
+Group=counta-relay
+WorkingDirectory=/opt/counta-relay
+EnvironmentFile=/etc/counta-relay.env
+Environment=HOST=127.0.0.1
+Environment=PORT=8787
+ExecStart=/usr/bin/node /opt/counta-relay/server.mjs
+Restart=always
+RestartSec=3
+# Nothing on disk is needed: lock the service down.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
