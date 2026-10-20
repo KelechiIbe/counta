@@ -27,7 +27,11 @@ export const NRS_LABELS: { zero: string[]; exempt: string[] } = {
     'Medical services',
     'Tuition relating to nursery, primary, secondary or tertiary education'
   ],
+  // The first two are the Act's words for exempt goods the template's list lacks (s.186(1)(o) and (d)); TaxStreem chose to
+  // describe them as the Act does.
   'exempt': [
+    'Assistive devices and disability-related products including hearing aids, wheelchairs, and braille materials',
+    'Baby products',
     'Crude Petroleum Oil and feed gas for all processed gas',
     'Goods or services supplied to a diplomatic mission, diplomat or person recognised under the Diplomatic Immunities and Privileges Act whose activity is in public interest, and not for profit',
     'Goods purchased for use in humanitarian donor funded projects',
@@ -96,7 +100,7 @@ Give less than 0.8 when the name is vague; when it could be a basic food or a pr
 children; or when the business's trade suggests something unusual.
 reason: one short sentence a shop owner understands. law: "NTA 2025 s.187" for zero-rated, "NTA 2025 s.186" for exempt, "NTA 2025 standard rate" for standard.
 nrs_label: for a zero-rated or exempt item, the one description from the NRS VAT return's list below that fits it, copied exactly; "" for a
-standard-rated item, or when none fits (baby products and assistive devices have no description of their own on the list).
+standard-rated item, or when none fits. Baby products and assistive devices take the Act's own words, which are on the exempt list below.
 Zero-rated: ${NRS_LABELS.zero.map((l) => JSON.stringify(l)).join('; ')}
 Exempt: ${NRS_LABELS.exempt.map((l) => JSON.stringify(l)).join('; ')}`;
 

@@ -37,7 +37,8 @@ export function NrsLabelSelect({ treatment, value, onChange, compact }: { treatm
   return (
     <select className={'input' + (compact ? ' input-sm' : '')} value={value} aria-label="NRS description" onChange={(e) => onChange(e.target.value)} style={{ maxWidth: '100%' }}>
       <option value="">Choose the NRS description</option>
-      {labels.map((l) => <option key={l.label} value={l.label} title={l.label}>{l.label.trim().replace(/;$/, '').replace(/\s{2,}/g, ' ')}</option>)}
+      {labels.map((l) => <option key={l.label} value={l.label} title={l.label}>
+        {l.label.trim().replace(/;$/, '').replace(/\s{2,}/g, ' ')}{l.on_template === false ? " (the Act's words; not on the NRS list yet)" : ''}</option>)}
     </select>
   );
 }

@@ -79,7 +79,10 @@ export function VatReturnModal({ period, onClose }: { period: string; onClose: (
                   <Line label="Line 115" v={s.lines['115']} strong />
                   <div style={{ fontSize: 12, color: Math.abs(Number(s.difference)) <= Number(s.tolerance) ? '#15803D' : '#B45309' }}>
                     {Math.abs(Number(s.difference)) < 0.005 ? 'They agree.' : Math.abs(Number(s.difference)) <= Number(s.tolerance)
-                      ? `${N2(Math.abs(Number(s.difference)))} apart: the template works VAT out on totals, Counta line by line.` : `${N2(Number(s.difference))} apart. Look before filing.`}
+                      ? `${N2(Math.abs(Number(s.difference)))} apart: the template works VAT out on totals, Counta line by line.`
+                      : Number(s.wvat_gap || 0) && Math.abs(Number(s.difference) + Number(s.wvat_gap)) <= Number(s.tolerance)
+                        ? `${N2(Math.abs(Number(s.difference)))} apart: line 110 credits 7.5% of the invoice value where an agent kept ${Number(s.wvat_gap) > 0 ? 'less' : 'more'}. See the checks above.`
+                        : `${N2(Number(s.difference))} apart. Look before filing.`}
                   </div>
                   <div className="faint" style={{ fontSize: 12 }}>Lines 116 to 150 (credit brought forward, credit, payable) are worked out by the portal.{s.counta.filed ? ' This month is filed in Counta.' : ''}</div>
                 </div>

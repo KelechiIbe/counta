@@ -26,10 +26,11 @@ export const useCustoms = (from?: string, to?: string) =>
 // Nigeria's states and local government areas as the NRS VAT template spells them (static, so read once).
 export type NgPlaces = { states: string[]; lgas: Record<string, string[]> };
 export const useNgPlaces = () => useQuery({ queryKey: ['ng-places'], staleTime: Infinity, gcTime: Infinity, queryFn: () => rpc<NgPlaces>('ng_places') });
-// The NRS VAT return's descriptions of zero-rated and exempt supplies, spelt as the template has them.
-export type NrsLabel = { label: string; treatment: 'zero' | 'exempt' };
+// The NRS VAT return's descriptions of zero-rated and exempt supplies, spelt as the template has them, and the Act's words for
+// the exempt goods its list lacks (on_template false).
+export type NrsLabel = { label: string; treatment: 'zero' | 'exempt'; on_template?: boolean };
 export const useNrsLabels = () => useQuery({ queryKey: ['nrs-labels'], staleTime: Infinity, gcTime: Infinity, queryFn: async () => {
-  const { data, error } = await supabase.from('nrs_vat_labels').select('label, treatment').order('label');
+  const { data, error } = await supabase.from('nrs_vat_labels').select('*').order('label');
   if (error) throw error;
   return (data || []) as NrsLabel[];
 } });
