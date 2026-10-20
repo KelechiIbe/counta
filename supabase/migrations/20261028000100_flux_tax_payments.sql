@@ -432,6 +432,12 @@ begin
   select * into t from tax_wallets where org_id = i.org_id and status = 'active';
   if not found then return 'The business has no tax wallet. Pay it by transfer from a bank account to the account shown, then mark it paid.'; end if;
   if (select is_sample from orgs where id = i.org_id) then return 'This is a sample business, so Counta does not pay its tax by itself.'; end if;
+  -- Payments paused by TaxStreem, or not open yet (the NIN check): the same as for every other payment.
+  begin
+    perform private.require_payments_open(i.org_id);
+  exception when others then
+    return sqlerrm;
+  end;
   if i.bank_code is null then return format('Counta could not find the bank "%s" to pay into. Pay it by transfer from a bank account, then mark it paid.', i.bank_name); end if;
   if i.name_ok is false then
     return format('The bank says account %s belongs to %s, but Flux read the name as %s. The tax wallet will not pay it: ask Flux for a new account, or pay it from a bank if you are sure.',
