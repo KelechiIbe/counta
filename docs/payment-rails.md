@@ -4,18 +4,33 @@ Counta collects money for a business by bank transfer, payment link and QR code,
 
 ## How money moves on Flutterwave
 
-1. Each business gets a wallet: a Flutterwave payout subaccount with its own virtual account number (Payments, Open wallet). Customers can pay straight into it, and Atlas matches each credit to the customer.
+1. Each business gets two wallets, both Flutterwave payout subaccounts in its name with their own account numbers (Payments, Open wallet): the business wallet, which takes payments and pays suppliers, and the tax wallet (see below). Customers can pay straight into the business wallet, and each credit is matched to the sale or invoice waiting for it.
 2. At the till or on an invoice, Counta opens a payment request (`payment_requests`) and asks Flutterwave for a way to pay:
-   - Pay by transfer: a one-off dynamic virtual account for the exact amount (Flutterwave keeps it open for about an hour).
+   - Pay by transfer: the business wallet's own account number, with the sale's number (`pay_ref`) to put in the transfer's description. The request waits at once; when the transfer reaches the wallet, Counta reads the wallet's statement and matches it, by that reference first, then by the amount (the oldest sale waiting for that amount, flagged for a check when several were). The money never passes through TaxStreem's balance, so it needs no sweep. The rail capability `direct_account` switches this on; without it, Counta falls back to a one-off dynamic virtual account on TaxStreem's account, swept as in step 4.
    - Payment link: Flutterwave checkout (card, transfer or USSD), returning to the document page.
    - QR: Flutterwave NQR where it is enabled; otherwise a QR code of the payment link.
 3. When Flutterwave says a charge completed, Counta looks the transaction up with `verify_by_reference` and records only what Flutterwave's own record says (amount, fee, payer). The webhook alone never records money.
-4. The money lands in TaxStreem's Flutterwave balance and is swept into the business's wallet with a transfer whose reference is `SWP-<tx_ref>`. A retry uses a fresh reference (`SWP-<tx_ref>-<n>`) so a lost answer can never pay twice.
+4. Card, USSD and QR payments land in TaxStreem's Flutterwave balance and are swept into the business's wallet with a transfer whose reference is `SWP-<tx_ref>`. A retry uses a fresh reference (`SWP-<tx_ref>-<n>`) so a lost answer can never pay twice.
 5. The sale is marked paid and posted: Dr wallet (under 1014) and Dr 6701 for Flutterwave's fee, Cr receivables (or, at the till, revenue and output VAT).
 6. A cron job every five minutes re-checks unpaid requests, retries failed sweeps and re-checks payouts in progress, so a missed webhook only delays the answer.
 7. Every night at 00:40 Counta reads each wallet's statement from Flutterwave, records credits the books are missing and compares the balance with the books. A difference becomes a question in the Books inbox.
 
 At the till the screen waits for the transfer, checks every four seconds and says the payment out loud when it lands ("Payment received. Five thousand naira from Ada Obi."). Payments by another channel (cash, POS, a transfer into another bank account) are recorded by the cashier and confirmed by a manager or the bookkeeper once they show in the bank.
+
+## Transfers need the relay
+
+Flutterwave takes transfers (payouts, bulk payments, sweeps, moves between a business's two wallets and tax payments) only from IP addresses whitelisted on TaxStreem's account. Supabase's servers have no fixed address, so Counta sends every transfer through TaxStreem's relay, a small server with one fixed address: see [transfer-relay.md](transfer-relay.md). Without the relay set up (`FLW_RELAY_URL` and `FLW_RELAY_SECRET` in the admin portal), transfers wait: a payout stays approved, a sweep stays pending, a move to the tax wallet waits, and each goes once the relay works. Collections need no relay.
+
+## The tax wallet
+
+The second account number holds the business's tax. Moves into it are automatic:
+
+- VAT: when a payment reaches the business wallet (a till sale, an invoice paid, money paid with no request and taken as a sale), the VAT share of it (`amount x VAT / total` of the sale) is queued to move.
+- WHT: when a supplier's bill is paid from the business wallet, the WHT and withholding VAT kept back are queued to move.
+
+The poll every five minutes gathers what is queued into one transfer per business (reference `TAXB-…`), sends it from the business wallet to the tax wallet, and books it (Dr tax wallet / Cr business wallet) the moment Flutterwave accepts it. A transfer Flutterwave later reports failed is reversed and tried again under a new reference. While a move is queued, the business wallet cannot pay that money out.
+
+Money leaves the tax wallet only to pay tax: a filed VAT month, or a month's WHT for one authority, to an account TaxStreem lists in the admin portal (Alerts and tax wallets) for that tax, with the payment reference the tax office gave (`CNTX-…` is Counta's own reference). When Flutterwave confirms, the VAT month is marked paid (or the WHT remittance recorded and the deductions marked remitted). Once a month's VAT is paid, and once deductions are remitted, whatever the tax wallet holds beyond the tax still owed goes back to the business wallet. When the tax wallet holds less than is owed (VAT collected into other bank accounts, say), the Payments page shows the shortfall and the tax wallet's number to top it up.
 
 ## Payouts
 
@@ -57,7 +72,12 @@ Batches made after that go as one bulk transfer of up to 100 rows per request. R
 | `FLW_PUBLIC_KEY` | Live public key |
 | `FLW_WEBHOOK_HASH` | The secret hash set in the Flutterwave dashboard |
 
-Webhook URL in the Flutterwave dashboard: `https://krtqqhndmncarwusukrw.supabase.co/functions/v1/payments/webhook/flutterwave`, with the same secret hash. Switch on webhooks for transfers as well as charges, and webhook retries.
+Webhook URL in the Flutterwave dashboard: `https://krtqqhndmncarwusukrw.supabase.co/functions/v1/payments/webhook/flutterwave`, with the same secret hash. Switch on webhooks for transfers as well as charges, webhook retries, and "Enable payout subaccounts wallet funding hook" so a transfer to a business's own number is seen at once (the poll reads the wallets' statements anyway).
+
+| Secret | Value |
+| --- | --- |
+| `FLW_RELAY_URL` | The relay's https address, for example `https://relay.taxstreem.com` |
+| `FLW_RELAY_SECRET` | The `RELAY_SECRET` set on the relay server |
 
 Payments, Settings shows whether the keys and the secret hash are set and when Flutterwave last reached Counta with a verified event. Flutterwave only sends an event once money moves, so that line stays empty until the first payment or transfer. Phone numbers go to Flutterwave as digits only (`08035550142`); Flutterwave refuses anything else.
 
@@ -89,7 +109,8 @@ Amounts are naira with two decimals. Times are ISO 8601. A 404 means "not found"
 
 | Call | Request | Answer |
 | --- | --- | --- |
-| `POST /accounts` | `{ business_id, name, email, phone }` | `{ account_ref, account_number, bank_name, account_name }`: the business's wallet |
+| `POST /accounts` | `{ business_id, name, email, phone, purpose: "main" \| "tax" }` | `{ account_ref, account_number, bank_name, account_name }`: the business wallet, or its tax wallet |
+| `POST /accounts/{account_ref}/move` | `{ to_account_ref, amount, reference, narration }` | `{ status: "sent" \| "failed", provider_ref?, error? }`: money between a business's two accounts; idempotent on `reference` |
 | `GET /accounts/{account_ref}/balance` | | `{ available, ledger }` |
 | `GET /accounts/resolve?account_number=&bank_code=` | | `{ account_name }` |
 | `GET /banks` | | `[{ code, name }]` |
@@ -114,6 +135,8 @@ x-counta-signature: sha256=<hex HMAC-SHA256 of the raw body with the webhook sec
 { "event": "payout.completed", "data": { "reference": "CNTP-…" } }
 { "event": "payout.failed", "data": { "reference": "CNTP-…" } }
 { "event": "wallet.funded", "data": { "account_ref", "amount", "reference", "provider_ref", "narration", "sender": { "name", "account_number", "bank" }, "at" } }
+{ "event": "move.completed", "data": { "reference": "TAXB-…" } }
+{ "event": "move.failed", "data": { "reference": "TAXB-…", "error" } }
 ```
 
 For collections and payouts the webhook is only a nudge: Counta calls `GET /collections/{tx_ref}` or `GET /payouts/{reference}` and records what that says. `wallet.funded` covers money paid straight into the wallet's account number; it is recorded once per `provider_ref`. Answer 200 quickly; Counta's own checks every five minutes cover anything the webhook missed.

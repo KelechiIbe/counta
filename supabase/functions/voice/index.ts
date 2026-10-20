@@ -20,6 +20,8 @@
 //                                                         and deletes conversations in which an NIN was said
 //   { action: 'forget_pending' }                       -> only the deleting
 //   { action: 'refresh_voices' }                       -> reloads the Nigerian voices
+//   { action: 'place_due' }                            -> places the calls the morning alerts queued: Martina reminding an owner of a
+//                                                         tax return due tomorrow, and following up a customer's overdue invoice
 //
 // Secrets: ELEVENLABS_API_KEY (Edge Function secret or Vault). Optional: ELEVENLABS_VOICE_IDS (comma-separated voice ids to
 // offer instead of searching the voice library for Nigerian voices), ELEVENLABS_VOICE_ID (Martina's default voice),
@@ -316,6 +318,59 @@ ${RULES}`,
     },
     criteria: [{ id: 'reminder_heard', name: 'Reminder heard', type: 'prompt', conversation_goal_prompt: 'Did the person hear and understand what is waiting for them?' }],
   },
+  tax_deadline: {
+    name: 'Counta · tax deadline reminders',
+    first: 'Hello {{person_first_name}}, this is Martina, the Counta assistant for {{business_name}}. I am calling about your {{tax_name}} for {{period}}, due {{due_date}}. Do you have a quick minute?',
+    maxSecs: 150,
+    prompt: `You are Martina, the automated assistant inside {{business_name}}'s Counta accounting app. You are calling {{person_name}}, who runs the business, because a tax return is due very soon.
+
+What is due: the {{tax_name}} for {{period}}, due on {{due_date}}. Amount: {{amount}}.
+What to do: {{what_to_do}}
+
+How to run the call:
+1. Greet them by first name and say in one or two sentences why you are calling: the return is due {{due_date}}, and filing late brings penalties and interest.
+2. Say what to do, simply, using only the details above. Do not invent figures, dates or penalties.
+3. You cannot file or pay anything yourself. They need to open Counta to finish it.
+4. Ask when they will do it, and whether anything is stopping them. If something is, write it down so the Counta team can help.
+5. Thank them and end the call. Keep it under a minute.
+${RULES}`,
+    data: {
+      will_file: { type: 'boolean', description: 'True if the person said they will file or pay before the due date.' },
+      when: { type: 'string', description: 'When they said they will do it, in their words. Empty if they did not say.' },
+      blocker: { type: 'string', description: 'Anything they said is stopping them filing or paying (missing figures, no money, a question about the return). Empty if none.' },
+      notes: { type: 'string', description: 'Anything else they said that matters, in one sentence.' },
+    },
+    criteria: [{ id: 'reminder_heard', name: 'Reminder heard', type: 'prompt', conversation_goal_prompt: 'Did the person hear that the return is due and what to do about it?' }],
+  },
+  customer_followup: {
+    name: 'Counta · overdue invoice follow-ups',
+    first: 'Good day. This is Martina, an automated assistant calling on behalf of {{business_name}}. Am I speaking with {{customer_name}}, or someone who handles their payments?',
+    maxSecs: 180,
+    prompt: `You are Martina, an automated assistant calling on behalf of {{business_name}}, a business in Nigeria, about an invoice its customer {{customer_name}} has not paid.
+
+The invoice: {{invoice_number}}, {{amount_due}} still to pay, due on {{due_date}} ({{days_overdue}} days ago).
+For questions about the invoice: {{contact_name}} at {{business_name}}, {{contact_phone}}.
+
+How to run the call:
+1. Confirm you are speaking with {{customer_name}} or someone who handles their payments. If not, ask for the right person or a good time to call back, then end politely.
+2. Say, politely and without pressure, that invoice {{invoice_number}} for {{amount_due}} was due on {{due_date}}, and ask when they expect to pay.
+3. If they say they have already paid, thank them and ask when and how they paid, so {{business_name}} can match it. Do not argue.
+4. If they disagree with the invoice or something on it, listen, write down exactly what they say, and say {{contact_name}} will get back to them. Do not discuss the details yourself.
+5. If they want the invoice again, say {{business_name}} will resend it with its payment link. Never read out links or account numbers on the call.
+6. Before you end, repeat back what they said (the date they will pay, or that they paid, or their query), thank them and end.
+Be courteous throughout. Never threaten, never mention penalties, legal action or credit reports, and never discuss anyone else's account.
+${RULES}`,
+    data: {
+      will_pay: { type: 'boolean', description: 'True if the customer said they will pay.' },
+      promised_date: { type: 'string', description: 'The day or date they said they will pay, in their words, for example "Friday" or "end of the month". Empty if none.' },
+      paid_already: { type: 'boolean', description: 'True if they said they have already paid.' },
+      paid_how: { type: 'string', description: 'If they said they paid: when and how, in their words. Empty otherwise.' },
+      dispute: { type: 'string', description: 'What they disagree with about the invoice, in their words. Empty if nothing.' },
+      resend_invoice: { type: 'boolean', description: 'True if they asked for the invoice or payment link to be sent again.' },
+      notes: { type: 'string', description: 'Anything else the business should know, in one sentence.' },
+    },
+    criteria: [{ id: 'answer', name: 'Customer answered', type: 'prompt', conversation_goal_prompt: 'Did the customer say when they will pay, that they have paid, or what they dispute?' }],
+  },
   guide_followup: {
     name: 'Counta · onboarding follow-up',
     first: 'Hello {{first_name}}, this is Martina from Counta. You asked me to give you a quick call to help you finish setting up. Is now a good time?',
@@ -452,7 +507,7 @@ async function businessVoice(orgId: string | null | undefined): Promise<string |
   return data?.voice_id && VOICE_ID.test(data.voice_id) ? data.voice_id : null;
 }
 
-type Kind = 'vendor_order' | 'reminder' | 'guide_followup';
+type Kind = 'vendor_order' | 'reminder' | 'guide_followup' | 'tax_deadline' | 'customer_followup';
 async function place(kind: Kind, prep: { call_id: string; to_number: string; variables: Record<string, unknown>; voice_id?: string | null }, num: any) {
   try {
     const agentId = await ensureAgent(kind);
@@ -484,6 +539,8 @@ const FINAL = ['completed', 'no_answer', 'busy', 'voicemail', 'failed'];
 
 async function syncCall(call: any) {
   if (FINAL.includes(call.status)) return call.status;
+  // Queued for calling hours by the morning alerts: not placed yet, so there is nothing to ask ElevenLabs.
+  if (!call.conversation_id && call.status === 'queued' && call.call_after) return call.status;
   if (!call.conversation_id) {
     if (Date.now() - new Date(call.created_at).getTime() > 30 * 60_000) {
       await admin.rpc('voice_call_update', { p_call: call.id, p_patch: { status: 'failed', error: 'The call never started.' } });
@@ -533,6 +590,21 @@ async function guideFollowups() {
     // The follow-up agent speaks in the business's own words too (revenue and clients for a law firm, sales and customers for a shop).
     d.variables = { ...(d.variables || {}), wording: wordingNote(await businessWords(d.org_id || null, null)) };
     out.push(await place('guide_followup', d, r.num));
+  }
+  return { ok: true, placed: out };
+}
+
+// The calls the morning alerts queued, now inside calling hours (the database decides which are due and moves the rest on).
+async function placeDue() {
+  // Checked first, so calls are not taken off the queue when they cannot be placed.
+  const r = await ready();
+  if (!r.ok) return { ok: false, reason: 'not_configured', error: r.error };
+  const { data: due, error } = await admin.rpc('svc_calls_due', { p_limit: 10 });
+  if (error) return { ok: false, error: error.message };
+  const out: unknown[] = [];
+  for (const d of (due as any[]) || []) {
+    if (d.kind !== 'tax_deadline' && d.kind !== 'customer_followup') continue;
+    out.push(await place(d.kind, { call_id: d.call_id, to_number: d.to_number, variables: d.variables || {} }, r.num));
   }
   return { ok: true, placed: out };
 }
@@ -719,6 +791,7 @@ Deno.serve(async (req) => {
         return json({ ...calls, forgotten: (await forgetConversations(null).catch(() => ({ deleted: 0 }))).deleted });
       }
       if (body.action === 'forget_pending') return json(await forgetConversations(null));
+      if (body.action === 'place_due') return json(await placeDue());
       if (body.action === 'refresh_voices') return json({ ok: true, ...(await refreshVoices()) });
       if (body.action !== 'sync_pending') return json({ ok: false, error: 'Unknown action.' }, 400);
       const since = new Date(Date.now() - 3 * 3600_000).toISOString();

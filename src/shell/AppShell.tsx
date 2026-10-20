@@ -7,7 +7,7 @@ import { initials } from '../lib/format';
 import { useNeedsAction } from './needsAction';
 import { InstallBanner } from '../components/InstallBanner';
 import { store } from '../lib/pwa';
-import { useInbox } from '../lib/api';
+import { useAttention, useInbox } from '../lib/api';
 import { useAdminMe } from '../admin/api';
 import { cap, useWords } from '../lib/wording';
 import { useVatRate } from '../lib/vat';
@@ -139,15 +139,18 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
   const money = can(inv, 'keep_books') || can(inv, 'make_payments') || can(inv, 'see_margins');
   const inbox = useInbox(money);
   const ib = inbox.data;
+  const at = useAttention().data;
+  const n = (k: keyof NonNullable<typeof at>) => Number(at?.[k] || 0);
   const external = (label: string, icon: string) => (
     <a className={'nav-item' + (rail ? ' rail-item' : '')} href={MAIN_APP} target="_blank" rel="noreferrer" title={label + ' opens in the main TaxStreem app'} aria-label={rail ? label : undefined}>
       <Icon name={icon} size={20} color="#6B7280" />{!rail && <><span style={{ flex: 1 }}>{label}</span><Icon name="external" size={14} color="#9CA3AF" /></>}
     </a>
   );
-  const link = (to: string, label: string, icon: string, extra?: () => void) => (
+  const link = (to: string, label: string, icon: string, extra?: () => void, badge = 0) => (
     <NavLink to={to} className={({ isActive }) => 'nav-item' + (rail ? ' rail-item' : '') + (isActive && to !== '/m' ? ' active' : '')} title={rail ? label : undefined} aria-label={rail ? label : undefined}
       onClick={() => { extra?.(); onClose(); }}>
-      {({ isActive }) => (<><Icon name={icon} size={20} color={isActive && to !== '/m' ? '#111827' : '#6B7280'} />{!rail && <span>{label}</span>}</>)}
+      {({ isActive }) => (<><Icon name={icon} size={20} color={isActive && to !== '/m' ? '#111827' : '#6B7280'} />{!rail && <span style={{ flex: 1 }}>{label}</span>}
+        {badge > 0 && (rail ? <span className="rail-dot" /> : <span className="nav-badge">{badge}</span>)}</>)}
     </NavLink>
   );
   const invSubs: Sub[] = populated ? [
@@ -172,20 +175,20 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
         {/* A business that only does services bills its clients: no till, orders or shop in the way. */}
         <Group to={w.has_stock ? '/sell/till' : '/sell/sales'} label={w.has_stock ? 'Sell' : 'Billing'} icon="receipt" active={p.startsWith('/sell')} onClose={onClose} rail={rail} drawer={drawer} show={can(inv, 'record_sales') || money}
           subs={w.has_stock
-            ? [['/sell/till', 'Till'], ['/sell/sales', `${cap(w.sales)} & invoices`], ['/sell/customers', cap(w.customers)], ['/sell/orders', 'Orders & deliveries'],
+            ? [['/sell/till', 'Till'], ['/sell/sales', `${cap(w.sales)} & invoices`, n('invoices_overdue')], ['/sell/customers', cap(w.customers)], ['/sell/orders', 'Orders & deliveries', n('orders_to_confirm')],
               ['/sell/price-lists', 'Price lists'], ['/sell/shop', 'Online shop']]
-            : [['/sell/sales', 'Invoices'], ['/sell/customers', cap(w.customers)], ['/sell/price-lists', 'Price lists']]} />
+            : [['/sell/sales', 'Invoices', n('invoices_overdue')], ['/sell/customers', cap(w.customers)], ['/sell/price-lists', 'Price lists']]} />
         <Group to="/payments" label="Payments" icon="card" active={p.startsWith('/payments')} onClose={onClose} rail={rail} drawer={drawer} show={can(inv, 'record_sales') || money}
-          subs={[['/payments', 'Wallet & payments', Number(ib?.payouts_to_approve || 0)]]} />
+          subs={[['/payments', 'Wallet & payments', Number(ib?.payouts_to_approve || 0) + n('tax_wallet')]]} />
         <Group to="/purchases/bills" label="Purchases" icon="file" active={p.startsWith('/purchases')} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'approve_pos')}
-          subs={[['/purchases/bills', 'Bills', Number(ib?.bills_to_approve || 0)], ['/purchases/vendors', 'Vendors']]} />
+          subs={[['/purchases/bills', 'Bills', Number(ib?.bills_to_approve || 0) + n('bills_overdue')], ['/purchases/vendors', 'Vendors']]} />
         <Group to="/inventory" label="Inventory" icon="package" active={p.startsWith('/inventory')} onClose={onClose} rail={rail} drawer={drawer} subs={invSubs} show={w.has_stock || populated} />
         <Group to="/accounting/inbox" label="Accounting" icon="book" active={p.startsWith('/accounting')} onClose={onClose} rail={rail} drawer={drawer} show={money}
-          subs={[['/accounting/inbox', 'Books inbox', questions], ['/accounting/banking', 'Banking'], ['/accounting/statements', 'Financial statements'],
+          subs={[['/accounting/inbox', 'Books inbox', questions], ['/accounting/banking', 'Banking', n('bank_lines')], ['/accounting/statements', 'Financial statements'],
             ['/accounting/ledgers', 'Ledgers & reports'], ['/accounting/cfo', 'CFO pack'], ['/accounting/journals', 'Journals'], ['/accounting/assets', 'Fixed assets', Number(ib?.assets_to_confirm || 0)],
             ['/accounting/close', 'Period close'], ['/accounting/migrate', 'Move your books']]} />
         <Group to="/tax/vat" label="Tax returns" icon="percent" active={p.startsWith('/tax/') || p === '/tax'} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'file_tax')}
-          subs={[['/tax/vat', 'VAT'], ['/tax/wht', 'Withholding tax'], ['/tax/cit', 'Companies income tax']]} />
+          subs={[['/tax/vat', 'VAT', n('vat') + n('schedules_draft')], ['/tax/wht', 'Withholding tax', n('wht')], ['/tax/cit', 'Companies income tax', n('cit')]]} />
         {external('Taxes', 'landmark')}
         {link('/assistant', 'AI Assistant', 'sparkles')}
       </nav>
@@ -193,7 +196,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
       <nav className="nav">
         {external('Integrations', 'blocks')}
         {external('Subscriptions', 'card')}
-        {link('/settings', 'Settings', 'settings')}
+        {link('/settings', 'Settings', 'settings', undefined, n('tax_id'))}
         {link('/m', 'Phone app', 'phone', () => store.set('counta-view', 'phone'))}
       </nav>
       <div style={{ marginTop: 'auto', padding: '16px 0 12px', flex: 'none', position: 'relative' }}>

@@ -187,7 +187,13 @@ export function PayWait({ request, saleNumber, onPaid, onClose, onCancelSale }: 
               </button>
               <div style={{ fontWeight: 600 }}>{r.bank_name}</div>
               <div className="muted" style={{ fontSize: 13 }}>{r.account_name}</div>
-              {expiry && <div className="faint" style={{ fontSize: 12, marginTop: 10 }}>This account takes one payment and closes at {expiry.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Lagos' })}.</div>}
+              {r.direct ? (
+                <div style={{ marginTop: 12, background: '#F0F7FF', borderRadius: 10, padding: '10px 12px', fontSize: 13, color: '#1E3A8A', textAlign: 'left' }}>
+                  This is your business&apos;s own account. Ask the customer to write{' '}
+                  <button className="btn btn-ghost btn-xs" style={{ fontWeight: 700, color: '#1E3A8A', padding: '0 4px' }} onClick={() => r.pay_ref && copy(r.pay_ref)} aria-label="Copy the reference">{r.pay_ref}<Icon name="copy" size={12} color="#1E3A8A" /></button>{' '}
+                  in the transfer&apos;s description, so Counta matches it to this sale the moment it lands.
+                </div>
+              ) : expiry && <div className="faint" style={{ fontSize: 12, marginTop: 10 }}>This account takes one payment and closes at {expiry.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Lagos' })}.</div>}
             </div>
           ) : (
             <div style={{ textAlign: 'center' }}>

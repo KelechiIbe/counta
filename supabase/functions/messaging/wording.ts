@@ -96,13 +96,24 @@ export function wording(m: Msg) {
         button: 'Join the team', link: p.link, wa: null,
       };
     }
+    case 'alert': {
+      // Counta telling the business's owner something needs doing (a tax return due, invoices overdue, transactions to
+      // confirm before the returns). Written by the database with the figures in; WhatsApp uses the template it names.
+      const lines = (Array.isArray(p.lines) ? p.lines : [p.body]).map((l: unknown) => String(l ?? '').trim()).filter(Boolean).slice(0, 8);
+      const wa = p.wa && typeof p.wa.name === 'string' && /^counta_[a-z_]+$/.test(p.wa.name) && Array.isArray(p.wa.params)
+        ? { name: p.wa.name, params: p.wa.params.map((x: unknown) => String(x ?? '')) } : null;
+      return { heading: String(p.heading || m.subject || 'Something needs doing in Counta'), lines, button: String(p.button || 'Open Counta'), link: p.link, wa,
+        greet: first(p.person_name), from: 'Counta', footer: `Counta sends these for ${biz}. Choose which you get in Settings, Notifications.` };
+    }
     default:
       return { heading: m.subject || biz, lines: [String(p.body || '')], button: p.link ? 'Open' : '', link: p.link, wa: null };
   }
 }
 
+type Words = ReturnType<typeof wording> & { greet?: string; from?: string; footer?: string };
+
 export function emailHtml(m: Msg) {
-  const w = wording(m), p = m.params || {};
+  const w = wording(m) as Words, p = m.params || {};
   const biz = p.business || m.org?.name || '';
   const color = brandColor(m.org?.brand_color);
   const body = w.lines.filter(Boolean).map((l) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.5;color:#1f2933">${esc(l)}</p>`).join('');
@@ -117,18 +128,18 @@ export function emailHtml(m: Msg) {
 <table role="presentation" width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;padding:28px;border-top:4px solid ${color}" cellpadding="0" cellspacing="0"><tr><td>
 ${logo}<p style="margin:0 0 4px;font-size:13px;color:#52606d">${esc(biz)}</p>
 <h1 style="margin:0 0 18px;font-size:20px;color:#102a43">${esc(w.heading)}</h1>
-<p style="margin:0 0 12px;font-size:15px;color:#1f2933">Hello ${esc(first(p.customer_name))},</p>
+<p style="margin:0 0 12px;font-size:15px;color:#1f2933">Hello ${esc(w.greet ?? first(p.customer_name))},</p>
 ${body}${button}
 ${contact ? `<p style="margin:20px 0 0;font-size:13px;color:#52606d">Questions? ${contact}</p>` : ''}
 ${footer ? `<p style="margin:14px 0 0;font-size:12px;color:#829ab1">${footer}</p>` : ''}
 </td></tr></table>
-<p style="font-size:12px;color:#829ab1;margin:14px 0 0">Sent for ${esc(biz)} by Counta</p>
+<p style="font-size:12px;color:#829ab1;margin:14px 0 0">${esc(w.footer || `Sent for ${biz} by Counta`)}</p>
 </td></tr></table></body></html>`;
 }
 
 export function emailText(m: Msg) {
-  const w = wording(m), p = m.params || {};
-  return [`Hello ${first(p.customer_name)},`, '', ...w.lines.filter(Boolean), '', w.link ? `${w.button || 'Open'}: ${w.link}` : '',
-    '', [p.business_phone, p.reply_to].filter(Boolean).join(' · ')].join('\n').trim();
+  const w = wording(m) as Words, p = m.params || {};
+  return [`Hello ${w.greet ?? first(p.customer_name)},`, '', ...w.lines.filter(Boolean), '', w.link ? `${w.button || 'Open'}: ${w.link}` : '',
+    '', [p.business_phone, p.reply_to].filter(Boolean).join(' · '), w.footer || ''].join('\n').trim();
 }
 

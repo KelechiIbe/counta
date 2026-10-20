@@ -281,7 +281,7 @@ export default function Till() {
                     <option value="">Which of our accounts?</option>{banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.account_number ? ` · ${b.account_number}` : ''}</option>)}
                   </select>
                 )}
-                {INSTANT.includes(t.method) && <div className="faint" style={{ fontSize: 12 }}>{t.method === 'account' ? 'A one-off account number appears for the customer. Counta confirms the money itself.' : t.method === 'qr' ? 'Show the QR code to the customer.' : 'Send the link to the customer.'}</div>}
+                {INSTANT.includes(t.method) && <div className="faint" style={{ fontSize: 12 }}>{t.method === 'account' ? 'Your business account number appears for the customer, with the receipt number to quote. Counta confirms the money itself.' : t.method === 'qr' ? 'Show the QR code to the customer.' : 'Send the link to the customer.'}</div>}
                 {(t.method === 'transfer' || t.method === 'pos' || t.method === 'card' || t.method === 'cheque') && <div className="faint" style={{ fontSize: 12 }}>Confirmed later by someone who keeps the books, against the bank.</div>}
               </div>
             ))}

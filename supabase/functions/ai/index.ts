@@ -562,6 +562,101 @@ async function applyVat(admin: SupabaseClient, items: VatItem[]) {
   return { ok: true, checked: results.length, results };
 }
 
+// ---------------------------------------------------------------- VAT from other systems' records
+// The lines of an uploaded sales schedule have no Counta product behind them: their VAT treatment is decided from the
+// description, the same way as an item's (Numens, or Gemini until it is connected). The answers go back to the page,
+// which shows them for the person to check before saving.
+async function vatClassifyText(sb: SupabaseClient, admin: SupabaseClient, body: any) {
+  const orgId = String(body.org_id || '');
+  if (!isUuid(orgId)) return json({ ok: false, error: 'Choose the business.' }, 400);
+  // Only someone who sees the business's VAT work may ask (the same check the schedules page uses).
+  const { error } = await sb.rpc('get_sales_schedules', { p_org: orgId });
+  if (error) return json({ ok: false, error: error.message }, 403);
+  if (await paused(admin, orgId)) return json(PAUSED);
+  const seen = new Set<string>();
+  const items: VatItem[] = [];
+  for (const l of Array.isArray(body.lines) ? body.lines : []) {
+    const name = String(l?.name || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    items.push({ id: String(items.length + 1), org_id: orgId, name });
+    if (items.length >= 300) break;
+  }
+  if (!items.length) return json({ ok: true, results: [] });
+  const { data: org } = await admin.from('orgs').select('industry').eq('id', orgId).maybeSingle();
+  for (const it of items) it.industry = org?.industry || undefined;
+  const { answers, error: e2 } = await classifyVat(admin, items);
+  if (e2 && !answers.length) return json({ ok: false, reason: aiOn() ? 'error' : 'not_configured', error: e2 });
+  const byId = new Map(answers.map((a) => [a.id, a]));
+  return json({ ok: true, results: items.map((it) => {
+    const a = byId.get(it.id);
+    return { name: it.name, treatment: a?.treatment ?? null, confidence: a?.confidence ?? 0, nrs_label: a?.nrs_label ?? null, reason: a?.reason ?? null, source: a?.source ?? null };
+  }) });
+}
+
+const PURCHASE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    is_invoice: S.bool, supplier_name: S.nstr, supplier_tin: S.nstr, invoice_no: S.nstr,
+    invoice_date: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' }, description: S.nstr,
+    net: { type: 'NUMBER', nullable: true, description: 'Amount before VAT' }, vat: { type: 'NUMBER', nullable: true, description: 'VAT shown on the invoice; 0 when none is shown' },
+    total: S.nnum, vat_shown: S.bool, paid: { type: 'BOOLEAN', nullable: true, description: 'True when the document shows it was paid (receipt, PAID stamp, zero balance)' },
+    confidence: S.int, warnings: { type: 'ARRAY', items: S.str },
+  },
+  required: ['is_invoice', 'vat_shown', 'confidence', 'warnings'],
+};
+// A purchase invoice uploaded to claim its input VAT: what it says, for the person to check. Nothing is saved here.
+async function readPurchaseInvoice(sb: SupabaseClient, admin: SupabaseClient, body: any) {
+  const orgId = String(body.org_id || ''), path = String(body.path || '');
+  if (!isUuid(orgId) || !path.startsWith(orgId + '/') || path.includes('..')) return json({ ok: false, error: 'Upload the invoice first.' }, 400);
+  const { error } = await sb.rpc('get_sales_schedules', { p_org: orgId });
+  if (error) return json({ ok: false, error: error.message }, 403);
+  if (!aiOn()) return json(notConfigured());
+  if (await paused(admin, orgId)) return json(PAUSED);
+  const { data: blob, error: dErr } = await sb.storage.from('documents').download(path);
+  if (dErr || !blob) return json({ ok: false, error: 'Could not open the uploaded file.' });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (bytes.length > 18 * 1024 * 1024) return json({ ok: false, error: 'The file is too large to read. Use a photo or PDF under 15MB.' });
+  const mime = String(body.mime || blob.type || (path.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'));
+  if (!/^(application\/pdf|image\/(jpeg|png|webp))$/.test(mime)) return json({ ok: false, error: 'Upload a PDF or a photo of the invoice.' });
+  const { data: me } = await admin.from('orgs').select('name, tin').eq('id', orgId).maybeSingle();
+  const system = `You read purchase invoices that a Nigerian business paid, so it can claim the input VAT on them in its monthly VAT return.
+The buyer is ${me?.name || 'the business'}${me?.tin ? ` (Tax ID ${me.tin})` : ''}; the supplier is the other party.
+Rules:
+- is_invoice: false when this is not a supplier's invoice or receipt (a quotation, a delivery note with no prices, a bank statement, a photo of something else).
+- supplier_name and supplier_tin as printed (the seller's, never the buyer's). invoice_no and invoice_date (YYYY-MM-DD; Nigerian dates are day first).
+- net is the amount before VAT, vat the VAT charged as printed, total the amount payable. vat_shown is true only when the invoice shows a VAT amount or a
+  VAT line at 7.5%; a price "inclusive of VAT" with no VAT figure is vat_shown false (no input VAT can be claimed from it).
+- When the invoice shows a VAT figure but not the amount before VAT, net = total - vat.
+- description: what was bought, in a few words.
+- paid: true when it shows it was paid (a receipt, a PAID stamp, a zero balance), false when it shows an amount still due, null when you cannot tell.
+- confidence 0-100: how sure you are of the figures. Below 80 when digits could be read two ways or the figures do not add up.
+- warnings: short plain sentences about anything a person should check (the VAT is not 7.5% of the net, the buyer is someone else, the date is old).
+- Never invent a figure that is not on the document.`;
+  let out: any, model = MODEL;
+  try {
+    const res = await gemini(system, [{ text: 'Read this purchase invoice.' }, { inlineData: { mimeType: mime, data: encodeBase64(bytes) } }], PURCHASE_SCHEMA, 0.1, { thinking: 'low' });
+    out = res.data; model = res.model;
+  } catch (e) {
+    if (e instanceof CredentialError) return json(notConfigured());
+    return json({ ok: false, error: 'Could not read the invoice: ' + (e as Error).message });
+  }
+  const n = (v: unknown) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Math.round(Number(v) * 100) / 100);
+  let net = n(out.net), vat = n(out.vat), total = n(out.total);
+  if (net == null && total != null && vat != null) net = Math.round((total - vat) * 100) / 100;
+  if (total == null && net != null && vat != null) total = Math.round((net + vat) * 100) / 100;
+  const warnings: string[] = (Array.isArray(out.warnings) ? out.warnings : []).map((w: unknown) => String(w).slice(0, 200)).slice(0, 6);
+  if (net != null && vat != null && vat > net * 0.075 + 1) warnings.push('The VAT is more than 7.5% of the amount before VAT.');
+  if (net != null && vat != null && total != null && Math.abs(net + vat - total) > 1) warnings.push('The amount before VAT and the VAT do not add up to the total.');
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(out.invoice_date || '')) ? out.invoice_date : null;
+  return json({ ok: true, model, invoice: {
+    is_invoice: Boolean(out.is_invoice), supplier_name: out.supplier_name ? String(out.supplier_name).slice(0, 160) : null, supplier_tin: invoiceTin(out.supplier_tin),
+    invoice_no: out.invoice_no ? String(out.invoice_no).slice(0, 60) : null, invoice_date: day, description: out.description ? String(out.description).slice(0, 200) : null,
+    net, vat: out.vat_shown ? vat : 0, total, vat_shown: Boolean(out.vat_shown) && (vat || 0) > 0, paid: out.paid ?? null,
+    confidence: Math.max(0, Math.min(100, Math.round(Number(out.confidence) || 0))), warnings } });
+}
+
 // ---------------------------------------------------------------- moving the books: old chart to Counta's chart
 const MAP_SCHEMA = {
   type: 'OBJECT',
@@ -832,6 +927,8 @@ Deno.serve(async (req) => {
           item_type: it.item_type, unit: it.selling_unit, current: it.vat_treatment, industry: org?.industry }]));
       }
       case 'read_invoice': return await readInvoice(sb, admin, body, u.user.id);
+      case 'read_purchase_invoice': return await readPurchaseInvoice(sb, admin, body);
+      case 'vat_classify_text': return await vatClassifyText(sb, admin, body);
       case 'ask': return await ask(body);
       case 'chat': return await chat(body);
       case 'voice': return await voice(body);

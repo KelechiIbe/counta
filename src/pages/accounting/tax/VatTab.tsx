@@ -16,6 +16,7 @@ import { ExportMenu, useMeta } from '../../../components/Books';
 import { useTaxRefresh } from './CitTab';
 import { CustomsPanel, VatReturnModal } from './VatReturn';
 import { vatPct } from '../../../lib/vat';
+import { PurchasesPanel, ReceiptsVatCard, SchedulesPanel, useVatSources } from './VatSources';
 
 const STATUS: Record<string, { label: string; tone: string }> = {
   open: { label: 'Not filed', tone: 't-grey' }, filed: { label: 'Filed, to pay', tone: 't-amber' }, paid: { label: 'Filed', tone: 't-green' },
@@ -33,7 +34,8 @@ export default function VatTab() {
   const q = useVatPosition(from + '-01', to + '-01');
   const [open, setOpen] = useState<any>(null);
   const [modal, setModal] = useState<null | { kind: 'file' | 'pay' | 'reopen' | 'charge'; m?: any; charge?: boolean }>(null);
-  const [view, setView] = useState<'months' | 'customs'>('months');
+  const [view, setView] = useState<'months' | 'schedules' | 'purchases' | 'customs'>('months');
+  const src = useVatSources(orgId);
   const [nrs, setNrs] = useState<string | null>(null);
   const d = q.data;
   const st = d?.status || {};
@@ -51,7 +53,9 @@ export default function VatTab() {
           </div>
           {(d.expiring || []).length > 0 && <Alert kind="amber" icon="clock">Input VAT credit from {(d.expiring as any[]).map((l) => `${monthShort(l.from)} (${N2(l.amount)})`).join(', ')} lapses five years after it arose. Use it or claim a refund.</Alert>}
           <div className="row wrap" style={{ justifyContent: 'space-between' }}>
-            <Pills value={view} onChange={setView} options={[{ id: 'months', label: 'By month' }, { id: 'customs', label: 'Customs entries' }]} />
+            <Pills value={view} onChange={setView} options={[{ id: 'months', label: 'By month' },
+              { id: 'schedules', label: 'Sales from another POS', count: (src.data?.schedules || []).filter((s: any) => s.status === 'draft').length || undefined },
+              { id: 'purchases', label: 'Input VAT invoices' }, { id: 'customs', label: 'Customs entries' }]} />
             {view === 'months' && <div className="row wrap" style={{ gap: 8 }}>
             <PeriodPicker value={period} onChange={setPeriod} presets={['qtd', 'lq', 'ytd', 'ly', 'l12', 'all']} label="Months shown" align="end" />
             <ExportMenu name={`VAT ${from} to ${to}`} disabled={!months.length} sheets={() => [{ meta: meta('VAT position', `${monthName(from)} to ${monthName(to)}`),
@@ -62,6 +66,12 @@ export default function VatTab() {
             </div>}
           </div>
           {view === 'customs' && <CustomsPanel canEdit={!!d.can_file} />}
+          {view === 'schedules' && (src.isLoading ? <SkeletonRows n={3} /> : src.error ? <Alert kind="grey" icon="shield">{(src.error as Error).message}</Alert> : <>
+            <SchedulesPanel data={src.data} canWork={!!src.data?.can?.work} />
+            <ReceiptsVatCard settings={src.data?.settings} canWork={!!src.data?.can?.work} />
+          </>)}
+          {view === 'purchases' && (src.isLoading ? <SkeletonRows n={3} /> : src.error ? <Alert kind="grey" icon="shield">{(src.error as Error).message}</Alert>
+            : <PurchasesPanel data={src.data} canWork={!!src.data?.can?.work} />)}
           {view === 'months' && <>
           <div className="card" style={{ overflow: 'auto' }}>
             <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '120px repeat(5,minmax(100px,1fr)) 120px 170px', minWidth: 1000 }}>

@@ -84,13 +84,15 @@ async function sendEmail(m: Msg): Promise<string> {
   // Shown as "Business name via Counta <billing@...>", replies go to the business.
   const addr = senderAddress(from);
   if (!addr) throw new Error('Email is not switched on yet: the sending address TaxStreem set has no email address in it.');
-  const replyTo = m.params?.reply_to || m.org?.reply_to_email || m.org?.email;
+  // Counta's own alerts to the owner come from Counta, with nowhere to reply to; customers' messages come from the business.
+  const own = m.template === 'alert';
+  const replyTo = own ? null : m.params?.reply_to || m.org?.reply_to_email || m.org?.email;
   const cc = (Array.isArray(m.params?.cc) ? m.params.cc : []).filter((e: unknown) => typeof e === 'string' && senderAddress(e as string)).slice(0, 5);
   m.org = { ...m.org, logo_url: storageUrl(m.org?.logo_path) };
   const res = await fetch(`${RESEND_URL}/emails`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': `counta-${m.id}` },
-    body: JSON.stringify({ from: `${displayName(m.org?.name)} <${addr}>`, to: [m.to_address], ...(cc.length ? { cc } : {}),
+    body: JSON.stringify({ from: `${own ? 'Counta' : displayName(m.org?.name)} <${addr}>`, to: [m.to_address], ...(cc.length && !own ? { cc } : {}),
       subject: m.subject || wording(m).heading, html: emailHtml(m), text: emailText(m),
       ...(replyTo ? { reply_to: replyTo } : {}), tags: [{ name: 'template', value: m.template }] }),
     signal: AbortSignal.timeout(20_000),
@@ -113,7 +115,7 @@ async function sendWhatsApp(m: Msg): Promise<string> {
     body: JSON.stringify({
       messaging_product: 'whatsapp', recipient_type: 'individual', to: m.to_address.replace(/[^0-9]/g, ''), type: 'template',
       template: { name: w.wa.name, language: { code: lang },
-        components: [{ type: 'body', parameters: w.wa.params.map((t) => ({ type: 'text', text: String(t ?? '').replace(/\s+/g, ' ').slice(0, 900) || '-' })) }] },
+        components: [{ type: 'body', parameters: w.wa.params.map((t: unknown) => ({ type: 'text', text: String(t ?? '').replace(/\s+/g, ' ').slice(0, 900) || '-' })) }] },
     }),
     signal: AbortSignal.timeout(20_000),
   });

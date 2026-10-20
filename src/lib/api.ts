@@ -52,6 +52,8 @@ export interface PayRequest {
   account_name: string | null; link_url: string | null; qr_image: string | null; expires_at: string | null; paid_amount?: number | null; paid_at?: string | null;
   error?: string | null; sale_id?: string | null; sale_number?: string | null; sale_status?: string | null; payer?: string | null; customer_name?: string | null; created_at?: string;
   created_by_name?: string; sweep_status?: string | null; fee?: number | null;
+  // A transfer to the business's own wallet number, matched to this sale by the reference (or the amount) when it arrives.
+  direct?: boolean; pay_ref?: string | null;
 }
 export interface Customer {
   id: string; name: string; kind: string; phone: string | null; email: string | null; address: string | null; tin: string | null; is_walk_in: boolean; archived: boolean;
@@ -100,6 +102,10 @@ export const useBill = (id: string | null) => useQuery({ queryKey: ['bill', id],
 export const useBanking = (enabled = true, period?: { from: string; to: string } | null) => useOrgQuery<any>(['banking', period?.from || null, period?.to || null],
   (o) => rpc('get_banking', period ? { p_org: o, p_filter: { from: period.from, to: period.to } } : { p_org: o }), enabled, undefined, true);
 export const useInbox = (enabled = true) => useOrgQuery<any>(['inbox'], (o) => rpc('get_books_inbox', { p_org: o }), enabled, 60_000);
+// How many things need someone's action, by menu item, for this person's role (the red numbers in the menu).
+export type Attention = { invoices_overdue: number; orders_to_confirm: number; payments_to_confirm: number; bills_overdue: number; bank_lines: number; proposals: number;
+  schedules_draft: number; vat: number; wht: number; cit: number; tax_wallet: number; tax_id: number };
+export const useAttention = (enabled = true) => useOrgQuery<Attention>(['attention'], (o) => rpc('get_attention', { p_org: o }), enabled, 120_000);
 export const useAssets = (enabled = true) => useOrgQuery<any>(['assets'], (o) => rpc('get_assets', { p_org: o }), enabled);
 // Home's figures for a period (this month when none is given) and the balances at its end.
 export const useOverview = (enabled = true, from?: string | null, to?: string | null) => useOrgQuery<any>(['overview', from || null, to || null],

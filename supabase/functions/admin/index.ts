@@ -78,7 +78,15 @@ async function test(group: string, auth: string) {
       const r = await call(`${FLW}/balances/NGN`, { headers: { Authorization: `Bearer ${k}` } });
       if (!r.ok) return { ok: false, note: `Flutterwave refused the key (${r.status}): ${why(r)}` };
       const bal = Number(r.body?.data?.available_balance);
-      return { ok: true, note: `The key works${Number.isFinite(bal) ? `. Available naira balance: ₦${bal.toLocaleString('en-NG', { minimumFractionDigits: 2 })}` : ''}.${/TEST/i.test(k) ? ' This is a test key.' : ''}` };
+      // Transfers (payouts, sweeps, the tax wallet) go through the relay with the fixed IP address: the payments function's own check.
+      const rc = await call(`${SUPABASE_URL}/functions/v1/payments`, { method: 'POST', headers: { Authorization: auth, apikey: ANON, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'relay_check' }) });
+      const relay = rc.body?.relay;
+      const transfers = relay?.ok ? ` Transfers go through the relay (version ${relay.version}) to ${relay.upstream}.`
+        : rc.body?.transfers_ready ? ' Transfers go straight to Flutterwave (FLW_DIRECT_TRANSFERS is on).'
+        : ` Transfers are off: ${short(relay?.error || rc.body?.error || 'the relay did not answer')} Payouts, sweeps and tax wallet moves wait until it works.`;
+      return { ok: true, note: `The key works${Number.isFinite(bal) ? `. Available naira balance: ₦${bal.toLocaleString('en-NG', { minimumFractionDigits: 2 })}` : ''}.${/TEST/i.test(k) ? ' This is a test key.' : ''}${transfers}`,
+        relay_ok: Boolean(relay?.ok) };
     }
     case 'email': {
       const k = await key('RESEND_API_KEY'), from = await key('RESEND_FROM');

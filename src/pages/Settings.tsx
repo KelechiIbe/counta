@@ -88,8 +88,54 @@ function NotificationsSection() {
         <div><button className="btn btn-primary btn-sm" disabled={busy || s.subscribed === null} onClick={turnOn}><Icon name="bell" size={14} color="#fff" />Turn on for this device</button></div>
       )}
       <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>
-        You hear about counts waiting for approval and recounts sent back to you, invoices Martina could not read with confidence, stock on its way to your branch, price checks after a cost change, and the outcome of every phone call Martina makes. Each goes only to people whose role covers it.
+        You hear about tax returns coming due, invoices due and overdue, bank lines and payments to confirm before the month&apos;s returns, counts waiting for approval, invoices Martina could not read with confidence, stock on its way to your branch, price checks after a cost change, and the outcome of every phone call Martina makes. Each goes only to people whose role covers it.
       </div>
+    </Section>
+  );
+}
+
+// What reaches the owner beyond the app: emails, WhatsApp messages and Martina's calls, and whether she calls customers.
+function AlertsSection() {
+  const { orgId } = useSession();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [data, setData] = useState<any>(null);
+  useEffect(() => { if (orgId) rpc<any>('get_alert_prefs', { p_org: orgId }).then(setData).catch(() => setData(null)); }, [orgId]);
+  async function set(k: string, v: boolean) {
+    setBusy(true);
+    try { const r = await rpc<any>('save_alert_prefs', { p_org: orgId, p: { [k]: v } }); setData({ ...data, ...r }); toast('Saved'); await qc.invalidateQueries({ queryKey: ['attention'] }); }
+    catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(false);
+  }
+  if (!data) return null;
+  const cfg = data.platform || {}, cc = cfg.customer_calls || {};
+  const can_ = !!data.can_change;
+  const row = (k: string, label: string, hint: string) => (
+    <label className="check" style={{ alignItems: 'flex-start' }}>
+      <input type="checkbox" style={{ flexShrink: 0, marginTop: 2 }} checked={!!data[k]} disabled={!can_ || busy} onChange={(e) => set(k, e.target.checked)} />
+      <span>{label}<span className="faint" style={{ display: 'block', fontSize: 12 }}>{hint}</span></span>
+    </label>
+  );
+  return (
+    <Section id="alerts" title="Alerts" sub="Everything that needs doing shows as a red number in the menu and a push notification. The important things also reach the owner by email and WhatsApp.">
+      {row('email', 'Email', `Tax returns due (${(cfg.tax_deadline?.message_days_before || [3, 1]).join(' and ')} days before), invoices overdue (weekly), and transactions to confirm before the returns.`)}
+      {row('whatsapp', 'WhatsApp', 'The same, on WhatsApp, to the owner\'s phone number.')}
+      {row('owner_calls', 'A call from Martina the day before a tax return is due', 'She explains what is due and what to do. Calls go out between ' + (cfg.calls?.hours?.[0] ?? 9) + ':00 and ' + (cfg.calls?.hours?.[1] ?? 17) + ':00.')}
+      {row('customer_calls', 'Martina follows up customers whose invoices are overdue', `Only after a reminder went unanswered, for invoices at least ${cc.min_days_overdue ?? 7} days overdue and ${cc.min_amount != null ? '₦' + Number(cc.min_amount).toLocaleString('en-NG') : '₦10,000'} or more, at most ${cc.per_org_per_day ?? 5} calls a day${cc.weekdays_only !== false ? ', on weekdays' : ''}. She is polite, never threatens, and writes what the customer said on the invoice.`)}
+      {!can_ && <div className="faint" style={{ fontSize: 12 }}>Only the owner or someone who manages settings changes these.</div>}
+      {!!data.owner && <div className="faint" style={{ fontSize: 12 }}>Messages go to {data.owner.name}{data.owner.email ? ` at ${data.owner.email}` : ''}{data.owner.phone ? ` and ${data.owner.phone}` : ''}.</div>}
+      {!!(data.calls || []).length && (
+        <div className="card" style={{ borderRadius: 12, overflow: 'hidden' }}>
+          {(data.calls as any[]).slice(0, 8).map((c) => (
+            <div key={c.id} className="tr" style={{ gridTemplateColumns: 'minmax(0,1fr) 110px' }}>
+              <span className="ellipsis">{c.kind === 'tax_deadline' ? 'Tax deadline call to the owner' : `${c.to || 'Customer'} · ${c.sale || 'invoice'}`}
+                <span className="faint" style={{ display: 'block', fontSize: 12 }}>{new Date(c.created_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Lagos' })}{c.summary ? ` · ${c.summary}` : ''}</span></span>
+              <span className="chip t-grey" style={{ justifySelf: 'end' }}>{String(c.status).replace('_', ' ')}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </Section>
   );
 }
@@ -239,6 +285,7 @@ export default function Settings() {
       </Section>
       <TaxStreemSection />
       <NotificationsSection />
+      <AlertsSection />
       <VoiceSection />
       <CallsSection />
       <Section title="Phone app" sub="For the people who handle stock. Works offline and syncs in order when data returns.">

@@ -1,0 +1,18 @@
+# Caddy in front of the relay: HTTPS with a certificate it gets and renews by itself. Replace the name with the relay's own
+# (an A record pointing at the server's fixed IP address).
+relay.taxstreem.com {
+	encode gzip
+	# Only the relay's own paths.
+	@relay path /health /check /forward/*
+	handle @relay {
+		reverse_proxy 127.0.0.1:8787
+	}
+	handle {
+		respond 404
+	}
+	header -Server
+	log {
+		output file /var/log/caddy/counta-relay.log
+		format json
+	}
+}
