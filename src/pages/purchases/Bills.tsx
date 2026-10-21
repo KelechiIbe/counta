@@ -21,13 +21,20 @@ import { authorityLabel, pct, useTaxProfile } from '../../lib/tax';
 import { CreditsList, UseCredits, VendorCreditModal } from './VendorCredits';
 import { useDraft, type Drafts } from '../../lib/drafts';
 import { vatPct } from '../../lib/vat';
+import { SupplierInvoices, useSupplierInvoices } from './SupplierInvoices';
 
-type Tab = 'all' | 'draft' | 'unpaid' | 'overdue' | 'paid' | 'credits' | 'returned' | 'held';
+type Tab = 'all' | 'draft' | 'unpaid' | 'overdue' | 'paid' | 'credits' | 'returned' | 'held' | 'invoices';
 
 export default function Bills() {
   const { data: inv } = useInventory();
   const [params, setParams] = useSearchParams();
-  const [tab, setTab] = useState<Tab>('unpaid');
+  // A notice about a supplier's invoice opens the Supplier invoices tab on it.
+  const [tab, setTabState] = useState<Tab>(params.get('tab') === 'invoices' ? 'invoices' : 'unpaid');
+  const setTab = (t: Tab) => { setTabState(t); if (params.get('tab') || params.get('open')) setParams({}); };
+  // Supplier invoices are for people who keep the books; anyone else following a link lands on the bills to pay.
+  useEffect(() => { if (inv && tab === 'invoices' && !can(inv, 'keep_books')) setTabState('unpaid'); }, [inv, tab]);
+  const supplierInvoices = useSupplierInvoices('open', !!inv && can(inv, 'keep_books'));
+  const toReview = Number(supplierInvoices.data?.counts?.review || 0) + Number(supplierInvoices.data?.counts?.failed || 0);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<string | 'new' | null>(null);
   // A bill Martina prepared opens in the editor for the person to check and save.
@@ -64,14 +71,17 @@ export default function Bills() {
       <div className="row wrap" style={{ justifyContent: 'space-between' }}>
         <Pills value={tab} onChange={setTab} options={[{ id: 'unpaid', label: 'To pay' }, { id: 'draft', label: 'To approve', count: all.filter((b) => b.status === 'draft').length || undefined }, { id: 'overdue', label: 'Overdue' }, { id: 'paid', label: 'Paid' },
           ...(held || tab === 'held' ? [{ id: 'held' as Tab, label: 'Waiting for Tax ID', count: held || undefined }] : []),
-          ...(returned || tab === 'returned' ? [{ id: 'returned' as Tab, label: 'Sent back', count: returned || undefined }] : []), { id: 'all', label: 'All' }, { id: 'credits', label: 'Credit notes' }]} />
+          ...(returned || tab === 'returned' ? [{ id: 'returned' as Tab, label: 'Sent back', count: returned || undefined }] : []), { id: 'all', label: 'All' }, { id: 'credits', label: 'Credit notes' },
+          ...(can(inv, 'keep_books') ? [{ id: 'invoices' as Tab, label: 'Supplier invoices', count: toReview || undefined }] : [])]} />
         <div className="row wrap">
           <PeriodPicker value={period} onChange={setPeriod} align="end" label="Bill dates" />
           <ExportMenu name={`${inv.org.name} bills ${today()}`} disabled={!rows.length} sheets={() => [{ meta: meta('Bills', period.preset === 'all' ? `As at ${fmtDay(today())}` : periodText(period)), cols, rows: rows as any }]} />
-          {(can(inv, 'keep_books') || can(inv, 'approve_pos')) && <button className="btn btn-primary btn-sm" onClick={() => setEditing('new')}><Icon name="plus" size={14} color="#fff" />Bill</button>}
+          {(can(inv, 'keep_books') || can(inv, 'approve_pos')) && tab !== 'invoices' && <button className="btn btn-primary btn-sm" onClick={() => setEditing('new')}><Icon name="plus" size={14} color="#fff" />Bill</button>}
         </div>
       </div>
-      {tab === 'credits' ? <CreditsList /> : <div className="card" style={{ overflow: 'hidden' }}>
+      {tab === 'invoices' && can(inv, 'keep_books') ? <SupplierInvoices openId={open} onOpen={(id) => setParams({ tab: 'invoices', open: id })} onClose={() => setParams({ tab: 'invoices' })}
+        onOpenBill={(id) => { setTabState('draft'); setParams({ open: id }); }} />
+        : tab === 'credits' ? <CreditsList /> : <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-hd"><div className="row" style={{ flex: 1 }}><Icon name="search" size={15} color="#9CA3AF" /><input className="input input-sm" style={{ border: 0, boxShadow: 'none' }} placeholder="Bill, vendor or their invoice number" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search bills" /></div></div>
         <div className="tbl">
           <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '110px minmax(160px,1.4fr) 110px 120px 120px 120px 120px', minWidth: 900 }}>
@@ -79,7 +89,7 @@ export default function Bills() {
           </div>
           {bills.isLoading ? <SkeletonRows n={6} /> : bills.error ? <div style={{ padding: 20 }}><Alert kind="yellow" icon="shield">{(bills.error as Error).message}</Alert></div> : !rows.length ? <div style={{ padding: 20 }}><Empty>No bills here.</Empty></div> : rows.map((b) => (
             <div key={b.id} className="tr click" onClick={() => setParams({ open: b.id })} style={{ gridTemplateColumns: '110px minmax(160px,1.4fr) 110px 120px 120px 120px 120px', minWidth: 900 }}>
-              <span><b>{b.number}</b><span className="faint" style={{ display: 'block', fontSize: 11 }}>{b.source === 'receipt' ? 'from stock' : b.source === 'prism' ? 'from Prism' : b.source === 'ai' ? 'read by AI' : ''}</span></span>
+              <span><b>{b.number}</b><span className="faint" style={{ display: 'block', fontSize: 11 }}>{b.source === 'receipt' ? 'from stock' : b.source === 'prism' ? 'from Prism' : b.source === 'ai' ? 'read by AI' : b.source === 'supplier' ? 'supplier invoice' : b.source === 'bulk' ? 'bulk payment' : ''}</span></span>
               <span className="ellipsis">{b.vendor_name}{b.vendor_ref ? <span className="faint" style={{ fontSize: 12 }}> · {b.vendor_ref}</span> : null}</span>
               <span className="muted">{fmtDay(b.bill_date)}</span>
               <span><StatusChip s={(b as any).returned_reason ? 'returned' : b.status} />{Number(b.in_progress) > 0 && <span className="chip t-amber" style={{ marginLeft: 4 }}>paying</span>}
@@ -91,7 +101,7 @@ export default function Bills() {
           ))}
         </div>
       </div>}
-      {open && <BillDrawer id={open} whtRates={bills.data?.wht_rates || []} onClose={() => setParams({})} onEdit={(id) => setEditing(id)} />}
+      {open && tab !== 'invoices' && <BillDrawer id={open} whtRates={bills.data?.wht_rates || []} onClose={() => setParams({})} onEdit={(id) => setEditing(id)} />}
       {editing && <BillEditor id={editing === 'new' ? null : editing} draft={editing === 'new' ? billDraft : null} vendors={bills.data?.vendors || []} whtRates={bills.data?.wht_rates || []} assetClasses={bills.data?.asset_classes || []}
         onClose={() => { setEditing(null); setBillDraft(null); }} onSaved={(id) => { setEditing(null); setBillDraft(null); setParams({ open: id }); }} />}
     </div>

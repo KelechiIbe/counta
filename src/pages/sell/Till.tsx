@@ -282,7 +282,8 @@ export default function Till() {
                   </select>
                 )}
                 {INSTANT.includes(t.method) && <div className="faint" style={{ fontSize: 12 }}>{t.method === 'account' ? 'Your business account number appears for the customer, with the receipt number to quote. Counta confirms the money itself.' : t.method === 'qr' ? 'Show the QR code to the customer.' : 'Send the link to the customer.'}</div>}
-                {(t.method === 'transfer' || t.method === 'pos' || t.method === 'card' || t.method === 'cheque') && <div className="faint" style={{ fontSize: 12 }}>Confirmed later by someone who keeps the books, against the bank.</div>}
+                {t.method === 'transfer' && <div style={{ fontSize: 12, color: '#B45309' }}>A transfer to your own bank is not confirmed here: someone checks it against the bank later, and a delivery waits until then. To know before the goods leave, use Pay by transfer: Counta confirms it in seconds and says "payment received".</div>}
+                {(t.method === 'pos' || t.method === 'card' || t.method === 'cheque') && <div className="faint" style={{ fontSize: 12 }}>Confirmed later by someone who keeps the books, against the bank.</div>}
               </div>
             ))}
             <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => setTenders((ts) => [...ts.map((t) => (t.amount ? t : { ...t, amount: '' })), { method: ts.some((x) => x.method === 'cash') ? 'account' : 'cash', amount: '' }])}>

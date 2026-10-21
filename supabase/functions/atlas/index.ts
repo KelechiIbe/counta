@@ -50,6 +50,11 @@ async function svc<T = any>(fn: string, args: Record<string, unknown>): Promise<
   if (error) throw new Error(`${fn}: ${error.message}`);
   return data as T;
 }
+// Every Gemini call is counted for TaxStreem's cost view (svc_usage); a failed count never holds anything up.
+function meter(orgId: string, kind: string, res: { model: string; usage?: { in: number; out: number } }) {
+  if (!res.usage || (!res.usage.in && !res.usage.out)) return;
+  admin.rpc('svc_usage', { p: { org_id: orgId, service: 'gemini', kind, item: res.model, qty_in: res.usage.in, qty_out: res.usage.out } }).then(() => {}, () => {});
+}
 function same(a: string, b: string) {
   const ea = new TextEncoder().encode(a), eb = new TextEncoder().encode(b);
   if (ea.length !== eb.length) return false;
@@ -70,7 +75,7 @@ export async function bookkeep(orgId: string) {
     if (cfg.g.mode === 'none' || on === false) {
       // No AI yet (or TaxStreem paused it): lines older than an hour go to suspense with a question, so nothing sits unexplained.
       run.asked = await svc<number>('svc_suspend_rest', { p_org: orgId });
-      run.error = on === false ? 'AI reading is paused for this business by TaxStreem.' : cfg.g.problem || 'Gemini is not connected: add the service account key in the admin portal.';
+      run.error = on === false ? 'AI reading is off for this business (paused by TaxStreem, or not in its plan).' : cfg.g.problem || 'Gemini is not connected: add the service account key in the admin portal.';
       return { org_id: orgId, ...run };
     }
     for (let round = 0; round < 5; round++) {
@@ -79,6 +84,7 @@ export async function bookkeep(orgId: string) {
       let answers;
       try {
         const res = await gemini(cfg, systemPrompt(ctx), userPrompt(ctx), SCHEMA, 0.1);
+        meter(orgId, 'bookkeeper', res);
         run.model = res.model;
         answers = calibrate(ctx, res.data?.results || []);
       } catch (e) {
@@ -135,10 +141,12 @@ async function commentary(sb: SupabaseClient, orgId: string, from: string | null
   const [kpis, sopl, ratios, trends, ar, ap] = await Promise.all([rep('kpis'), rep('sopl'), rep('ratios'), rep('trends'), rep('ar_aging'), rep('ap_aging')]);
   const pack = { period: { from, to }, kpis: kpis.rows, profit_or_loss: sopl.rows, ratios: ratios.rows, last_12_months: trends.rows,
     receivables_ageing: (ar.rows || []).slice(0, 15), payables_ageing: (ap.rows || []).slice(0, 15) };
-  const { data, model } = await gemini(cfg, `You are the finance director of a Nigerian business writing the monthly commentary for its owner.
+  const res = await gemini(cfg, `You are the finance director of a Nigerian business writing the monthly commentary for its owner.
 Use only the numbers in the pack; never invent or recompute a figure. Quote naira as ₦ with commas and compare with the prior period or the trend where the pack shows it.
 Write for a busy owner: plain words, no jargon, short sentences. Three to six points, at most four actions, and questions only where the numbers raise one.`,
     JSON.stringify(pack), COMMENTARY, 0.3);
+  meter(orgId, 'commentary', res);
+  const { data, model } = res;
   await admin.rpc('svc_agent_run', { p_org: orgId, p_agent: 'analyst', p_action: 'commentary', p: { items: 1, model } });
   return { ok: true, commentary: data, model };
 }

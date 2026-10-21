@@ -8,7 +8,7 @@ export const S = {
   nstr: { type: 'STRING', nullable: true }, nnum: { type: 'NUMBER', nullable: true },
 };
 
-export async function gemini(cfg: { g: GeminiConfig; model: string }, system: string, text: string, schema: unknown, temperature = 0.1): Promise<{ data: any; model: string }> {
+export async function gemini(cfg: { g: GeminiConfig; model: string }, system: string, text: string, schema: unknown, temperature = 0.1): Promise<{ data: any; model: string; usage: { in: number; out: number } }> {
   let lastErr = '';
   const all = [cfg.model, ...fallbackModels(cfg.g).filter((m) => m !== cfg.model)];
   const ready = all.filter((m) => (resting.get(m) || 0) < Date.now());
@@ -37,7 +37,8 @@ export async function gemini(cfg: { g: GeminiConfig; model: string }, system: st
     const body = await res.json();
     const out = body?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || '';
     if (!out) throw new Error('Gemini returned no content' + (body?.promptFeedback?.blockReason ? ` (${body.promptFeedback.blockReason})` : ''));
-    return { data: JSON.parse(out), model };
+    const u = body?.usageMetadata || {};
+    return { data: JSON.parse(out), model, usage: { in: Number(u.promptTokenCount) || 0, out: (Number(u.candidatesTokenCount) || 0) + (Number(u.thoughtsTokenCount) || 0) } };
   }
   throw new Error(lastErr || 'No Gemini model available');
 }

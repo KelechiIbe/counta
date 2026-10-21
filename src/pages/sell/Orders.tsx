@@ -2,7 +2,7 @@
 // for delivery get a delivery note that follows the van to the customer.
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useInventory, useSession, useToast } from '../../state/session';
+import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { money, useDeliveries, useSales, type Customer, type Sale } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
@@ -81,6 +81,7 @@ function Deliveries({ list, loading, onOpen }: { list: any[]; loading: boolean; 
   const [tab, setTab] = useState<'open' | 'done'>('open');
   const rows = list.filter((d) => (tab === 'open' ? ['pending', 'dispatched'].includes(d.status) : !['pending', 'dispatched'].includes(d.status)));
   const vans = (inv?.locations || []).filter((l: any) => l.kind === 'van');
+  const manager = !!inv && (inv.me.role === 'owner' || inv.me.role === 'manager' || can(inv, 'approve_adjustments'));
   const [receiving, setReceiving] = useState<any | null>(null);
   async function update(d: any, patch: Record<string, unknown>, ok: string) {
     try { await rpc('save_delivery', { p_org: orgId, p_delivery: { id: d.id, sale_id: d.sale_id, ...patch } }); toast(ok); await qc.invalidateQueries({ queryKey: ['deliveries'] }); return true; }
@@ -108,13 +109,16 @@ function Deliveries({ list, loading, onOpen }: { list: any[]; loading: boolean; 
             <span style={{ minWidth: 0 }}><b>{d.number}</b> <button className="btn btn-ghost btn-xs" onClick={() => onOpen(d.sale_id)}>{d.sale_number || 'Order'}</button>
               <span className="faint" style={{ display: 'block', fontSize: 12 }}>{d.customer_name} · {d.address || 'no address'}{d.scheduled_for ? ` · for ${fmtDay(d.scheduled_for)}` : ''}</span>
               <span className="faint" style={{ display: 'block', fontSize: 12 }}>{(d.lines || []).map((l: any) => `${Number(l.qty)} ${l.unit_label} ${l.description}`).join(', ')}</span></span>
-            <span><StatusChip s={d.status} />{Number(d.balance) > 0 && <span className="faint" style={{ display: 'block', fontSize: 11 }}>collect {N2(d.balance)}</span>}</span>
+            <span><StatusChip s={d.status} />{Number(d.balance) > 0 && <span className="faint" style={{ display: 'block', fontSize: 11 }}>collect {N2(d.balance)}</span>}
+              {d.held && <span className="chip t-amber" style={{ display: 'inline-block', marginTop: 3 }} title="The goods leave once the payment is confirmed">waiting for payment</span>}
+              {d.collect_on_delivery && <span className="faint" style={{ display: 'block', fontSize: 11 }}>pay on delivery{d.collect_agreed_by_name ? `, agreed by ${d.collect_agreed_by_name}` : ''}</span>}</span>
             <select className="input input-sm" value={d.vehicle_location_id || ''} onChange={(e) => update(d, { vehicle_location_id: e.target.value || null }, 'Van assigned')} disabled={!vans.length} aria-label="Van">
               <option value="">{vans.length ? 'Which van?' : 'No vans set up'}</option>{vans.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
             <span className="row wrap" style={{ gap: 4 }}>
               <button className="btn btn-ghost btn-xs" onClick={() => printNote(d)}><Icon name="printer" size={13} />Note</button>
-              {d.status === 'pending' && <button className="btn btn-secondary btn-xs" onClick={() => update(d, { status: 'dispatched' }, 'On its way')}>Dispatched</button>}
+              {d.status === 'pending' && <button className="btn btn-secondary btn-xs" disabled={d.held} title={d.held ? 'Waiting for the payment to be confirmed' : undefined} onClick={() => update(d, { status: 'dispatched' }, 'On its way')}>Dispatched</button>}
+              {d.held && manager && <button className="btn btn-ghost btn-xs" onClick={() => { if (window.confirm(`Let ${d.number} leave unpaid, with ${N2(d.balance)} collected on delivery?`)) void update(d, { collect_on_delivery: true }, 'Payment on delivery agreed'); }}>Agree payment on delivery</button>}
               {['pending', 'dispatched'].includes(d.status) && <button className="btn btn-primary btn-xs" onClick={() => setReceiving(d)}>Delivered</button>}
               {['pending', 'dispatched'].includes(d.status) && <button className="btn btn-ghost btn-xs" onClick={() => update(d, { status: 'failed' }, 'Marked as not delivered')}>Failed</button>}
             </span>
@@ -123,6 +127,7 @@ function Deliveries({ list, loading, onOpen }: { list: any[]; loading: boolean; 
       </div>
       {receiving && <ReceivedModal d={receiving} onClose={() => setReceiving(null)}
         onSave={async (who, note) => { if (await update(receiving, { status: 'delivered', received_by: who, ...(note ? { notes: note } : {}) }, `${receiving.number} delivered`)) setReceiving(null); }} />}
+      {rows.some((d) => d.held) && <Alert kind="amber" icon="clock">Goods leave once the payment is confirmed. Take it by Pay by transfer, which confirms in seconds, or confirm the transfer against the bank in Sales. {manager ? 'You can agree payment on delivery for a customer you trust.' : 'A manager can agree payment on delivery.'}</Alert>}
       {!vans.length && <Alert kind="grey" icon="truck">Selling from vans? Add each van as a branch of kind "van" under Locations &amp; staff, transfer stock to it, and open the till on the van to sell from it.</Alert>}
     </div>
   );

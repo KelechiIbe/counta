@@ -15,7 +15,20 @@ export const BULK_FIELDS: SheetField[] = [
   { key: 'supplier', label: 'Supplier in Counta', syn: ['supplier in counta', 'supplier', 'vendor', 'vendor name', 'supplier name'] },
   { key: 'account', label: 'Account code', syn: ['account code', 'gl code', 'ledger code', 'expense account', 'account to charge'] },
   { key: 'reference', label: 'Your reference', syn: ['your reference', 'reference', 'ref', 'staff id', 'employee id', 'staff number'] },
+  { key: 'work', label: 'Type of work', syn: ['type of work', 'work', 'work done', 'nature of work', 'nature of service', 'service type', 'wht type', 'transaction type', 'nature of transaction'],
+    hint: 'For a contractor with no bill' },
+  { key: 'contractor_type', label: 'Company or individual', syn: ['company or individual', 'contractor type', 'entity type', 'type of contractor', 'beneficiary type', 'corporate or individual', 'type'] },
+  { key: 'tin', label: 'Tax ID', syn: ['tax id', 'tin', 'tax identification number', 'nrs tin', 'firs tin', 'jtb tin', 'taxpayer id'] },
+  { key: 'address', label: 'Address', syn: ['address', 'contractor address', 'business address', 'office address'] },
+  { key: 'state', label: 'State', syn: ['state', 'state of residence', 'state of business'] },
+  { key: 'gross', label: 'Contract amount before WHT (₦)', syn: ['contract amount', 'gross amount', 'gross', 'invoice amount', 'amount before wht', 'contract sum', 'fee'],
+    hint: 'Instead of Amount, for a contractor' },
 ];
+
+// What the template's "Type of work" list offers, and the kinds of contractor. The books read other wording too.
+export const WORK_TYPES = ['Services', 'Professional services', 'Construction (roads, bridges, buildings)', 'Other construction', 'Supply of goods', 'Rent or hire',
+  'Commission', 'Brokerage', 'No withholding tax'];
+export const CONTRACTOR_TYPES = ['Company', 'Business name', 'Individual'];
 
 // Used for the template only when the payment rail cannot be reached for its own list. Sending always uses the
 // rail's list, matched by name.
@@ -94,6 +107,7 @@ export function namesAgree(sheet: string, bank: string): boolean {
 export interface BulkRow {
   row: number; name: string; bankText: string; bank_code: string; bank_name: string; bankOptions?: Bank[];
   account_number: string; amount: number | null; narration: string; bill: string; supplier: string; account: string; reference: string;
+  work: string; contractor_type: string; tin: string; address: string; state: string; gross: number | null;
   notes: string[]; issues: string[]; resolved?: string; resolving?: boolean; include: boolean; touched?: boolean; server?: any;
 }
 
@@ -132,6 +146,15 @@ export function readBulkRows(rows: (Record<string, Cell> & { _row: number })[], 
     const rawAmount = txt(r.amount);
     const amount = rawAmount === '' ? null : parseNum(r.amount ?? null);
     if (rawAmount !== '' && !(amount != null && amount > 0)) issues.push(`Amount "${rawAmount}" is not an amount in naira`);
+    const rawGross = txt(r.gross);
+    const gross = rawGross === '' ? null : parseNum(r.gross ?? null);
+    if (rawGross !== '' && !(gross != null && gross > 0)) issues.push(`Contract amount "${rawGross}" is not an amount in naira`);
+    const work = txt(r.work).replace(/\s+/g, ' ').slice(0, 80);
+    if (!work && (gross != null || txt(r.contractor_type))) issues.push('Say the type of work, so Counta knows the withholding tax');
+    if (work && rawAmount === '' && rawGross === '') issues.push('No amount: give what the contractor receives, or the contract amount before WHT');
+    // A Tax ID as text: Excel may have turned a 13-digit number into 1.23457E+12, which cannot be recovered.
+    const tinRaw = typeof r.tin === 'number' ? String(r.tin) : txt(r.tin);
+    if (/\d(\.\d+)?e\+?\d+$/i.test(tinRaw)) issues.push(`Tax ID ${tinRaw} was shortened by Excel. Format the column as text and type it again`);
     // "6101 Salaries & Wages" or "6101 - Salaries": the code; a name alone is matched by the books.
     const accountText = txt(r.account);
     const code = accountText.match(/^\d{3,6}\b/)?.[0];
@@ -139,9 +162,11 @@ export function readBulkRows(rows: (Record<string, Cell> & { _row: number })[], 
       row: r._row, name: txt(r.name).replace(/\s+/g, ' '), bankText, bank_code: m.bank?.code || '', bank_name: m.bank?.name || '', bankOptions: m.bank ? undefined : m.options,
       account_number: acct, amount: amount != null && amount > 0 ? Math.round(amount * 100) / 100 : null, narration: txt(r.narration).replace(/\s+/g, ' ').slice(0, 80),
       bill: txt(r.bill), supplier: txt(r.supplier).replace(/\s+/g, ' '), account: code || accountText, reference: txt(r.reference).slice(0, 60),
+      work, contractor_type: txt(r.contractor_type).slice(0, 40), tin: tinRaw.replace(/^'/, '').slice(0, 30), address: txt(r.address).replace(/\s+/g, ' ').slice(0, 300),
+      state: txt(r.state).slice(0, 40), gross: gross != null && gross > 0 ? Math.round(gross * 100) / 100 : null,
       notes, issues, include: true,
     };
-  }).filter((r) => r.name || r.account_number || r.amount || r.bill);
+  }).filter((r) => r.name || r.account_number || r.amount || r.bill || r.gross);
 }
 
 async function excel() {
@@ -170,6 +195,12 @@ export async function bulkTemplateXlsx(o: { orgName: string; banks: Bank[]; supp
     { h: 'Supplier in Counta', w: 26, note: 'For a payment to a supplier without a bill: it is recorded against what you owe them.' },
     { h: 'Account code', w: 14, note: 'For anything else, the account to charge (such as an expense). Leave empty to use the one you choose on upload.' },
     { h: 'Your reference', w: 18, note: 'Your own reference, such as a staff ID. It comes back in the results.' },
+    { h: 'Type of work', w: 30, note: 'For a contractor with no bill in Counta: what the work was. It decides the withholding tax. Pick from the list.' },
+    { h: 'Company or individual', w: 18, note: 'For a contractor: Company, Business name or Individual.' },
+    { h: 'Tax ID', w: 17, text: true, note: 'The contractor\'s Tax ID. Needed where the work attracts withholding tax; Counta checks it with the NRS.' },
+    { h: 'Address', w: 34, note: 'A company or business name is paid only with its address on file.' },
+    { h: 'State', w: 14, note: 'For an individual or a business name: the state their withholding tax goes to.' },
+    { h: 'Contract amount before WHT (₦)', w: 18, fmt: '#,##0.00', note: 'Instead of Amount: the contractor\'s invoice amount. Counta keeps the WHT back and pays the rest.' },
   ];
   const head = (s: any) => {
     const r = s.getRow(1);
@@ -191,12 +222,17 @@ export async function bulkTemplateXlsx(o: { orgName: string; banks: Bank[]; supp
   banks.forEach((b, i) => { lists.getCell(`A${i + 1}`).value = b.name; });
   o.suppliers.forEach((v, i) => { lists.getCell(`B${i + 1}`).value = v; });
   o.accounts.forEach((a, i) => { lists.getCell(`C${i + 1}`).value = a.code; });
+  WORK_TYPES.forEach((w, i) => { lists.getCell(`D${i + 1}`).value = w; });
+  CONTRACTOR_TYPES.forEach((w, i) => { lists.getCell(`E${i + 1}`).value = w; });
   const dv = (col: number, ref: string) => (ws as any).dataValidations.add(`${colLetter(col)}2:${colLetter(col)}1001`, {
     type: 'list', allowBlank: true, formulae: [ref], showErrorMessage: true, errorStyle: 'information', errorTitle: 'Not on the list', error: 'Keep it if you are sure; Counta checks it on upload.',
   });
   if (banks.length) dv(1, `Lists!$A$1:$A$${banks.length}`);
   if (o.suppliers.length) dv(6, `Lists!$B$1:$B$${o.suppliers.length}`);
   if (o.accounts.length) dv(7, `Lists!$C$1:$C$${o.accounts.length}`);
+  dv(9, `Lists!$D$1:$D$${WORK_TYPES.length}`);
+  dv(10, `Lists!$E$1:$E$${CONTRACTOR_TYPES.length}`);
+  (ws as any).dataValidations.add('O2:O1001', { type: 'decimal', operator: 'greaterThan', formulae: [0], allowBlank: true, showErrorMessage: true, errorTitle: 'Contract amount', error: 'Enter an amount in naira, such as 500000.' });
   (ws as any).dataValidations.add('D2:D1001', { type: 'decimal', operator: 'greaterThan', formulae: [0], allowBlank: true, showErrorMessage: true, errorTitle: 'Amount', error: 'Enter an amount in naira, such as 25000.' });
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
 
@@ -204,6 +240,9 @@ export async function bulkTemplateXlsx(o: { orgName: string; banks: Bank[]; supp
     ['Ada Okoro', 'Guaranty Trust Bank', '0123456789', 185000, 'October salary', '', '', o.accounts.find((a) => /salar/i.test(a.name))?.code || '6101', 'STAFF-014'],
     ['Adex Consulting Ltd', 'Access Bank', '0690000031', null, 'Retainer, October', 'BILL-0012', 'Adex Consulting Ltd', '', 'INV-118'],
     ['Musa Bello', 'Zenith Bank', '2034567891', 15000, 'Delivery to Ikeja', '', '', '', ''],
+    ['Emeka Tiling Ltd', 'Access Bank', '0690000040', null, 'Tiling, block C', '', '', '', 'ET-INV-9', 'Construction (roads, bridges, buildings)', 'Company', '1234567890123',
+      '3 Aba Road, Port Harcourt, Rivers', '', 500000],
+    ['Tunde Adeyemi', 'Kuda Bank', '2000000041', 49000, 'Photos, launch event', '', '', '', '', 'Services', 'Individual', '2345678901234', '', 'Lagos', null],
   ];
   sample.forEach((r, i) => { const row = ex.getRow(i + 2); r.forEach((v, j) => { row.getCell(j + 1).value = v as any; }); row.font = { italic: true, color: { argb: 'FF4B5563' } }; });
 
@@ -220,6 +259,12 @@ export async function bulkTemplateXlsx(o: { orgName: string; banks: Bank[]; supp
     ['Supplier in Counta: a payment to a supplier on account, without a bill. It reduces what you owe them. No withholding tax is deducted.', ''],
     ['Account code: anything else, such as salaries, allowances or delivery costs. It is charged to that account.', ''],
     ['Leave all three empty and the account you choose on the upload screen is used for that row.', ''],
+    ['', ''],
+    ['Contractors with no bill in Counta', 'h2'],
+    ['Fill Type of work and Company or individual. Counta finds the contractor among your suppliers or adds them, writes and approves a bill for the work, keeps the withholding tax back and pays the rest.', ''],
+    ['Give either Amount (what the contractor receives) or the Contract amount before WHT (their invoice amount).', ''],
+    ['Where the work attracts withholding tax, the contractor\'s Tax ID is needed. Counta checks it with the NRS on the upload screen, and the NRS name must match.', ''],
+    ['A company or business name is paid only with its address. For an individual or a business name, give the state their withholding tax goes to.', ''],
     ['', ''],
     ['After you upload', 'h2'],
     ['You see every row with the bank\'s name for the account, what it pays for, and any problem. Untick rows you do not want to pay.', ''],

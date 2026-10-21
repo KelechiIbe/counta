@@ -6,7 +6,7 @@ import { rpc } from '../lib/supabase';
 import { readInvoice, startReceipt, uploadDocument, type Source } from '../lib/receive';
 import { uuid } from '../lib/format';
 
-export type OpKind = 'sale' | 'till' | 'count' | 'receipt' | 'transfer_receive' | 'issue';
+export type OpKind = 'sale' | 'till' | 'quick_sale' | 'count' | 'receipt' | 'transfer_receive' | 'issue';
 export interface Op {
   id: string; org: string; kind: OpKind; label: string; detail: string; created_at: string; queued_offline: boolean;
   status: 'queued' | 'posting' | 'posted' | 'failed'; error?: string; result?: string; payload: any; author: string;
@@ -17,6 +17,8 @@ const listeners = new Set<() => void>();
 let cache: Op[] = [];
 let loaded = false;
 let syncing = false;
+// Set when something is queued while a sync is posting, so that sync goes round again instead of leaving it for the next tick.
+let again = false;
 let lastSync: { at: number; n: number } | null = null;
 
 export function deviceId(): string {
@@ -77,6 +79,12 @@ async function runOp(op: Op): Promise<string> {
       } });
       return r?.number ? `Posted · ${r.number}${p.method === 'cash' ? '' : ' · payment to confirm'}` : 'Posted';
     }
+    case 'quick_sale': {
+      // One sale of one or more products, with the customer's name when given, paid now or to settle later in Sales.
+      const r = await rpc<any>('record_quick_sale', { p_org: op.org, p: { ...p, client_uuid: op.id, device: deviceId(), offline: op.queued_offline, recorded_at: op.created_at } });
+      if (r?.duplicate) return `Already posted · ${r.number}`;
+      return `Posted · ${r.number}${r.settle_later ? ' · to settle in Sales' : p.pay && p.pay !== 'cash' ? ' · payment to confirm' : ''}${r.review_status === 'pending' ? ' · owner will review' : ''}`;
+    }
     case 'count': {
       const r = await rpc<any>('submit_count', { p_session: p.session_id, p_lines: p.lines, p_device: deviceId(), p_offline: op.queued_offline, p_client_uuid: op.id });
       const n = (r?.variances || []).length;
@@ -111,11 +119,12 @@ async function runOp(op: Op): Promise<string> {
 
 export async function syncAll(): Promise<void> {
   await load();
-  if (syncing || !navigator.onLine) return;
+  if (!navigator.onLine) return;
+  if (syncing) { again = true; return; }
   const todo = cache.filter((o) => o.status === 'queued').sort((a, b) => a.created_at.localeCompare(b.created_at));
   if (!todo.length) return;
-  syncing = true; emit();
-  let n = 0;
+  syncing = true; again = false; emit();
+  let n = 0, offline = false;
   try {
     for (const op of todo) {
       await patch(op.id, { status: 'posting' });
@@ -124,7 +133,7 @@ export async function syncAll(): Promise<void> {
         await patch(op.id, { status: 'posted', result, error: undefined });
         n++;
       } catch (e: any) {
-        if (isNetwork(e)) { await patch(op.id, { status: 'queued' }); break; }
+        if (isNetwork(e)) { await patch(op.id, { status: 'queued' }); offline = true; break; }
         await patch(op.id, { status: 'failed', error: String(e?.message || e) });
       }
     }
@@ -133,6 +142,8 @@ export async function syncAll(): Promise<void> {
     if (n) lastSync = { at: Date.now(), n };
     emit();
   }
+  // Several sales recorded at once arrive while the first is posting; they go now, in order, not at the next tick.
+  if (again && !offline) { again = false; await syncAll(); }
 }
 
 function snapshot() { return { ops: cache, syncing, lastSync }; }

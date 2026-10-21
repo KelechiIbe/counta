@@ -29,6 +29,16 @@ The VAT on each line comes from the item's treatment, which the tax agent sets w
 - Returns and voids: a return credits the lines returned, puts the stock back (or writes it off) and refunds by the method chosen: cash from the branch drawer, or a transfer from the bank account chosen on the form. A void needs a reason.
 - Refunds, payments and bills choose their account from `money_accounts`, which answers anyone who sells, keeps the books, approves adjustments or makes payments, so a manager or an accountant who does not use the till can still pick the account.
 
+## Sales logged on the phone
+
+On the phone app a sale can be logged by voice or by scanning products into a basket (Scan to sell).
+
+- By voice, one note can carry several sales: "Mama Bisi buy two Milo, she pay transfer; Chidi take one carton of semo, e go pay later." Counta lists each sale with its customer's name, its products and how it was paid, for the person to check, correct or remove before recording them all. Products the business does not have are left out. When the note does not say how a sale was paid, it is left for later.
+- At the phone till, the customer's name can be typed, and the way of paying is Cash, Transfer, POS or Later.
+- Each sale posts at once, from the phone's queue (or when data returns): stock out, revenue and VAT in, with the customer's name kept on the sale and matched to the customer when the business has one by that name. Cash is paid into the branch drawer; a transfer or POS waits in Payments to confirm.
+
+A sale logged with Later waits in Sales, To settle, for someone who keeps the books. They tick one or more, choose how they were paid (cash and which drawer, a bank transfer and which account, POS or card and the account the terminal pays into) and settle them in one step. Each sale counts as a sale from the day it was made.
+
 ## Invoices, quotes, credit notes
 
 - Quotes convert to invoices. Invoices can take a deposit, part payments and WHT credits from customers that withhold.
@@ -67,6 +77,8 @@ Checkout runs in four steps:
 4. Payment: pay now (a transfer account made for the order, card or USSD when the business has online payments) or pay on delivery or at pickup, when the business allows it.
 
 The confirmation gives the order number and a link to the order's own page, where the customer can pay and follow the order: placed, confirmed, on its way or ready for pickup, and delivered or collected.
+
+Goods leave once the money is confirmed. With Deliveries wait for the payment on (Sell, Online shop, on by default), a delivery cannot be marked dispatched or delivered while its sale is unpaid, waiting for a transfer, or paid by a transfer not yet confirmed against the bank; Orders & deliveries marks it "waiting for payment". Pay by transfer confirms in seconds. A manager can agree payment on delivery for a customer they trust.
 
 ## Branded documents
 

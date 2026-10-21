@@ -16,6 +16,10 @@
 //   send_tax_payment { payment_id }                -> sends an approved tax payment from the tax wallet
 //   banks {}                                       -> Nigerian banks for payouts
 //   resolve_account { account_number, bank_code }  -> the account name the bank holds
+//   subscription_start { org_id, plan_id, billing, method: 'card'|'wallet', use_saved? }
+//                                                  -> the owner's choice of Counta plan: a checkout link, a charge to the
+//                                                     saved card, or a move from the wallet to TaxStreem
+//   subscription_verify { org_id, tx_ref }         -> after the checkout: asks Flutterwave and records the payment
 // Anyone holding a document link (no sign-in):
 //   public_pay { token, method }                   -> a way to pay a shared invoice, receipt or order
 //   public_check { token }                         -> has it been paid
@@ -28,9 +32,11 @@
 //                               tax payments Flux posted and tells Flux of each one made
 //   { action: 'tax_instruction', instruction_id } -> (from the taxstreem function) checks one payment request from Flux
 //   { action: 'reconcile' }  -> compares every wallet with the books
+// The poll also renews Counta plans (svc_subscription_tick) and follows up plan payments still open.
 //
 // Nothing a webhook says is trusted on its own: Counta asks the rail for the transaction before recording money.
 // Secrets: FLW_SECRET_KEY, FLW_WEBHOOK_HASH (Edge Function secrets or Supabase Vault); partner rail keys are named on payment_rails.
+// FLW_MERCHANT_ID is TaxStreem's own Flutterwave merchant ID, where plan payments from a business's wallet go.
 // Transfers: Flutterwave takes transfer requests only from IP addresses whitelisted on TaxStreem's account, and Supabase's
 // servers have no fixed address. FLW_RELAY_URL and FLW_RELAY_SECRET name TaxStreem's relay (relay/ in the repository): a small
 // server with one fixed address that forwards the signed requests. Without it, transfers (sweeps, payouts, bulk payments,
@@ -884,6 +890,7 @@ async function poll() {
   try { out.tax_transfers = await sendTaxTransfers(); } catch (e) { console.log('poll tax transfers', (e as Error).message); }
   try { out.tax_payments = await checkTaxPayments(); } catch (e) { console.log('poll tax payments', (e as Error).message); }
   try { out.tax_instructions = await taxInstructionWork(); } catch (e) { console.log('poll tax instructions', (e as Error).message); }
+  try { out.subscriptions = await subscriptionWork(); } catch (e) { console.log('poll subscriptions', (e as Error).message); }
   return out;
 }
 
@@ -912,6 +919,109 @@ async function reconcile() {
   return out;
 }
 
+// ------------------------------------------------------------------ Counta plans
+// A plan is paid by card (Flutterwave checkout once, then the saved card's token) or from the business's wallet (a move to
+// TaxStreem's Flutterwave account). The database decides what is charged and changes the plan when the money is confirmed.
+const subCtx = (chargeId: string) => svc<any>('svc_subscription_charge', { p_charge: chargeId });
+const subUpdate = (txRef: string, p: Record<string, unknown>) => svc<any>('svc_subscription_charge_update', { p_tx_ref: txRef, p });
+
+// Asks Flutterwave about a card payment by its reference and records what it says, the card's token included.
+async function verifySubCard(txRef: string): Promise<any> {
+  let v: any;
+  try { v = await flw(`/transactions/verify_by_reference?tx_ref=${encodeURIComponent(txRef)}`); }
+  catch (e) { if (/no transaction|not found/i.test((e as Error).message)) return { status: 'pending' }; throw e; }
+  const d = v?.data;
+  if (!d || d.tx_ref !== txRef) return { status: 'pending' };
+  const st = String(d.status || '').toLowerCase();
+  if (st === 'successful') {
+    return await subUpdate(txRef, { status: 'successful', amount: num(d.amount), currency: d.currency || 'NGN', provider_ref: String(d.id || d.flw_ref || ''),
+      card: d.card?.token ? { token: String(d.card.token), last4: d.card.last_4digits ? String(d.card.last_4digits) : null, brand: d.card.type || null,
+        expiry: d.card.expiry || null, email: d.customer?.email || null } : null });
+  }
+  if (st === 'failed') return await subUpdate(txRef, { status: 'failed', error: String(d.processor_response || 'The card payment failed.').slice(0, 200), provider_ref: String(d.id || '') });
+  return { status: 'pending' };
+}
+
+async function subCheckout(ctx: any) {
+  const c = ctx.charge;
+  const l = await flw('/payments', { method: 'POST', body: JSON.stringify({
+    tx_ref: c.tx_ref, amount: num(c.amount), currency: 'NGN',
+    redirect_url: `${await appUrl()}/settings/subscription?ref=${encodeURIComponent(c.tx_ref)}`,
+    customer: { email: ctx.org.email || `billing+${String(ctx.org.id).slice(0, 8)}@counta.ng`, name: String(ctx.org.name).slice(0, 60), phonenumber: ngPhone(ctx.org.phone) },
+    customizations: { title: 'Counta', description: `${ctx.plan.name} plan, ${c.billing === 'year' ? 'a year' : 'a month'}` },
+    payment_options: 'card', meta: { kind: 'subscription', org_id: ctx.org.id, charge_id: c.id } }) });
+  if (!l?.data?.link) throw new UserError('Flutterwave did not return a payment page. Try again in a minute.');
+  return { action: 'checkout', link: String(l.data.link) };
+}
+
+async function chargeSavedCard(ctx: any): Promise<any> {
+  const c = ctx.charge;
+  if (!ctx.card?.token) return await subUpdate(c.tx_ref, { status: 'failed', error: 'No card is saved. Pay by card once and Counta keeps it for renewals.' });
+  try {
+    await flw('/tokenized-charges', { method: 'POST', body: JSON.stringify({ token: ctx.card.token, currency: 'NGN', country: 'NG', amount: num(c.amount),
+      email: ctx.card.email, tx_ref: c.tx_ref, narration: `Counta ${ctx.plan.name} plan` }) });
+  } catch (e) {
+    if (e instanceof NotConfigured) throw e;
+    if (e instanceof UserError) return await subUpdate(c.tx_ref, { status: 'failed', error: e.message.slice(0, 200) });
+    // No answer: it may have gone through. The poll asks Flutterwave again by its reference.
+    return { status: 'pending' };
+  }
+  return await verifySubCard(c.tx_ref);
+}
+
+async function chargeWallet(ctx: any): Promise<any> {
+  const c = ctx.charge;
+  const merchant = await secret('FLW_MERCHANT_ID');
+  if (!ctx.wallet?.account_ref || (ctx.wallet.rail && ctx.wallet.rail !== 'flutterwave')) {
+    return await subUpdate(c.tx_ref, { status: 'failed', error: 'The business wallet cannot pay for plans. Pay by card.' });
+  }
+  if (!merchant) return await subUpdate(c.tx_ref, { status: 'failed', error: 'Paying for plans from the wallet is not switched on yet. Pay by card.' });
+  // Moves between Flutterwave accounts go through the relay like every transfer; until it is ready the charge waits.
+  if (!(await transfersReady())) return { status: 'pending', waiting: 'transfers' };
+  const r = await flutterwave.moveFunds(ctx.wallet.account_ref, { barter_id: merchant }, num(c.amount), c.tx_ref, `Counta ${ctx.plan.name} plan`);
+  if (r.status === 'failed') return await subUpdate(c.tx_ref, { status: 'failed', error: (r.error || 'The wallet payment failed.').slice(0, 200) });
+  return await subUpdate(c.tx_ref, { status: 'sent', provider_ref: r.provider_ref || null });
+}
+
+async function verifySubWallet(txRef: string, providerRef: string | null): Promise<any> {
+  const v = await flutterwave.verifyPayout(txRef, providerRef || undefined);
+  if (!v || v.status === 'processing') return { status: 'sent' };
+  if (v.status === 'successful') {
+    const raw = (v.raw || {}) as Record<string, unknown>;
+    return await subUpdate(txRef, { status: 'successful', amount: num(raw.amount), currency: String(raw.currency || 'NGN'), provider_ref: v.provider_ref });
+  }
+  return await subUpdate(txRef, { status: 'failed', error: (v.error || 'The wallet payment failed.').slice(0, 200), provider_ref: v.provider_ref });
+}
+
+// From the poll: renewals that fell due, then payments still open with Flutterwave.
+async function subscriptionWork() {
+  const out = { charged: 0, checked: 0, errors: 0 };
+  if (!(await flutterwave.configured())) return out;
+  let due: any[] = [];
+  try { due = (await svc<any[]>('svc_subscription_tick', {})) || []; } catch (e) { console.log('subscription tick', (e as Error).message); return out; }
+  for (const d of due) {
+    try {
+      const ctx = await subCtx(String(d.charge_id));
+      if (d.method === 'card') await chargeSavedCard(ctx); else await chargeWallet(ctx);
+      out.charged++;
+    } catch (e) { out.errors++; console.log('subscription charge', d.charge_id, (e as Error).message); if (e instanceof NotConfigured) break; }
+  }
+  for (const c of (await svc<any[]>('svc_subscription_open', {})) || []) {
+    try {
+      if (c.method === 'card') {
+        const r = await verifySubCard(String(c.tx_ref));
+        if (r?.status === 'pending' && c.kind === 'start' && num(c.age_minutes) > 24 * 60) await svc('svc_subscription_expire', { p_tx_ref: c.tx_ref });
+        else if (r?.status === 'pending' && c.kind === 'renewal' && num(c.age_minutes) > 30) {
+          await subUpdate(String(c.tx_ref), { status: 'failed', error: 'Flutterwave did not confirm the charge to the card.' });
+        }
+      } else if (c.status === 'sent') await verifySubWallet(String(c.tx_ref), c.provider_ref || null);
+      else await chargeWallet(await subCtx(String(c.id)));
+      out.checked++;
+    } catch (e) { out.errors++; console.log('subscription check', c.tx_ref, (e as Error).message); }
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ webhooks
 async function flutterwaveWebhook(req: Request) {
   const hash = await secret('FLW_WEBHOOK_HASH');
@@ -926,7 +1036,11 @@ async function flutterwaveWebhook(req: Request) {
   if (!fresh) return json({ ok: true, duplicate: true });
   let outcome = 'ignored', err: string | null = null;
   try {
-    if (event === 'charge.completed' && String(d.tx_ref || '').startsWith('CNT-')) {
+    if (event === 'charge.completed' && String(d.tx_ref || '').startsWith('SUB-')) {
+      // A Counta plan paid by card: Flutterwave is asked, never the event's own fields.
+      const r = await verifySubCard(String(d.tx_ref));
+      outcome = `subscription:${r?.status}`;
+    } else if (event === 'charge.completed' && String(d.tx_ref || '').startsWith('CNT-')) {
       const r = await settle(String(d.tx_ref), 'flutterwave', { name: d.customer?.name, email: d.customer?.email });
       outcome = r.paid ? 'paid' : `not_paid:${r.status}`;
     } else if (event === 'charge.completed') {
@@ -936,7 +1050,10 @@ async function flutterwaveWebhook(req: Request) {
       outcome = 'wallet_sync';
     } else if (event === 'transfer.completed') {
       const ref = String(d.reference || '');
-      if (ref.startsWith('CNTP-')) {
+      if (ref.startsWith('SUB-')) {
+        const r = await verifySubWallet(ref, String(d.id || '') || null);
+        outcome = `subscription:${r?.status}`;
+      } else if (ref.startsWith('CNTP-')) {
         const { rail } = await railFor('flutterwave');
         const v = await rail.verifyPayout(ref, String(d.id || ''));
         if (v) await svc('svc_payout_update', { p_reference: ref, d: v });
@@ -1023,9 +1140,20 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
     const action = String(body.action || '');
 
-    if (action === 'poll' || action === 'reconcile' || action === 'tax_instruction') {
+    if (action === 'poll' || action === 'reconcile' || action === 'tax_instruction' || action === 'resolve_hook') {
       const hook = req.headers.get('x-counta-hook') || '';
       if (!hook || !timingSafeEqual(hook, await secret('PUSH_HOOK_SECRET'))) return json({ ok: false, error: 'Not allowed.' }, 401);
+      // Whose name an account on a supplier's invoice is held in (the ai function asks, for the invoice checks).
+      if (action === 'resolve_hook') {
+        const acct = String(body.account_number || '').replace(/\D/g, '');
+        if (!/^\d{10}$/.test(acct)) return json({ ok: false, error: 'Account numbers have 10 digits.' });
+        const { rail } = await railFor('flutterwave');
+        if (!(await rail.configured())) return json({ ok: false, error: 'not_configured' });
+        const code = bankCodeFor(await rail.banks(), String(body.bank_name || ''), body.bank_code ? String(body.bank_code) : null);
+        if (!code) return json({ ok: false, error: 'bank_unknown' });
+        try { return json({ ok: true, bank_code: code, account_name: await rail.resolveAccount(acct, code) }); }
+        catch (e) { return json({ ok: false, error: (e as Error).message }); }
+      }
       // A payment request Flux has just posted (the taxstreem function passes it on): check it and pay it if everything agrees.
       if (action === 'tax_instruction') return json({ ok: true, result: await checkInstruction(String(body.instruction_id || '')) });
       return json({ ok: true, result: action === 'poll' ? await poll() : await reconcile() });
@@ -1179,6 +1307,33 @@ Deno.serve(async (req) => {
         if (!/^\d{10}$/.test(String(body.account_number || ''))) throw new UserError('Account numbers have 10 digits.');
         const { rail } = await railFor(String(body.rail || 'flutterwave'));
         return json({ ok: true, account_name: await rail.resolveAccount(String(body.account_number), String(body.bank_code)) });
+      }
+      case 'subscription_start': {
+        const orgId = String(body.org_id || '');
+        const { data: r, error } = await sb.rpc('subscription_start', { p_org: orgId, p: { plan_id: body.plan_id, billing: body.billing, method: body.method,
+          use_saved: body.use_saved !== false } });
+        if (error) throw new UserError(error.message);
+        if (!r?.charge_id) return json({ ok: true, ...r });
+        if (!(await flutterwave.configured())) throw new NotConfigured('Card and wallet payments are not switched on yet. TaxStreem is setting them up.');
+        const ctx = await subCtx(String(r.charge_id));
+        if (r.action === 'checkout') return json({ ok: true, tx_ref: r.tx_ref, ...(await subCheckout(ctx)) });
+        const result = r.action === 'charge_card' ? await chargeSavedCard(ctx) : await chargeWallet(ctx);
+        const { data: state } = await sb.rpc('subscription_state', { p_org: orgId });
+        return json({ ok: true, action: r.action, tx_ref: r.tx_ref, result, state });
+      }
+      case 'subscription_verify': {
+        const orgId = String(body.org_id || ''), txRef = String(body.tx_ref || '');
+        if (!/^SUB-[0-9A-F]{16}$/.test(txRef)) throw new UserError('Unknown payment.');
+        // Only someone who manages this business's plan may ask.
+        const { error } = await sb.rpc('subscription_state', { p_org: orgId });
+        if (error) throw new UserError(error.message);
+        const id = await svc<string | null>('svc_subscription_by_ref', { p_tx_ref: txRef });
+        const ctx = id ? await subCtx(id) : null;
+        if (!ctx || ctx.org?.id !== orgId) throw new UserError('Unknown payment.');
+        const result = ['successful', 'failed', 'cancelled'].includes(ctx.charge.status) ? { status: ctx.charge.status }
+          : ctx.charge.method === 'card' ? await verifySubCard(txRef) : ctx.charge.status === 'sent' ? await verifySubWallet(txRef, ctx.charge.provider_ref) : { status: ctx.charge.status };
+        const { data: state } = await sb.rpc('subscription_state', { p_org: orgId });
+        return json({ ok: true, result, state });
       }
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }

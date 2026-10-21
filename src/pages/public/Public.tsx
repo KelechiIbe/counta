@@ -11,12 +11,15 @@ import { qrSvg } from '../../lib/labels';
 import { Icon } from '../../components/Icon';
 import { Alert, Spinner } from '../../components/ui';
 
-function Frame({ children, org }: { children: React.ReactNode; org?: any }) {
+export function Frame({ children, org }: { children: React.ReactNode; org?: any }) {
+  // A logo that will not load (removed, or not yet uploaded) falls back to the business's initials.
+  const [noLogo, setNoLogo] = useState(false);
   return (
     <div style={{ minHeight: '100vh', background: '#F4F6F8', padding: '24px 12px 48px' }}>
       <div style={{ maxWidth: 760, margin: '0 auto' }} className="stack">
         {org && <div className="row" style={{ gap: 12, marginBottom: 14 }}>
-          {org.logo_path ? <img src={photoUrl(org.logo_path) || ''} alt="" style={{ width: 44, height: 44, borderRadius: 10, objectFit: 'cover' }} /> : <span className="org-ini">{String(org.name || '').slice(0, 2).toUpperCase()}</span>}
+          {org.logo_path && !noLogo ? <img src={photoUrl(org.logo_path) || ''} alt="" onError={() => setNoLogo(true)} style={{ width: 44, height: 44, borderRadius: 10, objectFit: 'cover' }} />
+            : <span className="org-ini">{String(org.name || '').slice(0, 2).toUpperCase()}</span>}
           <div><div style={{ fontWeight: 700, fontSize: 17 }}>{org.name}</div><div className="muted" style={{ fontSize: 12 }}>{[org.address, org.phone, org.email].filter(Boolean).join(' · ')}</div></div>
         </div>}
         {children}

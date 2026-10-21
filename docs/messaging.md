@@ -91,6 +91,15 @@ Sent with Counta.
 
 Example: Bisi, Bright Pharmacy Ltd, BCS-118, your Tax ID is missing. You can get it at taxid.nrs.gov.ng; please send it to us with an invoice that shows it
 
+**counta_invoice_issues** (4 variables), to a supplier whose invoice came in with problems (from the invoice portal or uploaded by the business)
+
+```
+Hello {{1}}, {{2}} has received your invoice {{3}}. Please check: {{4}}
+Sent with Counta.
+```
+
+Example: Bisi, Bright Pharmacy Ltd, BCS-118, VAT should be ₦7,500.00 (7.5% of ₦100,000.00), but the invoice shows ₦10,000.00. The invoice has no bank account for payment.
+
 ### Alerts to the business's owner
 
 Counta also writes to the owner of each business when something needs doing: a tax return due, invoices due or overdue, and

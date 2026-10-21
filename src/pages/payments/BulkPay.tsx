@@ -79,6 +79,9 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
   const [phase, setPhase] = useState<'upload' | 'checking' | 'review'>('upload');
   const [check, setCheck] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  // Contractors' Tax IDs checked with the NRS from this page: number → what the NRS said.
+  const [nrs, setNrs] = useState<Record<string, { status?: string; taxpayer_name?: string | null; error?: string; busy?: boolean }>>({});
+  const [checkingTins, setCheckingTins] = useState(false);
   const clientRef = useRef(crypto.randomUUID());
   const rowsRef = useRef<BulkRow[]>([]);
   rowsRef.current = rows;
@@ -86,7 +89,8 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
   const patch = (i: number, p: Partial<BulkRow>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...p } : r)));
   const payload = (rs: BulkRow[]) => ({ title, default_account: defaultAccount || null, file_name: file || null,
     rows: rs.map((r) => ({ row: r.row, name: r.name, bank_code: r.bank_code, bank_name: r.bank_name, account_number: r.account_number, account_name: r.resolved || '',
-      amount: r.amount, narration: r.narration, bill: r.bill, supplier: r.supplier, account: r.account, reference: r.reference })) });
+      amount: r.amount, narration: r.narration, bill: r.bill, supplier: r.supplier, account: r.account, reference: r.reference,
+      work: r.work || null, contractor_type: r.contractor_type || null, tin: r.tin || null, address: r.address || null, state: r.state || null, gross: r.gross })) });
 
   async function runCheck(rs: BulkRow[]) {
     const ready = rs.filter((r) => !r.issues.length);
@@ -117,6 +121,28 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
     await resolveAll(work, (i, p) => { Object.assign(work[i], p); patch(i, p); });
     await runCheck(work);
     setPhase('review');
+  }
+
+  // The contractors' Tax IDs the books asked to have checked, once each, two at a time; then the sheet is checked again.
+  const tinsToCheck = useMemo(() => {
+    const seen = new Map<string, string>();
+    rows.forEach((r) => { const t = r.server?.contractor?.tin_to_check; if (t && !seen.has(t) && !nrs[t]?.status) seen.set(t, r.server?.contractor?.name || r.name); });
+    return [...seen.entries()].map(([number, name]) => ({ number, name }));
+  }, [rows, nrs]);
+  async function checkTins() {
+    setCheckingTins(true);
+    const todo = [...tinsToCheck];
+    let next = 0;
+    async function worker() {
+      while (next < todo.length) {
+        const t = todo[next++];
+        setNrs((m) => ({ ...m, [t.number]: { busy: true } }));
+        const res = await edge<{ status: string; taxpayer_name: string | null }>('mono', { action: 'verify_number', org_id: orgId, number: t.number, name: t.name });
+        setNrs((m) => ({ ...m, [t.number]: res.ok === false ? { error: res.error || 'The NRS check did not go through.' } : { status: res.status, taxpayer_name: res.taxpayer_name } }));
+      }
+    }
+    try { await Promise.all(Array.from({ length: Math.min(2, todo.length) }, worker)); await runCheck(rowsRef.current); }
+    finally { setCheckingTins(false); }
   }
 
   async function pickBank(i: number, code: string) {
@@ -167,7 +193,7 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
 
   return (
     <Modal onClose={onClose} width={phase === 'upload' ? 620 : 1080}>
-      <ModalHead title="Bulk payment" sub="Pay many people at once from the wallet: suppliers' bills, salaries, allowances and other costs." onClose={onClose} />
+      <ModalHead title="Bulk payment" sub="Pay many people at once from the wallet: suppliers' bills, contractors with no bill, salaries, allowances and other costs." onClose={onClose} />
       <div className="modal-body">
         {phase === 'upload' && (
           <>
@@ -186,7 +212,7 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
               </Field>
             </div>
             {banksErr && <Alert kind="amber" icon="alert">{banksErr}</Alert>}
-            <SheetRows fields={BULK_FIELDS} need={[['amount'], ['bill']]} action={(n) => `Check ${n} payment${n === 1 ? '' : 's'} with the banks`} onRows={onRows}
+            <SheetRows fields={BULK_FIELDS} need={[['amount'], ['bill'], ['gross']]} action={(n) => `Check ${n} payment${n === 1 ? '' : 's'} with the banks`} onRows={onRows}
               note="Excel or CSV. Up to 500 payments." />
           </>
         )}
@@ -197,6 +223,14 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
               {phase === 'checking' ? <span className="row" style={{ gap: 6, fontSize: 13 }}><Spinner small />Checking names with the banks · {resolvedCount} of {rows.filter((r) => /^\d{10}$/.test(r.account_number) && r.bank_code).length}{resolving ? '' : ' · checking the books'}</span>
                 : <button className="btn btn-ghost btn-sm" onClick={() => { setRows([]); setCheck(null); setPhase('upload'); }}>Upload another file</button>}
             </div>
+            {phase === 'review' && tinsToCheck.length > 0 && (
+              <Alert kind="blue" icon="shield">
+                <div className="row wrap" style={{ gap: 10, justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>{tinsToCheck.length} contractor{tinsToCheck.length === 1 ? '\'s' : 's\''} Tax ID{tinsToCheck.length === 1 ? '' : 's'} must be checked with the NRS before {tinsToCheck.length === 1 ? 'that row' : 'those rows'} can be paid. Withholding tax applies to the work, and the NRS name must match the contractor's.</span>
+                  <button className="btn btn-primary btn-sm" disabled={checkingTins} onClick={checkTins}>{checkingTins ? <><Spinner small />Checking…</> : `Check ${tinsToCheck.length} with the NRS`}</button>
+                </div>
+              </Alert>
+            )}
             <div className="card" style={{ overflow: 'auto', maxHeight: '48vh' }}>
               <table className="bulk-table">
                 <thead><tr><th style={{ width: 34 }} aria-label="Pay" /><th>Row</th><th>Pay to</th><th>Bank and account</th><th>For</th><th className="num">Amount</th><th>Check</th></tr></thead>
@@ -229,8 +263,13 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
                           <div className="mono faint" style={{ fontSize: 12 }}>{r.account_number}</div>
                         </td>
                         <td style={{ minWidth: 150 }}>
-                          {s?.label ? <div>{s.label}</div> : <div className="faint">{r.bill || r.supplier || r.account || (defaultAccount ? `${defaultAccount}` : '—')}</div>}
+                          {s?.label ? <div>{s.label}</div> : <div className="faint">{r.bill || r.supplier || r.work || r.account || (defaultAccount ? `${defaultAccount}` : '—')}</div>}
                           {s?.kind === 'bill' && Number(s.wht) > 0 && <div className="faint" style={{ fontSize: 12 }}>Settles {N2(s.gross)}, WHT {N2(s.wht)}</div>}
+                          {s?.kind === 'contractor' && s.gross != null && <div className="faint" style={{ fontSize: 12 }}>Bill of {N2(s.gross)}{Number(s.wht) > 0 ? `, WHT ${N2(s.wht)} (${(Number(s.contractor?.rate) * 100).toLocaleString('en-NG', { maximumFractionDigits: 2 })}%)` : ', no WHT'}{s.contractor?.new ? ' · new supplier' : ''}</div>}
+                          {s?.contractor?.tin && (() => { const n = nrs[s.contractor.tin]; return n?.busy ? <div className="faint" style={{ fontSize: 12 }}>Asking the NRS…</div>
+                            : n?.error ? <div style={{ fontSize: 12, color: '#B91C1C' }}>{n.error}</div>
+                            : n?.status ? <div style={{ fontSize: 12, color: n.status === 'verified' ? '#15803D' : '#B91C1C' }}>NRS: {n.status === 'verified' ? `found${n.taxpayer_name ? ` as ${n.taxpayer_name}` : ''}` : n.status === 'mismatch' ? `under ${n.taxpayer_name}` : 'no record'}</div>
+                            : s.contractor.tin_status ? <div className="faint" style={{ fontSize: 12 }}>Tax ID {s.contractor.tin} checked</div> : null; })()}
                           {r.narration && <div className="faint" style={{ fontSize: 12 }}>{r.narration}</div>}
                         </td>
                         <td className="num">{s?.amount != null ? N2(s.amount) : r.amount != null ? N2(r.amount) : '—'}</td>
@@ -259,6 +298,7 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
             {phase === 'review' && short > 0 && <Alert kind="red" icon="alert">The wallet is short by {N2(short)}. Fund it, or untick some rows.</Alert>}
             {phase === 'review' && needsApproval && <Alert kind="blue" icon="shield">Above {N2(threshold)}, so someone else who makes payments approves the batch before it goes. They get a notice.</Alert>}
             {phase === 'review' && rows.some((r) => r.server?.kind === 'vendor') && <div className="faint" style={{ fontSize: 12 }}>Payments to a supplier without a bill reduce what you owe them; no withholding tax is deducted on those.</div>}
+            {phase === 'review' && rows.some((r) => r.server?.kind === 'contractor') && <div className="faint" style={{ fontSize: 12 }}>Each contractor row writes and approves a bill for the work in Purchases, keeps the withholding tax back for the tax office and pays the rest. If the batch is declined or cancelled before the money leaves, those bills are voided.</div>}
           </>
         )}
       </div>

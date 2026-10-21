@@ -175,7 +175,8 @@ type FeedAccount = { id: string; org_id: string; mono_id: string; last_line_date
 // survives the time limit: the next run carries on from history_to.
 async function syncAccount(a: FeedAccount, realtime: boolean, budgetMs = 38_000) {
   const started = Date.now();
-  const to = new Date();
+  // Days are Lagos days (UTC+1, no daylight saving): between midnight and 1am a line dated today is still asked for.
+  const to = new Date(started + 3600_000);
   const { from, history } = fetchStart(a, to);
   const all = windows(from, to);
   let fetched = 0, added = 0, fresh: string | null = null, reached: string | null = null, last: any = null, complete = true;
@@ -552,10 +553,19 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
     const action = String(body.action || '');
 
-    if (action === 'sync_all') {
+    if (action === 'sync_all' || action === 'verify_vendor_tin') {
       const hook = req.headers.get('x-counta-hook') || '';
       const expected = await secret('PUSH_HOOK_SECRET');
       if (!hook || !expected || !sameSecret(hook, expected)) return json({ ok: false, error: 'Not allowed.' }, 401);
+      // A supplier's Tax ID found on an invoice uploaded on the invoice portal (no one is signed in): checked with the NRS the
+      // same way, counted against the business's daily lookups.
+      if (action === 'verify_vendor_tin') {
+        const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const orgId = String(body.org_id || ''), vendorId = String(body.vendor_id || '');
+        if (!UUID.test(orgId) || !UUID.test(vendorId)) return json({ ok: false, error: 'Choose the supplier.' }, 400);
+        const asService = <T = any>(fn: string, args: Record<string, unknown>) => svc<T>(fn === 'tin_check_target' ? 'svc_tin_check_target' : fn, args);
+        return json({ ok: true, ...(await verifyTin(asService, orgId, vendorId)) });
+      }
       return json({ ok: true, result: await syncAll() });
     }
 
@@ -590,6 +600,18 @@ Deno.serve(async (req) => {
         const vendorId = body.vendor_id == null || body.vendor_id === '' ? null : String(body.vendor_id);
         if (vendorId !== null && !UUID.test(vendorId)) throw new UserError('Choose the supplier.');
         return json({ ok: true, ...(await verifyTin(mine, orgId, vendorId)) });
+      }
+      // A contractor's Tax ID from a bulk payment file, checked before the contractor is on file. The database decides who
+      // may ask and counts the lookup; a number checked today comes back without asking the NRS again.
+      case 'verify_number': {
+        const orgId = String(body.org_id || '');
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgId)) throw new UserError('Choose the business first.');
+        const name = String(body.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        const target = await mine<any>('tin_check_number', { p_org: orgId, p: { number: String(body.number ?? ''), name } });
+        if (target.done) return json({ ok: true, number: target.number, status: target.status, taxpayer_name: target.taxpayer_name ?? null });
+        const rec: any = await nrsLookup(String(target.number), 'tin');
+        return json({ ok: true, ...(await svc('svc_tin_number_result', { p_org: orgId, p: {
+          check_id: target.check_id, found: Boolean(rec), nrs_tin: rec?.nrs_tin ?? null, taxpayer_name: rec?.taxpayer_name ?? null, name } })) });
       }
       case 'cac_status_report': {
         const orgId = String(body.org_id || '');

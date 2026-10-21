@@ -124,7 +124,7 @@ export const STATUS_TONE: Record<string, string> = {
   paid: 't-green', open: 't-blue', partially_paid: 't-amber', pending: 't-amber', draft: 't-grey', void: 't-grey', cancelled: 't-grey', converted: 't-purple',
   expired: 't-grey', credited: 't-purple', approved: 't-blue', processing: 't-amber', successful: 't-green', failed: 't-red', reversed: 't-red',
   pending_approval: 't-amber', confirmed: 't-green', rejected: 't-red', creating: 't-grey', active: 't-green', closed: 't-grey',
-  sending: 't-amber', completed: 't-green', partly_failed: 't-red', returned: 't-red',
+  sending: 't-amber', completed: 't-green', partly_failed: 't-red', returned: 't-red', review: 't-amber', reading: 't-grey', trialing: 't-blue', past_due: 't-red',
 };
 export const statusLabel = (s: string) => s.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 export const METHOD_LABEL: Record<string, string> = {
