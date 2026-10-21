@@ -102,13 +102,39 @@ Sent with Counta.
 
 Example: Bisi, Bright Pharmacy Ltd, BCS-118, VAT should be ₦7,500.00 (7.5% of ₦100,000.00), but the invoice shows ₦10,000.00. The invoice has no bank account for payment.
 
-### Alerts to the business's owner
+### Alerts to the business's people
 
-Counta also writes to the owner of each business when something needs doing: a tax return due, invoices due or overdue, and
-transactions to confirm before the month's returns. These go from Counta (no reply-to), only to the owner, at most once per
-alert and channel. TaxStreem sets when they go in the admin portal (Alerts and tax wallets); each business can stop email,
-WhatsApp and calls to itself in Settings, Alerts. Sample businesses are never messaged. Submit these three as well, in the
-Utility category, language English.
+Counta also writes to a business's people when something needs doing: a tax return due, invoices due or overdue, and
+transactions to confirm before the month's returns. Emails go from Counta (no reply-to) to the owner, at most once per alert.
+TaxStreem sets when they go in the admin portal (Alerts and tax wallets); each business can stop email, WhatsApp and calls to
+itself in Settings, Alerts. Sample businesses never email.
+
+#### Alerts on WhatsApp
+
+WhatsApp alerts go to everyone whose role covers the work and who linked their WhatsApp to Martina (Settings, Martina on
+WhatsApp and Siri). That number is the person's own, confirmed with a code, so nobody else is ever messaged; the phone number
+on the team list is not used. Migration `20261103000100_whatsapp_alerts.sql`.
+
+- **What goes.** The morning alerts above, on the same days as the email, and every push notification that asks for action:
+  a bill or a supplier's invoice to review, a delivery or receipt to confirm, a bank line to match, a payment to confirm, a
+  payout or bulk payment to approve, a payout that failed, a bank to sign in to again, a new order, a price check, a stock
+  count to approve or redo, stock on its way to receive, a connected tool that stopped working, a plan payment that failed,
+  a return Flux sent back, a tax payment Rev360 has not seen, the VAT threshold passed, and a question from the accountant.
+  Money in, payments received and call results stay on the bell (`private.wa_worthy`).
+- **When.** Between 8:00 and 20:00 where the business is. One raised at night waits for 8:00 (`messages.send_after`; the
+  messages cron sends it). At most ten a day to one number.
+- **From.** TaxStreem's number on OpenWA, where Martina answers, even when the business linked its own number for customers.
+  When the person's Martina chat is on the same business, the alert ends with "Reply here to ask Martina about it." and joins
+  that chat, so she knows what a reply refers to.
+- **Sample business.** It sends them too, to its own people only.
+- **Allowance.** Counta's own alerts, by email or WhatsApp, do not count against the business's monthly messages in its plan.
+  Cost of service still counts them as TaxStreem's cost.
+- **Unlinked.** An alert waiting for 8:00 does not go if the number was unlinked in the meantime.
+- **The message log.** Settings, Customer messages lists messages to customers and suppliers only; alerts to the team, with
+  their numbers, are not in it.
+
+Through the official Cloud API (`WHATSAPP_PROVIDER = meta`), only the alerts with a template below can go; the rest are
+marked failed with "This message can only go by email." Submit these three in the Utility category, language English.
 
 **counta_tax_deadline** (6 variables)
 
@@ -117,7 +143,7 @@ Hello {{1}}, {{2}}'s {{3}} for {{4}} is due on {{5}}. Amount: {{6}}. Open Counta
 Sent by Counta.
 ```
 
-Example: Ada, Bright Pharmacy Ltd, vat return, September 2026, 21 Oct 2026, ₦184,250.00
+Example: Ada, Bright Pharmacy Ltd, VAT return, September 2026, 21 Oct 2026, ₦184,250.00
 
 **counta_invoices_due** (5 variables)
 

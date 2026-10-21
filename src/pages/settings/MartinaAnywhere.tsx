@@ -55,6 +55,7 @@ function WhatsAppLink({ data }: { data: Mine }) {
     <div className="stack" style={{ gap: 10 }} data-testid="wa-link">
       <div className="ink3" style={{ fontSize: 13.5, lineHeight: 1.55 }}>
         Chat with Martina on WhatsApp at <b>{pretty(data.whatsapp.number)}</b>. Ask how sales are going, who owes you or what is running low, by text or voice note. She records sales, raises invoices, approves bills and sends reminders after she reads them back and you answer yes. She never sends money: payments open in Counta for you to tap.
+        {' '}Counta also sends your alerts to this chat: tax returns due, invoices overdue, and anything waiting for you, such as a bill to review or a payout to approve.
       </div>
       {linked.map((l) => (
         <div key={l.id} className="row wrap" style={{ gap: 10, alignItems: 'center' }}>

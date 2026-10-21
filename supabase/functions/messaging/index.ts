@@ -1,5 +1,7 @@
 // Counta messaging: invoices, receipts, orders, statements and payment reminders by email (Resend) and WhatsApp
 // (WhatsApp Business Cloud API).
+// Counta's own alerts to a business's people (template 'alert') go by WhatsApp from TaxStreem's OpenWA number to the number
+// each person linked to Martina; one queued for the morning waits in send_after (docs/messaging.md, Alerts on WhatsApp).
 //
 // Database (header x-counta-hook: <PUSH_HOOK_SECRET>):
 //   { message_id }          -> sends one queued message
@@ -129,19 +131,22 @@ async function provider(): Promise<'openwa' | 'meta'> {
 }
 const NOT_ON = 'WhatsApp is not switched on yet. TaxStreem is setting it up; the message goes out once it is.';
 
-// The same words as the email, as WhatsApp text.
+// The same words as the email, as WhatsApp text. An alert to someone whose Martina chat is on the same business says that
+// a reply reaches her.
 export function waText(m: Msg): string {
   const w = wording(m) as ReturnType<typeof wording> & { greet?: string; footer?: string };
   const p = m.params || {};
   const hello = `Hello ${w.greet ?? first(p.customer_name)},`;
   const biz = p.business || m.org?.name || '';
-  return waFormat(w.heading, [hello, '', ...w.lines], w.link, w.button, w.footer || (biz ? `Sent for ${biz} by Counta` : 'Sent by Counta'));
+  const reply = m.template === 'alert' && p.reply_hint === true ? ['Reply here to ask Martina about it.'] : [];
+  return waFormat(w.heading, [hello, '', ...w.lines, ...reply], w.link, w.button, w.footer || (biz ? `Sent for ${biz} by Counta` : 'Sent by Counta'));
 }
 
 async function sendOpenWa(m: Msg): Promise<string> {
   const cfg = await openwaCfg();
   if (!cfg) throw new Error(NOT_ON);
-  const { data: s } = await admin.rpc('svc_wa_sender', { p_org: m.org_id || null });
+  // Counta's own alerts come from TaxStreem's number, where Martina answers; a business's own linked number is for its customers.
+  const { data: s } = await admin.rpc('svc_wa_sender', { p_org: m.template === 'alert' ? null : m.org_id || null });
   if (!s?.session || s.status !== 'ready') throw new Error(NOT_ON.replace('yet. TaxStreem is setting it up', 'at the moment: the WhatsApp number is not connected'));
   const phone = waDigits(m.to_address);
   if (!phone) throw new Error('That phone number does not look right for WhatsApp.');
@@ -196,6 +201,10 @@ async function deliver(id: string) {
   try {
     const providerId = m.channel === 'email' ? await sendEmail(m) : await sendWhatsApp(m);
     await admin.rpc('svc_message_update', { p_id: id, p_status: 'sent', p_provider_id: providerId || null, p_error: null });
+    // An alert in the person's Martina chat joins the conversation, so a reply ("file it", "who is it from?") makes sense to her.
+    if (m.template === 'alert' && m.channel === 'whatsapp' && m.params?.reply_hint === true && typeof m.params?.link_id === 'string') {
+      await admin.rpc('svc_chat_log', { p_link: m.params.link_id, p_role: 'assistant', p_text: waText(m), p_meta: { alert: String(m.params.kind || '') } });
+    }
     return { id, status: 'sent' };
   } catch (e) {
     const msg = (e as Error).message;

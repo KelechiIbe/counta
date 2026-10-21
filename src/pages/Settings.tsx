@@ -97,6 +97,13 @@ function NotificationsSection() {
 }
 
 // What reaches the owner beyond the app: emails, WhatsApp messages and Martina's calls, and whether she calls customers.
+// "Ada", "Ada and Tunde", "Ada, Tunde and Bisi", "Ada, Tunde, Bisi, Kemi, Femi and 3 others".
+export function listNames(names: string[]) {
+  const n = names.filter(Boolean);
+  if (n.length > 6) return `${n.slice(0, 5).join(', ')} and ${n.length - 5} others`;
+  return n.length <= 1 ? n[0] || '' : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`;
+}
+
 function AlertsSection() {
   const { orgId } = useSession();
   const toast = useToast();
@@ -120,13 +127,21 @@ function AlertsSection() {
     </label>
   );
   return (
-    <Section id="alerts" title="Alerts" sub="Everything that needs doing shows as a red number in the menu and a push notification. The important things also reach the owner by email and WhatsApp.">
+    <Section id="alerts" title="Alerts" sub="Everything that needs doing shows as a red number in the menu and a push notification. The important things also reach the owner by email and, on WhatsApp, everyone who linked theirs to Martina.">
       {row('email', 'Email', `Tax returns due (${(cfg.tax_deadline?.message_days_before || [3, 1]).join(' and ')} days before), invoices overdue (weekly), and transactions to confirm before the returns.`)}
-      {row('whatsapp', 'WhatsApp', 'The same, on WhatsApp, to the owner\'s phone number.')}
+      {row('whatsapp', 'WhatsApp', 'The same on WhatsApp, plus anything waiting for you: bills and receipts to review, payouts to approve, a bank to sign in to again, new orders. Each person gets what their role covers, from TaxStreem\'s number, between 8:00 and 20:00, at most 10 a day.')}
       {row('owner_calls', 'A call from Martina the day before a tax return is due', 'She explains what is due and what to do. Calls go out between ' + (cfg.calls?.hours?.[0] ?? 9) + ':00 and ' + (cfg.calls?.hours?.[1] ?? 17) + ':00.')}
       {row('customer_calls', 'Martina follows up customers whose invoices are overdue', `Only after a reminder went unanswered, for invoices at least ${cc.min_days_overdue ?? 7} days overdue and ${cc.min_amount != null ? '₦' + Number(cc.min_amount).toLocaleString('en-NG') : '₦10,000'} or more, at most ${cc.per_org_per_day ?? 5} calls a day${cc.weekdays_only !== false ? ', on weekdays' : ''}. She is polite, never threatens, and writes what the customer said on the invoice.`)}
       {!can_ && <div className="faint" style={{ fontSize: 12 }}>Only the owner or someone who manages settings changes these.</div>}
-      {!!data.owner && <div className="faint" style={{ fontSize: 12 }}>Messages go to {data.owner.name}{data.owner.email ? ` at ${data.owner.email}` : ''}{data.owner.phone ? ` and ${data.owner.phone}` : ''}.</div>}
+      {!!data.owner && <div className="faint" style={{ fontSize: 12 }} data-testid="alerts-email-to">Emails go to {data.owner.name}{data.owner.email ? ` at ${data.owner.email}` : ''}.</div>}
+      {Array.isArray(data.whatsapp_people) && (
+        <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }} data-testid="alerts-whatsapp-to">
+          {data.whatsapp_people.length
+            ? `WhatsApp alerts go to ${listNames(data.whatsapp_people)}, on the number${data.whatsapp_people.length === 1 ? '' : 's'} linked to Martina.`
+            : 'Nobody here has linked WhatsApp to Martina yet, so no WhatsApp alerts go out.'}
+          {data.my_whatsapp ? ` Yours go to ${data.my_whatsapp}.` : ' Link your number under Martina on WhatsApp and Siri to get yours.'}
+        </div>
+      )}
       {!!(data.calls || []).length && (
         <div className="card" style={{ borderRadius: 12, overflow: 'hidden' }}>
           {(data.calls as any[]).slice(0, 8).map((c) => (
