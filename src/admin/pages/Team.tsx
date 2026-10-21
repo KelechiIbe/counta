@@ -35,6 +35,7 @@ function describe(a: Audit): string {
     case 'set_wht_rate': return `Withholding tax ${a.target}: company ${pct(d.company)}, individual ${pct(d.individual)}`;
     case 'add_staff': return `Added ${a.target} as ${d.role}`;
     case 'remove_staff': return `Removed ${a.target} as ${d.role}`;
+    case 'delete_business': return `Deleted the business ${d.name}${d.logins_removed ? `, with ${d.logins_removed} login${d.logins_removed === 1 ? '' : 's'}` : ''}${d.samples ? ` and ${d.samples === 1 ? 'a sample business' : `${d.samples} sample businesses`}` : ''}${d.finished ? '' : ' (not finished)'}`;
     case 'review_identity': return `${d.approved === false ? 'Turned down' : 'Approved'} an identity check${d.note ? `: ${d.note}` : ''}`;
     default: return a.action.replace(/_/g, ' ') + (a.target ? ` ${a.target}` : '');
   }

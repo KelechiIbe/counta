@@ -12,6 +12,12 @@
 //                                             session's state with the QR code to scan while it waits for one
 //   { action: 'openwa_status' }            -> the same state, without changing anything
 //   { action: 'openwa_unlink' }            -> logs the number out of WhatsApp on the server
+//   { action: 'delete_business', org_id, confirm } -> deletes a business for good. The database part (admin_business_delete)
+//                                             checks the typed name, that no wallet holds money and nothing is on its
+//                                             way, and removes every record in one go; then this removes its files, the
+//                                             logins of people in no other business, its bank feeds at Mono and any
+//                                             WhatsApp number it linked on OpenWA, and emails every admin
+//   { action: 'delete_business_finish', audit_id } -> tries again whatever a deletion could not finish
 //
 // Keys are read Vault first, then the Edge Function secret, exactly as the other functions read them; the value of a
 // secret never leaves this function.
@@ -25,6 +31,7 @@ const XI = (Deno.env.get('ELEVENLABS_BASE_URL') || 'https://api.elevenlabs.io').
 const FLW = (Deno.env.get('FLW_BASE_URL') || 'https://api.flutterwave.com/v3').replace(/\/$/, '');
 const RESEND = (Deno.env.get('RESEND_BASE_URL') || 'https://api.resend.com').replace(/\/$/, '');
 const GRAPH = (Deno.env.get('WHATSAPP_GRAPH_URL') || 'https://graph.facebook.com/v21.0').replace(/\/$/, '');
+const MONO = (Deno.env.get('MONO_BASE_URL') || 'https://api.withmono.com').replace(/\/$/, '');
 const admin = createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false } });
 
 const cors = {
@@ -192,17 +199,71 @@ async function openwa(sb: SupabaseClient, action: string, userId: string) {
 
 // ------------------------------------------------------------------ alerts
 // Every admin hears about every key change, by email, when email is set up.
-async function alert(actor: string, label: string, what: string) {
+async function alert(actor: string, label: string, what: string, tail = 'If this was not you or someone you expected, sign in to the admin portal, check Keys and services, and change the key at the provider.') {
   const k = await key('RESEND_API_KEY'), from = senderAddress(await key('RESEND_FROM'));
   if (!k || !from) return false;
   const { data: to } = await admin.rpc('svc_admin_emails');
   const list = (Array.isArray(to) ? to : []).filter((e: unknown) => typeof e === 'string').slice(0, 20);
   if (!list.length) return false;
   const when = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos', dateStyle: 'medium', timeStyle: 'short' });
-  const text = `${actor} ${what} in the Counta admin portal on ${when} (Lagos time).\n\n${label}\n\nIf this was not you or someone you expected, sign in to the admin portal, check Keys and services, and change the key at the provider.`;
+  const text = `${actor} ${what} in the Counta admin portal on ${when} (Lagos time).\n\n${label}\n\n${tail}`;
   const r = await call(`${RESEND}/emails`, { method: 'POST', headers: { Authorization: `Bearer ${k}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ from: `Counta admin <${from}>`, to: list, subject: `Counta admin: ${label.split('\n')[0]}`, text }) });
   return r.ok;
+}
+
+// ------------------------------------------------------------------ deleting a business
+// What the database could not do itself: the files (Storage), the logins (Auth), the bank feeds at Mono and the WhatsApp
+// numbers on OpenWA. Each part is safe to run again; what is still left keeps the deletion open for Try again.
+async function finishDeletion(auditId: number) {
+  const done = { logins: 0, files: 0, mono: 0, whatsapp: 0 };
+  const errors: string[] = [];
+  const pending = async () => (await admin.rpc('svc_business_delete_pending', { p_audit: auditId })).data as
+    { users: string[]; files: { bucket: string; name: string }[]; mono: string[]; whatsapp: string[] } | null;
+  // Files, a thousand at a time, until none are left or a round removes nothing.
+  for (let round = 0; round < 50; round++) {
+    const files = (await pending())?.files || [];
+    if (!files.length) break;
+    let removed = 0;
+    for (const bucket of [...new Set(files.map((f) => f.bucket))]) {
+      const names = files.filter((f) => f.bucket === bucket).map((f) => f.name);
+      for (let i = 0; i < names.length; i += 100) {
+        const { data, error } = await admin.storage.from(bucket).remove(names.slice(i, i + 100));
+        if (error) { errors.push(`Files: ${short(error.message, 160)}`); break; }
+        removed += (data || []).length;
+      }
+    }
+    done.files += removed;
+    if (!removed) break;
+  }
+  const p = await pending();
+  // Logins of people who are still in no business, not accountants and not TaxStreem staff (the database checks again).
+  for (const id of p?.users || []) {
+    const { error } = await admin.auth.admin.deleteUser(String(id));
+    if (error && !/not.?found/i.test(error.message)) errors.push(`A login: ${short(error.message, 160)}`);
+    else done.logins++;
+  }
+  // Bank feeds at Mono: Mono stops reading the bank (and billing for it). Without Mono keys there is no feed to stop.
+  const monoKey = await key('MONO_SECRET_KEY');
+  let monoLeft = false;
+  for (const id of monoKey ? p?.mono || [] : []) {
+    const r = await call(`${MONO}/v2/accounts/${encodeURIComponent(id)}/unlink`, { method: 'POST', headers: { 'mono-sec-key': monoKey, accept: 'application/json' } });
+    if (r.ok || r.status === 404 || /already|not found|unlinked/i.test(why(r))) done.mono++;
+    else { monoLeft = true; errors.push(`A bank feed at Mono: ${why(r)}`); }
+  }
+  // WhatsApp numbers the business linked on TaxStreem's OpenWA server: logged out, and the session removed.
+  const cfg = await openwaCfg();
+  let waLeft = false;
+  for (const id of cfg ? p?.whatsapp || [] : []) {
+    await owa(cfg!, `/sessions/${encodeURIComponent(id)}/logout`, { method: 'POST', body: {} });
+    const r = await owa(cfg!, `/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (r.ok || r.status === 404) done.whatsapp++;
+    else { waLeft = true; errors.push(`A WhatsApp number on OpenWA: ${owaError(r)}`); }
+  }
+  const after = await pending();
+  const left = Boolean((after?.users || []).length || (after?.files || []).length || monoLeft || waLeft);
+  await admin.rpc('svc_business_delete_done', { p_audit: auditId, p: { ...done, errors, pending: left } });
+  return { finished: !left, ...done, errors };
 }
 
 Deno.serve(async (req) => {
@@ -255,6 +316,21 @@ Deno.serve(async (req) => {
         const r = await openwa(sb, body.action, u.user.id);
         if (body.action !== 'openwa_status' && r.ok) await alert(actor, body.action === 'openwa_connect' ? 'WhatsApp on OpenWA was connected (a new webhook secret was made)' : 'TaxStreem\'s WhatsApp number was logged out of OpenWA', body.action === 'openwa_connect' ? 'connected WhatsApp' : 'logged out WhatsApp');
         return json(r);
+      }
+      case 'delete_business': {
+        const { data, error } = await sb.rpc('admin_business_delete', { p_org: String(body.org_id || ''), p_confirm: String(body.confirm ?? '') });
+        if (error) return json({ ok: false, error: error.message });
+        const r = await finishDeletion(Number(data.audit_id));
+        await alert(actor, `${data.name} was deleted from Counta, with ${data.logins} login${data.logins === 1 ? '' : 's'} of people in no other business.`,
+          'deleted a business', 'If this was not you or someone you expected, sign in to the admin portal and check the record of changes on the Admin team page.');
+        return json({ ok: true, name: data.name, audit_id: data.audit_id, ...r });
+      }
+      case 'delete_business_finish': {
+        const { data: open, error } = await sb.rpc('admin_business_deletions');
+        if (error) return json({ ok: false, error: error.message });
+        const row = ((open as any[]) || []).find((d) => Number(d.id) === Number(body.audit_id));
+        if (!row) return json({ ok: false, error: 'That deletion is already finished.' });
+        return json({ ok: true, name: row.name, audit_id: row.id, ...(await finishDeletion(Number(row.id))) });
       }
       default:
         return json({ ok: false, error: 'Unknown action.' }, 400);
