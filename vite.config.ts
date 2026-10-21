@@ -31,7 +31,7 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: '/index.html',
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        globPatterns: ['**/*.{js,css,html,svg,png,webp,woff2}'],
         // Export libraries load only when someone downloads a file, so phones do not install them up front.
         globIgnores: ['**/push-sw.js', '**/exceljs*.js', '**/xlsx-*.js', '**/pdf-vendor-*.js', '**/pdfjs-*.js', '**/mono-connect-*.js'],
         importScripts: ['push-sw.js'],
