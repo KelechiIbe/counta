@@ -42,10 +42,10 @@ export default function Customers() {
     { key: 'overdue', label: 'Overdue', type: 'money', total: true }, { key: 'sales_12m', label: 'Sales (12 months)', type: 'money', total: true }, { key: 'last_sale', label: 'Last sale', type: 'date' }];
   return (
     <div className="container">
-      <div className="m-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 12 }}>
-        <div className="card card-pad"><div className="label">Customers owe</div><div style={{ fontSize: 26, fontWeight: 700, marginTop: 6 }}>{N2(owed)}</div></div>
-        <div className="card card-pad"><div className="label">Overdue</div><div style={{ fontSize: 26, fontWeight: 700, marginTop: 6, color: overdue > 0 ? '#DC2626' : undefined }}>{N2(overdue)}</div></div>
-        <div className="card card-pad"><div className="label">Customers</div><div style={{ fontSize: 26, fontWeight: 700, marginTop: 6 }}>{all.length}</div></div>
+      <div className="fig-tiles" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 12 }}>
+        <div className="card card-pad"><div className="label">Customers owe</div><div className="fig">{N2(owed)}</div></div>
+        <div className="card card-pad"><div className="label">Overdue</div><div className="fig" style={{ color: overdue > 0 ? '#DC2626' : undefined }}>{N2(overdue)}</div></div>
+        <div className="card card-pad"><div className="label">Customers</div><div className="fig">{all.length}</div></div>
       </div>
       <div className="row wrap" style={{ justifyContent: 'space-between' }}>
         <Pills value={tab} onChange={setTab} options={[{ id: 'all', label: 'All' }, { id: 'owing', label: 'Owe money' }, { id: 'overdue', label: 'Overdue' }, { id: 'credit', label: 'Hold credit' }]} />

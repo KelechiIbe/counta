@@ -6,7 +6,7 @@ Suppliers send invoices to a business on its own invoice link, and people who ke
 
 Every business has a link of the form `https://counta-taxstreem.netlify.app/v/<token>`, shown on the Supplier invoices tab with Copy, WhatsApp and Email buttons. A supplier opens it with no account, gives a name and an email or a WhatsApp number, and uploads a PDF or a photo (JPEG, PNG or WebP, up to 8 MB). The page shows the result at once: the reference (`SI-00001`), and anything the supplier must fix.
 
-Someone who keeps the books can switch the link off, make a new one (the old one stops working), and choose whether suppliers are told about problems automatically. The link also follows the business's plan (the Supplier invoice portal module) and TaxStreem's switch of the same name. Sample businesses never take invoices on a link.
+Someone who keeps the books can switch the link off, make a new one (the old one stops working), and choose whether suppliers are told about problems automatically. The link also follows the business's plan (the Supplier invoice portal module) and TaxStreem's switch of the same name. Sample businesses never take invoices on a link; their tab says so, and uploading there still shows how Counta reads and checks an invoice.
 
 Limits keep the link from being abused: ten uploads an hour from one address, a hundred a day on one link, and 120 invoices an hour read for one business however they arrive.
 

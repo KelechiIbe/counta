@@ -83,6 +83,8 @@ function PortalCard({ portal }: { portal: { token: string; on: boolean; notices:
   const [busy, setBusy] = useState(false);
   const url = portalUrl(portal.token);
   const keep = inv ? can(inv, 'keep_books') : false;
+  // The sample business never takes invoices on its link (the link page says so); uploading still shows how it works.
+  const sample = Boolean(inv?.org.is_sample);
   async function set(p: Record<string, unknown>, ok: string) {
     setBusy(true);
     try { await rpc('set_invoice_portal', { p_org: orgId, p }); toast(ok); await qc.invalidateQueries({ queryKey: ['supplier-invoices'] }); }
@@ -98,8 +100,9 @@ function PortalCard({ portal }: { portal: { token: string; on: boolean; notices:
           <div style={{ fontWeight: 600 }}>Your invoice link for suppliers</div>
           <div className="faint" style={{ fontSize: 12.5 }}>Suppliers upload invoices here instead of emailing or sending them by WhatsApp. Counta reads and checks each one and writes the bill.</div>
         </div>
-        <span className={'chip ' + (portal.on ? 't-green' : 't-grey')}>{portal.on ? 'Taking invoices' : 'Switched off'}</span>
+        <span className={'chip ' + (portal.on && !sample ? 't-green' : 't-grey')}>{sample ? 'Not on the sample business' : portal.on ? 'Taking invoices' : 'Switched off'}</span>
       </div>
+      {sample && <div className="faint" style={{ fontSize: 12.5 }}>This is the sample business, so its link does not take invoices. Upload an invoice below to see how Counta reads and checks it; in your own business, suppliers can use the link.</div>}
       <div className="row wrap" style={{ gap: 8 }}>
         <input className="input input-sm mono grow" style={{ minWidth: 220 }} readOnly value={url} aria-label="Invoice link" onFocus={(e) => e.target.select()} />
         <button className="btn btn-secondary btn-sm" onClick={() => navigator.clipboard?.writeText(url).then(() => toast('Link copied'), () => toast('Select the link and copy it', 'err'))}><Icon name="copy" size={13} />Copy</button>
