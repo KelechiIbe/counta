@@ -22,6 +22,12 @@
 -- Bumpa: a store's secret API key now brings its paid orders in every five minutes, like Shopify; the CSV upload stays.
 
 -- ---------------------------------------------------------------------------
+-- 0. One-time accounts: a space between TaxStreem and the business's name. The third ₦100 check on 21 October showed
+--    Flutterwave MFB keeps a space ("TaxStreem Kelandellen") where it dropped the slash and the hyphen.
+-- ---------------------------------------------------------------------------
+update private.config set value = ' ' where key = 'va_separator';
+
+-- ---------------------------------------------------------------------------
 -- 1. Bumpa by API: looked at by the five-minute work when it has a key
 -- ---------------------------------------------------------------------------
 create or replace function public.svc_integrations_due() returns jsonb
