@@ -221,13 +221,13 @@ function Reviewed({ p }: { p: any }) {
     catch (e) { toast((e as Error).message, 'err'); }
   }
   return (
-    <div className="tr" style={{ gridTemplateColumns: 'minmax(0,1.4fr) 120px 110px auto', gap: 12 }}>
-      <span style={{ minWidth: 0 }}><b>{p.title}</b><span className="faint" style={{ display: 'block', fontSize: 12 }}>{p.proposal?.account_code} {p.account_name} · {p.journal_ref} · {when(p.created_at)} · {p.rationale}</span>
+    <div className="tr rsp" style={{ gridTemplateColumns: 'minmax(0,1.4fr) 120px 110px auto', gap: 12 }} data-testid="atlas-posted">
+      <span className="m-main" style={{ minWidth: 0 }}><b>{p.title}</b><span className="faint" style={{ display: 'block', fontSize: 12 }}>{[[p.proposal?.account_code, p.account_name].filter(Boolean).join(' '), p.journal_ref, when(p.created_at), p.rationale].filter(Boolean).join(' · ')}</span>
         {edit && <span className="row" style={{ marginTop: 6 }}><select className="input input-sm" value={code} onChange={(e) => setCode(e.target.value)}>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select>
           <button className="btn btn-primary btn-xs" onClick={change}>Move</button></span>}</span>
       <span className="chip t-green" style={{ justifySelf: 'start' }}>{pct(p.confidence)} sure</span>
-      <b className="num right">{N2(p.amount)}</b>
-      {can(inv, 'keep_books') && p.status === 'auto_posted' ? <span className="row" style={{ gap: 4 }}><button className="btn btn-ghost btn-xs" onClick={confirm}>Right</button><button className="btn btn-ghost btn-xs" onClick={() => setEdit(!edit)}>Wrong account</button></span> : <span />}
+      <b className="num right m-end">{N2(p.amount)}</b>
+      {can(inv, 'keep_books') && p.status === 'auto_posted' ? <span className="row m-line" style={{ gap: 4 }}><button className="btn btn-ghost btn-xs" onClick={confirm}>Right</button><button className="btn btn-ghost btn-xs" onClick={() => setEdit(!edit)}>Wrong account</button></span> : <span />}
     </div>
   );
 }

@@ -12,58 +12,46 @@ OpenWA drives WhatsApp Web with a real phone number. It is not Meta's official W
 
 ## Set up the server
 
-On the server, as root:
+On DigitalOcean: Create, Droplets, region London, Ubuntu 24.04 (LTS), Basic, Regular, 2 GB of memory (about US$12 a month),
+a long root password kept in the password manager, hostname `counta-whatsapp`. At Namecheap add an A record, Host `wa`,
+pointing at the Droplet's ipv4 address. Then open the Droplet, Access, Launch Droplet Console, and paste:
 
 ```sh
-curl -fsSL https://get.docker.com | sh
-apt-get update && apt-get install -y caddy
-git clone https://github.com/rmyndharis/OpenWA.git /opt/openwa && cd /opt/openwa
-git checkout "$(git describe --tags "$(git rev-list --tags --max-count=1)")"   # the latest release
-cat > .env <<EOF
+curl -fsSL https://raw.githubusercontent.com/KelechiIbe/counta/main/openwa/setup.sh | bash -s wa.taxstreem.com
+```
+
+`openwa/setup.sh` installs Docker and Caddy, runs OpenWA from its published image (`ghcr.io/rmyndharis/openwa`, the version
+pinned in the script and tested with Counta), puts HTTPS in front of it, lets in only SSH, HTTP and HTTPS, adds 2 GB of swap
+on a small server, and backs up the sessions every night to `/root/openwa-backups` (the last seven). It writes
+`/opt/openwa/.env` (root only) with:
+
+```sh
 NODE_ENV=production
 TZ=Africa/Lagos
 DATABASE_TYPE=sqlite
-AUTO_START_SESSIONS=true
 BASE_URL=https://wa.taxstreem.com
-API_KEY_PEPPER=$(openssl rand -hex 32)
+AUTO_START_SESSIONS=true      # sessions start again after a restart
+RESOLVE_LID_TO_PHONE=true     # Counta needs the sender's number when WhatsApp hides it behind a privacy id
 ENABLE_SWAGGER=false
 MCP_ENABLED=false
-EOF
-chmod 600 .env
-# Counta does not use OpenWA's built-in database orchestration, so the Docker socket proxy is switched off.
-cat > docker-compose.override.yml <<'EOF'
-services:
-  docker-proxy:
-    profiles: ['disabled']
-EOF
-docker compose up -d --build
+API_KEY_PEPPER=<made once, 64 hex characters>
 ```
 
-OpenWA listens on `127.0.0.1:2785` only. Caddy puts HTTPS in front of it:
+and a `docker-compose.override.yml` that uses the published image and switches off the Docker socket proxy (Counta does
+not use OpenWA's built-in database orchestration). OpenWA listens on `127.0.0.1:2785` only; Caddy serves it at
+`https://wa.taxstreem.com`. Running the line again updates OpenWA to the script's version and keeps the pepper, the keys
+and the sessions. Three commands come with it: `openwa-admin-key`, `openwa-backup` and `openwa-status`.
 
-```sh
-cat > /etc/caddy/Caddyfile <<'EOF'
-wa.taxstreem.com {
-  reverse_proxy 127.0.0.1:2785
-}
-EOF
-systemctl reload caddy
-ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw --force enable
-```
-
-The admin key is made on first boot. Read it once, on the server, and keep it in TaxStreem's password manager:
-
-```sh
-docker compose logs openwa-api | grep -oE "owa_k1_[a-f0-9]{64}" | head -1
-```
-
-Do not paste it into a chat or email. Open `https://wa.taxstreem.com`, sign in with it, go to **API keys** and create a key with the **Operator** role named *Counta*. Counta needs nothing more than Operator: making sessions, webhooks and sending. The admin key never goes into Counta.
+The admin key is made on first start. Show it with `openwa-admin-key`, sign in at `https://wa.taxstreem.com` with it and keep
+it in TaxStreem's password manager. Do not paste it into a chat or email. In the dashboard, **API Keys**, **Create API
+Key**: name *Counta*, role **Operator**, all sessions, no IP addresses (Counta's servers have no fixed address), no expiry.
+Counta needs nothing more than Operator: making sessions, webhooks and sending. The admin key never goes into Counta.
 
 `API_KEY_PEPPER` must stay the same for the life of the server; changing it locks out every key.
 
 ## Connect Counta
 
-In Counta's admin portal, **Keys**, **WhatsApp on OpenWA**:
+In Counta's admin portal, **Keys and services**, **WhatsApp through OpenWA**:
 
 1. **OpenWA server address**: `https://wa.taxstreem.com`.
 2. **OpenWA API key**: the Operator key. It is stored in Supabase Vault and never shown again.
@@ -85,6 +73,6 @@ Every webhook from OpenWA is signed (`X-OpenWA-Signature: sha256=…`, HMAC-SHA2
 
 ## Keeping it healthy
 
-- Update OpenWA with `cd /opt/openwa && git fetch --tags && git checkout <new tag> && docker compose up -d --build`. Sessions survive on the `openwa-data` volume.
-- Back up the volume (`docker run --rm -v openwa_openwa-data:/d -v /root:/b alpine tar czf /b/openwa-data.tgz -C /d .`) before upgrades. Losing it means scanning the QR codes again.
+- Update OpenWA by running the setup line again once the script's pinned version has been raised and tested. Sessions survive on the `openwa_openwa-data` volume.
+- The nightly backup is in `/root/openwa-backups`; `openwa-backup` makes one at once, worth doing before an update. Losing the volume means scanning the QR codes again. The backups hold the admin key and the linked sessions, so they stay on the server.
 - If WhatsApp restricts the number, Counta's admin panel shows *WhatsApp needs attention on the phone*. Open WhatsApp on the phone to see why, and switch `WHATSAPP_PROVIDER` to `meta` while it is sorted out.

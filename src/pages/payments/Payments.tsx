@@ -261,11 +261,11 @@ function PaymentSettings({ data, onSaved }: { data: any; onSaved: () => void }) 
   );
 }
 
-type TransferSettings = { mode: 'wallet' | 'one_time'; name: string | null; default_name: string; prefix: string; label: string; checks_today: number; can_change: boolean;
+type TransferSettings = { mode: 'wallet' | 'one_time'; name: string | null; default_name: string; prefix: string; separator?: string; label: string; checks_today: number; can_change: boolean;
   seen: { label: string; shown: string | null; bank: string | null; error: string | null; at: string } | null };
 
 // How a customer pays by transfer: to the business's own wallet number with a reference, or to a one-time account for each
-// payment, named TaxStreem/<business>. The owner can ask Counta what name a bank shows for such an account.
+// payment, named TaxStreem-<business>. The owner can ask Counta what name a bank shows for such an account.
 function TransferChoice() {
   const { orgId } = useSession();
   const toast = useToast();
@@ -294,6 +294,7 @@ function TransferChoice() {
     if (r.ok === false && !r.settings) toast(r.error || 'The check did not finish.', 'err');
   }
   const seen = t.seen;
+  const pre = `${t.prefix}${t.separator ?? '-'}`;
   return (
     <div className="stack" style={{ gap: 8 }} data-testid="transfer-choice">
       <div className="field-label">When a customer pays by transfer</div>
@@ -305,13 +306,13 @@ function TransferChoice() {
       <label className="check" style={{ alignItems: 'flex-start' }}>
         <input type="radio" name="transfer-mode" disabled={!t.can_change} checked={m === 'one_time'} onChange={() => setMode('one_time')} />
         <span><b>A one-time account for each payment</b><span className="faint" style={{ display: 'block', fontSize: 12.5, lineHeight: 1.45 }}>
-          A fresh account number for every sale or invoice, so no reference is needed and every payment matches by itself. The account is TaxStreem's, named {t.prefix}/{n.trim() || t.default_name}, and the money moves to your wallet as soon as it lands. At the till it lasts an hour.</span></span>
+          A fresh account number for every sale or invoice, so no reference is needed and every payment matches by itself. The account is TaxStreem's, named {pre}{n.trim() || t.default_name}, and the money moves to your wallet as soon as it lands. At the till it lasts an hour.</span></span>
       </label>
       {m === 'one_time' && (
         <div className="stack" style={{ gap: 8, paddingLeft: 26 }}>
-          <Field label="Name on one-time accounts" hint={`Customers see ${t.prefix}/ and this name in their bank app. Up to 30 characters.`}>
+          <Field label="Name on one-time accounts" hint={`Customers see ${pre} and this name in their bank app. Up to 30 characters.`}>
             <div className="row" style={{ gap: 0, maxWidth: 360 }}>
-              <span className="input" style={{ width: 'auto', flex: 'none', borderTopRightRadius: 0, borderBottomRightRadius: 0, background: 'var(--row)', color: 'var(--muted)' }}>{t.prefix}/</span>
+              <span className="input" style={{ width: 'auto', flex: 'none', borderTopRightRadius: 0, borderBottomRightRadius: 0, background: 'var(--row)', color: 'var(--muted)' }}>{pre}</span>
               <input className="input" aria-label="Name on one-time accounts" maxLength={30} disabled={!t.can_change} value={n} onChange={(e) => setName(e.target.value)}
                 style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, minWidth: 0 }} />
             </div>
