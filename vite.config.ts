@@ -6,7 +6,8 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // A new version waits for the person to press Update now on the notice (src/lib/update.ts).
+      registerType: 'prompt',
       includeAssets: ['icon-brand.svg', 'logo-brand.svg', 'apple-touch-icon.png', 'badge-96.png'],
       manifest: {
         name: 'Counta by TaxStreem',

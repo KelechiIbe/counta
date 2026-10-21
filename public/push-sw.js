@@ -1,4 +1,18 @@
-/* Counta push handlers. Imported into the Workbox service worker (see vite.config.ts). */
+/* Counta's own service worker handlers, imported into the Workbox service worker (see vite.config.ts): how a new version
+   takes over, and push notifications. */
+
+// A new version waits until the person presses Update now on the notice (src/lib/update.ts). Pages from before that notice
+// cannot show it, so while none of the newer pages has run on this device (they leave a marker), a new version takes over
+// at once, as it always did, and those pages reload onto it.
+self.addEventListener('install', (event) => {
+  event.waitUntil((async () => {
+    try {
+      const meta = await caches.open('counta-meta');
+      if (await meta.match('/__counta/update-notice')) return;
+    } catch (e) { /* no cache storage: take over */ }
+    await self.skipWaiting();
+  })());
+});
 self.addEventListener('push', (event) => {
   let d = {};
   try { d = event.data ? event.data.json() : {}; } catch (e) { d = { body: event.data ? event.data.text() : '' }; }

@@ -168,6 +168,14 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 .x-btn { border: none; background: transparent; cursor: pointer; padding: 4px; border-radius: 8px; display: grid; place-items: center; }
 .x-btn:hover { background: var(--canvas); }
 .toast { position: fixed; left: 50%; bottom: calc(28px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--ink); color: #fff; border-radius: 12px; padding: 12px 18px; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 10px; box-shadow: var(--shadow-drawer); animation: tsRise .2s ease-out; z-index: 80; max-width: calc(100% - 32px); }
+/* A new version is ready (components/UpdateNotice.tsx): above everything, at the top, clear of the phone's notch. */
+.update-notice { position: fixed; z-index: 90; top: calc(12px + env(safe-area-inset-top)); left: 0; right: 0; margin: 0 auto; width: min(600px, calc(100% - 32px)); box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: #fff; border: 1px solid #C7DBFF; border-radius: 14px; box-shadow: var(--shadow-drawer); animation: tsRise .2s ease-out; }
+.update-notice-icon { width: 36px; height: 36px; border-radius: 10px; background: #EEF4FF; display: grid; place-items: center; flex: none; }
+.update-notice-actions { display: flex; gap: 6px; flex: none; }
+@media (max-width: 560px) {
+  .update-notice { flex-wrap: wrap; }
+  .update-notice-actions { width: 100%; justify-content: flex-end; }
+}
 
 /* ---------- auth ---------- */
 .auth-wrap { min-height: 100vh; display: grid; grid-template-columns: 1fr 1fr; }
