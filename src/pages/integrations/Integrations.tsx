@@ -8,6 +8,15 @@ import { edge } from '../../lib/api';
 import { N2, uuid, when } from '../../lib/format';
 import { useSession, useToast } from '../../state/session';
 import { Icon } from '../../components/Icon';
+import bumpaLogo from '../../assets/integrations/bumpa.webp';
+import flutterwaveLogo from '../../assets/integrations/flutterwave.webp';
+import paystackLogo from '../../assets/integrations/paystack.webp';
+import selarLogo from '../../assets/integrations/selar.webp';
+import shopifyLogo from '../../assets/integrations/shopify.webp';
+import slackLogo from '../../assets/integrations/slack.webp';
+import whatsappLogo from '../../assets/integrations/whatsapp.webp';
+import wooLogo from '../../assets/integrations/woocommerce.webp';
+import zapierLogo from '../../assets/integrations/zapier.webp';
 import { Alert, Drawer, Field, Spinner } from '../../components/ui';
 
 type Provider = 'paystack' | 'flutterwave' | 'selar' | 'woocommerce' | 'shopify' | 'zapier' | 'bumpa' | 'slack';
@@ -20,20 +29,35 @@ type Page = {
   can_manage: boolean; sample: boolean; connected: Conn[]; bank_feeds: number; locations: { id: string; name: string }[];
   whatsapp: { sender: 'counta' | 'own'; own: { status: string; phone: string | null; push_name: string | null; last_error: string | null } | null; counta: { status: string } | null; can_change: boolean };
 };
-type Tool = { id: Provider | 'whatsapp' | 'bank'; name: string; mark: string; tone: string; what: string; group: string };
+// logo: the tool's own mark. bleed: the mark is its own tile (an app icon), so it fills the square; the others sit on a white
+// tile, a wordmark (wide) with less room around it. The bank connection has no one brand, so it shows a bank.
+type Tool = { id: Provider | 'whatsapp' | 'bank'; name: string; logo?: string; bleed?: boolean; wide?: boolean; what: string; group: string };
 
 const TOOLS: Tool[] = [
-  { id: 'paystack', name: 'Paystack', mark: 'PS', tone: '#0BA4DB', group: 'Get paid', what: 'Every successful payment to your Paystack account becomes a paid sale, with Paystack\'s fee booked.' },
-  { id: 'flutterwave', name: 'Flutterwave', mark: 'FW', tone: '#F5A623', group: 'Get paid', what: 'Payments to your own Flutterwave account become paid sales, checked with Flutterwave first.' },
-  { id: 'selar', name: 'Selar', mark: 'SE', tone: '#7B2FF7', group: 'Sell online', what: 'Each Selar sale of your courses, e-books or products is recorded as it happens.' },
-  { id: 'bumpa', name: 'Bumpa', mark: 'BU', tone: '#00B37E', group: 'Sell online', what: 'Paid Bumpa orders come in through your API key every few minutes, or from the orders you export.' },
-  { id: 'woocommerce', name: 'WooCommerce', mark: 'WC', tone: '#7F54B3', group: 'Sell online', what: 'Paid orders from your WordPress store come in every few minutes.' },
-  { id: 'shopify', name: 'Shopify', mark: 'SH', tone: '#5E8E3E', group: 'Sell online', what: 'Paid Shopify orders come in every few minutes, products matched to yours.' },
-  { id: 'zapier', name: 'Zapier or Make', mark: 'ZP', tone: '#FF4F00', group: 'Sell online', what: 'Anything else that can send a webhook: post its sales to Counta\'s address.' },
-  { id: 'whatsapp', name: 'WhatsApp Business', mark: 'WA', tone: '#25D366', group: 'Talk to customers', what: 'Send invoices, receipts and reminders from your own WhatsApp number.' },
-  { id: 'slack', name: 'Slack', mark: 'SL', tone: '#4A154B', group: 'Your team', what: 'Payments in, tax deadlines and books alerts post to a channel your team reads.' },
-  { id: 'bank', name: 'Bank accounts', mark: 'BK', tone: '#0072F5', group: 'Your bank', what: 'Bank lines come in through Mono, ready to match. Set them up in Banking.' },
+  { id: 'paystack', name: 'Paystack', logo: paystackLogo, group: 'Get paid', what: 'Every successful payment to your Paystack account becomes a paid sale, with Paystack\'s fee booked.' },
+  { id: 'flutterwave', name: 'Flutterwave', logo: flutterwaveLogo, group: 'Get paid', what: 'Payments to your own Flutterwave account become paid sales, checked with Flutterwave first.' },
+  { id: 'selar', name: 'Selar', logo: selarLogo, wide: true, group: 'Sell online', what: 'Each Selar sale of your courses, e-books or products is recorded as it happens.' },
+  { id: 'bumpa', name: 'Bumpa', logo: bumpaLogo, bleed: true, group: 'Sell online', what: 'Paid Bumpa orders come in through your API key every few minutes, or from the orders you export.' },
+  { id: 'woocommerce', name: 'WooCommerce', logo: wooLogo, wide: true, group: 'Sell online', what: 'Paid orders from your WordPress store come in every few minutes.' },
+  { id: 'shopify', name: 'Shopify', logo: shopifyLogo, group: 'Sell online', what: 'Paid Shopify orders come in every few minutes, products matched to yours.' },
+  { id: 'zapier', name: 'Zapier or Make', logo: zapierLogo, bleed: true, group: 'Sell online', what: 'Anything else that can send a webhook: post its sales to Counta\'s address.' },
+  { id: 'whatsapp', name: 'WhatsApp Business', logo: whatsappLogo, bleed: true, group: 'Talk to customers', what: 'Send invoices, receipts and reminders from your own WhatsApp number.' },
+  { id: 'slack', name: 'Slack', logo: slackLogo, bleed: true, group: 'Your team', what: 'Payments in, tax deadlines and books alerts post to a channel your team reads.' },
+  { id: 'bank', name: 'Bank accounts', group: 'Your bank', what: 'Bank lines come in through Mono, ready to match. Set them up in Banking.' },
 ];
+
+function ToolMark({ t, size = 40 }: { t: Tool; size?: number }) {
+  const box = { width: size, height: size, borderRadius: 10, flex: 'none', display: 'grid', placeItems: 'center', boxSizing: 'border-box' } as const;
+  if (!t.logo) return <span aria-hidden="true" style={{ ...box, background: '#EEF4FF', border: '1px solid #D6E4FF' }} data-testid="logo-bank"><Icon name="landmark" size={Math.round(size / 2)} color="#0072F5" /></span>;
+  if (t.bleed) return <img src={t.logo} alt="" aria-hidden="true" width={size} height={size} style={{ ...box, objectFit: 'contain' }} data-testid={`logo-${t.id}`} />;
+  const pad = Math.round(size / (t.wide ? 13 : 8)), inner = size - 2 * pad - 2;
+  return (
+    <span aria-hidden="true" style={{ ...box, background: '#fff', border: '1px solid var(--line)', padding: pad }}>
+      <img src={t.logo} alt="" width={inner} height={inner} style={{ width: inner, height: inner, objectFit: 'contain' }} data-testid={`logo-${t.id}`} />
+    </span>
+  );
+}
+
 const STATUS: Record<string, [string, string]> = { active: ['Connected', 't-green'], paused: ['Paused', 't-grey'], error: ['Needs attention', 't-red'] };
 
 export function useIntegrations() {
@@ -74,7 +98,7 @@ export default function Integrations() {
                 <button key={t.id} className="card card-pad stack entry-card" style={{ gap: 10, textAlign: 'left', cursor: 'pointer', background: '#fff' }} onClick={() => setOpen(t)}
                   data-testid={`tool-${t.id}`}>
                   <div className="row" style={{ gap: 10 }}>
-                    <span style={{ width: 40, height: 40, borderRadius: 10, background: t.tone, color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 700, fontSize: 13, flex: 'none' }}>{t.mark}</span>
+                    <ToolMark t={t} />
                     <b className="grow" style={{ fontSize: 15 }}>{t.name}</b>
                     {st && <span className={'chip ' + st[1]}>{st[0]}</span>}
                   </div>
@@ -100,7 +124,7 @@ function ToolDrawer({ t, page, onClose }: { t: Tool; page: Page; onClose: () => 
   return (
     <Drawer onClose={onClose} width={600}>
       <div className="drawer-hd">
-        <span style={{ width: 40, height: 40, borderRadius: 10, background: t.tone, color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 700, fontSize: 13, flex: 'none' }}>{t.mark}</span>
+        <ToolMark t={t} />
         <div className="grow"><div className="drawer-title">{t.name}</div><div className="muted" style={{ fontSize: 13 }}>{t.what}</div></div>
         <button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button>
       </div>
