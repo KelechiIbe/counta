@@ -248,14 +248,89 @@ function PaymentSettings({ data, onSaved }: { data: any; onSaved: () => void }) 
       </Field>
       <div className="stack" style={{ gap: 6 }}>
         <div className="field-label">Ways customers can pay</div>
-        {[['account', 'Pay by transfer to a one-off account number'], ['link', 'Payment link (card, transfer, USSD)'], ['qr', 'QR code']].map(([m, l]) => (
+        {[['account', 'Pay by bank transfer'], ['link', 'Payment link (card, transfer, USSD)'], ['qr', 'QR code']].map(([m, l]) => (
           <label key={m} className="check"><input type="checkbox" disabled={!rail?.capabilities?.includes(m)} checked={f.payment_methods.includes(m)} onChange={() => toggle(m)} />{l}{!rail?.capabilities?.includes(m) ? ' (not offered by this rail)' : ''}</label>
         ))}
       </div>
+      <TransferChoice />
       <Field label="Payouts that need a second person (₦ and above)" hint="0 means anyone who can make payments sends them on their own. The owner's payouts never wait.">
         <input className="input" inputMode="decimal" value={f.payout_approval_threshold} onChange={(e) => setF({ ...f, payout_approval_threshold: e.target.value })} style={{ maxWidth: 220 }} />
       </Field>
       <div><button className="btn btn-primary" onClick={save}>Save</button></div>
+    </div>
+  );
+}
+
+type TransferSettings = { mode: 'wallet' | 'one_time'; name: string | null; default_name: string; prefix: string; label: string; checks_today: number; can_change: boolean;
+  seen: { label: string; shown: string | null; bank: string | null; error: string | null; at: string } | null };
+
+// How a customer pays by transfer: to the business's own wallet number with a reference, or to a one-time account for each
+// payment, named TaxStreem/<business>. The owner can ask Counta what name a bank shows for such an account.
+function TransferChoice() {
+  const { orgId } = useSession();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['transfer-settings', orgId], enabled: !!orgId, queryFn: () => rpc<TransferSettings>('transfer_settings', { p_org: orgId }) });
+  const [mode, setMode] = useState<'wallet' | 'one_time' | null>(null);
+  const [name, setName] = useState<string | null>(null);
+  const [busy, setBusy] = useState<'save' | 'check' | null>(null);
+  const t = q.data;
+  if (!t) return q.isLoading ? <SkeletonRows n={2} /> : null;
+  const m = mode ?? t.mode, n = name ?? (t.name || t.default_name);
+  const dirty = m !== t.mode || n.trim() !== (t.name || t.default_name);
+  async function save() {
+    setBusy('save');
+    try {
+      const r = await rpc<TransferSettings>('set_transfer_settings', { p_org: orgId, p: { mode: m, name: n.trim() } });
+      qc.setQueryData(['transfer-settings', orgId], r); setMode(null); setName(null); toast('Saved');
+    } catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(null);
+  }
+  async function check() {
+    setBusy('check');
+    const r = await edge<{ shown?: string; bank?: string; settings?: TransferSettings }>('payments', { action: 'transfer_name_check', org_id: orgId });
+    setBusy(null);
+    if (r.settings) qc.setQueryData(['transfer-settings', orgId], r.settings);
+    if (r.ok === false && !r.settings) toast(r.error || 'The check did not finish.', 'err');
+  }
+  const seen = t.seen;
+  return (
+    <div className="stack" style={{ gap: 8 }} data-testid="transfer-choice">
+      <div className="field-label">When a customer pays by transfer</div>
+      <label className="check" style={{ alignItems: 'flex-start' }}>
+        <input type="radio" name="transfer-mode" disabled={!t.can_change} checked={m === 'wallet'} onChange={() => setMode('wallet')} />
+        <span><b>Your business account number, with a reference</b><span className="faint" style={{ display: 'block', fontSize: 12.5, lineHeight: 1.45 }}>
+          One number that never changes, in your business's name. Customers add the reference Counta shows; when they leave it out, Counta matches the payment by its exact amount, and asks you when two payments could match.</span></span>
+      </label>
+      <label className="check" style={{ alignItems: 'flex-start' }}>
+        <input type="radio" name="transfer-mode" disabled={!t.can_change} checked={m === 'one_time'} onChange={() => setMode('one_time')} />
+        <span><b>A one-time account for each payment</b><span className="faint" style={{ display: 'block', fontSize: 12.5, lineHeight: 1.45 }}>
+          A fresh account number for every sale or invoice, so no reference is needed and every payment matches by itself. The account is TaxStreem's, named {t.prefix}/{n.trim() || t.default_name}, and the money moves to your wallet as soon as it lands. At the till it lasts an hour.</span></span>
+      </label>
+      {m === 'one_time' && (
+        <div className="stack" style={{ gap: 8, paddingLeft: 26 }}>
+          <Field label="Name on one-time accounts" hint={`Customers see ${t.prefix}/ and this name in their bank app. Up to 30 characters.`}>
+            <div className="row" style={{ gap: 0, maxWidth: 360 }}>
+              <span className="input" style={{ width: 'auto', flex: 'none', borderTopRightRadius: 0, borderBottomRightRadius: 0, background: 'var(--row)', color: 'var(--muted)' }}>{t.prefix}/</span>
+              <input className="input" aria-label="Name on one-time accounts" maxLength={30} disabled={!t.can_change} value={n} onChange={(e) => setName(e.target.value)}
+                style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, minWidth: 0 }} />
+            </div>
+          </Field>
+          {seen && seen.label === t.label && (
+            <Alert kind={seen.error ? 'amber' : 'green'} icon={seen.error ? 'alert' : 'check'}>
+              {seen.error ? <>Counta could not read the name back: {seen.error}</> : <>{seen.bank ? `${seen.bank} shows` : 'The bank shows'} <b>{seen.shown}</b> for one of these accounts ({when(seen.at)}).</>}
+            </Alert>
+          )}
+          {t.can_change && !dirty && (
+            <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+              <button className="btn btn-secondary btn-sm" disabled={busy !== null || t.checks_today >= 3} onClick={check}>
+                {busy === 'check' ? <Spinner small /> : <Icon name="search" size={14} />}Check the name banks show</button>
+              <span className="faint" style={{ fontSize: 12 }}>Opens one ₦100 account nobody pays, then asks its bank for the name. {Math.max(0, 3 - t.checks_today)} of 3 checks left today.</span>
+            </div>
+          )}
+        </div>
+      )}
+      {t.can_change && dirty && <div><button className="btn btn-primary btn-sm" disabled={busy !== null} onClick={save}>{busy === 'save' ? <Spinner small /> : null}Save how customers pay by transfer</button></div>}
     </div>
   );
 }

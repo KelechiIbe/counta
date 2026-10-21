@@ -16,6 +16,7 @@ import { PayFrom } from './VatTab';
 import { downloadUrl, useTaxRefresh } from './CitTab';
 import { vatPct, vatRateOn } from '../../../lib/vat';
 import { FluxPayments, FluxSend } from '../../payments/FluxPayments';
+import { useFilingCurrent, VersionBanner } from '../../../practice/VersionBanner';
 
 const LINES: [string, string, 'in' | 'sub' | 'total'][] = [
   ['10', 'Total sales and income, excluding VAT', 'in'], ['15', 'Less exempt sales', 'in'], ['20', 'Less zero-rated sales', 'in'], ['22', 'Less sales adjustments (credit notes)', 'in'],
@@ -37,12 +38,13 @@ export function VatReturnModal({ period, onClose }: { period: string; onClose: (
   const [ties, setTies] = useState<any[] | null>(null);
   const count = (k: string) => k === 'c2' ? ['goods', 'services', 'fixed_assets'].reduce((n, x) => n + (s?.c2?.[x]?.length || 0), 0) : (s?.[k]?.length || 0);
   const checks: any[] = s?.checks || [];
+  const acc = useFilingCurrent('vat', period.slice(0, 7)).data;
   async function download() {
     setBusy(true);
     try {
       const r = await edge<any>('tax-files', { action: 'vat_file', org_id: orgId, period: period.slice(0, 7) });
       if (r.ok === false) throw new Error(r.error || 'Could not make the file.');
-      setTies(r.ties || []);
+      if (r.accountant) toast(`Downloaded ${r.accountant.name}'s version, the one in use.`); else setTies(r.ties || []);
       downloadUrl(r.url);
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
@@ -52,6 +54,7 @@ export function VatReturnModal({ period, onClose }: { period: string; onClose: (
     <Modal onClose={onClose} width={820}>
       <ModalHead title={`NRS VAT return for ${monthName(period)}`} sub="Form VAT 002 with schedules A to F, as the NRS template takes it" onClose={onClose} />
       <div className="modal-body stack" style={{ gap: 12 }}>
+        <VersionBanner kind="vat" period={period.slice(0, 7)} />
         {q.isLoading ? <SkeletonRows n={6} /> : q.error ? <Alert kind="yellow" icon="shield">{(q.error as Error).message}</Alert> : s && (
           <>
             {checks.length > 0 && (
@@ -94,7 +97,7 @@ export function VatReturnModal({ period, onClose }: { period: string; onClose: (
               </div>
             </div>
             {off.length > 0 && <Alert kind="red" icon="alert">The template's own formulas differ from Counta on line{off.length > 1 ? 's' : ''} {off.map((t) => t.line).join(', ')}. Do not upload this file; tell TaxStreem.</Alert>}
-            <FluxSend tax="vat" period={period} ready={!!s.counta?.filed && !s.blocked}
+            <FluxSend tax="vat" period={period} ready={!!s.counta?.filed && (!s.blocked || !!acc)}
               notReady={s.blocked ? 'Fix the points above first.' : 'File the month in Counta first: filing freezes the figures Flux files.'} />
             <FluxPayments taxes={['vat']} period={period.slice(0, 7) + '-01'} />
             {ties && !off.length && <Alert kind="green" icon="check">Downloaded. Every line of the form agrees with Counta. Upload it on the NRS portal with the month's VAT payment.</Alert>}
@@ -103,7 +106,7 @@ export function VatReturnModal({ period, onClose }: { period: string; onClose: (
       </div>
       <div className="modal-ft">
         <button className="btn btn-secondary" onClick={onClose}>Close</button>
-        <button className="btn btn-primary" disabled={!s || s.blocked || busy} onClick={download}>{busy ? <Spinner small /> : <Icon name="download" size={14} color="#fff" />}NRS VAT file</button>
+        <button className="btn btn-primary" disabled={!s || (s.blocked && !acc) || busy} onClick={download}>{busy ? <Spinner small /> : <Icon name="download" size={14} color="#fff" />}{acc ? 'Accountant\'s VAT file' : 'NRS VAT file'}</button>
       </div>
     </Modal>
   );

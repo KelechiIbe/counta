@@ -118,6 +118,13 @@ export function wording(m: Msg) {
       return { heading: String(p.heading || m.subject || 'Something needs doing in Counta'), lines, button: String(p.button || 'Open Counta'), link: p.link, wa,
         greet: first(p.person_name), from: 'Counta', footer: `Counta sends these for ${biz}. Choose which you get in Settings, Notifications.` };
     }
+    case 'practice': {
+      // The accountant portal's invitations (a practice to its staff or to a business owner, a business to its accountant):
+      // email only, the words written by the database and the one-time link made as it is sent.
+      const lines = (Array.isArray(p.lines) ? p.lines : []).map((l: unknown) => String(l ?? '').trim()).filter(Boolean).slice(0, 6);
+      return { heading: String(p.heading || m.subject || 'Counta'), lines, button: String(p.button || 'Open Counta'), link: p.link, wa: null,
+        greet: p.greet ? first(p.greet) : 'there', footer: `Sent by Counta for ${p.from_name || 'Counta'}. If you were not expecting this, you can ignore the email.` };
+    }
     default:
       return { heading: m.subject || biz, lines: [String(p.body || '')], button: p.link ? 'Open' : '', link: p.link, wa: null };
   }

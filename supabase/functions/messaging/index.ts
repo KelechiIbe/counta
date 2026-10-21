@@ -6,15 +6,29 @@
 //   { action: 'retry' }     -> sends messages that are still queued or failed and can be tried again
 // Signed-in callers (Authorization: Bearer <user JWT>):
 //   { action: 'status' }    -> which channels are switched on
+//   { action: 'wa_link', org_id }   -> links the business's own WhatsApp number on OpenWA (when TaxStreem allows it):
+//                                      starts its session and answers the QR code to scan
+//   { action: 'wa_status', org_id } -> the business's own number: its state, and the QR code while it waits for a scan
+//   { action: 'wa_unlink', org_id } -> unlinks it; messages go from TaxStreem's number again
+//   { action: 'practice_email', kind: 'member'|'client'|'accountant', id }
+//                                   -> emails an accountant-portal invitation (to a practice's new staff, from a practice to a
+//                                      business owner, or from a business to its accountant) with a fresh one-time link
 // Meta (WhatsApp delivery and read receipts):
 //   GET  /messaging/whatsapp   -> webhook verification (hub.verify_token must equal WHATSAPP_VERIFY_TOKEN)
 //   POST /messaging/whatsapp   -> header X-Hub-Signature-256 must be the HMAC of the body with WHATSAPP_APP_SECRET
+// OpenWA (delivery receipts and session changes):
+//   POST /messaging/openwa     -> header X-OpenWA-Signature must be the HMAC of the body with OPENWA_WEBHOOK_SECRET
 //
+// Which WhatsApp sends: WHATSAPP_PROVIDER, openwa (TaxStreem's number on its OpenWA server, or the business's own linked
+// number) or meta (the official API). Empty means openwa once OPENWA_URL and OPENWA_API_KEY are set, else meta.
 // Secrets (Edge Function secrets or Vault): RESEND_API_KEY, RESEND_FROM ("Counta <billing@your-domain>"),
-// WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN. Optional: WHATSAPP_TEMPLATE_LANG (default en).
-// WhatsApp messages to customers use approved templates; their wording is in docs/messaging.md.
+// WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN, OPENWA_URL, OPENWA_API_KEY,
+// OPENWA_WEBHOOK_SECRET. Optional: WHATSAPP_TEMPLATE_LANG (default en), OPENWA_BUSINESS_NUMBERS (on lets businesses link
+// their own number). Messages through the official API use approved templates (docs/messaging.md); through OpenWA they
+// are plain text with the same wording.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { emailHtml, emailText, type Msg, wording } from './wording.ts';
+import { emailHtml, emailText, first, type Msg, wording } from './wording.ts';
+import { ensureSession, type OpenWa, owa, owaError, RECEIPT_EVENTS, sendText, sessionState, setWebhooks, signatureOk, waDigits, waFormat } from './openwa.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -31,12 +45,13 @@ const cors = {
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 const cache = new Map<string, { v: string; at: number }>();
+const CACHE_MS = Number(Deno.env.get('SECRET_CACHE_MS') || 60_000);
 // Keys set in the admin portal (Supabase Vault) come first; the Edge Function secrets are the fallback.
 async function secret(name: string): Promise<string> {
   // The database's hook secret keeps its old order: the Edge Function secret first.
   if (name === 'PUSH_HOOK_SECRET' && Deno.env.get(name)) return Deno.env.get(name)!.trim();
   const hit = cache.get(name);
-  if (hit && Date.now() - hit.at < 60_000) return hit.v;
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.v;
   let v = '';
   for (const fn of ['svc_secret', 'app_secret']) {
     const { data } = await admin.rpc(fn, { p_name: name });
@@ -102,7 +117,39 @@ async function sendEmail(m: Msg): Promise<string> {
   return String(body.id || '');
 }
 
+// ------------------------------------------------------------------ WhatsApp: OpenWA or the official API
+async function openwaCfg(): Promise<OpenWa | null> {
+  const url = await secret('OPENWA_URL'), key = await secret('OPENWA_API_KEY');
+  return url && key ? { url, key } : null;
+}
+async function provider(): Promise<'openwa' | 'meta'> {
+  const p = (await secret('WHATSAPP_PROVIDER')).toLowerCase();
+  if (p === 'meta' || p === 'openwa') return p;
+  return (await openwaCfg()) ? 'openwa' : 'meta';
+}
+const NOT_ON = 'WhatsApp is not switched on yet. TaxStreem is setting it up; the message goes out once it is.';
+
+// The same words as the email, as WhatsApp text.
+export function waText(m: Msg): string {
+  const w = wording(m) as ReturnType<typeof wording> & { greet?: string; footer?: string };
+  const p = m.params || {};
+  const hello = `Hello ${w.greet ?? first(p.customer_name)},`;
+  const biz = p.business || m.org?.name || '';
+  return waFormat(w.heading, [hello, '', ...w.lines], w.link, w.button, w.footer || (biz ? `Sent for ${biz} by Counta` : 'Sent by Counta'));
+}
+
+async function sendOpenWa(m: Msg): Promise<string> {
+  const cfg = await openwaCfg();
+  if (!cfg) throw new Error(NOT_ON);
+  const { data: s } = await admin.rpc('svc_wa_sender', { p_org: m.org_id || null });
+  if (!s?.session || s.status !== 'ready') throw new Error(NOT_ON.replace('yet. TaxStreem is setting it up', 'at the moment: the WhatsApp number is not connected'));
+  const phone = waDigits(m.to_address);
+  if (!phone) throw new Error('That phone number does not look right for WhatsApp.');
+  return await sendText(cfg, String(s.session), phone, waText(m));
+}
+
 async function sendWhatsApp(m: Msg): Promise<string> {
+  if ((await provider()) === 'openwa') return await sendOpenWa(m);
   const token = await secret('WHATSAPP_TOKEN');
   const phoneId = await secret('WHATSAPP_PHONE_NUMBER_ID');
   if (!token || !phoneId) throw new Error('WhatsApp is not switched on yet. TaxStreem is setting it up; the message goes out once it is.');
@@ -189,12 +236,124 @@ async function whatsappWebhook(req: Request) {
   return json({ ok: true, statuses: n });
 }
 
+// ------------------------------------------------------------------ OpenWA webhook: receipts and session changes
+const OWA_STATUS: Record<string, string> = { sent: 'sent', delivered: 'delivered', read: 'read', failed: 'failed', played: 'read' };
+
+async function adminEmail(subject: string, text: string) {
+  const k = await secret('RESEND_API_KEY'), from = senderAddress(await secret('RESEND_FROM'));
+  if (!k || !from) return;
+  const { data: to } = await admin.rpc('svc_admin_emails');
+  const list = (Array.isArray(to) ? to : []).filter((e: unknown) => typeof e === 'string').slice(0, 20);
+  if (!list.length) return;
+  await fetch(`${RESEND_URL}/emails`, { method: 'POST', headers: { Authorization: `Bearer ${k}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: `Counta admin <${from}>`, to: list, subject, text }), signal: AbortSignal.timeout(15_000) }).catch(() => null);
+}
+
+async function openwaWebhook(req: Request) {
+  if (req.method !== 'POST') return new Response('POST only', { status: 405 });
+  const raw = await req.text();
+  if (!(await signatureOk(raw, req.headers.get('x-openwa-signature'), await secret('OPENWA_WEBHOOK_SECRET')))) return new Response('Forbidden', { status: 403 });
+  let b: any;
+  try { b = JSON.parse(raw); } catch { return new Response('Bad request', { status: 400 }); }
+  // A delivery more than two days old is a replay; one already handled is a retry.
+  if (b?.timestamp && Date.parse(b.timestamp) < Date.now() - 2 * 86400_000) return json({ ok: true, stale: true });
+  const { data: fresh } = await admin.rpc('svc_openwa_seen', { p_id: String(req.headers.get('x-openwa-delivery-id') || b?.deliveryId || b?.idempotencyKey || '') });
+  if (fresh === false) return json({ ok: true, duplicate: true });
+  const event = String(b?.event || req.headers.get('x-openwa-event') || ''), d = b?.data || {}, session = String(b?.sessionId || d?.sessionId || '');
+  if (event === 'message.ack' || event === 'message.failed') {
+    const status = event === 'message.failed' ? 'failed' : OWA_STATUS[String(d.status || '')];
+    if (status && (d.messageId || d.id)) {
+      await admin.rpc('svc_message_status', { p_provider_id: String(d.messageId || d.id), p_status: status,
+        p_error: status === 'failed' ? String(d.error || d.reason || 'WhatsApp could not deliver it.').slice(0, 300) : null });
+    }
+    return json({ ok: true });
+  }
+  if (event.startsWith('session.') && session) {
+    const status = event === 'session.authenticated' ? 'ready' : event === 'session.disconnected' ? 'disconnected'
+      : event === 'session.restriction' ? 'action_required' : String(d.status || '');
+    const { data: saved } = await admin.rpc('svc_wa_session_save', { p: { id: session, status: status || null, phone: d.phone || null, push_name: d.pushName || null,
+      ...(event === 'session.disconnected' || event === 'session.restriction' ? { last_error: String(d.reason || d.message || event).slice(0, 300) } : {}) } });
+    const before = saved?.before, now = saved?.now;
+    // TaxStreem's own number dropping stops Martina on WhatsApp and every message: every admin hears at once.
+    if (now?.kind === 'counta' && before?.status === 'ready' && now.status !== 'ready') {
+      await adminEmail('Counta: the WhatsApp number on OpenWA is not connected',
+        `OpenWA reports the session for TaxStreem's WhatsApp number as "${now.status}"${now.last_error ? ` (${now.last_error})` : ''}.\n\nWhatsApp messages wait in Counta and Martina cannot answer on WhatsApp until it is connected again. Open the admin portal, Keys and services, WhatsApp through OpenWA, and press Connect to see what it needs (often a new QR code to scan).${event === 'session.restriction' ? '\n\nWhatsApp has restricted the number. Stop sending from it and check the phone it belongs to.' : ''}`);
+    }
+    return json({ ok: true });
+  }
+  return json({ ok: true, ignored: event });
+}
+
+// ------------------------------------------------------------------ a business's own number
+async function businessNumber(sb: any, orgId: string, action: string) {
+  const { data: who, error } = await sb.rpc('whatsapp_link_check', { p_org: orgId });
+  if (error) return { ok: false, error: error.message };
+  const cfg = await openwaCfg();
+  if (!cfg || (await provider()) !== 'openwa') return { ok: false, reason: 'not_configured', error: 'Linking your own number is not available yet. Messages go from TaxStreem\'s WhatsApp number.' };
+  const sess = who.session as any;
+  if (action === 'wa_unlink') {
+    if (sess?.id) {
+      await owa(cfg, `/sessions/${encodeURIComponent(sess.id)}/logout`, { method: 'POST', body: {} });
+      await admin.rpc('svc_wa_session_save', { p: { id: sess.id, status: 'unlinked', last_error: null } });
+    }
+    await admin.from('orgs').update({ whatsapp_sender: 'counta' }).eq('id', orgId);
+    return { ok: true, status: 'unlinked' };
+  }
+  if (action === 'wa_link') {
+    if ((await secret('OPENWA_BUSINESS_NUMBERS')).toLowerCase() !== 'on') {
+      return { ok: false, reason: 'off', error: 'TaxStreem has not switched on linking your own number yet. Messages go from TaxStreem\'s WhatsApp number.' };
+    }
+    const hookSecret = await secret('OPENWA_WEBHOOK_SECRET');
+    if (!hookSecret) return { ok: false, reason: 'not_configured', error: 'WhatsApp is still being set up by TaxStreem.' };
+    let s: any;
+    try {
+      s = await ensureSession(cfg, `org-${orgId.slice(0, 8)}`);
+      await setWebhooks(cfg, String(s.id), `${SUPABASE_URL}/functions/v1/`, hookSecret, [{ url: `${SUPABASE_URL}/functions/v1/messaging/openwa`, events: RECEIPT_EVENTS }]);
+    } catch (e) { return { ok: false, error: `The WhatsApp server did not set up the link: ${(e as Error).message}` }; }
+    await admin.rpc('svc_wa_session_save', { p: { id: String(s.id), kind: 'business', org_id: orgId, name: String(s.name || ''), status: String(s.status || 'created'),
+      created_by: who.user_id } });
+  }
+  // The session just made (when linking), or the one already there.
+  const id = action === 'wa_link'
+    ? (await admin.from('whatsapp_sessions').select('id').eq('kind', 'business').eq('org_id', orgId).maybeSingle()).data?.id
+    : sess?.id;
+  if (!id) return { ok: true, status: 'none' };
+  const st = await sessionState(cfg, String(id));
+  if (!['unreachable', 'missing'].includes(st.status)) {
+    await admin.rpc('svc_wa_session_save', { p: { id, status: st.status, phone: st.phone, push_name: st.push_name } });
+  }
+  return { ok: true, status: st.status, phone: st.phone, qr: st.qr || null, error: st.status === 'unreachable' ? st.error : undefined };
+}
+
+// ------------------------------------------------------------------ the accountant portal's invitations
+// The person asking must be allowed to send it (the database checks, as them); the link is made only now, as the email goes.
+async function practiceEmail(sb: any, kind: string, id: string) {
+  if (!['member', 'client', 'accountant'].includes(kind) || !/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, error: 'Unknown invitation.' };
+  const { error: ce } = await sb.rpc('practice_invite_check', { p_kind: kind, p_id: id });
+  if (ce) return { ok: false, error: ce.message };
+  if (!(await channelOn(null, 'email'))) return { ok: false, error: 'Email is paused by TaxStreem for now. Try again later.' };
+  if (!(await secret('RESEND_API_KEY')) || !senderAddress(await secret('RESEND_FROM'))) {
+    return { ok: false, reason: 'not_configured', error: 'Email is not switched on yet. TaxStreem is setting it up.' };
+  }
+  const { data: inv, error } = await admin.rpc('svc_practice_invite_link', { p_kind: kind, p_id: id });
+  if (error || !inv) return { ok: false, error: error?.message || 'That invitation was accepted or withdrawn.' };
+  const m: Msg = { id: `practice-${kind}-${id}-${Date.now()}`, channel: 'email', to_address: String(inv.to), template: 'practice', subject: String(inv.subject || ''),
+    params: { ...inv, business: inv.from_name || 'Counta' }, org: { name: String(inv.from_name || 'Counta'), reply_to_email: inv.reply_to || undefined } };
+  try {
+    await sendEmail(m);
+    return { ok: true, sent_to: inv.to };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 // ------------------------------------------------------------------ entry
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const path = new URL(req.url).pathname;
   try {
     if (/\/whatsapp\/?$/.test(path)) return await whatsappWebhook(req);
+    if (/\/openwa\/?$/.test(path)) return await openwaWebhook(req);
     if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
     let body: any;
     try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
@@ -221,8 +380,16 @@ Deno.serve(async (req) => {
       const emailOn = await channelOn(orgId, 'email'), waOn = await channelOn(orgId, 'whatsapp');
       return json({ ok: true, email: Boolean((await secret('RESEND_API_KEY')) && sender) && emailOn, sender: sender || null,
         sender_set: Boolean(await secret('RESEND_FROM')), email_key: Boolean(await secret('RESEND_API_KEY')),
-        whatsapp: Boolean((await secret('WHATSAPP_TOKEN')) && (await secret('WHATSAPP_PHONE_NUMBER_ID'))) && waOn,
+        whatsapp: ((await provider()) === 'openwa' ? Boolean(await openwaCfg())
+          : Boolean((await secret('WHATSAPP_TOKEN')) && (await secret('WHATSAPP_PHONE_NUMBER_ID')))) && waOn,
+        whatsapp_provider: await provider(), own_numbers: (await secret('OPENWA_BUSINESS_NUMBERS')).toLowerCase() === 'on',
         paused: { email: !emailOn, whatsapp: !waOn } });
+    }
+    if (body.action === 'practice_email') return json(await practiceEmail(sb, String(body.kind || ''), String(body.id || '')));
+    if (['wa_link', 'wa_status', 'wa_unlink'].includes(body.action)) {
+      const orgId = typeof body.org_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.org_id) ? body.org_id : '';
+      if (!orgId) return json({ ok: false, error: 'Choose the business.' }, 400);
+      return json(await businessNumber(sb, orgId, body.action));
     }
     return json({ ok: false, error: 'Unknown action.' }, 400);
   } catch (e) {

@@ -28,6 +28,8 @@ Settings, Customer messages shows whether email is on and the address it sends f
 
 ## WhatsApp
 
+Once TaxStreem's own OpenWA server is connected, WhatsApp goes through it; see [whatsapp-openwa.md](whatsapp-openwa.md) for setting it up, Martina on WhatsApp and Siri, and businesses' own numbers. The official Cloud API below stays as the fallback (`WHATSAPP_PROVIDER = meta`).
+
 | Secret | Value |
 | --- | --- |
 | `WHATSAPP_TOKEN` | A permanent system-user access token with `whatsapp_business_messaging` |

@@ -15,7 +15,10 @@ export type KeyRow = {
 export type KeysStatus = {
   ok: boolean; error?: string; keys: KeyRow[];
   webhooks: { flutterwave: { url: string; last: { rail: string; event: string; received_at: string; outcome: string | null; error: string | null } | null };
-    mono: { url: string }; whatsapp: { url: string; last: string | null }; flux: { url: string } };
+    mono: { url: string }; whatsapp: { url: string; last: string | null }; flux: { url: string }; openwa?: { messaging: string; chat: string } };
+  whatsapp?: { counta: { id: string; status: string; phone: string | null; status_at: string; last_error: string | null } | null;
+    businesses: { id: string; org_id: string; business: string; status: string; phone: string | null; status_at: string; sender: string }[];
+    links: number; siri: number; turns_today: number } | null;
 };
 export const useKeys = () => useQuery({ queryKey: ['admin-keys'], queryFn: () => edge<KeysStatus>('admin', { action: 'status' }) });
 
@@ -57,7 +60,8 @@ export const GROUPS: { id: string; title: string; what: string; test?: boolean }
   { id: 'flutterwave', title: 'Flutterwave', what: 'Business account numbers, payment links, QR codes, payouts, and Counta plans paid by card or from the wallet.', test: true },
   { id: 'mono', title: 'Mono', what: 'Bank feeds, and the CAC, Tax ID and NIN lookups in onboarding.', test: true },
   { id: 'email', title: 'Email (Resend)', what: 'Invoices, receipts, reminders, invitations and these admin alerts.', test: true },
-  { id: 'whatsapp', title: 'WhatsApp Business', what: 'Invoices, receipts and reminders by WhatsApp.', test: true },
+  { id: 'whatsapp', title: 'WhatsApp Business (official API)', what: 'Invoices, receipts and reminders through Meta\'s official API, when "Which WhatsApp sends" below is meta.', test: true },
+  { id: 'openwa', title: 'WhatsApp through OpenWA', what: 'TaxStreem\'s own WhatsApp number on its OpenWA server: invoices, receipts, reminders and alerts, and Martina on WhatsApp. Unofficial: WhatsApp may restrict a number linked to it.', test: true },
   { id: 'numens', title: 'Numens', what: 'TaxStreem\'s tax model for the VAT treatment of items. Gemini stands in without it.', test: true },
   { id: 'taxstreem', title: 'TaxStreem', what: 'Single sign-on from TaxStreem, and Flux, which files returns on Rev360.', test: true },
   { id: 'counta', title: 'Counta', what: 'The web address in links, the contact for push notifications, and where word of a NIN slip to review goes.' },

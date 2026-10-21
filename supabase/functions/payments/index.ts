@@ -16,10 +16,15 @@
 //   send_tax_payment { payment_id }                -> sends an approved tax payment from the tax wallet
 //   banks {}                                       -> Nigerian banks for payouts
 //   resolve_account { account_number, bank_code }  -> the account name the bank holds
+//   transfer_name_check { org_id }                 -> opens one ₦100 one-time account named TaxStreem/<business> and asks the
+//                                                     bank for its name, so the owner sees what customers will see
 //   subscription_start { org_id, plan_id, billing, method: 'card'|'wallet', use_saved? }
 //                                                  -> the owner's choice of Counta plan: a checkout link, a charge to the
 //                                                     saved card, or a move from the wallet to TaxStreem
 //   subscription_verify { org_id, tx_ref }         -> after the checkout: asks Flutterwave and records the payment
+//   practice_plan_start { client_id, plan_id, billing, use_saved? }
+//                                                  -> an accountant's practice pays for a client's plan with its own card
+//   practice_plan_verify { tx_ref }                -> after the practice's checkout
 // Anyone holding a document link (no sign-in):
 //   public_pay { token, method }                   -> a way to pay a shared invoice, receipt or order
 //   public_check { token }                         -> has it been paid
@@ -277,9 +282,9 @@ const flutterwave: Rail = {
     if (method === 'account') {
       const v = await flw('/virtual-account-numbers', { method: 'POST', body: JSON.stringify({
         email, amount: r.amount, tx_ref: r.tx_ref, firstname: nm.first, lastname: nm.last, phonenumber: ngPhone(c.phone),
-        narration: String(ctx.narration || ctx.org_name).slice(0, 50), is_permanent: false }) });
+        narration: String(ctx.va_name || ctx.narration || ctx.org_name).slice(0, 50), is_permanent: false }) });
       const d = v.data || {};
-      return { provider_ref: d.flw_ref || d.order_ref, account_number: d.account_number, bank_name: d.bank_name, account_name: ctx.org_name,
+      return { provider_ref: d.flw_ref || d.order_ref, account_number: d.account_number, bank_name: d.bank_name, account_name: ctx.va_name || ctx.org_name,
         expires_at: flwDate(d.expiry_date) };
     }
     if (method === 'qr') {
@@ -919,6 +924,34 @@ async function reconcile() {
   return out;
 }
 
+// ------------------------------------------------------------------ the name on one-time accounts
+// One ₦100 one-time account, named as the business's would be, and the name its bank gives for it. Nobody is asked to pay
+// it; Flutterwave closes it within the hour.
+async function transferNameCheck(sb: SupabaseClient, orgId: string) {
+  const { data: c, error } = await sb.rpc('transfer_name_check_start', { p_org: orgId });
+  if (error) throw new UserError(error.message);
+  if (!(await flutterwave.configured())) throw new NotConfigured('Payments are not switched on yet. TaxStreem is setting them up.');
+  const nm = splitName(String(c.org_name || 'Counta'));
+  let out: { shown?: string; bank?: string; error?: string } = {};
+  try {
+    const v = await flw('/virtual-account-numbers', { method: 'POST', body: JSON.stringify({
+      email: c.email, amount: 100, tx_ref: `CHK-${String(c.check_id).replace(/-/g, '').slice(0, 16).toUpperCase()}`, firstname: nm.first, lastname: nm.last,
+      phonenumber: ngPhone(c.phone), narration: String(c.label).slice(0, 50), is_permanent: false }) });
+    const d = v.data || {};
+    if (!d.account_number) throw new UserError('Flutterwave did not open an account.');
+    const code = bankCodeFor(await flutterwave.banks(), String(d.bank_name || ''), null);
+    if (!code) out = { bank: String(d.bank_name || ''), error: `Counta could not find ${d.bank_name || 'the bank'} in the bank list to ask for the name.` };
+    else out = { bank: String(d.bank_name || ''), shown: (await flutterwave.resolveAccount(String(d.account_number), code)).trim() };
+    if (!out.shown && !out.error) out.error = 'The bank did not give a name.';
+  } catch (e) {
+    if (e instanceof NotConfigured) throw e;
+    out = { error: (e as Error).message.slice(0, 280) };
+  }
+  await svc('svc_transfer_name_seen', { p_check: c.check_id, p: out });
+  const { data: settings } = await sb.rpc('transfer_settings', { p_org: orgId });
+  return { ok: !out.error, label: c.label, ...out, settings };
+}
+
 // ------------------------------------------------------------------ Counta plans
 // A plan is paid by card (Flutterwave checkout once, then the saved card's token) or from the business's wallet (a move to
 // TaxStreem's Flutterwave account). The database decides what is charged and changes the plan when the money is confirmed.
@@ -944,12 +977,17 @@ async function verifySubCard(txRef: string): Promise<any> {
 
 async function subCheckout(ctx: any) {
   const c = ctx.charge;
+  // An accountant paying for a client's plan pays as the practice, and comes back to the portal.
+  const payer = ctx.payer?.kind === 'practice' ? ctx.payer : null;
+  const back = /^\/[a-z/-]+$/.test(String(ctx.return_path || '')) ? String(ctx.return_path) : '/settings/subscription';
   const l = await flw('/payments', { method: 'POST', body: JSON.stringify({
     tx_ref: c.tx_ref, amount: num(c.amount), currency: 'NGN',
-    redirect_url: `${await appUrl()}/settings/subscription?ref=${encodeURIComponent(c.tx_ref)}`,
-    customer: { email: ctx.org.email || `billing+${String(ctx.org.id).slice(0, 8)}@counta.ng`, name: String(ctx.org.name).slice(0, 60), phonenumber: ngPhone(ctx.org.phone) },
-    customizations: { title: 'Counta', description: `${ctx.plan.name} plan, ${c.billing === 'year' ? 'a year' : 'a month'}` },
-    payment_options: 'card', meta: { kind: 'subscription', org_id: ctx.org.id, charge_id: c.id } }) });
+    redirect_url: `${await appUrl()}${back}?ref=${encodeURIComponent(c.tx_ref)}`,
+    customer: payer
+      ? { email: payer.email || `billing+${String(payer.id).slice(0, 8)}@counta.ng`, name: String(payer.name).slice(0, 60), phonenumber: ngPhone(payer.phone) }
+      : { email: ctx.org.email || `billing+${String(ctx.org.id).slice(0, 8)}@counta.ng`, name: String(ctx.org.name).slice(0, 60), phonenumber: ngPhone(ctx.org.phone) },
+    customizations: { title: 'Counta', description: `${ctx.plan.name} plan for ${String(ctx.org.name).slice(0, 40)}, ${c.billing === 'year' ? 'a year' : 'a month'}` },
+    payment_options: 'card', meta: { kind: 'subscription', org_id: ctx.org.id, charge_id: c.id, ...(payer ? { practice_id: payer.id } : {}) } }) });
   if (!l?.data?.link) throw new UserError('Flutterwave did not return a payment page. Try again in a minute.');
   return { action: 'checkout', link: String(l.data.link) };
 }
@@ -1308,6 +1346,7 @@ Deno.serve(async (req) => {
         const { rail } = await railFor(String(body.rail || 'flutterwave'));
         return json({ ok: true, account_name: await rail.resolveAccount(String(body.account_number), String(body.bank_code)) });
       }
+      case 'transfer_name_check': return json(await transferNameCheck(sb, String(body.org_id || '')));
       case 'subscription_start': {
         const orgId = String(body.org_id || '');
         const { data: r, error } = await sb.rpc('subscription_start', { p_org: orgId, p: { plan_id: body.plan_id, billing: body.billing, method: body.method,
@@ -1334,6 +1373,25 @@ Deno.serve(async (req) => {
           : ctx.charge.method === 'card' ? await verifySubCard(txRef) : ctx.charge.status === 'sent' ? await verifySubWallet(txRef, ctx.charge.provider_ref) : { status: ctx.charge.status };
         const { data: state } = await sb.rpc('subscription_state', { p_org: orgId });
         return json({ ok: true, result, state });
+      }
+      case 'practice_plan_start': {
+        const { data: r, error } = await sb.rpc('practice_plan_start', { p_client: String(body.client_id || ''), p: { plan_id: body.plan_id, billing: body.billing,
+          use_saved: body.use_saved !== false } });
+        if (error) throw new UserError(error.message);
+        if (!(await flutterwave.configured())) throw new NotConfigured('Card payments are not switched on yet. TaxStreem is setting them up.');
+        const ctx = await subCtx(String(r.charge_id));
+        if (r.action === 'checkout') return json({ ok: true, tx_ref: r.tx_ref, ...(await subCheckout(ctx)) });
+        return json({ ok: true, action: r.action, tx_ref: r.tx_ref, result: await chargeSavedCard(ctx) });
+      }
+      case 'practice_plan_verify': {
+        const txRef = String(body.tx_ref || '');
+        if (!/^SUB-[0-9A-F]{16}$/.test(txRef)) throw new UserError('Unknown payment.');
+        // Only a partner or manager of the practice that pays may ask.
+        const { data: ck, error } = await sb.rpc('practice_charge_check', { p_tx_ref: txRef });
+        if (error) throw new UserError(error.message);
+        const ctx = await subCtx(String(ck.charge_id));
+        const result = ['successful', 'failed', 'cancelled'].includes(ctx.charge.status) ? { status: ctx.charge.status } : await verifySubCard(txRef);
+        return json({ ok: true, result });
       }
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }

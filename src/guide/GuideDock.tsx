@@ -70,7 +70,7 @@ export function Confetti({ fire }: { fire: number }) {
   return <canvas ref={ref} className="g-confetti" />;
 }
 
-const HIDDEN = /^\/(p|shop|sso|login|signup|reset|update-password|join|review|admin)(\/|$)/;
+const HIDDEN = /^\/(p|shop|sso|login|signup|reset|update-password|join|review|admin|practice)(\/|$)/;
 
 export function GuideDock() {
   const g = useGuideTalk();

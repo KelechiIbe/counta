@@ -12,6 +12,8 @@ import { today, yearStart } from '../../lib/api';
 import { fmtDay } from '../../lib/format';
 import { areport } from '../../lib/accounting';
 import { buildPack, cellText, type Block, type PSection } from '../../lib/fsPack';
+import { useFilingCurrent, VersionBanner } from '../../practice/VersionBanner';
+import { openDoc } from '../../practice/api';
 import { downloadBlob, safeName } from '../../lib/exporters';
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Field, MenuButton, Pills, SkeletonRows } from '../../components/ui';
@@ -38,6 +40,8 @@ export default function Statements() {
   const pack = useQuery({ queryKey: ['fs-pack', orgId, period.from, period.to], enabled: !!orgId, staleTime: 30_000,
     queryFn: () => rpc<any>('financial_statements_pack', { p_org: orgId, p_from: period.from, p_to: period.to }) });
   const model = useMemo(() => (pack.data ? buildPack(pack.data) : null), [pack.data]);
+  const fsKey = pack.data?.periods?.from && pack.data?.periods?.to ? `${pack.data.periods.from}:${pack.data.periods.to}` : null;
+  const acc = useFilingCurrent('fs', fsKey).data;
   if (!inv) return null;
   const canEdit = inv.me.role === 'owner' || can(inv, 'keep_books');
   const warnings = model?.warnings || [];
@@ -66,6 +70,7 @@ export default function Statements() {
         <PeriodBar value={period} onChange={setPeriod} />
         <div className="row wrap">
           {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => setEditing(true)}><Icon name="building" size={14} />Company details</button>}
+          {acc && <button className="btn btn-secondary btn-sm" onClick={() => openDoc(acc.file_path, acc.file_name).catch((e) => toast(e.message, 'err'))}><Icon name="download" size={14} />Accountant's version</button>}
           <MenuButton label="Export full set" icon="download" className="btn btn-primary btn-sm" width={260} busy={busy ? 'Preparing…' : undefined} disabled={!model}
             items={[
               { key: 'docx', label: 'Word document', hint: 'Edit before printing; contents and page numbers included', icon: 'file', onClick: () => exportSet('docx') },
@@ -74,6 +79,7 @@ export default function Statements() {
             ]} />
         </div>
       </div>
+      <VersionBanner kind="fs" period={fsKey} />
 
       {pack.isLoading ? <div className="card card-pad"><SkeletonRows n={3} /></div> : warnings.length > 0 && (
         <div className="card card-pad stack" style={{ gap: 8 }}>
