@@ -1,6 +1,6 @@
 // Keys and services: every key Counta uses, by service. A key pasted here goes to Supabase Vault and is never shown again
 // (only its last four characters); Counta reads it before any Edge Function secret of the same name.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { edge } from '../../lib/api';
 import { when } from '../../lib/format';
@@ -89,6 +89,70 @@ function Hook({ label, url, last }: { label: string; url: string; last?: string 
   );
 }
 
+type OwaState = { ok?: boolean; status?: string; phone?: string | null; push_name?: string | null; qr?: string | null; error?: string };
+const OWA_WORDS: Record<string, string> = { ready: 'Connected', qr_ready: 'Waiting for the QR code to be scanned', authenticating: 'Signing in', initializing: 'Starting',
+  created: 'Made, not started', disconnected: 'Disconnected', action_required: 'WhatsApp needs attention on the phone', failed: 'Failed', missing: 'Not on the server any more',
+  unreachable: 'Server not answering', none: 'Not connected yet' };
+
+// TaxStreem's number on OpenWA: connect it (Counta makes the session and the webhooks), scan the QR code, see its state.
+function OpenWaPanel({ data }: { data: KeysStatus }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [st, setSt] = useState<OwaState | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState(false);
+  const saved = data.whatsapp?.counta;
+  async function act(action: 'openwa_connect' | 'openwa_status' | 'openwa_unlink') {
+    setBusy(action);
+    const r = await edge<OwaState>('admin', { action });
+    setBusy(null); setConfirm(false);
+    if (r.ok === false) { toast(r.error || 'OpenWA did not answer.', 'err'); return; }
+    setSt(r);
+    await qc.invalidateQueries({ queryKey: ['admin-keys'] });
+  }
+  // While the QR code waits, look again every few seconds: it changes, and the session turns ready once scanned.
+  useEffect(() => {
+    if (st?.status !== 'qr_ready') return;
+    const t = setTimeout(() => { void act('openwa_status'); }, 5000);
+    return () => clearTimeout(t);
+  }, [st]); // eslint-disable-line react-hooks/exhaustive-deps
+  const status = st?.status || saved?.status || 'none';
+  const phone = st?.phone || saved?.phone;
+  const biz = data.whatsapp?.businesses || [];
+  return (
+    <div className="stack" style={{ gap: 12, padding: '12px 16px' }} data-testid="openwa-panel">
+      <div className="row wrap" style={{ gap: 10, alignItems: 'center' }}>
+        <span className={'chip ' + (status === 'ready' ? 't-green' : status === 'none' ? 't-grey' : 't-amber')}>{OWA_WORDS[status] || status}</span>
+        {phone && <b className="mono">+{phone}</b>}
+        {saved?.status_at && <span className="faint" style={{ fontSize: 12 }}>since {when(saved.status_at)}</span>}
+        <span className="grow" />
+        <button className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => act('openwa_connect')}>{busy === 'openwa_connect' ? <Spinner small /> : <Icon name="link" size={14} color="#fff" />}{status === 'ready' ? 'Connect again' : 'Connect'}</button>
+        <button className="btn btn-secondary btn-sm" disabled={!!busy} onClick={() => act('openwa_status')}>{busy === 'openwa_status' ? <Spinner small /> : <Icon name="refresh" size={14} />}Check</button>
+        {status === 'ready' && <button className={'btn btn-sm ' + (confirm ? 'btn-danger' : 'btn-ghost')} disabled={!!busy} onBlur={() => setConfirm(false)}
+          onClick={() => (confirm ? act('openwa_unlink') : setConfirm(true))}>{confirm ? 'Log the number out' : 'Log out'}</button>}
+      </div>
+      {st?.qr && (
+        <div className="row wrap" style={{ gap: 16, alignItems: 'center' }}>
+          <img src={st.qr} alt="QR code to link TaxStreem's WhatsApp number" style={{ width: 220, height: 220, background: '#fff', border: '1px solid var(--line)', borderRadius: 12, padding: 8 }} />
+          <div className="faint" style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 360 }}>On the phone with TaxStreem's Counta number, open WhatsApp, then Settings, Linked devices, Link a device, and scan this. It refreshes on its own every few seconds.</div>
+        </div>
+      )}
+      {(st?.error || saved?.last_error) && status !== 'ready' && <Alert kind="amber" icon="alert">{st?.error || saved?.last_error}</Alert>}
+      <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>
+        Connect makes the session on the server, gives OpenWA a new webhook secret and Counta's addresses ({data.webhooks.openwa?.messaging} and {data.webhooks.openwa?.chat}), and shows the QR code.
+        {data.whatsapp ? ` People linked to Martina on WhatsApp: ${data.whatsapp.links}; Siri keys: ${data.whatsapp.siri}; messages to Martina today: ${data.whatsapp.turns_today}.` : ''}
+      </div>
+      {biz.length > 0 && (
+        <div className="stack" style={{ gap: 4 }}>
+          <div className="field-label">Businesses with their own number</div>
+          {biz.map((b) => <div key={b.id} className="row wrap" style={{ gap: 8, fontSize: 13 }}><b>{b.business}</b><span className="mono faint">{b.phone ? `+${b.phone}` : ''}</span>
+            <span className={'chip ' + (b.status === 'ready' ? 't-green' : 't-amber')}>{OWA_WORDS[b.status] || b.status}</span>{b.sender === 'own' && <span className="chip t-blue">Sending from it</span>}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Group({ g, data }: { g: (typeof GROUPS)[number]; data: KeysStatus }) {
   const [test, setTest] = useState<{ ok: boolean; note: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -113,6 +177,7 @@ function Group({ g, data }: { g: (typeof GROUPS)[number]; data: KeysStatus }) {
       {g.id === 'flutterwave' && <Hook label="Webhook address" url={wh.flutterwave.url} last={wh.flutterwave.last?.received_at ?? null} />}
       {g.id === 'mono' && <Hook label="Webhook address" url={wh.mono.url} />}
       {g.id === 'whatsapp' && <Hook label="Webhook address" url={wh.whatsapp.url} last={wh.whatsapp.last} />}
+      {g.id === 'openwa' && <OpenWaPanel data={data} />}
       {g.id === 'taxstreem' && <Hook label="Flux reports back to" url={wh.flux.url} />}
     </Card>
   );

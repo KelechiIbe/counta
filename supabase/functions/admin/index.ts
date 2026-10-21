@@ -7,10 +7,16 @@
 //   { action: 'set_key', name, value }     -> writes a key or setting to Vault (admin_set_secret) and emails every admin
 //   { action: 'clear_key', name }          -> clears it in Vault, so the Edge Function secret (if any) applies again
 //   { action: 'test', group }              -> one harmless request to the provider with the key Counta will use
+//   { action: 'openwa_connect' }           -> TaxStreem's WhatsApp number on OpenWA: makes (or finds) the session, gives
+//                                             OpenWA a fresh webhook secret and Counta's webhook addresses, and answers the
+//                                             session's state with the QR code to scan while it waits for one
+//   { action: 'openwa_status' }            -> the same state, without changing anything
+//   { action: 'openwa_unlink' }            -> logs the number out of WhatsApp on the server
 //
 // Keys are read Vault first, then the Edge Function secret, exactly as the other functions read them; the value of a
 // secret never leaves this function.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { COUNTA_SESSION, ensureSession, INBOUND_EVENTS, type OpenWa, owa, owaError, RECEIPT_EVENTS, sessionState, setWebhooks } from './openwa.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -108,6 +114,19 @@ async function test(group: string, auth: string) {
       if (!r.ok) return { ok: false, note: `Meta refused (${r.status}): ${why(r)}` };
       return { ok: true, note: `Connected to ${r.body?.verified_name || 'the business'} on ${r.body?.display_phone_number || 'its number'}${r.body?.quality_rating ? `, quality ${String(r.body.quality_rating).toLowerCase()}` : ''}.` };
     }
+    case 'openwa': {
+      const cfg = await openwaCfg();
+      if (!cfg) return { ok: false, note: 'Add the server address and the API key.' };
+      const h = await owa(cfg, '/health');
+      if (!h.ok) return { ok: false, note: `The OpenWA server did not answer at ${cfg.url} (${owaError(h)}).` };
+      const k = await owa(cfg, '/sessions');
+      if (!k.ok) return { ok: false, note: `The server answered, but refused the API key (${owaError(k)}). Use an Operator key from the OpenWA dashboard.` };
+      const { data: row } = await admin.from('whatsapp_sessions').select('id').eq('kind', 'counta').maybeSingle();
+      if (!row) return { ok: true, note: 'The server and the key work. Press Connect to link TaxStreem\'s number.' };
+      const st = await sessionState(cfg, row.id);
+      return { ok: st.status === 'ready', note: st.status === 'ready' ? `The server and the key work, and WhatsApp is connected on +${st.phone || 'the number'}.`
+        : `The server and the key work, but WhatsApp is ${st.status.replace(/_/g, ' ')}. Press Connect to see what it needs.` };
+    }
     case 'numens': {
       const url = await key('NUMENS_API_URL'), k = await key('NUMENS_API_KEY');
       if (!url || !k) return { ok: false, note: 'Add the address and the key.' };
@@ -129,6 +148,46 @@ async function test(group: string, auth: string) {
     default:
       return { ok: false, note: 'Nothing to test for this group.' };
   }
+}
+
+// ------------------------------------------------------------------ OpenWA: TaxStreem's WhatsApp number
+async function openwaCfg(): Promise<OpenWa | null> {
+  const url = await key('OPENWA_URL'), k = await key('OPENWA_API_KEY');
+  return url && k ? { url, key: k } : null;
+}
+const hex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n))).map((x) => x.toString(16).padStart(2, '0')).join('');
+
+async function openwa(sb: SupabaseClient, action: string, userId: string) {
+  const cfg = await openwaCfg();
+  if (!cfg) return { ok: false, error: 'Add the OpenWA server address and API key first.' };
+  const base = `${SUPABASE_URL}/functions/v1/`;
+  if (action === 'openwa_connect') {
+    const h = await owa(cfg, '/health');
+    if (!h.ok) return { ok: false, error: `The OpenWA server did not answer at ${cfg.url} (${owaError(h)}).` };
+    let s: any;
+    try { s = await ensureSession(cfg, COUNTA_SESSION); } catch (e) { return { ok: false, error: `OpenWA would not start the session: ${(e as Error).message}` }; }
+    // A fresh secret each time Connect is pressed: OpenWA signs every delivery with it, and Counta checks it.
+    const secret = hex(32);
+    const { error } = await sb.rpc('admin_set_secret', { p_name: 'OPENWA_WEBHOOK_SECRET', p_value: secret });
+    if (error) return { ok: false, error: error.message };
+    try {
+      await setWebhooks(cfg, String(s.id), base, secret, [
+        { url: `${base}messaging/openwa`, events: RECEIPT_EVENTS }, { url: `${base}chat/openwa`, events: INBOUND_EVENTS }]);
+    } catch (e) { return { ok: false, error: (e as Error).message }; }
+    await admin.rpc('svc_wa_session_save', { p: { id: String(s.id), kind: 'counta', name: String(s.name || COUNTA_SESSION), status: String(s.status || 'created'), created_by: userId } });
+  }
+  const { data: row } = await admin.from('whatsapp_sessions').select('id').eq('kind', 'counta').maybeSingle();
+  if (!row) return { ok: true, status: 'none' };
+  if (action === 'openwa_unlink') {
+    const r = await owa(cfg, `/sessions/${encodeURIComponent(row.id)}/logout`, { method: 'POST', body: {} });
+    if (!r.ok && r.status !== 404) return { ok: false, error: `OpenWA did not log out: ${owaError(r)}` };
+  }
+  const st = await sessionState(cfg, row.id);
+  if (!['unreachable'].includes(st.status)) {
+    await admin.rpc('svc_wa_session_save', { p: { id: row.id, status: st.status === 'missing' ? 'missing' : st.status, phone: st.phone, push_name: st.push_name,
+      last_error: st.error || null } });
+  }
+  return { ok: true, status: st.status, phone: st.phone, push_name: st.push_name, qr: st.qr || null, error: st.error };
 }
 
 // ------------------------------------------------------------------ alerts
@@ -173,7 +232,8 @@ Deno.serve(async (req) => {
           mono: { url: `${SUPABASE_URL}/functions/v1/mono/webhook` },
           whatsapp: { url: `${SUPABASE_URL}/functions/v1/messaging/whatsapp`, last: wa?.[0]?.updated_at || null },
           flux: { url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/cit-status` },
-        } });
+          openwa: { messaging: `${SUPABASE_URL}/functions/v1/messaging/openwa`, chat: `${SUPABASE_URL}/functions/v1/chat/openwa` },
+        }, whatsapp: (await sb.rpc('admin_whatsapp')).data || null });
       }
       case 'set_key': {
         const name = String(body.name || '');
@@ -191,6 +251,11 @@ Deno.serve(async (req) => {
       }
       case 'test':
         return json({ group: String(body.group || ''), ...(await test(String(body.group || ''), auth)) });
+      case 'openwa_connect': case 'openwa_status': case 'openwa_unlink': {
+        const r = await openwa(sb, body.action, u.user.id);
+        if (body.action !== 'openwa_status' && r.ok) await alert(actor, body.action === 'openwa_connect' ? 'WhatsApp on OpenWA was connected (a new webhook secret was made)' : 'TaxStreem\'s WhatsApp number was logged out of OpenWA', body.action === 'openwa_connect' ? 'connected WhatsApp' : 'logged out WhatsApp');
+        return json(r);
+      }
       default:
         return json({ ok: false, error: 'Unknown action.' }, 400);
     }

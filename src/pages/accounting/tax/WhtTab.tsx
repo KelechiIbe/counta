@@ -15,6 +15,7 @@ import { ExportMenu, useMeta } from '../../../components/Books';
 import { downloadUrl, useTaxRefresh } from './CitTab';
 import { PayFrom } from './VatTab';
 import { FluxPayments, FluxSend } from '../../payments/FluxPayments';
+import { useFilingCurrent, VersionBanner } from '../../../practice/VersionBanner';
 
 type View = 'months' | 'receipts' | 'rates';
 
@@ -107,6 +108,7 @@ function ScheduleModal({ g, authorities, onClose, onPay }: { g: any; authorities
   }, [g.period, g.authority, g.kind]); // eslint-disable-line react-hooks/exhaustive-deps
   const rows: any[] = s?.rows || [];
   const blocks = (s?.checks || []).filter((c: any) => c.severity === 'block');
+  const acc = useFilingCurrent('wht', g.kind === 'wht' && g.authority ? g.period.slice(0, 7) : null, g.authority).data;
   async function download() {
     setBusy(true);
     try {
@@ -122,6 +124,7 @@ function ScheduleModal({ g, authorities, onClose, onPay }: { g: any; authorities
     <Modal onClose={onClose} width={860}>
       <ModalHead title={title} sub={g.authority ? `${authorityLabel(g.authority, authorities)} · due ${fmtDay(s?.due_date || g.due_date)}` : 'State not known: these suppliers need a state before the WHT has somewhere to go'} onClose={onClose} />
       <div className="modal-body stack" style={{ gap: 10 }}>
+        {g.kind === 'wht' && g.authority && <VersionBanner kind="wht" period={g.period.slice(0, 7)} authority={g.authority} />}
         {err ? <Alert kind="yellow" icon="shield">{err}</Alert> : !s ? <Spinner /> : (
           <>
             {(s.checks || []).map((c: any, i: number) => <Alert key={i} kind={c.severity === 'block' ? 'red' : 'amber'} icon="alert">{c.text}</Alert>)}
@@ -144,14 +147,14 @@ function ScheduleModal({ g, authorities, onClose, onPay }: { g: any; authorities
             )}
             {(files || []).some((f) => (f.mismatches || []).length) && <Alert kind="amber" icon="alert">The template's own formula gives a different WHT on some lines. Check the supplier's Tax ID and type before uploading.</Alert>}
             {g.authority === 'NRS' && <>
-              <FluxSend tax={g.kind === 'wht' ? 'wht' : 'wvat'} period={g.period} ready={!blocks.length && rows.length > 0} notReady={blocks.length ? 'Fix the points above first.' : 'Nothing to file this month.'} />
+              <FluxSend tax={g.kind === 'wht' ? 'wht' : 'wvat'} period={g.period} ready={(!blocks.length || !!acc) && rows.length > 0} notReady={blocks.length ? 'Fix the points above first.' : 'Nothing to file this month.'} />
               <FluxPayments taxes={[g.kind === 'wht' ? 'wht' : 'wvat']} period={g.period.slice(0, 7) + '-01'} />
             </>}
           </>
         )}
       </div>
       <div className="modal-ft">
-        {s && g.kind === 'wht' && g.authority && <button className="btn btn-secondary" disabled={busy || !!blocks.length || !rows.length} onClick={download}>{busy ? <Spinner small /> : <Icon name="download" size={14} />}{g.authority === 'NRS' ? 'NRS template' : 'State template'}</button>}
+        {s && g.kind === 'wht' && g.authority && <button className="btn btn-secondary" disabled={busy || (!!blocks.length && !acc) || !rows.length} onClick={download}>{busy ? <Spinner small /> : <Icon name="download" size={14} />}{acc ? 'Accountant\'s schedule' : g.authority === 'NRS' ? 'NRS template' : 'State template'}</button>}
         {s && g.kind !== 'wht' && <ExportMenu name={`Withholding VAT ${g.period.slice(0, 7)}`} disabled={!rows.length} sheets={() => [{ meta: meta(title, 'Paid to the NRS'),
           cols: [{ key: 'beneficiary_name', label: 'Supplier' }, { key: 'beneficiary_number', label: 'Tax ID' }, { key: 'address', label: 'Address' }, { key: 'invoice', label: 'Invoice' },
             { key: 'transaction_date', label: 'Date', type: 'date' }, { key: 'amount', label: 'Amount', type: 'money', total: true }, { key: 'wht', label: 'VAT', type: 'money', total: true }],

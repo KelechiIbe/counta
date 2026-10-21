@@ -10,6 +10,7 @@ import { edge, money } from '../../../lib/api';
 import { N2, fmtDay, when } from '../../../lib/format';
 import { CA_CATEGORIES, CIT_STATUS, SECTIONS, SOURCE_LABEL, TAX_KEYS, WVAT_AGENTS, lawLong, lawShort, useCitYear, useCitYears, useTaxProfile } from '../../../lib/tax';
 import { FluxPayments } from '../../payments/FluxPayments';
+import { useFilingCurrent, VersionBanner } from '../../../practice/VersionBanner';
 import { TB_FIELDS, tbRows } from '../../../lib/moveBooks';
 import { Icon } from '../../../components/Icon';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner, Stat } from '../../../components/ui';
@@ -110,11 +111,13 @@ function CitYear({ year }: { year: number }) {
     setBusy(key);
     try { const r = await fn(); if (ok) toast(ok); await refresh(); return r; } catch (e) { toast((e as Error).message, 'err'); } finally { setBusy(null); }
   }
+  const acc = useFilingCurrent('cit', String(year)).data;
   async function download() {
     setBusy('download');
     try {
       const r = await edge<any>('tax-files', { action: 'cit_file', org_id: orgId, year });
       if (r.ok === false) throw new Error(r.error || 'Could not make the file.');
+      if (r.accountant) toast(`Downloaded ${r.accountant.name}'s version, the one in use.`);
       const broken = (r.ties || []).filter((t: any) => !t.ok);
       if (broken.length) toast(`The draft does not tie yet: ${broken.map((t: any) => t.label).join(', ')}`, 'err');
       downloadUrl(r.url);
@@ -148,7 +151,7 @@ function CitYear({ year }: { year: number }) {
           </div>
           <div className="row wrap">
             <button className="btn btn-secondary btn-sm" disabled={!!busy} onClick={download}>
-              {busy === 'download' ? <Spinner small /> : <Icon name="download" size={14} />}{frozen ? 'Rev360 file' : 'Draft Rev360 file'}</button>
+              {busy === 'download' ? <Spinner small /> : <Icon name="download" size={14} />}{acc ? 'Accountant\'s Rev360 file' : frozen ? 'Rev360 file' : 'Draft Rev360 file'}</button>
             {d.can_approve && ['draft', 'rejected'].includes(row.status) && (
               <button className="btn btn-primary btn-sm" disabled={!!busy || blocks.length > 0} title={blocks.length ? 'Settle the points marked to fix first' : undefined}
                 onClick={() => setModal('approve')}><Icon name="check" size={14} color="#fff" />Approve</button>)}
@@ -164,6 +167,7 @@ function CitYear({ year }: { year: number }) {
           <Stat label="Due" value={comp.ended ? fmtDay(comp.due) : 'Year still running'} />
         </div>
         {row.status === 'approved' && <div className="faint" style={{ fontSize: 12 }}>Approved by {row.approved_by || 'someone'} ({when(row.approved_at)}). The figures are frozen; reopen the year to change them.</div>}
+        <VersionBanner kind="cit" period={String(year)} />
         {(row.flux_status || ['sent', 'filed', 'rejected'].includes(row.status)) && <FluxState row={row} />}
         <FluxPayments taxes={['cit']} year={year} />
         {flux && <Alert kind="blue" icon="info">{flux}</Alert>}

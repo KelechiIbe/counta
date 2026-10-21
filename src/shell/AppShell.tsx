@@ -9,6 +9,7 @@ import { InstallBanner } from '../components/InstallBanner';
 import { store } from '../lib/pwa';
 import { useAttention, useInbox } from '../lib/api';
 import { useAdminMe } from '../admin/api';
+import { usePracticesMine } from '../practice/api';
 import { cap, useWords } from '../lib/wording';
 import { useVatRate } from '../lib/vat';
 
@@ -26,7 +27,7 @@ const TITLES: Record<string, string> = {
   '/accounting/inbox': 'Books inbox', '/accounting/banking': 'Banking & reconciliation', '/accounting/statements': 'Financial statements',
   '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close',
   '/tax': 'Tax returns', '/tax/vat': 'VAT returns', '/tax/wht': 'Withholding tax', '/tax/cit': 'Companies income tax',
-  '/accounting/journals': 'Journals', '/accounting/migrate': 'Move your books', '/assistant': 'AI Assistant', '/settings': 'Settings', '/settings/subscription': 'Subscription',
+  '/accounting/journals': 'Journals', '/accounting/migrate': 'Move your books', '/assistant': 'AI Assistant', '/settings': 'Settings', '/settings/subscription': 'Subscription', '/integrations': 'Integrations',
 };
 export const titleFor = (path: string) => TITLES[path] || TITLES[Object.keys(TITLES).filter((k) => path.startsWith(k + '/')).sort((x, y) => y.length - x.length)[0]] || 'Counta';
 const PICKER = new Set(['/inventory', '/inventory/items', '/inventory/insights']);
@@ -132,6 +133,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
   const badges = useNeedsAction().badges;
   const [menu, setMenu] = useState(false);
   const staff = useAdminMe(menu).data?.staff === true;
+  const practices = (usePracticesMine(menu).data?.practices.length || 0) > 0;
   const w = useWords();
   const populated = (inv?.items.length ?? 0) > 0;
   const current = memberships.find((m) => m.org_id === orgId);
@@ -194,7 +196,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
       </nav>
       <div className="sidebar-section" style={{ paddingTop: 24 }}>{rail ? '' : 'MORE'}</div>
       <nav className="nav">
-        {external('Integrations', 'blocks')}
+        {link('/integrations', 'Integrations', 'blocks')}
         {can(inv, 'manage_settings') && link('/settings/subscription', 'Subscription', 'card')}
         {link('/settings', 'Settings', 'settings', undefined, n('tax_id'))}
         {link('/m', 'Phone app', 'phone', () => store.set('counta-view', 'phone'))}
@@ -213,6 +215,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
             <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/onboarding'); }}><Icon name="plus" size={16} color="#6B7280" />Add a business</button>
             <div style={{ height: 1, background: '#F3F4F6', margin: '4px 0' }} />
             <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/settings'); }}><Icon name="settings" size={16} color="#6B7280" />Settings</button>
+            <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/practice'); }}><Icon name="book" size={16} color="#6B7280" />{practices ? 'Accountant portal' : 'I am an accountant'}</button>
             {staff && <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/admin'); }}><Icon name="shield" size={16} color="#6B7280" />Admin portal</button>}
             <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={signOut}><Icon name="logout" size={16} color="#6B7280" />Sign out</button>
           </div>

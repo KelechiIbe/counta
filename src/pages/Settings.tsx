@@ -19,6 +19,8 @@ import { useGuideTalk } from '../guide/GuideProvider';
 import { saveVoice } from '../lib/onboard';
 import { PeopleCard, RolesCard } from './settings/Team';
 import { IdentityPanel, useIdentity } from './onboarding/Identity';
+import { MartinaAnywhere } from './settings/MartinaAnywhere';
+import { AccountantSection } from './settings/Accountant';
 
 function Section({ id, title, sub, children }: { id?: string; title: string; sub?: string; children: ReactNode }) {
   return (
@@ -179,6 +181,17 @@ function TeamSection() {
   );
 }
 
+// The business's accountant, from Counta's accountant portal. The sample business has none.
+function YourAccountantSection() {
+  const { data: inv } = useInventory();
+  if (!inv || inv.org.is_sample) return null;
+  return (
+    <Section id="accountant" title="Your accountant" sub="Invite your accountant by email. They keep your books and prepare your returns in Counta with an Accountant's place in the business, and never move money.">
+      <AccountantSection />
+    </Section>
+  );
+}
+
 // The director's NIN check. Until it passes (or TaxStreem approves the slip), the wallet, payment links and payouts wait.
 function IdentitySection() {
   const { orgId } = useSession();
@@ -267,6 +280,7 @@ export default function Settings() {
       </Section>
       <BrandingSection />
       <TeamSection />
+      <YourAccountantSection />
       <IdentitySection />
       <Section title="Stock rules" sub="These drive reorder suggestions, price proposals and voice review.">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
@@ -287,6 +301,9 @@ export default function Settings() {
       <NotificationsSection />
       <AlertsSection />
       <VoiceSection />
+      <Section id="martina-anywhere" title="Martina on WhatsApp and Siri" sub="Talk to Martina from your own WhatsApp, or say Hey Siri on an iPhone. She acts as you, within what your role allows, for this business.">
+        <MartinaAnywhere />
+      </Section>
       <CallsSection />
       <Section title="Phone app" sub="For the people who handle stock. Works offline and syncs in order when data returns.">
         <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>Open <b>{window.location.host}</b> on the phone. On Android, Chrome offers <b>Install</b>; on iPhone, tap Share in Safari and choose <b>Add to Home Screen</b>. Staff sign in with the email you invited and land on the phone screens for scanning, blind counts, invoice photos and voice entry. The full app, with approvals and reports, is one tap away and fits the phone too.</div>

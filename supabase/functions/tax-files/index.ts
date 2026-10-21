@@ -17,6 +17,12 @@
 //                                           (PRN) and the account to pay (docs/flux-tax-returns.md).
 //   { action: 'flux_new_account', instruction_id }
 //                                        -> asks Flux for a new payment account for a PRN whose account expired.
+//   { action: 'accountant_upload', org_id, kind: 'vat'|'wht'|'cit'|'fs', period, authority?, path, file_name, note? }
+//                                        -> an accountant's changed return or statements, uploaded by the app to path (under
+//                                           <org>/tax/accountant/): Counta reads its figures, compares them with its own (or
+//                                           with the version in use) and keeps it for review (docs/accountant-portal.md).
+// While an accountant's version of a return is in use, the files above are that version (pass original: true for Counta's
+// own), and Flux is told who changed it and that they take responsibility.
 // Flux settings (admin portal, or Edge Function secrets): FLUX_URL (base URL) and FLUX_SECRET (shared HMAC secret). Requests carry
 //   x-counta-signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">; Flux reports back on
 //   /functions/v1/taxstreem/flux/... with the same signature (docs/flux-cit-handoff.md, docs/flux-tax-returns.md).
@@ -25,6 +31,7 @@ import { type CitPack, fillCit } from './cit.ts';
 import { sha256Hex, template, TEMPLATES, templatesBase } from './templates.ts';
 import { fillVat, type VatSchedule } from './vat.ts';
 import { nrsFiles, stateFile, type WhtSchedule } from './wht.ts';
+import { citFigures, type Figures, FileProblem, fromVersion, fsCounta, fsFigures, safeName, sideBySide, vatCounta, vatFigures, whtCounta, whtFigures } from './accountant.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -59,6 +66,16 @@ async function pack(sb: SupabaseClient, orgId: string, year: number): Promise<Ci
 
 function folder(p: CitPack) { return `${p.org_id}/tax/cit/${p.year}`; }
 
+// The accountant's version in use for a return, if there is one (asked as the person, so the database checks they may see it).
+async function inUse(sb: SupabaseClient, orgId: string, kind: string, period: string, authority: string | null = null): Promise<any | null> {
+  const { data, error } = await sb.rpc('filing_version_current', { p_org: orgId, p_kind: kind, p_period: period, p_authority: authority });
+  if (error) throw new UserError(error.message);
+  return data || null;
+}
+// What the app and Flux are told about an accountant's version.
+const accountantOf = (v: any) => v ? { version_id: v.id, version: v.version, name: v.accepted_name, licence: v.accepted_licence, practice: v.practice_name,
+  accepted_at: v.accepted_at, statement: v.statement, changes: v.changes, journal_ref: v.journal_ref } : null;
+
 // Writes the file (a draft each time; an approved return once) and answers where it is.
 async function citFile(p: CitPack, regenerate = false) {
   if (!p.draft && p.template_path && !regenerate) {
@@ -91,7 +108,7 @@ async function sign(raw: string, secret: string) {
   return `t=${t},v1=${Array.from(sig).map((x) => x.toString(16).padStart(2, '0')).join('')}`;
 }
 
-async function citSend(p: CitPack) {
+async function citSend(p: CitPack, acc: any = null) {
   if (!p.can_send) {
     if (p.draft) throw new UserError(`Approve the ${p.year} return before sending it to Flux.`);
     if (!p.afs_path) throw new UserError('Attach the audited financial statements before sending the return.');
@@ -101,7 +118,8 @@ async function citSend(p: CitPack) {
   const url = (await vaultFirst('FLUX_URL')).replace(/\/$/, '');
   const secret = await vaultFirst('FLUX_SECRET');
   if (!url || !secret) return { ok: false, reason: 'not_configured', error: 'TaxStreem Flux is not connected yet. Download the file and file it on Rev360, or ask TaxStreem to connect Flux.' };
-  const file = await citFile(p);
+  const file = acc ? { path: acc.file_path as string, sha256: acc.sha256 as string } : await citFile(p);
+  const fileName = acc ? acc.file_name as string : p.file_name;
   const week = 7 * 24 * 3600;
   const afsName = p.afs_path!.split('/').pop()!;
   const body = {
@@ -111,11 +129,12 @@ async function citSend(p: CitPack) {
     accounting_year: p.year, year_of_assessment: p.yoa, period: { from: p.from, to: p.to }, regime: p.regime, due: p.due,
     approved: { by: p.approved_by ?? null, at: p.approved_at ?? null },
     files: {
-      template: { name: p.file_name, url: await signed(file.path, week), sha256: file.sha256, content_type: XLSX, expires_in: week },
+      template: { name: fileName, url: await signed(file.path, week), sha256: file.sha256, content_type: XLSX, expires_in: week },
       financial_statements: { name: afsName, url: await signed(p.afs_path!, week), expires_in: week },
     },
     fixed_asset_declaration: p.declaration,
     computation: { rows: p.rows, figures: p.figures },
+    prepared_by_accountant: accountantOf(acc),
     callback_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/cit-status`,
   };
   const raw = JSON.stringify(body);
@@ -138,10 +157,17 @@ async function citSend(p: CitPack) {
   return { ok: true, status: row.status, flux_ref: row.flux_ref };
 }
 
-async function whtFiles(sb: SupabaseClient, orgId: string, period: string, authority: string) {
+async function whtFiles(sb: SupabaseClient, orgId: string, period: string, authority: string, original = false) {
   const { data, error } = await sb.rpc('wht_schedule', { p_org: orgId, p_period: `${period}-01`, p_authority: authority, p_kind: 'wht' });
   if (error) throw new UserError(error.message);
   const s = data as WhtSchedule;
+  const acc = original ? null : await inUse(sb, orgId, 'wht', period, authority);
+  if (acc) {
+    const fig = (k: string) => Number((acc.figures || []).find((x: any) => x.key === k)?.uploaded ?? 0);
+    return { ok: true, authority, period, accountant: accountantOf(acc), checks: [],
+      files: [{ name: acc.file_name, path: acc.file_path, url: await signed(acc.file_path, 1800, acc.file_name), rows: fig('rows'), total: fig('wht_total'),
+        template_total: fig('wht_total'), mismatches: [] }] };
+  }
   if (!s.rows?.length) return { ok: false, error: `Nothing was deducted for ${s.authority_name || authority} in ${period}.` };
   const blocks = (s.checks || []).filter((c) => c.severity === 'block');
   if (blocks.length) return { ok: false, error: blocks.map((c) => c.text).join(' '), checks: s.checks };
@@ -159,10 +185,19 @@ async function whtFiles(sb: SupabaseClient, orgId: string, period: string, autho
   return { ok: true, authority, period, files: out, checks: s.checks };
 }
 
-async function vatFile(sb: SupabaseClient, orgId: string, period: string) {
+async function vatFile(sb: SupabaseClient, orgId: string, period: string, original = false) {
   const { data, error } = await sb.rpc('vat_schedule', { p_org: orgId, p_period: `${period}-01` });
   if (error) throw new UserError(error.message);
   const s = data as VatSchedule;
+  const acc = original ? null : await inUse(sb, orgId, 'vat', period);
+  if (acc) {
+    // The accountant's return is the one of record: its form lines, and Counta's own figures beside them.
+    const lines: Record<string, number> = {};
+    for (const x of acc.figures || []) if (/^line_\d+$/.test(x.key)) lines[x.key.slice(5)] = Number(x.uploaded ?? 0);
+    return { ok: true, period, file_name: acc.file_name as string, path: acc.file_path as string, url: await signed(acc.file_path, 1800, acc.file_name), ties: null,
+      rows: null, checks: (s.checks || []).filter((c) => c.severity !== 'block'), lines, counta: s.counta, difference: null, tolerance: s.tolerance,
+      accountant: accountantOf(acc) };
+  }
   if (s.blocked) return { ok: false, error: s.checks.filter((c) => c.severity === 'block').map((c) => c.text).join(' '), checks: s.checks };
   const { bytes, ties, rows } = fillVat(await template('nrs_vat'), s);
   const path = `${orgId}/tax/vat/${period}/${s.file_name}`;
@@ -170,6 +205,74 @@ async function vatFile(sb: SupabaseClient, orgId: string, period: string) {
   if (up) throw new Error(`Could not store ${s.file_name}: ${up.message}`);
   return { ok: true, period, file_name: s.file_name, path, url: await signed(path, 1800, s.file_name), ties, rows, checks: s.checks,
     lines: s.lines, counta: s.counta, difference: s.difference, tolerance: s.tolerance };
+}
+
+// ------------------------------------------------------------------ an accountant's changed file
+const KINDS = ['vat', 'wht', 'cit', 'fs'];
+async function accountantUpload(sb: SupabaseClient, userId: string, orgId: string, body: any) {
+  const kind = String(body.kind || ''), period = String(body.period || ''), authority = kind === 'wht' ? String(body.authority || 'NRS') : null;
+  const path = String(body.path || '');
+  if (!KINDS.includes(kind)) throw new UserError('Choose the return.');
+  if (!path.startsWith(`${orgId}/tax/accountant/`) || path.includes('..') || !/\.xlsx$/i.test(path)) throw new UserError('Upload the file through Counta.');
+  // As the accountant: may they, and what is the upload compared with?
+  const { data: st, error } = await sb.rpc('filing_version_start', { p_org: orgId, p_kind: kind, p_period: period, p_authority: authority });
+  if (error) throw new UserError(error.message);
+  const { data: blob, error: de } = await admin.storage.from('documents').download(path);
+  if (de || !blob) throw new UserError('Counta could not find the uploaded file. Upload it again.');
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (bytes.length > 15_000_000) throw new UserError('The file is larger than 15 MB.');
+  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) throw new UserError('That is not an Excel workbook (.xlsx).');
+
+  let up: Figures, base: Figures['rows'] | null = st.current ? fromVersion(st.current.figures) : null;
+  try {
+    if (kind === 'vat') {
+      up = vatFigures(bytes);
+      if (!base) {
+        const { data: s, error: e } = await sb.rpc('vat_schedule', { p_org: orgId, p_period: `${period}-01` });
+        if (e) throw new UserError(e.message);
+        base = vatCounta(s as VatSchedule).rows;
+      }
+    } else if (kind === 'wht') {
+      up = whtFigures(bytes, authority!);
+      if (!base) {
+        const { data: s, error: e } = await sb.rpc('wht_schedule', { p_org: orgId, p_period: `${period}-01`, p_authority: authority, p_kind: 'wht' });
+        if (e) throw new UserError(e.message);
+        if (authority === 'NRS' && (s as WhtSchedule).rows.length > 130) {
+          throw new UserError(`The NRS schedule for ${period} runs to ${Math.ceil((s as WhtSchedule).rows.length / 130)} files. Changed schedules can be uploaded when they fit one file of 130 rows.`);
+        }
+        base = whtCounta(s as WhtSchedule).rows;
+      }
+    } else if (kind === 'cit') {
+      up = citFigures(bytes);
+      if (!base) {
+        const p = await pack(sb, orgId, Number(period));
+        if (!p.cell_map?.length) throw new UserError(`Counta has no ${period} return to compare with yet. Open the year under Tax, CIT first.`);
+        const { bytes: mine } = fillCit(await template('cit'), p);
+        base = citFigures(mine).rows;
+      }
+    } else {
+      up = fsFigures(bytes);
+      if (!base) {
+        const [from, to] = period.split(':');
+        const get = async (report: string) => {
+          const { data, error: e } = await sb.rpc('accounting_report', { p_org: orgId, p_report: report, p_from: from, p_to: to, p_options: {} });
+          if (e) throw new UserError(e.message);
+          return (data as any)?.rows || [];
+        };
+        base = fsCounta(await get('sopl'), await get('sofp')).rows;
+      }
+    }
+  } catch (e) {
+    if (e instanceof FileProblem) throw new UserError(e.message);
+    throw e;
+  }
+  const rows = sideBySide(base!, up.rows);
+  const { data: saved, error: se } = await admin.rpc('svc_filing_version_save', { p: {
+    org_id: orgId, kind, period, authority, file_path: path, file_name: String(body.file_name || '').slice(0, 160) || safeName(path), sha256: await sha256Hex(bytes),
+    size: bytes.length, user_id: userId, member_id: st.member_id, base_version: st.current?.id ?? null, rows, checks: up.checks,
+    note: typeof body.note === 'string' ? body.note.slice(0, 1500) : null } });
+  if (se) throw new UserError(se.message);
+  return { ok: true, version: saved, compared_with: st.current ? 'version' : 'counta' };
 }
 
 // ------------------------------------------------------------------ VAT, WHT and withholding VAT through Flux
@@ -204,16 +307,18 @@ async function fluxSend(sb: SupabaseClient, orgId: string, tax: string, period: 
   const week = 7 * 24 * 3600;
   // The files first, made as the person asking (the database checks they may), so nothing is marked sent that cannot be filed.
   const files: { name: string; url: string; content_type: string; rows?: number; total?: number; expires_in: number }[] = [];
-  let schedule: unknown = null, checks: unknown = null;
+  let schedule: unknown = null, checks: unknown = null, accountant: unknown = null;
   if (tax === 'vat') {
     const f = await vatFile(sb, orgId, period);
     if (!f.ok) return f;
     files.push({ name: f.file_name!, url: await signed(f.path!, week, f.file_name), content_type: XLSX, expires_in: week });
     schedule = { lines: f.lines, counta: f.counta };
     checks = f.checks;
+    accountant = (f as any).accountant ?? null;
   } else if (tax === 'wht') {
     const f = await whtFiles(sb, orgId, period, 'NRS');
     if (!f.ok) return f;
+    accountant = (f as any).accountant ?? null;
     for (const x of f.files!) files.push({ name: x.name, url: await signed(x.path, week, x.name), content_type: XLSX, rows: x.rows, total: x.total, expires_in: week });
     const { data } = await sb.rpc('wht_schedule', { p_org: orgId, p_period: `${period}-01`, p_authority: 'NRS', p_kind: 'wht' });
     schedule = { rows: (data as WhtSchedule)?.rows || [], total: (data as WhtSchedule)?.total ?? null };
@@ -235,7 +340,7 @@ async function fluxSend(sb: SupabaseClient, orgId: string, tax: string, period: 
     counta_org_id: orgId, taxstreem_org_id: pk.org?.taxstreem_org_id ?? null,
     company: { name: pk.org?.name, tin: pk.org?.tin, rc_number: pk.org?.rc_number, address: pk.org?.address },
     tax, period, authority: 'NRS', amount: pk.amount, to_pay: pk.to_pay, due: pk.due, sent_by: pk.sent_by,
-    summary: pk.summary, schedule, checks, files,
+    summary: pk.summary, schedule, checks, files, prepared_by_accountant: accountant,
     callback_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/return-status`,
     payment_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/payment`,
     payment_status_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/payment-status`,
@@ -288,6 +393,7 @@ Deno.serve(async (req) => {
     }
     const orgId = String(body.org_id || ''), year = Number(body.year);
     if (!/^[0-9a-f-]{36}$/i.test(orgId)) return json({ ok: false, error: 'Choose the business.' }, 400);
+    if (body.action === 'accountant_upload') return json(await accountantUpload(sb, u.user.id, orgId, body));
     if (body.action === 'flux_send') {
       const period = String(body.period || '').slice(0, 7), tax = String(body.tax || '');
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period) || !['vat', 'wht', 'wvat'].includes(tax)) return json({ ok: false, error: 'Choose the tax and the month.' }, 400);
@@ -296,22 +402,30 @@ Deno.serve(async (req) => {
     if (body.action === 'wht_files') {
       const period = String(body.period || '').slice(0, 7), authority = String(body.authority || '');
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period) || !/^(NRS|SIRS:[A-Z]{2})$/.test(authority)) return json({ ok: false, error: 'Choose the month and the tax authority.' }, 400);
-      return json(await whtFiles(sb, orgId, period, authority));
+      return json(await whtFiles(sb, orgId, period, authority, body.original === true));
     }
     if (body.action === 'vat_file') {
       const period = String(body.period || '').slice(0, 7);
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return json({ ok: false, error: 'Choose the month.' }, 400);
-      return json(await vatFile(sb, orgId, period));
+      return json(await vatFile(sb, orgId, period, body.original === true));
     }
     if (!Number.isInteger(year)) return json({ ok: false, error: 'Choose the year.' }, 400);
     switch (body.action) {
       case 'cit_file': {
         const p = await pack(sb, orgId, year);
+        const acc = body.original === true ? null : await inUse(sb, orgId, 'cit', String(year));
+        if (acc) {
+          return json({ ok: true, draft: p.draft, status: p.status, file_name: acc.file_name, url: await signed(acc.file_path, 1800, acc.file_name), sha256: acc.sha256,
+            ties: null, checks: p.checks, accountant: accountantOf(acc) });
+        }
         const f = await citFile(p);
         return json({ ok: true, draft: p.draft, status: p.status, file_name: p.file_name, url: await signed(f.path, 1800, p.file_name), sha256: f.sha256,
           ties: f.ties, checks: p.checks });
       }
-      case 'cit_send': return json(await citSend(await pack(sb, orgId, year)));
+      case 'cit_send': {
+        const p = await pack(sb, orgId, year);
+        return json(await citSend(p, await inUse(sb, orgId, 'cit', String(year))));
+      }
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }
   } catch (e) {

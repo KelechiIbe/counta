@@ -15,6 +15,7 @@ import { Alert, Field, Spinner } from '../../components/ui';
 import { Orb } from '../../guide/GuideDock';
 import { useGuideTalk, type OnboardScreen } from '../../guide/GuideProvider';
 import { IdentityPanel, useIdentity } from './Identity';
+import { usePracticesMine } from '../../practice/api';
 import '../../guide/guide.css';
 
 const ORDER: OnboardScreen[] = ['welcome', 'find', 'found', 'questions', 'summary', 'score', 'identity', 'document', 'done'];
@@ -38,6 +39,9 @@ export default function Onboard() {
   const [params, setParams] = useSearchParams();
   const guide = useGuide();
   const fresh = params.get('new') === '1';
+  // An accountant with a practice and no business of their own belongs in the portal.
+  const practices = usePracticesMine(!memberships.length && !fresh);
+  useEffect(() => { if (!memberships.length && !fresh && practices.data?.practices.length) nav('/practice', { replace: true }); }, [practices.data, memberships.length, fresh]); // eslint-disable-line react-hooks/exhaustive-deps
   // An existing business being completed (from the checklist), else the person's own profile: the open draft, or the one
   // they submitted last.
   const target = params.get('org') || null;
@@ -163,6 +167,14 @@ function Welcome({ first, lang, onTalk, onType, onSelf, onSample, hasOrgs }: { f
           <div className="muted" style={{ fontSize: 13, marginTop: 4, lineHeight: 1.45 }}>Open a sample shop with two Lagos branches and two months of history. It stays separate from your real business.</div>
         </div>
         <button className="btn btn-secondary" onClick={onSample}>Open sample</button>
+      </div>
+      <div className="ob-card row wrap" style={{ gap: 16, borderStyle: 'dashed', borderColor: 'var(--dashed)', boxShadow: 'none' }} data-testid="accountant-entry">
+        <span style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--primary-soft)', display: 'grid', placeItems: 'center' }}><Icon name="book" size={22} color="#0072F5" /></span>
+        <div className="grow" style={{ minWidth: 220 }}>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>{pcm ? 'You be accountant?' : 'Are you an accountant?'}</div>
+          <div className="muted" style={{ fontSize: 13, marginTop: 4, lineHeight: 1.45 }}>Look after all your clients' books and tax returns from one portal. Clients connect to you by invitation.</div>
+        </div>
+        <button className="btn btn-secondary" onClick={() => nav('/practice')}>Accountant portal</button>
       </div>
       {hasOrgs && <button className="btn btn-ghost" onClick={() => nav('/home')} style={{ alignSelf: 'center' }}>Back to my businesses</button>}
     </>
