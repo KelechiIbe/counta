@@ -116,7 +116,7 @@ export function wording(m: Msg) {
       const wa = p.wa && typeof p.wa.name === 'string' && /^counta_[a-z_]+$/.test(p.wa.name) && Array.isArray(p.wa.params)
         ? { name: p.wa.name, params: p.wa.params.map((x: unknown) => String(x ?? '')) } : null;
       return { heading: String(p.heading || m.subject || 'Something needs doing in Counta'), lines, button: String(p.button || 'Open Counta'), link: p.link, wa,
-        greet: first(p.person_name), from: 'Counta', footer: `Counta sends these for ${biz}. Choose which you get in Settings, Notifications.` };
+        greet: first(p.person_name), from: 'Counta', footer: `Counta sends these for ${biz}. Choose which you get in Settings, Alerts.` };
     }
     case 'practice': {
       // The accountant portal's invitations (a practice to its staff or to a business owner, a business to its accountant):

@@ -68,6 +68,7 @@ Every webhook from OpenWA is signed (`X-OpenWA-Signature: sha256=…`, HMAC-SHA2
 
 - **Messages from Counta** come from TaxStreem's number. If the session drops, messages wait in the queue instead of failing and go out once it is back.
 - **Martina on WhatsApp**: in Counta, Settings, *Martina on WhatsApp and Siri*, a person enters their number and gets a code; they send `LINK 123456` to TaxStreem's number from that phone. Martina then answers as them, within their role, for that business: text or voice notes. She reads back anything that records or changes something and acts only on a yes. She never moves money; payments open in Counta. `UNLINK` stops it, and the owner can remove anyone's link.
+- **Alerts**: the same chat carries the person's alerts: tax returns due, invoices overdue, transactions to confirm, and anything waiting for them (a bill to review, a payout to approve, a bank to sign in to again). Between 8:00 and 20:00, at most ten a day, each person only what their role covers. See [messaging.md](messaging.md#alerts-on-whatsapp).
 - **Siri on iPhone**: Apple does not offer iMessage to businesses in Nigeria, so iPhone users make a personal key in the same Settings section and build a three-step *Ask Martina* shortcut. Counta keeps only a fingerprint of the key.
 - **A business's own number**: on the Integrations page, *WhatsApp Business*, the owner presses *Link my number* and scans the QR code from the business's phone, then chooses *Send from my number*. If that phone drops off, Counta goes back to TaxStreem's number on its own.
 
