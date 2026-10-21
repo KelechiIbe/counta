@@ -63,10 +63,10 @@ export default function Bills() {
     { key: 'total', label: 'Total', type: 'money', total: true }, { key: 'wht_expected', label: 'WHT', type: 'money', total: true }, { key: 'balance', label: 'Balance', type: 'money', total: true }];
   return (
     <div className="container">
-      <div className="m-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 12 }}>
-        <div className="card card-pad"><div className="label">We owe suppliers</div><div style={{ fontSize: 26, fontWeight: 700, marginTop: 6 }}>{N2(owed)}</div></div>
-        <div className="card card-pad"><div className="label">Overdue</div><div style={{ fontSize: 26, fontWeight: 700, marginTop: 6, color: overdue ? '#DC2626' : undefined }}>{N2(overdue)}</div></div>
-        <div className="card card-pad"><div className="label">To approve</div><div style={{ fontSize: 26, fontWeight: 700, marginTop: 6 }}>{all.filter((b) => b.status === 'draft').length}</div></div>
+      <div className="fig-tiles" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 12 }}>
+        <div className="card card-pad"><div className="label">We owe suppliers</div><div className="fig">{N2(owed)}</div></div>
+        <div className="card card-pad"><div className="label">Overdue</div><div className="fig" style={{ color: overdue ? '#DC2626' : undefined }}>{N2(overdue)}</div></div>
+        <div className="card card-pad"><div className="label">To approve</div><div className="fig">{all.filter((b) => b.status === 'draft').length}</div></div>
       </div>
       <div className="row wrap" style={{ justifyContent: 'space-between' }}>
         <Pills value={tab} onChange={setTab} options={[{ id: 'unpaid', label: 'To pay' }, { id: 'draft', label: 'To approve', count: all.filter((b) => b.status === 'draft').length || undefined }, { id: 'overdue', label: 'Overdue' }, { id: 'paid', label: 'Paid' },
