@@ -215,7 +215,7 @@ function LinkModal({ draft, onClose }: { draft: Drafts['payment_link'] | null; o
     <Modal onClose={onClose} width={460}>
       <ModalHead title="Payment link" sub="The customer pays by card, transfer or USSD. It lands in the wallet and on their account." onClose={onClose} />
       <div className="modal-body">
-        {draft && <Alert kind="blue" icon="sparkles">Martina filled this in{draft.description ? ` for ${draft.description}` : ''}. Check it, then make the link.</Alert>}
+        {draft && <Alert kind="blue" icon="martina">Martina filled this in{draft.description ? ` for ${draft.description}` : ''}. Check it, then make the link.</Alert>}
         <Field label="Customer" req><CustomerPicker value={customer} onChange={(c) => { setCustomer(c); setMiss(null); }} walkIn={false} placeholder="Choose the customer" /></Field>
         {miss && !customer && <Alert kind="amber" icon="info">No customer called "{miss}" yet. Choose one, or add them from the box above.</Alert>}
         <Field label="Amount (₦)" req><input className="input num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" /></Field>

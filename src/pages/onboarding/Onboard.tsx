@@ -157,7 +157,7 @@ function Welcome({ first, lang, onTalk, onType, onSelf, onSample, hasOrgs }: { f
         <div className="faint" style={{ fontSize: 12 }}>You can speak, type or tap at any point. Martina is an AI assistant.</div>
       </div>
       <div className="ob-card row wrap" style={{ gap: 16, borderStyle: 'dashed', borderColor: 'var(--dashed)', boxShadow: 'none' }}>
-        <span style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--primary-soft)', display: 'grid', placeItems: 'center' }}><Icon name="sparkles" size={22} color="#0072F5" /></span>
+        <span style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--primary-soft)', display: 'grid', placeItems: 'center' }}><Icon name="martina" size={24} color="#0072F5" /></span>
         <div className="grow" style={{ minWidth: 220 }}>
           <div style={{ fontSize: 15, fontWeight: 600 }}>Just looking around?</div>
           <div className="muted" style={{ fontSize: 13, marginTop: 4, lineHeight: 1.45 }}>Open a sample shop with two Lagos branches and two months of history. It stays separate from your real business.</div>
@@ -467,7 +467,7 @@ function Questions({ k, live, onNext }: { k: Kyc; live: boolean; onNext: () => v
       </div>
       {tips.length > 0 && (
         <div className="ob-card stack" style={{ gap: 8, background: 'linear-gradient(135deg,#F5F3FF,#fff)' }}>
-          <b className="row" style={{ gap: 8 }}><Icon name="sparkles" size={16} color="#7C3AED" />Martina's two cents</b>
+          <b className="row" style={{ gap: 8 }}><Icon name="martina" size={16} color="#0072F5" />Martina's two cents</b>
           {tips.map((t) => <div key={t} style={{ fontSize: 14, lineHeight: 1.5 }}>{t}</div>)}
         </div>
       )}

@@ -167,7 +167,7 @@ export default function ItemForm({ item, draft, note, onClose, onSaved }: {
     <Drawer onClose={onClose} width={560}>
       <div className="drawer-hd" style={{ alignItems: 'center' }}><div className="drawer-title grow">{editing ? 'Edit item' : 'New item'}</div><XButton onClick={onClose} /></div>
       <div className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {d && <Alert kind="blue" icon="sparkles">{note || 'Martina prepared this item. Check it, add anything missing, then save it.'}</Alert>}
+        {d && <Alert kind="blue" icon="martina">{note || 'Martina prepared this item. Check it, add anything missing, then save it.'}</Alert>}
         <Field label="Product name" req error={err.name}>
           <input className={'input' + (err.name ? ' err' : '')} value={f.name} onChange={(e) => set('name', e.target.value)} placeholder={String(ind.example[0]?.name || 'e.g. Golden Penny Spaghetti 500g')} autoFocus={!editing} />
         </Field>

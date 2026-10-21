@@ -7,10 +7,11 @@ import { useCounts, useProposals } from '../lib/queries';
 import { buildItems } from '../lib/domain';
 import { aiStatus, buildContext, chatMartina, localAnswer, type ChatMsg } from '../lib/martina';
 import { fmtTime } from '../lib/format';
-import { Icon } from '../components/Icon';
+import { Icon, MartinaAvatar } from '../components/Icon';
 import { Alert, Spinner } from '../components/ui';
 import { useAssistantChat } from '../guide/useAssistantChat';
 import { Orb } from '../guide/GuideDock';
+import { ConfirmCard, HandsFreeSwitch } from '../guide/ConfirmCard';
 
 export function useMartina() {
   const { data: inv } = useInventory();
@@ -60,7 +61,7 @@ function RecordsChat({ initial, onRetry }: { initial: string; onRetry: () => voi
       <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
         <div className="card-hd">
           <div className="row" style={{ gap: 12 }}>
-            <span style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg,#0072F5,#7C3AED 55%,#DB2779)', display: 'grid', placeItems: 'center' }}><Icon name="sparkles" size={18} color="#fff" /></span>
+            <MartinaAvatar size={40} />
             <div>
               <div style={{ fontSize: 15, fontWeight: 600 }}>Martina</div>
               <div className="muted" style={{ fontSize: 12 }}>{status.data == null ? 'Checking…' : 'Answers from your stock records'}</div>
@@ -144,9 +145,10 @@ export default function Assistant() {
             <div style={{ margin: 'auto', textAlign: 'center', maxWidth: 560 }}>
               <div style={{ fontFamily: 'var(--font-brand)', fontSize: 22, fontWeight: 600 }}>Ask Martina anything about the business</div>
               <div className="ink3" style={{ fontSize: 14, marginTop: 6, lineHeight: 1.5 }}>
-                She looks up sales, payments, bills, the books, tax and stock, and opens the right screen. She can prepare an invoice, a sale, a bill or a payment link for you to check;
-                nothing is saved, sent or paid until you confirm it.
+                She looks up sales, payments, bills, the books, tax and stock, and opens the right screen. Say yes and she records a sale, issues and sends an invoice,
+                approves a bill or reminds a customer; she prepares anything else on screen for you to check. Money leaves the wallet only when you tap Pay or Approve yourself.
               </div>
+              <div className="row" style={{ justifyContent: 'center', marginTop: 14 }}><HandsFreeSwitch /></div>
               <div className="row wrap" style={{ justifyContent: 'center', marginTop: 16 }}>
                 {c.starters.map((s) => <button key={s} className="pill" style={{ color: '#111827' }} disabled={c.busyElsewhere} onClick={() => void c.ask(s)}>{s}</button>)}
               </div>
@@ -160,6 +162,7 @@ export default function Assistant() {
           ))}
           {(c.connecting || c.waiting) && <div className="row muted" style={{ fontSize: 13 }}><Spinner small />{c.connecting ? 'Connecting to Martina…' : 'Martina is looking…'}</div>}
           {c.error && !c.connecting && <Alert kind="amber" icon="info">{c.error}</Alert>}
+          <ConfirmCard />
           <div ref={end} />
         </div>
         <form onSubmit={(e) => { e.preventDefault(); submit(); }} className="row" style={{ padding: 16, gap: 10 }}>

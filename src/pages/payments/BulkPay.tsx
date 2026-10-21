@@ -15,11 +15,14 @@ import { StatusChip } from '../sell/common';
 
 // Codes Counta posts to through a bill or a supplier, never straight from a bulk payment.
 const CONTROL = new Set(['1101', '1102', '2101', '2107']);
+// The chart's sections a payment with no bill can go to. (The chart gives each account's section as its category; its
+// kind says only whether it is a bank, cash, wallet or ordinary account.)
+const EXPENSE = new Set(['Expenses', 'Cost of Sales', 'Finance Costs & Taxation']);
 function useBulkAccounts() {
   const chart = useChart();
   return useMemo<{ code: string; name: string; kind: string }[]>(() => (chart.data?.accounts || [])
-    .filter((a: any) => !a.is_group && a.active && (a.kind === 'expense' || a.kind === 'liability') && !CONTROL.has(a.code) && !/^1/.test(a.code))
-    .map((a: any) => ({ code: a.code as string, name: a.name as string, kind: a.kind as string })), [chart.data]);
+    .filter((a: any) => !a.is_group && a.active !== false && (EXPENSE.has(a.category) || a.category === 'Liabilities') && !CONTROL.has(a.code) && !/^[19]/.test(a.code))
+    .map((a: any) => ({ code: a.code as string, name: a.name as string, kind: a.category === 'Liabilities' ? 'liability' : 'expense' })), [chart.data]);
 }
 function useBanks() {
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -74,6 +77,9 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
   const { banks, err: banksErr } = useBanks();
   const [title, setTitle] = useState('');
   const [defaultAccount, setDefaultAccount] = useState('');
+  // Read by the check as soon as it changes on the review step (the state itself only updates on the next render).
+  const defRef = useRef('');
+  defRef.current = defaultAccount;
   const [rows, setRows] = useState<BulkRow[]>([]);
   const [file, setFile] = useState('');
   const [phase, setPhase] = useState<'upload' | 'checking' | 'review'>('upload');
@@ -87,7 +93,7 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
   rowsRef.current = rows;
 
   const patch = (i: number, p: Partial<BulkRow>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...p } : r)));
-  const payload = (rs: BulkRow[]) => ({ title, default_account: defaultAccount || null, file_name: file || null,
+  const payload = (rs: BulkRow[]) => ({ title, default_account: defRef.current || null, file_name: file || null,
     rows: rs.map((r) => ({ row: r.row, name: r.name, bank_code: r.bank_code, bank_name: r.bank_name, account_number: r.account_number, account_name: r.resolved || '',
       amount: r.amount, narration: r.narration, bill: r.bill, supplier: r.supplier, account: r.account, reference: r.reference,
       work: r.work || null, contractor_type: r.contractor_type || null, tin: r.tin || null, address: r.address || null, state: r.state || null, gross: r.gross })) });
@@ -123,6 +129,8 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
     setPhase('review');
   }
 
+  // Rows the books could not place: no bill, supplier, type of work or account, and no account chosen for them.
+  const noPurpose = rows.filter((r) => (r.server?.errors || []).some((e: string) => /^Say what this payment is for/.test(e))).length;
   // The contractors' Tax IDs the books asked to have checked, once each, two at a time; then the sheet is checked again.
   const tinsToCheck = useMemo(() => {
     const seen = new Map<string, string>();
@@ -231,6 +239,20 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
                 </div>
               </Alert>
             )}
+            {phase === 'review' && (noPurpose > 0 || defaultAccount) && (
+              <div className={noPurpose ? 'alert alert-amber' : ''} style={{ display: 'grid', gap: 6, ...(noPurpose ? { padding: '10px 12px', borderRadius: 10 } : {}) }}>
+                {noPurpose > 0 && <span style={{ fontSize: 13 }}>{noPurpose === 1 ? 'One payment has' : `${noPurpose} payments have`} no bill, supplier or account. Choose the account {noPurpose === 1 ? 'it goes' : 'they go'} to, such as Salaries & Wages or Professional Fees; no bill is needed.</span>}
+                <label className="row wrap" style={{ gap: 8, alignItems: 'center', fontSize: 13 }}>
+                  <span className="muted">Payments with no bill go to</span>
+                  <select className="input input-sm" style={{ maxWidth: 320 }} aria-label="Account for payments with no bill" value={defaultAccount}
+                    onChange={(e) => { defRef.current = e.target.value; setDefaultAccount(e.target.value); void runCheck(rowsRef.current); }}>
+                    <option value="">Choose an account</option>
+                    <optgroup label="Expenses">{accounts.filter((a) => a.kind === 'expense').map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</optgroup>
+                    <optgroup label="Amounts owed">{accounts.filter((a) => a.kind === 'liability').map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</optgroup>
+                  </select>
+                </label>
+              </div>
+            )}
             <div className="card" style={{ overflow: 'auto', maxHeight: '48vh' }}>
               <table className="bulk-table">
                 <thead><tr><th style={{ width: 34 }} aria-label="Pay" /><th>Row</th><th>Pay to</th><th>Bank and account</th><th>For</th><th className="num">Amount</th><th>Check</th></tr></thead>
@@ -238,7 +260,7 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
                   {rows.map((r, i) => {
                     const s = r.server;
                     const nameOk = r.resolved ? namesAgree(r.name, r.resolved) : null;
-                    const problems = [...r.issues, ...((s && !s.ok) ? s.errors : [])];
+                    const problems = [...r.issues, ...((s && !s.ok) ? s.errors.map((e: string) => (/^Say what this payment is for/.test(e) ? 'Choose the account above. No bill is needed.' : e)) : [])];
                     const can = !problems.length && s?.ok && !r.resolving;
                     return (
                       <tr key={r.row} className={r.include && can ? '' : 'off'}>

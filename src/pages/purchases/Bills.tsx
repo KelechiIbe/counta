@@ -426,7 +426,7 @@ function BillEditor({ id, draft, vendors, whtRates, assetClasses, onClose, onSav
       <div className="drawer-hd"><div className="grow"><div className="drawer-title">{id ? `Edit ${existing.data?.number || ''}` : 'New bill'}</div><div className="muted" style={{ fontSize: 13 }}>Stock you received is billed from Receive stock; this is for everything else.</div></div>
         <button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button></div>
       <div className="drawer-body stack" style={{ gap: 14 }}>
-        {draft && !id && <Alert kind="blue" icon="sparkles">Martina prepared this bill{vendor.id ? '' : ' for a new vendor'}. Choose the account it belongs to, check VAT and the amount, then save it. Nothing is posted or paid until it is approved.</Alert>}
+        {draft && !id && <Alert kind="blue" icon="martina">Martina prepared this bill{vendor.id ? '' : ' for a new vendor'}. Choose the account it belongs to, check VAT and the amount, then save it. Nothing is posted or paid until it is approved.</Alert>}
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 12 }}>
           <Field label="Vendor" req>
             <input className="input" list="bill-vendors" value={vendor.name} onChange={(e) => { const v = vendors.find((x) => x.name === e.target.value); setVendor(v ? { id: v.id, name: v.name, tin: v.tin || '' } : { id: '', name: e.target.value, tin: vendor.tin }); if (v?.wht_category) setF((x) => ({ ...x, wht_category: v.wht_category })); }} placeholder="Type or pick" />

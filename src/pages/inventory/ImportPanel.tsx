@@ -308,14 +308,14 @@ export default function ImportPanel({ onClose, migration, onDone }: { onClose: (
                 </select>
               </Field>
             </div>
-            {aiBusy && <Alert kind="blue" icon="sparkles">Martina is matching the columns…</Alert>}
-            {!aiBusy && aiNote && <Alert kind="blue" icon="sparkles">{aiNote}</Alert>}
+            {aiBusy && <Alert kind="blue" icon="martina">Martina is matching the columns…</Alert>}
+            {!aiBusy && aiNote && <Alert kind="blue" icon="martina">{aiNote}</Alert>}
             {(() => {
               const plainQty = maps.map((m, i) => (m.field === 'qty' && !m.location ? headers[i] : null)).filter(Boolean);
               return plainQty.length > 1 ? <Alert kind="yellow" icon="alert">{plainQty.length} columns are being added together as stock: {plainQty.join(', ')}. Leave out any that is not stock on hand today.</Alert> : null;
             })()}
             {!aiBusy && !aiNote && status.data?.configured && how.some((h, i) => h !== 'exact' && headers[i]) && (
-              <button className="btn btn-secondary btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => askMartina()}><Icon name="sparkles" size={14} />Ask Martina to match the columns</button>
+              <button className="btn btn-secondary btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => askMartina()}><Icon name="martina" size={14} />Ask Martina to match the columns</button>
             )}
             <div className="muted" style={{ fontSize: 13, lineHeight: 1.45 }}>
               {built.length} rows found. Columns you do not match are kept on each item as notes, so nothing is lost.
@@ -350,7 +350,7 @@ export default function ImportPanel({ onClose, migration, onDone }: { onClose: (
                           {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                         </select>
                       )}
-                      {how[i] === 'ai' && <span title="Matched by Martina"><Icon name="sparkles" size={14} color="#0072F5" /></span>}
+                      {how[i] === 'ai' && <span title="Matched by Martina"><Icon name="martina" size={14} color="#0072F5" /></span>}
                     </div>
                   </div>
                 );
@@ -366,7 +366,7 @@ export default function ImportPanel({ onClose, migration, onDone }: { onClose: (
             {hasName && !hasPrice && <Alert kind="yellow" icon="info">No price column is matched. Goods you sell need a selling price; raw materials, consumables and spares can come in without one.</Alert>}
             {status.data?.configured && (
               <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start', paddingLeft: 0 }} onClick={readEachRow} disabled={aiBusy}>
-                <Icon name="sparkles" size={14} color="#0072F5" />{aiBusy ? 'Martina is reading…' : 'Messy sheet? Let Martina read each row instead'}
+                <Icon name="martina" size={14} color="#0072F5" />{aiBusy ? 'Martina is reading…' : 'Messy sheet? Let Martina read each row instead'}
               </button>
             )}
             {err && <Alert kind="red" icon="alert">{err}</Alert>}

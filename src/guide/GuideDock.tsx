@@ -4,34 +4,37 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useSession } from '../state/session';
 import { useGuide } from '../lib/onboard';
-import { Icon } from '../components/Icon';
+import { Icon, MartinaMark } from '../components/Icon';
 import { Spinner } from '../components/ui';
 import { useGuideTalk } from './GuideProvider';
 import { VoicePickerModal } from './VoicePicker';
+import { ConfirmCard, HandsFreeSwitch } from './ConfirmCard';
 import './guide.css';
 
-// The orb grows with the voice: Martina's when she speaks, the person's while she listens.
+// Martina's face across the app: her mark in a blue disc. Live, it moves with the conversation: rings ripple out with the
+// person's voice while she listens, and when she speaks the dot inside the bubble brightens and the spark twinkles in step
+// with her voice, so she reads as someone talking. --lvl carries the voice level (0 to 1) to the styles.
 export function Orb({ size = 56, live = false }: { size?: number; live?: boolean }) {
   const g = useGuideTalk();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!live) return;
+    if (!live) { ref.current?.style.setProperty('--lvl', '0'); return; }
     let raf = 0, smooth = 0;
     const tick = () => {
       const v = g.volumes();
       const level = g.speaking ? v.output : v.input * 0.7;
       smooth = smooth * 0.8 + Math.min(1, level * 1.6) * 0.2;
-      if (ref.current) ref.current.style.transform = `scale(${1 + smooth * 0.22})`;
+      ref.current?.style.setProperty('--lvl', smooth.toFixed(3));
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [live, g]);
-  const cls = !live ? 'idle off' : g.speaking ? 'speaking' : 'idle';
+  const cls = !live ? 'idle off' : g.speaking ? 'speaking' : 'listening';
   return (
-    <div className={'g-orb ' + cls} style={{ width: size, height: size }} aria-hidden>
+    <div ref={ref} className={'g-orb ' + cls} style={{ width: size, height: size }} aria-hidden>
       <span className="ring" /><span className="ring r2" />
-      <div ref={ref} className="core" style={{ transition: 'transform .08s linear' }} />
+      <div className="core"><MartinaMark size={Math.round(size * 0.64)} color="#fff" /></div>
     </div>
   );
 }
@@ -112,7 +115,8 @@ export function GuideDock() {
         ) : (
           <div className="g-launch g-launch-2" role="group" aria-label="Martina">
             <button className="g-launch-main" onClick={() => g.start({ agent: 'assistant' })} aria-label="Talk to Martina">
-              <Orb size={34} /><span>Ask Martina<span className="faint" style={{ display: 'block', fontSize: 11, fontWeight: 500 }}>talk or type</span></span>
+              <Orb size={34} /><span>Ask Martina<span className="faint" style={{ display: 'block', fontSize: 11, fontWeight: 500 }}>
+                {g.handsFree && g.wakeState === 'listening' ? <><span className="g-dot" style={{ display: 'inline-block', width: 6, height: 6, marginRight: 5, verticalAlign: 1 }} />say “Hello Martina”</> : 'talk or type'}</span></span>
             </button>
             <button className="g-launch-type" onClick={() => g.start({ agent: 'assistant', text: true })} aria-label="Type to Martina" title="Type instead"><Icon name="chat" size={16} /></button>
           </div>
@@ -146,7 +150,9 @@ export function GuideDock() {
           {g.error && <div className="g-line agent" style={{ background: '#FFF7ED' }}>{g.error}</div>}
           {last.map((l) => <div key={l.at + l.role} className={'g-line ' + l.role}>{l.text}</div>)}
           {g.status === 'live' && g.speaking && !last.length && <div className="g-typing"><span /><span /><span /></div>}
+          <ConfirmCard compact />
         </div>
+        {g.agent === 'assistant' && <div className="g-dock-hf"><HandsFreeSwitch small /></div>}
         <form className="g-dock-ft" onSubmit={(e) => { e.preventDefault(); g.send(text); setText(''); }}>
           {!g.textOnly && (
             <button type="button" className="icon-btn" onClick={g.toggleMute} aria-label={g.muted ? 'Unmute the microphone' : 'Mute the microphone'}

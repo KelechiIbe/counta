@@ -9,7 +9,7 @@ import { buildItems, suAbbr } from '../../lib/domain';
 import { K, P, N, when, plural, fmtDay } from '../../lib/format';
 import { moveBy, moveItem, moveQty, moveRef, typeLabel, typeTone } from '../../lib/ledger';
 import { askMartina, buildContext, localAnswer, type Answer } from '../../lib/martina';
-import { Icon } from '../../components/Icon';
+import { Icon, MartinaAvatar } from '../../components/Icon';
 import { PeriodPicker } from '../../components/PeriodPicker';
 import { ROLLING, presetLabel, useScreenPeriod } from '../../lib/period';
 import { Kpi, Label, SkeletonRows, Spinner } from '../../components/ui';
@@ -53,7 +53,7 @@ function PromptBar() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '8px 0 4px' }}>
       <form onSubmit={(e) => { e.preventDefault(); ask(q); }} style={{ width: '100%', maxWidth: 820, display: 'flex', alignItems: 'center', gap: 10, border: '1px solid #E6E6E6', borderRadius: 999, padding: '8px 10px 8px 8px', boxShadow: 'var(--shadow-card)' }}>
-        <span style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#0072F5,#7C3AED 55%,#DB2779)', display: 'grid', placeItems: 'center', flex: 'none' }}><Icon name="sparkles" size={16} color="#fff" /></span>
+        <MartinaAvatar size={36} />
         <input value={q} onChange={(e) => setQ(e.target.value)} aria-label="Ask Martina about your stock"
           placeholder={`Ask about your stock — how many cartons of ${items[0]?.name.split(' ')[0] || 'Milo'} are left at ${other?.name || 'the shop'}?`}
           style={{ flex: 1, border: 'none', fontSize: 15, color: '#111827', background: 'transparent', minWidth: 0, boxShadow: 'none', outline: 'none' }} />
