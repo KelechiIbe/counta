@@ -2,7 +2,7 @@
 
 ## Sign-up
 
-`/signup` asks for a name, email, an optional mobile number and a password. Supabase sends a confirmation email; the person types the six-digit code (`verifyOtp`, type `signup`) or taps the link, and lands on `/onboarding`. The mobile number is kept in the account's metadata (`phone`) and offered for the business phone and for Martina's follow-up call.
+`/signup` asks for a name, email, an optional mobile number and a password. Supabase sends a confirmation email; the person types the code (`verifyOtp`, type `signup`; Counta's project sends eight digits and the field takes six to ten) or taps the link, and lands on `/onboarding`. The mobile number is kept in the account's metadata (`phone`) and offered for the business phone and for Martina's follow-up call.
 
 For the code to appear in the email, the Supabase "Confirm signup" email template must include `{{ .Token }}` (Authentication, Emails, Confirm signup). A suggested body:
 

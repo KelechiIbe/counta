@@ -229,6 +229,7 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
   .tr.rsp > * { flex: 0 1 auto; min-width: 0; text-align: left; }
   .tr.rsp > .m-main { flex: 1 1 100%; }
   .tr.rsp > .m-end { margin-left: auto; }
+  .tr.rsp > .m-line { flex: 1 1 100%; }
   .tr.rsp > .m-first { order: -1; }
   .var-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; row-gap: 6px !important; }
   .var-grid > :first-child, .var-grid > :last-child { grid-column: 1 / -1; }

@@ -94,7 +94,13 @@ export async function ensureSession(cfg: OpenWa, name: string): Promise<any> {
   }
   if (!['ready', 'qr_ready', 'authenticating', 'initializing'].includes(String(s?.status))) {
     const st = await owa(cfg, `/sessions/${encodeURIComponent(s.id)}/start`, { method: 'POST', body: {} });
-    if (!st.ok && st.status !== 409) throw new Error(owaError(st));
+    if (!st.ok && st.status !== 409) {
+      // OpenWA answers a failed start with a bare 500; the session's own record says why (no internet, WhatsApp Web
+      // refusing the server, a browser that would not open).
+      const why = await owa(cfg, `/sessions/${encodeURIComponent(s.id)}`);
+      const last = why.ok ? (why.body?.data || why.body)?.lastError : null;
+      throw new Error(`OpenWA could not start the session: ${String(last || owaError(st)).replace(/\s+/g, ' ').slice(0, 240)}`);
+    }
     const again = await owa(cfg, `/sessions/${encodeURIComponent(s.id)}`);
     if (again.ok) s = again.body?.data || again.body;
   }

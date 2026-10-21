@@ -46,7 +46,8 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
-  // After sign-up: the six-digit code from the confirmation email (the link in it works too).
+  // After sign-up: the code from the confirmation email (the link in it works too). Supabase sends 6 to 10 digits, as the
+  // project is set (8 on Counta's project), so the field takes any of those lengths.
   const [codeFor, setCodeFor] = useState<string | null>(null);
   // Where to go afterwards: a path inside Counta only (an invitation link brings people back to /join).
   const asked = params.get('next') || '';
@@ -158,7 +159,7 @@ function CodeStep({ email, redirect, onBack, onDone }: { email: string; redirect
   useEffect(() => { const t = window.setInterval(() => setWait((w) => (w > 0 ? w - 1 : 0)), 1000); return () => window.clearInterval(t); }, []);
   async function verify(v = code) {
     const token = v.replace(/\D/g, '');
-    if (token.length !== 6) { setErr('Enter the six digits from the email.'); return; }
+    if (token.length < 6 || token.length > 10) { setErr('Enter the code from the email: all of its digits.'); return; }
     setBusy(true); setErr(null);
     const { error } = await supabase.auth.verifyOtp({ email, token, type: 'signup' });
     if (error) { setBusy(false); setErr(/expired|invalid/i.test(error.message) ? 'That code has expired or is not right. Check the latest email, or send a new code.' : cleanError(error)); return; }
@@ -177,16 +178,29 @@ function CodeStep({ email, redirect, onBack, onDone }: { email: string; redirect
           <img src="/logo-brand.svg" alt="TaxStreem" style={{ height: 22, alignSelf: 'flex-start', marginBottom: 12 }} />
           <div>
             <h1 style={{ fontFamily: 'var(--font-brand)', fontSize: 28, fontWeight: 600, letterSpacing: '-.01em', margin: 0 }}>Check your email</h1>
-            <div className="muted" style={{ fontSize: 14, marginTop: 6, lineHeight: 1.5 }}>We sent a six-digit code to <b>{email}</b>. Type it here, or tap the link in the email.</div>
+            <div className="muted" style={{ fontSize: 14, marginTop: 6, lineHeight: 1.5 }}>We sent a code to <b>{email}</b>. Type it here, or tap the link in the email.</div>
           </div>
           <Field label="Code" req>
-            <input className="input" value={code} autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={7} placeholder="123456" aria-label="Six-digit code"
-              style={{ fontSize: 26, letterSpacing: '.4em', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}
-              onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 6); setCode(v); if (v.length === 6) void verify(v); }} />
+            <input className="input" value={code} autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={14} placeholder="12345678" aria-label="Code from the email"
+              style={{ fontSize: 26, letterSpacing: '.3em', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}
+              onChange={(e) => {
+                const v = e.target.value.replace(/\D/g, '').slice(0, 10);
+                const filled = v.length - code.length > 1;
+                setCode(v);
+                // Typed: checks itself at 8 digits, the length Counta's project sends. Filled in by the phone: at once.
+                if (!busy && (v.length === 8 || (filled && v.length >= 6))) void verify(v);
+              }}
+              onPaste={(e) => {
+                // A pasted code replaces whatever was typed and is checked at once, whatever its length.
+                const v = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 10);
+                if (v.length < 6) return;
+                e.preventDefault(); setCode(v);
+                if (!busy) void verify(v);
+              }} />
           </Field>
           {err && <Alert kind="red" icon="alert">{err}</Alert>}
           {note && <Alert kind="green" icon="mail">{note}</Alert>}
-          <button className="btn btn-primary btn-block" disabled={busy || code.length !== 6} style={{ padding: '12px 16px', boxShadow: 'var(--shadow-cta)' }}>{busy && <Spinner small />}Confirm and continue</button>
+          <button className="btn btn-primary btn-block" disabled={busy || code.length < 6} style={{ padding: '12px 16px', boxShadow: 'var(--shadow-cta)' }}>{busy && <Spinner small />}Confirm and continue</button>
           <div style={{ fontSize: 14, color: '#4B5563', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             <button type="button" className="link" onClick={onBack} style={{ border: 0, background: 'none', padding: 0, cursor: 'pointer', color: 'var(--primary)' }}>Wrong email?</button>
             {wait > 0 ? <span className="faint">New code in {wait}s</span>
