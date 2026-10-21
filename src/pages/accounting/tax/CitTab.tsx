@@ -94,6 +94,7 @@ function CitYear({ year }: { year: number }) {
   const [reason, setReason] = useState('');
   const [flux, setFlux] = useState<string | null>(null);
   const d = q.data;
+  const acc = useFilingCurrent('cit', String(year)).data;
   if (q.isLoading) return <SkeletonRows n={8} />;
   if (q.error) return <Alert kind="yellow" icon="shield">{(q.error as Error).message}</Alert>;
   if (!d) return null;
@@ -111,7 +112,6 @@ function CitYear({ year }: { year: number }) {
     setBusy(key);
     try { const r = await fn(); if (ok) toast(ok); await refresh(); return r; } catch (e) { toast((e as Error).message, 'err'); } finally { setBusy(null); }
   }
-  const acc = useFilingCurrent('cit', String(year)).data;
   async function download() {
     setBusy('download');
     try {
