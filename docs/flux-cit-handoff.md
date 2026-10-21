@@ -75,7 +75,11 @@ Flux answers `2xx` with `{ "ok": true, "ref": "<Flux's own reference>", "message
 | `filed` | The year shows "Filed" with the acknowledgement; the bookkeepers are notified. |
 | `rejected` | The year shows "Sent back" with the message; the bookkeepers are notified. It can be corrected, approved again and sent again. |
 
-Counta answers `200 { ok: true, status, flux_status }`, `401` for a bad signature, `400` for a malformed body and `422` when the year is unknown or was never approved.
+It can also carry the files Rev360 gave for the year (the acknowledgement, the assessment, the PRN page, the receipt) in
+`documents`, kept in the business's Documents under CIT for that year. The format and limits are in
+[flux-tax-returns.md](flux-tax-returns.md#6-files-flux-sends-back).
+
+Counta answers `200 { ok: true, status, flux_status }` (with `documents: { stored, failed }` when files were sent), `401` for a bad signature, `400` for a malformed body and `422` when the year is unknown or was never approved.
 
 ## Who may do what
 

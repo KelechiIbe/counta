@@ -117,7 +117,7 @@ export function reportCsv(cols: RCol[], rows: Record<string, unknown>[]): Blob {
 
 // jsPDF's built-in Helvetica only covers Latin-1, so ₦ and other symbols are spelt out and accented letters
 // outside that range lose their accent (Ọ → O) instead of printing as garbage.
-const latin1 = (s: string) => s
+export const latin1 = (s: string) => s
   .replace(/₦\s?/g, 'NGN ').replace(/[−–—]/g, '-').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/…/g, '...').replace(/→/g, '>')
   .replace(/[^\u0000-\u00ff]/g, (ch) => { const base = ch.normalize('NFD')[0]; return base && base.charCodeAt(0) <= 0xff ? base : '?'; });
 const pdfText = (v: unknown, t?: string) => latin1(pdfRaw(v, t));

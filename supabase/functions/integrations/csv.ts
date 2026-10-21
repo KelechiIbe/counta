@@ -62,7 +62,8 @@ export function bumpaOrders(text: string, prefix = 'bumpa'): Parsed {
     if (status && /(unpaid|pending|not paid|cancel|refund|failed|abandon)/.test(status)) { skipped.push({ row: line, reason: `Not paid (${get(r, 'status')})` }); return; }
     const amount = money(get(r, 'amount'));
     if (!(amount > 0)) { skipped.push({ row: line, reason: 'No amount' }); return; }
-    const id = get(r, 'id') || `row-${line}`;
+    // "#1023" in the export is order 1023, as Bumpa's API gives it, so an order imported both ways is recorded once.
+    const id = get(r, 'id').replace(/^#\s*/, '') || `row-${line}`;
     const qty = Number(get(r, 'qty').replace(/,/g, '')) || 1;
     const product = get(r, 'product');
     const when = get(r, 'date');

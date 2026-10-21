@@ -1,8 +1,8 @@
 // Counta's connected tools (docs/integrations.md). Paid sales from Paystack, Flutterwave, Selar, WooCommerce, Shopify, Zapier
-// or Make, and Bumpa's exported orders become paid sales in the books; Counta's alerts post to Slack.
+// or Make, and Bumpa (its API, or its exported orders) become paid sales in the books; Counta's alerts post to Slack.
 //
 // Signed-in callers (Authorization: Bearer <user JWT>; the database checks they manage the business's settings):
-//   { action: 'connect', org_id, provider, key?, secret?, site?, shop?, url? } -> checks the key with the tool, keeps it in Vault
+//   { action: 'connect', org_id, provider, key?, secret?, site?, shop?, url?, bumpa_location? } -> checks the key with the tool, keeps it in Vault
 //                                                     and answers the webhook address (and secret hash) to paste into the tool
 //   { action: 'sync', id }          -> asks the tool for new payments or orders now
 //   { action: 'test', id }          -> checks the key still works (Slack: posts a hello)
@@ -16,7 +16,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { bumpaOrders } from './csv.ts';
 import {
-  flwCheck, flwKeyOk, flwSale, flwSince, flwVerify, genericSale, hint, paystackCheck, paystackKeyOk, paystackSale, paystackSigned, paystackSince,
+  bumpaCheck, bumpaKeyOk, bumpaLocationOk, bumpaSince, flwCheck, flwKeyOk, flwSale, flwSince, flwVerify, genericSale, hint, paystackCheck, paystackKeyOk,
+  paystackSale, paystackSigned, paystackSince,
   same, type Sale, shopifyCheck, shopifySince, shopOk, slackHookOk, slackPost, token, ToolError, wooCheck, wooKeysOk, wooSince,
 } from './providers.ts';
 
@@ -70,6 +71,7 @@ async function syncOne(id: string) {
     else if (c.provider === 'flutterwave') sales = await flwSince(c.secret, since);
     else if (c.provider === 'woocommerce') sales = await wooSince(c.settings.site, c.settings.consumer_key, c.secret, since);
     else if (c.provider === 'shopify') sales = await shopifySince(c.settings.shop, c.secret, since);
+    else if (c.provider === 'bumpa' && c.secret) sales = await bumpaSince(c.secret, c.settings?.bumpa_location || null, since);
     else if (c.provider === 'slack') return await slackSend(c);
     else return { skipped: true };
     const r = await record(id, sales);
@@ -152,7 +154,14 @@ async function connect(sb: any, b: any) {
     } else if (provider === 'selar' || provider === 'zapier') {
       newHook();
     } else if (provider === 'bumpa') {
-      // Nothing to check: orders come in as exported files.
+      // With the store's secret key, paid orders come in every few minutes; without one, as exported files.
+      const k = String(b.key || '').trim(), loc = String(b.bumpa_location || '').trim();
+      if (k) {
+        if (!bumpaKeyOk(k)) throw new UserError('Paste the secret API key you made in your Bumpa dashboard (app.getbumpa.com), whole.');
+        if (loc && !bumpaLocationOk(loc)) throw new UserError('The Bumpa location ID has letters, digits, hyphens or underscores only. Leave it empty for the store\'s main location.');
+        await bumpaCheck(k, loc || null); keep(k);
+        p.settings = { api: true, ...(loc ? { bumpa_location: loc } : {}) };
+      }
     } else {
       throw new UserError('Unknown tool.');
     }
@@ -165,7 +174,7 @@ async function connect(sb: any, b: any) {
   const saved = await svc<any>('svc_integration_save', { p });
   // A first look at what was paid in the last two days, so the connection shows its work at once.
   let first = null;
-  if (['paystack', 'flutterwave', 'woocommerce', 'shopify'].includes(provider)) first = await syncOne(saved.id);
+  if (['paystack', 'flutterwave', 'woocommerce', 'shopify'].includes(provider) || (provider === 'bumpa' && p.secret)) first = await syncOne(saved.id);
   return { ok: true, integration: saved, ...answer, first };
 }
 
@@ -272,6 +281,7 @@ Deno.serve(async (req) => {
         else if (c.provider === 'flutterwave') await flwCheck(c.secret);
         else if (c.provider === 'woocommerce') await wooCheck(c.settings.site, c.settings.consumer_key, c.secret);
         else if (c.provider === 'shopify') await shopifyCheck(c.settings.shop, c.secret);
+        else if (c.provider === 'bumpa' && c.secret) await bumpaCheck(c.secret, c.settings?.bumpa_location || null);
         else if (c.provider === 'slack') await slackPost(c.secret, 'A test from Counta. Alerts post here.');
         await svc('svc_integration_note', { p_integration: m.id, p: { error: null } });
         return json({ ok: true, working: true });

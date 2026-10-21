@@ -26,6 +26,7 @@ const Onboard = lazy(() => import('./pages/onboarding/Onboard'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Subscription = lazy(() => import('./pages/settings/Subscription'));
 const Integrations = lazy(() => import('./pages/integrations/Integrations'));
+const Documents = lazy(() => import('./pages/documents/Documents'));
 const Join = lazy(() => import('./pages/auth/Join'));
 const AdminApp = lazy(() => import('./admin/AdminApp'));
 const PracticeApp = lazy(() => import('./practice/PracticeApp'));
@@ -193,6 +194,7 @@ export default function App() {
         <Route path="/inventory/migrate" element={<Migrate />} />
         <Route path="/assistant" element={<Assistant />} />
         <Route path="/integrations" element={<Integrations />} />
+        <Route path="/documents" element={<Documents />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/settings/subscription" element={<Subscription />} />
         </Route>

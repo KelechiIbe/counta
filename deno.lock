@@ -22,6 +22,7 @@
         "npm:barcode-detector@^3.2.2",
         "npm:docx@9.7.1",
         "npm:exceljs@^4.4.0",
+        "npm:fflate@0.8.3",
         "npm:idb-keyval@^6.3.0",
         "npm:jspdf-autotable@^5.0.9",
         "npm:jspdf@^4.2.1",
