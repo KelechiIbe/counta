@@ -12,6 +12,8 @@ Counta is TaxStreem's operating system for trading businesses: selling, payments
 
 **Plans** are set by TaxStreem in the admin portal: modules (features and monthly limits), plans that include them, subscriptions paid by card or from the business wallet, and the cost of running Counta for each business. See `docs/plans-and-costs.md`.
 
+**Deleting a business**: TaxStreem's admins can remove a business for good, with its files and the logins of people in no other business, so it can sign up again. See `docs/deleting-a-business.md`.
+
 **Accounting** is Atlas: the books inbox (the agents' questions), banking and reconciliation (PDF, Excel and CSV statements from any Nigerian bank, and bank feeds through Mono; see `docs/banking-and-feeds.md`), financial statements with notes, the tax computation and capital allowances (`docs/tax-computation.md`), ledgers and reports, the CFO pack with a written commentary, journals, the fixed asset register and the month-end close. See `docs/atlas.md`. When an item is added, the tax agent (Numens, with Gemini standing in for testing) sets its VAT treatment under the Nigeria Tax Act 2025, so each sale posts its output VAT correctly.
 
 **Messages** go out by email through Resend and by WhatsApp Business with a link to pay. See `docs/messaging.md`. **Single sign-on** from TaxStreem and Prism bills are in `docs/taxstreem-sso.md`.

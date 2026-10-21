@@ -9,6 +9,7 @@ import { useToast } from '../../state/session';
 import { FEATURES, featureLabel, tidyError } from '../api';
 import { Card, grid, PageHead } from '../ui';
 import { OrgPlan } from './OrgPlan';
+import { DeleteBusiness, UnfinishedDeletions } from './DeleteBusiness';
 
 type Row = {
   id: string; name: string; rc_number: string | null; created_at: string; is_sample: boolean; identity_status: string; offering: string | null; industry: string | null;
@@ -32,6 +33,7 @@ export default function Businesses() {
   return (
     <>
       <PageHead title="Businesses" sub="Every business on Counta. Search by name, RC number, or the name or email of anyone in it." />
+      <UnfinishedDeletions />
       <form className="row wrap" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); set('q', q.trim()); }}>
         <input className="input" style={{ flex: '1 1 260px', minWidth: 0 }} placeholder="Search businesses" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search businesses" />
         <button className="btn btn-secondary" type="submit"><Icon name="search" size={14} />Search</button>
@@ -180,6 +182,7 @@ export function Business() {
           </div>
         ))}
       </Card>
+      {!o.is_sample && <DeleteBusiness id={id} name={o.name} />}
     </>
   );
 }
