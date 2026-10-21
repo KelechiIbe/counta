@@ -189,7 +189,7 @@ export default function Till() {
             <div className="grow"><ItemPicker items={sellable} onPick={(i) => add(i)} autoFocus placeholder="Scan a barcode, or type a name or SKU" /></div>
             <button className="btn btn-secondary btn-sm" onClick={() => setScan(!scan)}><Icon name="scan" size={14} />{scan ? 'Close camera' : 'Camera'}</button>
           </div>
-          {fromMartina > 0 && lines.length > 0 && <div style={{ padding: '10px 16px 0' }}><Alert kind="blue" icon="sparkles">Martina put {fromMartina} {fromMartina === 1 ? 'product' : 'products'} in the cart. Check the quantities and prices, then take payment.</Alert></div>}
+          {fromMartina > 0 && lines.length > 0 && <div style={{ padding: '10px 16px 0' }}><Alert kind="blue" icon="martina">Martina put {fromMartina} {fromMartina === 1 ? 'product' : 'products'} in the cart. Check the quantities and prices, then take payment.</Alert></div>}
           {scan && <Camera paused={false} onCode={(code) => {
             const it = inv.items.find((i) => i.barcode === code || i.qr_code === code || i.sku === code);
             if (it) { add(it); navigator.vibrate?.(50); } else toast(`No item uses the code ${code}`, 'err');

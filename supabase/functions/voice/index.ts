@@ -30,7 +30,7 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 import { CALM, FOLLOWUP_DATA, FOLLOWUP_PROMPT, firstMessage, GUIDE_PROMPT, GUIDE_TOOLS, stepLabel, toolConfig, type ToolDef, whatWeKnow } from './guide.ts';
-import { ASSISTANT_PROMPT, ASSISTANT_TOOLS, assistantFirst, PERM_WORDS } from './assistant.ts';
+import { ASSISTANT_PROMPT, ASSISTANT_TOOLS, assistantFirst, handsFreeFirst, PERM_WORDS } from './assistant.ts';
 import { wordingNote, wordsFor } from './wording.ts';
 import { cacheable, phrase, shortName } from './phrases.ts';
 
@@ -672,7 +672,7 @@ async function guideToken(sb: SupabaseClient, userId: string, textOnly = false, 
 }
 
 // Martina for everyday work in a business the person belongs to, told what their role allows.
-async function assistantToken(sb: SupabaseClient, userId: string, textOnly: boolean, orgId: string | null, page: string) {
+async function assistantToken(sb: SupabaseClient, userId: string, textOnly: boolean, orgId: string | null, page: string, hands?: { request: boolean }) {
   if (!(await secret('ELEVENLABS_API_KEY'))) return { ok: false, reason: 'not_configured', error: VOICE_OFF };
   if (!orgId) return { ok: false, error: 'Open a business first.' };
   if (!(await featureOn(orgId, 'martina'))) return { ok: false, reason: 'paused', error: MARTINA_OFF };
@@ -701,12 +701,13 @@ async function assistantToken(sb: SupabaseClient, userId: string, textOnly: bool
     can_do: can.length ? can.join('; ') : 'look things up',
     cannot_do: cannot.length ? cannot.join('; ') : 'nothing: they hold every permission',
     wording: wordingNote(bw), language_style: lang === 'pcm' ? 'pidgin' : 'english',
-    channel: textOnly ? 'typing' : 'voice', page: where, today: lagosToday(),
+    channel: textOnly ? 'typing' : hands ? 'hands-free voice' : 'voice', page: where, today: lagosToday(),
   };
   return {
     ok: true, agent: 'assistant', ...(textOnly ? { signed_url: t.signed_url } : { token: t.token }), conversation_id: t.conversation_id || null, agent_id: agentId,
     session_id: session, language: lang, text_only: textOnly, dynamic_variables,
-    overrides: { agent: { firstMessage: assistantFirst(first, lang, where.split(/[ /]/)[0], wordsFor(bw)) }, ...(voice && !textOnly ? { tts: { voiceId: voice } } : {}),
+    overrides: { agent: { firstMessage: hands && !textOnly ? handsFreeFirst(first, lang, hands.request) : assistantFirst(first, lang, where.split(/[ /]/)[0], wordsFor(bw)) },
+      ...(voice && !textOnly ? { tts: { voiceId: voice } } : {}),
       ...(textOnly ? { conversation: { textOnly: true } } : {}) },
   };
 }
@@ -831,7 +832,7 @@ Deno.serve(async (req) => {
         return json(await guideToken(sb, u.user.id, body.text === true, typeof body.org_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.org_id) ? body.org_id : null));
       case 'assistant_token':
         return json(await assistantToken(sb, u.user.id, body.text === true, typeof body.org_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.org_id) ? body.org_id : null,
-          String(body.page || '')));
+          String(body.page || ''), body.hands_free === true ? { request: body.has_request === true } : undefined));
       case 'forget': {
         // The app names the conversation in which an NIN was typed or said; it must be one of Martina's own.
         const conv = typeof body.conversation_id === 'string' && /^[A-Za-z0-9_-]{6,80}$/.test(body.conversation_id) ? body.conversation_id : null;

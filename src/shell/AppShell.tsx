@@ -190,7 +190,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
         <Group to="/tax/vat" label="Tax returns" icon="percent" active={p.startsWith('/tax/') || p === '/tax'} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'file_tax')}
           subs={[['/tax/vat', 'VAT', n('vat') + n('schedules_draft')], ['/tax/wht', 'Withholding tax', n('wht')], ['/tax/cit', 'Companies income tax', n('cit')]]} />
         {external('Taxes', 'landmark')}
-        {link('/assistant', 'AI Assistant', 'sparkles')}
+        {link('/assistant', 'AI Assistant', 'martina')}
       </nav>
       <div className="sidebar-section" style={{ paddingTop: 24 }}>{rail ? '' : 'MORE'}</div>
       <nav className="nav">

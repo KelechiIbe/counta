@@ -50,7 +50,7 @@ export default function MobileApp() {
     ['/m/till', 'Sell', 'receipt', can(inv, 'record_sales')],
     ['/m/receive', 'Receive', 'camera', can(inv, 'receive_stock')],
     ['/m/count', 'Count', 'list', can(inv, 'count_stock')],
-    ['/m/chat', 'Martina', 'chat', true],
+    ['/m/chat', 'Martina', 'martina', true],
   ];
   const shown = tabs.filter((t) => t[3]);
   const path = location.pathname;
@@ -124,7 +124,7 @@ function Today() {
     ['mic', 'Talk to record a sale', '/m/sell', can(inv, 'record_sales')],
     ['camera', 'Photograph an invoice', '/m/receive', can(inv, 'receive_stock')],
     ['factory', 'Issue to a job', '/m/issue', can(inv, 'issue_stock')],
-    ['chat', 'Ask Martina', '/m/chat', true],
+    ['martina', 'Ask Martina', '/m/chat', true],
   ];
   return (
     <>

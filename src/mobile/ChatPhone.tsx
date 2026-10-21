@@ -5,9 +5,10 @@ import { rpc } from '../lib/supabase';
 import { N, fmtTime } from '../lib/format';
 import { pluralUnit, poMessage, waLink } from '../lib/domain';
 import { useMartina } from '../pages/Assistant';
-import { Icon } from '../components/Icon';
+import { Icon, MartinaAvatar } from '../components/Icon';
 import { useM } from './ctx';
 import { useAssistantChat } from '../guide/useAssistantChat';
+import { ConfirmCard, HandsFreeSwitch } from '../guide/ConfirmCard';
 
 // The stock-only chat from the copy on this phone, used offline or when Martina's live line cannot be reached.
 function RecordsChat({ initial }: { initial: string }) {
@@ -45,7 +46,7 @@ function RecordsChat({ initial }: { initial: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, background: '#ECE5DD', minHeight: 0 }}>
       <div className="row" style={{ gap: 10, padding: '10px 14px', paddingTop: 'max(10px, env(safe-area-inset-top))', background: '#075E54', color: '#fff', position: 'sticky', top: 0, zIndex: 5 }}>
-        <span style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#0072F5,#7C3AED 55%,#DB2779)', display: 'grid', placeItems: 'center' }}><Icon name="sparkles" size={16} color="#fff" /></span>
+        <MartinaAvatar size={36} />
         <div className="grow"><div style={{ fontSize: 15, fontWeight: 600 }}>Martina · TaxStreem</div><div style={{ fontSize: 11, opacity: 0.85 }}>{queue.online ? 'online' : 'offline · answering from the copy on this phone'}</div></div>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -91,7 +92,7 @@ export default function ChatScreen() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, background: '#ECE5DD', minHeight: 0 }}>
       <div className="row" style={{ gap: 10, padding: '10px 14px', paddingTop: 'max(10px, env(safe-area-inset-top))', background: '#075E54', color: '#fff', position: 'sticky', top: 0, zIndex: 5 }}>
-        <span style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#0072F5,#7C3AED 55%,#DB2779)', display: 'grid', placeItems: 'center', flex: 'none' }}><Icon name="sparkles" size={16} color="#fff" /></span>
+        <MartinaAvatar size={36} />
         <div className="grow" style={{ minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 600 }}>Martina · TaxStreem</div>
           <div style={{ fontSize: 11, opacity: 0.85 }}>{c.connecting ? 'connecting…' : c.voice ? (g.speaking ? 'speaking' : 'listening') : c.waiting ? 'typing…' : 'online'}</div>
@@ -100,7 +101,7 @@ export default function ChatScreen() {
         {c.live && <button onClick={() => void c.end()} style={{ background: 'rgba(255,255,255,.15)', border: 0, color: '#fff', borderRadius: 999, padding: '6px 10px', fontSize: 12 }}>End</button>}
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ alignSelf: 'center', background: '#FFF5C4', color: '#6B7280', fontSize: 11, borderRadius: 8, padding: '4px 10px', textAlign: 'center' }}>Ask about sales, payments, the books, tax or stock. Martina prepares; you confirm.</div>
+        <div style={{ alignSelf: 'center', background: '#FFF5C4', color: '#6B7280', fontSize: 11, borderRadius: 8, padding: '4px 10px', textAlign: 'center' }}>Ask about sales, payments, the books, tax or stock. Martina does it when you say yes; money goes out only when you tap.</div>
         {c.busyElsewhere && <div style={{ alignSelf: 'center', background: '#fff', color: '#4B5563', fontSize: 12, borderRadius: 8, padding: '6px 10px' }}>Martina is helping set up the business. End that conversation first.</div>}
         {c.lines.map((m, i) => (
           <div key={i} style={{ alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '86%', background: m.role === 'user' ? '#DCF8C6' : '#fff', borderRadius: m.role === 'user' ? '10px 10px 2px 10px' : '10px 10px 10px 2px', padding: '8px 12px', fontSize: 13, lineHeight: 1.45, boxShadow: '0 1px 1px rgba(0,0,0,.08)' }}>
@@ -110,9 +111,11 @@ export default function ChatScreen() {
         ))}
         {(c.connecting || c.waiting) && <div style={{ alignSelf: 'flex-start', background: '#fff', borderRadius: 10, padding: '8px 12px', fontSize: 13, color: '#6B7280' }}>{c.connecting ? 'connecting…' : 'typing…'}</div>}
         {c.error && !c.connecting && <div style={{ alignSelf: 'center', background: '#FFF7ED', color: '#9A3412', fontSize: 12, borderRadius: 8, padding: '6px 10px' }}>{c.error}</div>}
+        <ConfirmCard compact />
         <div ref={end} />
       </div>
       <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8, background: '#F0F0F0', paddingBottom: 10 }}>
+        {!c.lines.length && !c.connecting && <HandsFreeSwitch small />}
         {!c.lines.length && !c.connecting && (
           <div className="row wrap" style={{ gap: 6 }}>
             {c.starters.map((x) => (

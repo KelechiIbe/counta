@@ -539,7 +539,7 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
         <div className="muted" style={{ fontSize: 13 }}>{type === 'invoice' ? 'Issuing posts it: revenue, output VAT and the stock.' : 'A quote changes nothing in the books until it becomes an invoice.'}</div></div>
         <button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button></div>
       <div className="drawer-body stack" style={{ gap: 14 }}>
-        {draft && !id && <Alert kind="blue" icon="sparkles">Martina prepared this {type}. Check the {unmatched ? 'customer, ' : ''}lines and prices, then save it or issue it. Nothing is posted until you do.</Alert>}
+        {draft && !id && <Alert kind="blue" icon="martina">Martina prepared this {type}. Check the {unmatched ? 'customer, ' : ''}lines and prices, then save it or issue it. Nothing is posted until you do.</Alert>}
         {unmatched && !customer && <Alert kind="amber" icon="info">No customer called "{unmatched}" yet. Choose one, or add them from the customer box.</Alert>}
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 12 }}>
           <Field label="Customer" req hint={exp ? `Export${isExport(customer?.country) ? ` to ${countryName(customer?.country)}` : ''}: zero-rated for VAT.` : undefined}>

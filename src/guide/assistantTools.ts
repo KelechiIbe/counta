@@ -86,8 +86,8 @@ export function assistantTools(ctx: Ctx): Record<string, Tool> {
       const filter: Record<string, unknown> = { limit: 10 };
       if (kind && kind !== 'any') filter.doc_type = kind;
       if (number) filter.q = String(number);
-      if (status === 'unpaid') filter.status = 'unpaid';
-      if (status === 'overdue') filter.status = 'overdue';
+      // The sales list filters by the documents' own statuses: owing is open or partly paid; overdue is that, past its due date.
+      if (status === 'unpaid' || status === 'overdue') { filter.status = 'open,partially_paid'; filter.limit = 50; }
       if (status === 'paid') filter.status = 'paid';
       if (period) { const p = periodDates(period, from, to); filter.from = p.from; filter.to = p.to; }
       if (customer) {
@@ -97,7 +97,7 @@ export function assistantTools(ctx: Ctx): Record<string, Tool> {
         filter.customer_id = c.id;
       }
       const r = await rpc<any>('get_sales', { p_org: o, p_filter: filter });
-      const rows = (r?.rows || []).slice(0, 10);
+      const rows = (r?.rows || []).filter((x: any) => status !== 'overdue' || Number(x.overdue_days) > 0).slice(0, 10);
       return { found: rows.length, documents: rows.map((s: any) => ({ number: s.number, kind: s.doc_type, customer: s.customer_name, date: s.issue_date, total: round(s.total),
         still_owed: round(s.balance), status: s.status, overdue_days: s.overdue_days || undefined })) };
     },

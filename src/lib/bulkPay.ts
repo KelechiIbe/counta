@@ -112,6 +112,11 @@ export interface BulkRow {
 }
 
 const txt = (c: Cell | undefined) => cellText(c ?? null).trim();
+// What people type in a column that does not apply to the row: "NA", "N/A", "nil", "none", "-", "0", "no bill". Read as empty,
+// so a payment with no bill is paid as one (the account it goes to, or a contractor's type of work, says what it is for).
+const NOT_APPLICABLE = /^(n\.?\s*\/?\s*a\.?|not applicable|nil+|none|null|nothing|-+|—|–|0+|no(\s+(bill|invoice|supplier|tin|tax id))?|x)$/i;
+export const notApplicable = (v: string) => NOT_APPLICABLE.test(v.trim());
+const opt = (c: Cell | undefined) => { const t = txt(c); return notApplicable(t) ? '' : t; };
 
 // An account number as the sheet holds it: text with spaces, dashes or a leading apostrophe, a number that lost its
 // leading zero, or (from a CSV that Excel saved) a number shortened to 1.23457E+09, which cannot be recovered.
@@ -143,27 +148,27 @@ export function readBulkRows(rows: (Record<string, Cell> & { _row: number })[], 
     const m = matchBank(bankText, banks);
     if (!bankText) issues.push('No bank');
     else if (!m.bank && !m.options) issues.push(`Bank "${bankText}" not recognised. Choose it below`);
-    const rawAmount = txt(r.amount);
+    const rawAmount = opt(r.amount);
     const amount = rawAmount === '' ? null : parseNum(r.amount ?? null);
     if (rawAmount !== '' && !(amount != null && amount > 0)) issues.push(`Amount "${rawAmount}" is not an amount in naira`);
-    const rawGross = txt(r.gross);
+    const rawGross = opt(r.gross);
     const gross = rawGross === '' ? null : parseNum(r.gross ?? null);
     if (rawGross !== '' && !(gross != null && gross > 0)) issues.push(`Contract amount "${rawGross}" is not an amount in naira`);
-    const work = txt(r.work).replace(/\s+/g, ' ').slice(0, 80);
-    if (!work && (gross != null || txt(r.contractor_type))) issues.push('Say the type of work, so Counta knows the withholding tax');
+    const work = opt(r.work).replace(/\s+/g, ' ').slice(0, 80);
+    if (!work && (gross != null || opt(r.contractor_type))) issues.push('Say the type of work, so Counta knows the withholding tax');
     if (work && rawAmount === '' && rawGross === '') issues.push('No amount: give what the contractor receives, or the contract amount before WHT');
     // A Tax ID as text: Excel may have turned a 13-digit number into 1.23457E+12, which cannot be recovered.
-    const tinRaw = typeof r.tin === 'number' ? String(r.tin) : txt(r.tin);
+    const tinRaw = typeof r.tin === 'number' ? (r.tin === 0 ? '' : String(r.tin)) : opt(r.tin);
     if (/\d(\.\d+)?e\+?\d+$/i.test(tinRaw)) issues.push(`Tax ID ${tinRaw} was shortened by Excel. Format the column as text and type it again`);
     // "6101 Salaries & Wages" or "6101 - Salaries": the code; a name alone is matched by the books.
-    const accountText = txt(r.account);
+    const accountText = opt(r.account);
     const code = accountText.match(/^\d{3,6}\b/)?.[0];
     return {
       row: r._row, name: txt(r.name).replace(/\s+/g, ' '), bankText, bank_code: m.bank?.code || '', bank_name: m.bank?.name || '', bankOptions: m.bank ? undefined : m.options,
       account_number: acct, amount: amount != null && amount > 0 ? Math.round(amount * 100) / 100 : null, narration: txt(r.narration).replace(/\s+/g, ' ').slice(0, 80),
-      bill: txt(r.bill), supplier: txt(r.supplier).replace(/\s+/g, ' '), account: code || accountText, reference: txt(r.reference).slice(0, 60),
-      work, contractor_type: txt(r.contractor_type).slice(0, 40), tin: tinRaw.replace(/^'/, '').slice(0, 30), address: txt(r.address).replace(/\s+/g, ' ').slice(0, 300),
-      state: txt(r.state).slice(0, 40), gross: gross != null && gross > 0 ? Math.round(gross * 100) / 100 : null,
+      bill: opt(r.bill), supplier: opt(r.supplier).replace(/\s+/g, ' '), account: code || accountText, reference: txt(r.reference).slice(0, 60),
+      work, contractor_type: opt(r.contractor_type).slice(0, 40), tin: tinRaw.replace(/^'/, '').slice(0, 30), address: opt(r.address).replace(/\s+/g, ' ').slice(0, 300),
+      state: opt(r.state).slice(0, 40), gross: gross != null && gross > 0 ? Math.round(gross * 100) / 100 : null,
       notes, issues, include: true,
     };
   }).filter((r) => r.name || r.account_number || r.amount || r.bill || r.gross);

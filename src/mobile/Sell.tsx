@@ -14,6 +14,7 @@ import { Done, ItemSearch, SaleSheet } from './common';
 import { enqueue } from './queue';
 import { toWav } from '../lib/audio';
 import { announce, browserSay } from '../lib/speech';
+import { micInUse } from '../guide/handsFree';
 
 type Pay = 'cash' | 'transfer' | 'pos' | 'card' | 'later';
 type HeardSale = { customer_name?: string | null; payment: Pay | 'unknown'; lines: { item_id: string; qty: number; unit_kind: 'purchase' | 'selling' }[] };
@@ -62,18 +63,20 @@ export default function SellScreen() {
 
   async function start() {
     setErr(null);
+    // "Hello Martina" stops listening while the sale is recorded.
+    micInUse(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mime = pickMime();
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       const chunks: Blob[] = [];
       mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-      mr.onstop = () => { stream.getTracks().forEach((t) => t.stop()); void understand(new Blob(chunks, { type: (mime || 'audio/webm').split(';')[0] })); };
+      mr.onstop = () => { stream.getTracks().forEach((t) => t.stop()); micInUse(false); void understand(new Blob(chunks, { type: (mime || 'audio/webm').split(';')[0] })); };
       mr.start();
       const timer = window.setTimeout(() => { if (mr.state === 'recording') mr.stop(); }, 15000);
       rec.current = { mr, chunks, stream, timer };
       setStage('listening');
-    } catch { setErr('The microphone is blocked. Allow it for this site, or record the sale by hand below.'); }
+    } catch { micInUse(false); setErr('The microphone is blocked. Allow it for this site, or record the sale by hand below.'); }
   }
   function stop() { const r = rec.current; if (r && r.mr.state === 'recording') { window.clearTimeout(r.timer); r.mr.stop(); } }
   async function understand(blob: Blob) {

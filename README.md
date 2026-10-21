@@ -24,6 +24,8 @@ The item form and the import template follow the kind of business: a pharmacy re
 
 Every desktop screen also fits a phone. Tables turn into cards under 760px, modals become bottom sheets, fields stay at 16px so iPhones do not zoom, and the layout respects the notch and home bar. On a phone, `/` opens the phone app; a person can switch to the full app from Today and Counta remembers the choice on that device.
 
+Martina, the assistant, answers by voice or typing anywhere in Counta. On a spoken yes (or a tap on Approve) she records a sale, issues and sends an invoice, approves a supplier bill or reminds a customer who owes; the app checks the yes itself, and money going out is always opened on screen for a tap. With Hands-free switched on for a device, saying "Hello Martina" while Counta is open starts a conversation without touching the screen. See `docs/onboarding-and-voices.md`.
+
 Martina can also phone people through ElevenLabs voice agents. From a purchase order she calls the vendor, reads out the order, confirms quantities and a delivery date, and writes the outcome back to the order. From Locations & staff an owner or manager can have her ring a team member about a count to finish, counts to approve, invoices to confirm, a transfer to receive or price checks to decide. See `docs/voice-and-push.md`.
 
 Installed as an app, Counta sends push notifications when a count needs approval or comes back for a recount, an invoice needs checking, stock is on its way to a branch, a price check opens, or a phone call finishes. A banner asks to install (Chrome's install prompt on Android, Share then Add to Home Screen on iPhone) and then to turn on notifications.

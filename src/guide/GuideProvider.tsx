@@ -12,6 +12,9 @@ import {
 } from '../lib/onboard';
 import { fetchSpeech, playAudio } from '../lib/speech';
 import { assistantTools } from './assistantTools';
+import { clearPending, currentPending, runPending, voiceActions } from './actions';
+import { chime, chooseHandsFree, handsFreeChosen, micBusyNow, onMicChange, WakeListener, wakeSupported, type WakeState } from './handsFree';
+import type { Inventory } from '../lib/types';
 import { checkNin } from '../pages/onboarding/Identity';
 
 export type Line = { role: 'agent' | 'user'; text: string; at: number };
@@ -27,7 +30,7 @@ type Wallet = { account_number: string | null; bank_name: string | null; account
 
 interface GuideCtx {
   status: Status; textOnly: boolean; speaking: boolean; muted: boolean; lines: Line[]; error: string | null; minimized: boolean; agent: Agent;
-  start: (o?: { text?: boolean; agent?: Agent; first?: string }) => Promise<boolean>; end: () => Promise<void>; send: (t: string) => void; toggleMute: () => void; setMinimized: (v: boolean) => void;
+  start: (o?: { text?: boolean; agent?: Agent; first?: string; handsFree?: boolean }) => Promise<boolean>; end: () => Promise<void>; send: (t: string) => void; toggleMute: () => void; setMinimized: (v: boolean) => void;
   // What the person does on screen, told to Martina so she keeps up.
   notify: (t: string) => void;
   volumes: () => { input: number; output: number };
@@ -38,6 +41,10 @@ interface GuideCtx {
   wallet: Wallet | null; setWallet: (w: Wallet | null) => void;
   confetti: number; celebrate: () => void;
   insights: () => Promise<WebInsights | null>;
+  // "Hello Martina": the choice for this device, whether the browser can do it, and what the listener is doing.
+  handsFree: boolean; setHandsFree: (on: boolean) => void; wakeSupported: boolean; wakeState: WakeState; wakeNote: string | null;
+  // The action Martina is holding for approval, approved or cancelled with a tap.
+  approvePending: () => Promise<void>; cancelPending: () => void;
 }
 const Ctx = createContext<GuideCtx>(null as any);
 export const useGuideTalk = () => useContext(Ctx);
@@ -94,9 +101,13 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   const live = useRef({ orgId, nav, path: loc.pathname });
   live.current = { orgId, nav, path: loc.pathname };
 
+  // Everything said in this conversation, readable by the tools at once (the state updates a render later).
+  const said = useRef<Line[]>([]);
   const add = useCallback((role: Line['role'], text: string) => {
     if (!text?.trim()) return;
-    setLines((l) => [...l.slice(-30), { role, text: text.trim(), at: Date.now() }]);
+    const line = { role, text: text.trim(), at: Date.now() };
+    said.current = [...said.current.slice(-60), line];
+    setLines((l) => [...l.slice(-30), line]);
   }, []);
   const markFilled = useCallback((keys: string[]) => {
     const t = Date.now();
@@ -252,12 +263,21 @@ export function GuideProvider({ children }: { children: ReactNode }) {
         return 'The NIN slip upload is on screen.';
       }),
       ...Object.fromEntries(Object.entries(assistantTools({ org, nav: (to: string) => live.current.nav(to), qc, celebrate })).map(([k, fn]) => [k, safe(fn)])),
+      ...Object.fromEntries(Object.entries(voiceActions({
+        org, nav: (to: string) => live.current.nav(to), qc,
+        inv: async () => qc.getQueryData<Inventory>(['inv', org()]) || await rpc<Inventory>('get_inventory', { p_org: org() }),
+        userSince: (at: number) => said.current.filter((l) => l.role === 'user' && l.at > at).map((l) => l.text),
+      })).map(([k, fn]) => [k, safe(fn)])),
+      // The person is done ("thanks, that's all"): Martina says goodbye, then the conversation closes and, hands-free,
+      // Counta listens for her name again.
+      finish: safe(async () => { endSoon.current?.(); return 'Closing after your goodbye.'; }),
     };
   }, [qc, refresh, goOnboard, markFilled, insights, celebrate, refreshMemberships, setOrgId, session]);
 
-  const start = useCallback(async (o: { text?: boolean; agent?: Agent; first?: string } = {}) => {
+  const start = useCallback(async (o: { text?: boolean; agent?: Agent; first?: string; handsFree?: boolean } = {}) => {
     if (conv.current || status === 'connecting') return false;
     const which: Agent = o.agent || 'guide';
+    handsFreeTalk.current = Boolean(o.handsFree);
     // Everyday conversations keep what was said on screen when Martina reconnects; the setup guide starts afresh.
     const keep = which === 'assistant' && agentRef.current === 'assistant';
     agentRef.current = which;
@@ -270,7 +290,8 @@ export function GuideProvider({ children }: { children: ReactNode }) {
       }
       const page = live.current.path.replace(/^\/m(\/|$)/, '/phone/').split('/').filter(Boolean).slice(0, 2).join(' ').replace('accounting tax', 'tax') || 'home';
       const t = which === 'assistant'
-        ? await edge<any>('voice', { action: 'assistant_token', text, org_id: live.current.orgId, page })
+        ? await edge<any>('voice', { action: 'assistant_token', text, org_id: live.current.orgId, page,
+          ...(o.handsFree ? { hands_free: true, has_request: Boolean(String(o.first || '').trim()) } : {}) })
         : await edge<any>('voice', { action: 'guide_token', text, ...(live.current.orgId ? { org_id: live.current.orgId } : {}) });
       if (!t.ok) throw new Error(t.error || 'Martina is not available just now.');
       const { Conversation } = await import('@elevenlabs/client');
@@ -279,7 +300,7 @@ export function GuideProvider({ children }: { children: ReactNode }) {
         dynamicVariables: t.dynamic_variables, overrides: t.overrides, clientTools: tools,
         onConnect: () => { setStatus('live'); if (which === 'guide') void guideMark('intro_heard').catch(() => null); },
         onDisconnect: () => {
-          conv.current = null; setStatus('idle'); setSpeaking(false);
+          conv.current = null; setStatus('idle'); setSpeaking(false); clearPending(); said.current = [];
           // ElevenLabs finishes the conversation first; anything it still holds is retried every quarter of an hour.
           if (saidNin.current) {
             saidNin.current = false;
@@ -291,9 +312,10 @@ export function GuideProvider({ children }: { children: ReactNode }) {
         onMessage: (m: { message: string; source?: string; role?: string }) => {
           const who = (m.role || m.source) === 'user' ? 'user' : 'agent';
           if (who === 'user' && looksLikeNin(m.message)) saidNin.current = true;
+          lastHeard.current = Date.now();
           add(who, m.message);
         },
-        onModeChange: (m: { mode: string }) => setSpeaking(m.mode === 'speaking'),
+        onModeChange: (m: { mode: string }) => { speakingRef.current = m.mode === 'speaking'; lastHeard.current = Date.now(); setSpeaking(m.mode === 'speaking'); },
       };
       const c = text
         ? await Conversation.startSession({ ...base, signedUrl: t.signed_url, textOnly: true, connectionType: 'websocket' } as any)
@@ -305,7 +327,7 @@ export function GuideProvider({ children }: { children: ReactNode }) {
       if (first) { if (looksLikeNin(first)) saidNin.current = true; add('user', first); conv.current.sendUserMessage(first); }
       return true;
     } catch (e) {
-      conv.current = null; setStatus('idle');
+      conv.current = null; setStatus('idle'); handsFreeTalk.current = false;
       setError((e as Error).message || 'Could not reach Martina.');
       return false;
     }
@@ -316,7 +338,7 @@ export function GuideProvider({ children }: { children: ReactNode }) {
     if (!c) return;
     setStatus('ending');
     try { await c.endSession(); } catch { /* already gone */ }
-    conv.current = null; setStatus('idle'); setSpeaking(false);
+    conv.current = null; setStatus('idle'); setSpeaking(false); clearPending(); said.current = [];
   }, []);
   const send = useCallback((t: string) => {
     const v = t.trim(); if (!v || !conv.current) return;
@@ -329,6 +351,93 @@ export function GuideProvider({ children }: { children: ReactNode }) {
     try { return { input: conv.current?.getInputVolume() ?? 0, output: conv.current?.getOutputVolume() ?? 0 }; } catch { return { input: 0, output: 0 }; }
   }, []);
 
+  // ---------------------------------------------------------------- hands-free
+  const [handsFree, setHandsFreeState] = useState(() => handsFreeChosen());
+  const [wakeState, setWakeState] = useState<WakeState>('off');
+  const [wakeNote, setWakeNote] = useState<string | null>(null);
+  const [micBusy, setMicBusy] = useState(micBusyNow());
+  const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState !== 'hidden');
+  const handsFreeTalk = useRef(false);
+  const speakingRef = useRef(false);
+  const lastHeard = useRef(0);
+  const endSoon = useRef<(() => void) | null>(null);
+  const listener = useRef<WakeListener | null>(null);
+  const startRef = useRef(start);
+  startRef.current = start;
+  const setHandsFree = useCallback((on: boolean) => { chooseHandsFree(on); setHandsFreeState(on); setWakeNote(null); }, []);
+  useEffect(() => onMicChange(() => setMicBusy(micBusyNow())), []);
+  useEffect(() => {
+    const v = () => setVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', v);
+    return () => document.removeEventListener('visibilitychange', v);
+  }, []);
+  // Listening runs while the choice is on, someone is signed in to a business, Counta is on screen, no conversation is going
+  // and no other screen is recording.
+  const listen = handsFree && !!session && !!orgId && status === 'idle' && visible && !micBusy && wakeSupported();
+  useEffect(() => {
+    if (!listen) { listener.current?.stop(handsFree ? 'paused' : 'off'); return; }
+    const l = new WakeListener({
+      onWake: (rest) => {
+        chime();
+        setMinimized(false);
+        void startRef.current({ agent: 'assistant', handsFree: true, ...(rest ? { first: rest } : {}) });
+      },
+      onState: (st, why) => {
+        setWakeState(st);
+        if (why) setWakeNote(why); else if (st === 'listening') setWakeNote(null);
+        if (st === 'blocked') { chooseHandsFree(false); setHandsFreeState(false); }
+      },
+    });
+    listener.current = l;
+    l.start();
+    return () => { l.stop(); if (listener.current === l) listener.current = null; };
+  }, [listen, handsFree]);
+  useEffect(() => { if (!handsFree) setWakeState(wakeSupported() ? 'off' : 'unsupported'); }, [handsFree]);
+
+  // A hands-free conversation closes itself after twenty seconds of quiet (a minute while an action waits for a yes), and after
+  // Martina's goodbye when the person is done.
+  useEffect(() => {
+    endSoon.current = () => {
+      // Her goodbye may still be on its way when she calls finish: wait for it to start and end (or a few quiet seconds), at most
+      // twelve seconds, so it is never cut off.
+      const t0 = Date.now();
+      let spoke = speakingRef.current, quietSince = 0;
+      const tick = () => {
+        if (!conv.current) return;
+        const now = Date.now();
+        if (speakingRef.current) { spoke = true; quietSince = 0; } else if (!quietSince) quietSince = now;
+        if (now - t0 > 12_000 || (spoke && quietSince && now - quietSince > 700) || (!spoke && now - t0 > 3000)) { void end(); return; }
+        window.setTimeout(tick, 250);
+      };
+      window.setTimeout(tick, 250);
+    };
+  }, [end]);
+  useEffect(() => {
+    if (status !== 'live' || !handsFreeTalk.current) return;
+    lastHeard.current = Date.now();
+    const t = window.setInterval(() => {
+      const quiet = Date.now() - lastHeard.current;
+      if (!speakingRef.current && quiet > (currentPending() ? 60_000 : 20_000)) void end();
+    }, 2000);
+    return () => window.clearInterval(t);
+  }, [status, end]);
+  useEffect(() => { if (status === 'idle') handsFreeTalk.current = false; }, [status]);
+
+  // Approve or Cancel tapped on the card: done here, and Martina is told so she can say it.
+  const approvePending = useCallback(async () => {
+    const p = currentPending();
+    if (!p) return;
+    const r = await runPending(p.id);
+    const msg = 'error' in r ? `The person tapped Approve, but it failed: ${r.error}` : `The person tapped Approve on screen. Done: ${r.summary}`;
+    add('agent', 'error' in r ? r.error : r.summary);
+    try { conv.current?.sendContextualUpdate(msg); } catch { /* not live */ }
+  }, [add]);
+  const cancelPending = useCallback(() => {
+    if (!currentPending()) return;
+    clearPending();
+    try { conv.current?.sendContextualUpdate('The person tapped Cancel on screen. Nothing was done.'); } catch { /* not live */ }
+  }, []);
+
   // Signing out ends the conversation.
   useEffect(() => { if (!session && conv.current) void end(); }, [session, end]);
   useEffect(() => () => { void conv.current?.endSession(); }, []);
@@ -336,13 +445,16 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   // Test builds can drive the tools the way the agent does (VITE_GUIDE_TEST=1), without ElevenLabs.
   useEffect(() => {
     if (import.meta.env.VITE_GUIDE_TEST !== '1') return;
-    (window as any).__countaGuide = { tool: (name: string, p: unknown) => tools[name]?.(p), lines: () => lines };
-  }, [tools, lines]);
+    (window as any).__countaGuide = { tool: (name: string, p: unknown) => tools[name]?.(p), lines: () => lines,
+      // What the person says, as the conversation would hear it.
+      say: (t: string) => add('user', t) };
+  }, [tools, lines, add]);
 
   const value = useMemo<GuideCtx>(() => ({
     status, textOnly, speaking, muted, lines, error, minimized, agent, start, end, send, toggleMute, setMinimized, notify, volumes,
     screen, setScreen, filled, markFilled, uploadAsk, voicePicker, setVoicePicker, wallet, setWallet, confetti, celebrate, insights,
+    handsFree, setHandsFree, wakeSupported: wakeSupported(), wakeState, wakeNote, approvePending, cancelPending,
   }), [status, textOnly, speaking, muted, lines, error, minimized, agent, start, end, send, toggleMute, notify, volumes, screen, filled, markFilled, uploadAsk,
-    voicePicker, wallet, confetti, celebrate, insights]);
+    voicePicker, wallet, confetti, celebrate, insights, handsFree, setHandsFree, wakeState, wakeNote, approvePending, cancelPending]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
