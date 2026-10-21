@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../state/session';
 import { useAction } from '../lib/queries';
 import { must, rpc, supabase } from '../lib/supabase';
-import { isOn, PAUSED, useFeatures } from '../lib/features';
+import { isOn, offNote, useFeatures } from '../lib/features';
 import { Icon } from '../components/Icon';
 import { Alert, Field, Label } from '../components/ui';
 import { ChartDrawer, PostingRules } from '../components/ChartOfAccounts';
@@ -152,7 +152,7 @@ function CallsSection() {
   return (
     <Section id="calls" title="Phone calls" sub="Martina phones vendors to place orders and reminds staff about work waiting in Counta.">
       {st.isLoading || feats.isLoading ? <div className="skel" style={{ height: 40 }} /> : paused ? (
-        <Alert kind="amber" icon="info">{PAUSED.phone_calls}</Alert>
+        <Alert kind="amber" icon="info">{offNote(feats.data, 'phone_calls')}</Alert>
       ) : st.data?.configured ? (
         <Alert kind="green" icon="check">Switched on · calls go out from {st.data.phone?.number || 'TaxStreem\'s number'}.</Alert>
       ) : (

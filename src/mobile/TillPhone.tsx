@@ -15,8 +15,9 @@ import { enqueue } from './queue';
 import { Camera } from './Scan';
 
 type Line = { item: Item; qty: number };
-type Method = 'cash' | 'transfer' | 'pos';
-const METHODS: [Method, string][] = [['cash', 'Cash'], ['transfer', 'Transfer'], ['pos', 'POS']];
+type Method = 'cash' | 'transfer' | 'pos' | 'later';
+// "Later" leaves the way of paying to be chosen in Sales, To settle: cash, which account a transfer went to, or POS.
+const METHODS: [Method, string][] = [['cash', 'Cash'], ['transfer', 'Transfer'], ['pos', 'POS'], ['later', 'Later']];
 const KEY = 'counta.m.basket';
 
 // A short beep for each scan, so the cashier hears it went in without looking.
@@ -41,6 +42,7 @@ export function TillScreen() {
   });
   const [unknown, setUnknown] = useState<string | null>(null);
   const [method, setMethod] = useState<Method>('cash');
+  const [customer, setCustomer] = useState('');
   const [camera, setCamera] = useState(true);
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -82,14 +84,15 @@ export function TillScreen() {
     if (!live.length || noPrice.length || busy || !inv) return;
     setBusy(true);
     const n = live.reduce((a, l) => a + l.qty, 0);
+    const name = customer.replace(/\s+/g, ' ').trim().slice(0, 120);
     await enqueue({
-      org: inv.org.id, kind: 'till', label: 'Till sale', author: inv.me.display_name,
+      org: inv.org.id, kind: 'quick_sale', label: name ? `Sale to ${name}` : 'Till sale', author: inv.me.display_name,
       detail: `${num(n)} ${n === 1 ? 'item' : 'items'} · ${N(total)} · ${METHODS.find((m) => m[0] === method)![1]}`,
-      payload: { location_id: loc, method, lines: live.map((l) => ({ item_id: l.item.id, qty: l.qty, unit: 'selling' })) },
+      payload: { location_id: loc, pay: method, customer_name: name || null, lines: live.map((l) => ({ item_id: l.item.id, qty: l.qty, unit: 'selling' })) },
     });
     setBusy(false);
-    setDone(`${num(n)} ${n === 1 ? 'item' : 'items'}, ${N(total)} by ${METHODS.find((m) => m[0] === method)![1].toLowerCase()}.${method === 'cash' ? '' : ' Confirm the money in Sales once it lands.'}`);
-    setLines([]); setUnknown(null); setMethod('cash');
+    setDone(`${name ? `${name}: ` : ''}${num(n)} ${n === 1 ? 'item' : 'items'}, ${N(total)}${method === 'later' ? ', to be paid later. Choose how it was paid in Sales, To settle.' : ` by ${METHODS.find((m) => m[0] === method)![1].toLowerCase()}.${method === 'cash' ? '' : ' Confirm the money in Sales once it lands.'}`}`);
+    setLines([]); setUnknown(null); setMethod('cash'); setCustomer('');
   }
 
   if (done) return <><MTop title="Scan to sell" right={<BranchChip />} /><QueueBanner /><Done title="Sold" body={done + ' It posts to the books as soon as there is data.'} action="Next customer" onAction={() => setDone(null)} /></>;
@@ -135,6 +138,7 @@ export function TillScreen() {
             <span className="muted" style={{ fontSize: 13 }}>{num(live.reduce((a, l) => a + l.qty, 0))} {pluralUnit('item', live.reduce((a, l) => a + l.qty, 0))}</span>
             <b className="num" style={{ fontSize: 20 }}>{N(total)}</b>
           </div>
+          <input className="input input-sm" value={customer} maxLength={120} onChange={(e) => setCustomer(e.target.value)} placeholder="Customer's name (optional)" aria-label="Customer's name" />
           <div className="row" style={{ gap: 6 }} role="radiogroup" aria-label="How they paid">
             {METHODS.map(([m, l]) => <button key={m} role="radio" aria-checked={method === m} className={'pill' + (method === m ? ' on' : '')} style={{ flex: 1, justifyContent: 'center' }} onClick={() => setMethod(m)}>{l}</button>)}
           </div>

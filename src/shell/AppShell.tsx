@@ -26,7 +26,7 @@ const TITLES: Record<string, string> = {
   '/accounting/inbox': 'Books inbox', '/accounting/banking': 'Banking & reconciliation', '/accounting/statements': 'Financial statements',
   '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close',
   '/tax': 'Tax returns', '/tax/vat': 'VAT returns', '/tax/wht': 'Withholding tax', '/tax/cit': 'Companies income tax',
-  '/accounting/journals': 'Journals', '/accounting/migrate': 'Move your books', '/assistant': 'AI Assistant', '/settings': 'Settings',
+  '/accounting/journals': 'Journals', '/accounting/migrate': 'Move your books', '/assistant': 'AI Assistant', '/settings': 'Settings', '/settings/subscription': 'Subscription',
 };
 export const titleFor = (path: string) => TITLES[path] || TITLES[Object.keys(TITLES).filter((k) => path.startsWith(k + '/')).sort((x, y) => y.length - x.length)[0]] || 'Counta';
 const PICKER = new Set(['/inventory', '/inventory/items', '/inventory/insights']);
@@ -147,7 +147,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
     </a>
   );
   const link = (to: string, label: string, icon: string, extra?: () => void, badge = 0) => (
-    <NavLink to={to} className={({ isActive }) => 'nav-item' + (rail ? ' rail-item' : '') + (isActive && to !== '/m' ? ' active' : '')} title={rail ? label : undefined} aria-label={rail ? label : undefined}
+    <NavLink to={to} end={to === '/settings'} className={({ isActive }) => 'nav-item' + (rail ? ' rail-item' : '') + (isActive && to !== '/m' ? ' active' : '')} title={rail ? label : undefined} aria-label={rail ? label : undefined}
       onClick={() => { extra?.(); onClose(); }}>
       {({ isActive }) => (<><Icon name={icon} size={20} color={isActive && to !== '/m' ? '#111827' : '#6B7280'} />{!rail && <span style={{ flex: 1 }}>{label}</span>}
         {badge > 0 && (rail ? <span className="rail-dot" /> : <span className="nav-badge">{badge}</span>)}</>)}
@@ -195,7 +195,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
       <div className="sidebar-section" style={{ paddingTop: 24 }}>{rail ? '' : 'MORE'}</div>
       <nav className="nav">
         {external('Integrations', 'blocks')}
-        {external('Subscriptions', 'card')}
+        {can(inv, 'manage_settings') && link('/settings/subscription', 'Subscription', 'card')}
         {link('/settings', 'Settings', 'settings', undefined, n('tax_id'))}
         {link('/m', 'Phone app', 'phone', () => store.set('counta-view', 'phone'))}
       </nav>

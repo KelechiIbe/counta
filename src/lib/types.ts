@@ -31,7 +31,7 @@ export interface Org {
   tin?: string | null; rc_number?: string | null; address?: string | null; logo_path?: string | null; prices_include_vat?: boolean;
   invoice_terms_days?: number; invoice_note?: string | null; auto_post_threshold?: number; cash_sales_without_invoices?: boolean;
   reporting_framework?: 'ifrs' | 'ifrs_sme'; principal_activity?: string | null; fiscal_year_start?: number; books_start?: string | null;
-  capitalisation_threshold?: number; max_cashier_discount_pct?: number; receipt_footer?: string | null;
+  capitalisation_threshold?: number; max_cashier_discount_pct?: number; receipt_footer?: string | null; release_after_payment?: boolean;
   shop_slug?: string | null; shop_enabled?: boolean; shop_title?: string | null; shop_note?: string | null; shop_whatsapp?: string | null;
   shop_location_id?: string | null; shop_delivery_fee?: number; shop_pickup?: boolean; shop_delivery?: boolean; shop_show_stock?: boolean;
   payment_rail?: string; payment_methods?: string[]; payout_approval_threshold?: number; reminders_enabled?: boolean; reminder_days?: number[];

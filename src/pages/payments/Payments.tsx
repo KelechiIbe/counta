@@ -16,7 +16,7 @@ import { CustomerPicker, PayWait, StatusChip } from '../sell/common';
 import { useDraft, type Drafts } from '../../lib/drafts';
 import type { Customer, PayRequest } from '../../lib/api';
 import { BatchList, BatchModal, BulkPayModal, TemplateButton } from './BulkPay';
-import { isOn, PAUSED, useFeatures } from '../../lib/features';
+import { isOn, offNote, useFeatures } from '../../lib/features';
 import { TaxWalletPanel } from './TaxWallet';
 
 export default function Payments() {
@@ -67,7 +67,7 @@ export default function Payments() {
   return (
     <div className="container">
       <PaymentsLock />
-      {!isOn(feats.data, 'payments') && <Alert kind="amber" icon="info">{PAUSED.payments}</Alert>}
+      {!isOn(feats.data, 'payments') && <Alert kind="amber" icon="info">{offNote(feats.data, 'payments')}</Alert>}
       {pay.isLoading ? <SkeletonRows n={4} /> : !w || w.status !== 'active' ? (
         <div className="card card-pad stack" style={{ gap: 12, maxWidth: 760 }}>
           <div style={{ fontSize: 18, fontWeight: 600 }}>Open the business wallet</div>

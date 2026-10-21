@@ -136,6 +136,11 @@ export default function Shop() {
           <Field label="Most a cashier can discount (%)" hint="More than this needs a manager."><input className="input" disabled={!owner} inputMode="decimal" value={f.max_cashier_discount_pct} onChange={(e) => set('max_cashier_discount_pct', e.target.value)} /></Field>
           <Field label="Line at the bottom of receipts"><input className="input" disabled={!owner} value={f.receipt_footer || ''} onChange={(e) => set('receipt_footer', e.target.value)} placeholder="Thank you for shopping with us" /></Field>
         </div>
+        <label className="check"><input type="checkbox" disabled={!owner} checked={o.release_after_payment !== false} onChange={async (e) => {
+          try { await rpc('set_release_after_payment', { p_org: orgId, p_on: e.target.checked }); toast(e.target.checked ? 'Deliveries wait for the payment' : 'Deliveries no longer wait for the payment'); await qc.invalidateQueries({ queryKey: ['inv'] }); }
+          catch (err) { toast((err as Error).message, 'err'); }
+        }} />Goods leave only once the payment is confirmed</label>
+        <div className="faint" style={{ fontSize: 12, marginTop: -6 }}>A delivery waits until the sale is paid. Pay by transfer confirms in seconds; a transfer to your own bank waits for someone to confirm it against the bank. A manager can agree payment on delivery for one order.</div>
       </div>
       {owner && <div><button className="btn btn-primary" disabled={busy} onClick={save}>Save</button></div>}
     </div>

@@ -17,6 +17,12 @@ Counta collects money for a business by bank transfer, payment link and QR code,
 
 At the till the screen waits for the transfer, checks every four seconds and says the payment out loud when it lands ("Payment received. Five thousand naira from Ada Obi."). Payments by another channel (cash, POS, a transfer into another bank account) are recorded by the cashier and confirmed by a manager or the bookkeeper once they show in the bank.
 
+### How fast a transfer is confirmed
+
+Pay by transfer is confirmed without anyone checking the bank: Flutterwave tells Counta as soon as the money reaches the account it gave (the webhook), Counta asks Flutterwave to confirm before recording anything, and the till and the poll ask as well in case the webhook is late. A transfer sent by NIP usually lands within seconds of the customer pressing send; when the customer's bank holds it, the sale waits until it arrives, and nothing is marked paid on the customer's word. A transfer into one of the business's other bank accounts cannot be seen by Counta; it waits for someone to confirm it against the bank (Sales, Payments to confirm).
+
+Goods leave once the money is confirmed. With Deliveries wait for the payment on (Sell, Online shop; on by default), a delivery cannot be marked dispatched or delivered while its sale is unpaid, waiting for a transfer, or paid by a transfer not yet confirmed. A manager can agree payment on delivery for a customer they trust, and the delivery shows who agreed it.
+
 ## Transfers need the relay
 
 Flutterwave takes transfers (payouts, bulk payments, sweeps, moves between a business's two wallets and tax payments) only from IP addresses whitelisted on TaxStreem's account. Supabase's servers have no fixed address, so Counta sends every transfer through TaxStreem's relay, a small server with one fixed address: see [transfer-relay.md](transfer-relay.md). Without the relay set up (`FLW_RELAY_URL` and `FLW_RELAY_SECRET` in the admin portal), transfers wait: a payout stays approved, a sweep stays pending, a move to the tax wallet waits, and each goes once the relay works. Collections need no relay.
@@ -48,8 +54,22 @@ Each row needs the beneficiary's name, bank, 10-digit account number and the amo
 | Supplier in Counta | Dr 2101 payables (that supplier) / Cr wallet | A payment on account, with no WHT. |
 | Account code | Dr that account / Cr wallet | Any postable account except bank, cash, wallet, receivables, payables, customer advances, inventory and equity accounts. |
 | (none) | Dr the account chosen on upload / Cr wallet | For a payroll sheet, choose Salaries & Wages once. |
+| Type of work (a contractor with no bill) | Writes and approves a bill for the work: Dr the account / Cr 2101; then pays it: Dr 2101 / Cr 2202 WHT / Cr wallet | See Contractors below. |
 
 On upload Counta asks the bank for the name on every account (five at a time) and checks every row against the books: the bill exists and is approved, the amount is not more than is owed, the account can take a payment, the same bill is not paid twice. A row whose bank name differs from the sheet stays unticked until someone ticks it. Rows that pay the same account the same amount, or an amount paid to that account in the last seven days, are flagged. The batch must fit in the wallet with the estimated transfer fees (₦10.75 up to ₦5,000, ₦26.88 up to ₦50,000, ₦53.75 above).
+
+### Contractors
+
+A contractor paid with no bill in Counta goes on the same sheet. The template's columns Type of work (a list: services, professional services, construction, supply of goods, rent, commission, brokerage, no withholding tax), Company or individual, Tax ID, Address, State and Contract amount before WHT (instead of Amount) carry what the books need. Counta finds the contractor among the business's suppliers by Tax ID, then by bank account, then by name, or adds them when the batch is saved. The withholding tax rate comes from the type of work and whether the contractor is a company, the small-company rule (no WHT while a month's purchases from a supplier with a Tax ID stay within ₦2 million) and exemptions on file. The contractor receives the contract amount less WHT.
+
+The same rules as a bill apply:
+
+- Where the work attracts withholding tax, the row needs the contractor's Tax ID. One on file and already checked is enough; a new one must be checked with the NRS first, from the review screen (Check with the NRS), and the NRS's name for it must match the contractor or the account. Up to 60 checks a day per business.
+- A company or a business name is paid only with its address, on file or in the sheet.
+- WHT from an individual or a business name goes to the state revenue service, so the state must be known.
+- What is on file wins over the sheet: a different Tax ID, or an individual on file listed as a company, is shown as an error to resolve.
+
+Each contractor row writes and approves a bill (source `bulk`) when the batch is saved and pays it in the batch. If the batch is declined or cancelled before the money leaves, those bills are voided and their postings reversed.
 
 A batch is approved once, as a whole: when its total is at or above the approval threshold and the person who made it is not the owner, someone else who makes payments approves it. One notice goes out for the approval and one when the batch finishes, not one per row. Rows of a batch cannot be approved one by one.
 
@@ -78,6 +98,7 @@ Webhook URL in the Flutterwave dashboard: `https://krtqqhndmncarwusukrw.supabase
 | --- | --- |
 | `FLW_RELAY_URL` | The relay's https address, for example `https://relay.taxstreem.com` |
 | `FLW_RELAY_SECRET` | The `RELAY_SECRET` set on the relay server |
+| `FLW_MERCHANT_ID` | TaxStreem's own Flutterwave merchant ID, where Counta plans paid from a business wallet go (see [plans-and-costs.md](plans-and-costs.md)) |
 
 Payments, Settings shows whether the keys and the secret hash are set and when Flutterwave last reached Counta with a verified event. Flutterwave only sends an event once money moves, so that line stays empty until the first payment or transfer. Phone numbers go to Flutterwave as digits only (`08035550142`); Flutterwave refuses anything else.
 

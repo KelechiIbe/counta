@@ -85,6 +85,19 @@ export function wording(m: Msg) {
         wa: { name: 'counta_bill_returned', params: [first(p.customer_name), biz, p.number, why] },
       };
     }
+    case 'invoice_issues': {
+      // A supplier's invoice that came in with problems (from the invoice portal or uploaded by the business): what to fix.
+      const issues = (Array.isArray(p.issues) ? p.issues : []).map((x: unknown) => String(x ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 8);
+      const one = issues.join(' ').slice(0, 900) || 'some details need checking';
+      return {
+        heading: `Your invoice ${p.number} needs a look`,
+        lines: [`${biz} has received your invoice ${p.number}${Number(p.total) ? ` for ${naira(p.total)}` : ''}. Counta checked it and found:`,
+          ...issues.map((x: string) => `• ${x}`),
+          'Please reply to this email with a corrected invoice, or send it again on the link you used. Invoices without a Tax ID (where withholding tax applies) or a business address cannot be paid.'],
+        button: '', link: '',
+        wa: { name: 'counta_invoice_issues', params: [first(p.customer_name), biz, p.number, one] },
+      };
+    }
     case 'invite': {
       // A team invitation: email only, with a one-time link made as it is sent.
       const until = p.expires_at ? new Date(p.expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Africa/Lagos' }) : '';

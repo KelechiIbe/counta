@@ -45,13 +45,16 @@ export const FEATURES: { id: string; label: string; what: string }[] = [
   { id: 'email', label: 'Email to customers', what: 'Invoices, receipts, statements and reminders by email. Invitations to the team still go.' },
   { id: 'whatsapp', label: 'WhatsApp to customers', what: 'The same messages by WhatsApp.' },
   { id: 'payments', label: 'Payments', what: 'Business account numbers, payment links, QR codes and payouts. Money already on its way is still recorded.' },
+  { id: 'bulk_payments', label: 'Bulk payments', what: 'Paying many people at once from a spreadsheet, contractors included. Single payouts still work.' },
+  { id: 'bank_feeds', label: 'Bank feeds', what: 'Linking bank accounts through Mono. Accounts already linked keep their history.' },
+  { id: 'supplier_portal', label: 'Supplier invoice portal', what: 'The link suppliers use to upload invoices. Invoices can still be uploaded by the business.' },
 ];
 export const featureLabel = (id: string) => FEATURES.find((f) => f.id === id)?.label || id;
 
 export const GROUPS: { id: string; title: string; what: string; test?: boolean }[] = [
   { id: 'gemini', title: 'Google Gemini', what: 'Reads invoices, statements, product photos, CAC documents and NIN slips; the bookkeeper and Martina\'s typed answers.', test: true },
   { id: 'elevenlabs', title: 'ElevenLabs', what: 'The Nigerian voices, Martina by voice, and phone calls through the connected Twilio number.', test: true },
-  { id: 'flutterwave', title: 'Flutterwave', what: 'Business account numbers, payment links, QR codes and payouts.', test: true },
+  { id: 'flutterwave', title: 'Flutterwave', what: 'Business account numbers, payment links, QR codes, payouts, and Counta plans paid by card or from the wallet.', test: true },
   { id: 'mono', title: 'Mono', what: 'Bank feeds, and the CAC, Tax ID and NIN lookups in onboarding.', test: true },
   { id: 'email', title: 'Email (Resend)', what: 'Invoices, receipts, reminders, invitations and these admin alerts.', test: true },
   { id: 'whatsapp', title: 'WhatsApp Business', what: 'Invoices, receipts and reminders by WhatsApp.', test: true },

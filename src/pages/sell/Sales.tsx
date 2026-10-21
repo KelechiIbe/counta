@@ -1,7 +1,7 @@
 // Sales and invoices: receipts, invoices, quotes and credit notes; payments waiting for confirmation; returns.
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { DOC_LABEL, METHOD_LABEL, VAT_STATUS, money, today, useChart, useCustomers, useSale, useSales, type Customer, type DocType, type Sale, type SaleRow, moneyAccounts } from '../../lib/api';
@@ -19,7 +19,7 @@ import { useDraft, type Drafts } from '../../lib/drafts';
 import { CustomerPicker, PaymentsList, PrintButtons, RecordPayment, RequestPayment, SaleLines, SendBox, StatusChip, docUrl, dueText } from './common';
 import { useVatRate, vatInside, vatPct, vatRateOn } from '../../lib/vat';
 
-type Tab = 'all' | 'invoice' | 'receipt' | 'quote' | 'credit_note' | 'unpaid' | 'confirm';
+type Tab = 'all' | 'invoice' | 'receipt' | 'quote' | 'credit_note' | 'unpaid' | 'confirm' | 'settle';
 
 export default function Sales() {
   const { data: inv } = useInventory();
@@ -42,6 +42,8 @@ export default function Sales() {
   }), [tab, q, range.from, range.to, vs]);
   const sales = useSales(filter);
   const meta = useMeta();
+  const toSettle = useQuery({ queryKey: ['sales-to-settle', orgId], enabled: !!orgId && !!inv && can(inv, 'keep_books'), refetchInterval: 30_000, retry: 1,
+    queryFn: () => rpc<any>('sales_to_settle', { p_org: orgId, p: {} }) });
   if (!inv) return null;
   const rows = sales.data?.rows || [];
   const pending = sales.data?.pending_payments || [];
@@ -55,6 +57,7 @@ export default function Sales() {
         <Pills value={tab} onChange={setTab} options={[
           { id: 'all', label: 'All' }, { id: 'invoice', label: 'Invoices' }, { id: 'receipt', label: 'Receipts' }, { id: 'quote', label: 'Quotes' },
           { id: 'credit_note', label: 'Credit notes' }, { id: 'unpaid', label: 'Unpaid' }, { id: 'confirm', label: 'Payments to confirm', count: pending.length || undefined },
+          ...(can(inv, 'keep_books') ? [{ id: 'settle' as Tab, label: 'To settle', count: (toSettle.data?.rows || []).length || undefined }] : []),
         ]} />
         <div className="row wrap">
           <ExportMenu name={`${inv.org.name} sales ${today()}`} disabled={!rows.length}
@@ -65,7 +68,7 @@ export default function Sales() {
           <button className="btn btn-primary btn-sm" onClick={() => setEditing({ type: 'invoice' })}><Icon name="plus" size={14} color="#fff" />Invoice</button>
         </div>
       </div>
-      {tab === 'confirm' ? <PendingPayments rows={pending} /> : (
+      {tab === 'settle' ? <SettleSales data={toSettle.data} loading={toSettle.isLoading} /> : tab === 'confirm' ? <PendingPayments rows={pending} /> : (
         <div className="card" style={{ overflow: 'hidden' }}>
           <div className="card-hd">
             <div className="row" style={{ flex: '1 1 260px' }}><Icon name="search" size={15} color="#9CA3AF" /><input className="input input-sm" style={{ border: 0, boxShadow: 'none' }} placeholder="Number, customer, phone or reference" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search sales" /></div>
@@ -344,6 +347,76 @@ function ReturnGoods({ sale, onClose, onDone, onAmount }: { sale: Sale; onClose:
 }
 
 // ---------------------------------------------------------------- confirming payments
+// Sales recorded with the way of paying left for later (by voice, at the phone till): choose how each was paid (cash into a
+// drawer, a transfer into which account, POS into the account the terminal pays into) and settle several at once.
+function SettleSales({ data, loading }: { data: any; loading: boolean }) {
+  const { orgId } = useSession();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const rows: any[] = data?.rows || [];
+  const accounts: any[] = data?.accounts || [];
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [method, setMethod] = useState<'cash' | 'transfer' | 'pos' | 'card'>('transfer');
+  const [account, setAccount] = useState('');
+  const [reference, setReference] = useState('');
+  const [busy, setBusy] = useState(false);
+  const fits = accounts.filter((a) => (method === 'cash' ? a.kind === 'cash' : a.kind !== 'cash'));
+  const chosen = rows.filter((r) => picked.has(r.id));
+  const total = chosen.reduce((a, r) => a + Number(r.balance), 0);
+  async function settle() {
+    setBusy(true);
+    try {
+      const r = await rpc<any>('settle_sales', { p_org: orgId, p: { method, bank_account_id: account || null, reference: reference || null, sales: chosen.map((x) => x.id) } });
+      toast(`${r.settled} sale${r.settled === 1 ? '' : 's'} settled, ${N2(r.total)}`);
+      setPicked(new Set()); setReference('');
+      await Promise.all(['sales-to-settle', 'sales', 'sale'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
+    } catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(false);
+  }
+  return (
+    <div className="stack" style={{ gap: 12 }}>
+      <Alert kind="grey" icon="info">Sales recorded with "Later" (by voice or at the phone till) wait here until someone chooses how they were paid. They count as sales from the day they were made.</Alert>
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="tbl">
+          <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '34px 120px minmax(150px,1fr) minmax(180px,1.4fr) 130px 120px', minWidth: 760 }}>
+            <span /><span>Sale</span><span>Customer</span><span>Products</span><span>Recorded</span><span className="right">To settle</span>
+          </div>
+          {loading ? <SkeletonRows n={4} /> : !rows.length ? <div style={{ padding: 20 }}><Empty>Nothing to settle.</Empty></div> : rows.map((r) => (
+            <label key={r.id} className="tr click" style={{ gridTemplateColumns: '34px 120px minmax(150px,1fr) minmax(180px,1.4fr) 130px 120px', minWidth: 760 }}>
+              <input type="checkbox" checked={picked.has(r.id)} aria-label={`Settle ${r.number}`}
+                onChange={(e) => setPicked((s) => { const n = new Set(s); if (e.target.checked) n.add(r.id); else n.delete(r.id); return n; })} />
+              <span><b>{r.number}</b><span className="faint" style={{ display: 'block', fontSize: 11 }}>{r.channel === 'voice' ? 'by voice' : r.channel === 'phone' ? 'phone till' : r.channel}</span></span>
+              <span className="ellipsis">{r.customer_name || <span className="faint">Walk-in</span>}</span>
+              <span className="ellipsis muted" style={{ fontSize: 13 }}>{r.items}</span>
+              <span className="muted" style={{ fontSize: 12 }}>{when(r.created_at)}{r.recorded_by ? ` · ${r.recorded_by}` : ''}{r.location ? ` · ${r.location}` : ''}</span>
+              <span className="right num">{N2(r.balance)}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+      {rows.length > 0 && (
+        <div className="card card-pad stack" style={{ gap: 10 }}>
+          <div className="row wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
+            <Field label="How they paid" style={{ minWidth: 150 }}><select className="input" value={method} onChange={(e) => { setMethod(e.target.value as any); setAccount(''); }}>
+              <option value="cash">Cash</option><option value="transfer">Bank transfer</option><option value="pos">POS</option><option value="card">Card</option></select></Field>
+            <Field label={method === 'cash' ? 'Into which drawer' : 'Into which account'} style={{ minWidth: 220 }}>
+              <select className="input" value={account} onChange={(e) => setAccount(e.target.value)}>
+                <option value="">{method === 'cash' ? "The shift's drawer" : 'Choose'}</option>
+                {fits.map((a) => <option key={a.id} value={a.id}>{a.name}{a.bank_name ? ` · ${a.bank_name}` : ''}</option>)}</select></Field>
+            <Field label="Reference" style={{ minWidth: 160 }}><input className="input" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional" /></Field>
+            <button className="btn btn-primary" disabled={busy || !chosen.length || (method !== 'cash' && !account)} onClick={settle}>
+              {busy ? 'Settling…' : `Settle ${chosen.length || ''} ${chosen.length === 1 ? 'sale' : 'sales'}${chosen.length ? `, ${N2(total)}` : ''}`}</button>
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn btn-ghost btn-xs" onClick={() => setPicked(new Set(rows.map((r) => r.id)))}>Choose all</button>
+            {picked.size > 0 && <button className="btn btn-ghost btn-xs" onClick={() => setPicked(new Set())}>Clear</button>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PendingPayments({ rows }: { rows: any[] }) {
   const { data: inv } = useInventory();
   const toast = useToast();

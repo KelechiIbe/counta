@@ -9,6 +9,7 @@ import { catalogueText, CIT_MAP_SCHEMA, CIT_MAP_SYSTEM, cleanCitLines, type TbRo
 import { CAC_DOC_SCHEMA, CAC_DOC_SYSTEM, cacDocChecks, type Category, cleanCacDoc, cleanInsight, cleanNinSlip, INSIGHT_SYSTEM, insightPrompt, looseJson,
   NIN_SLIP_SCHEMA, NIN_SLIP_SYSTEM } from './kyc.ts';
 import { cleanProduct, PRODUCT_SCHEMA, PRODUCT_SYSTEM, validBarcode } from './product.ts';
+import { cleanSupplier, sha256hex, sniff, SUPPLIER_SCHEMA, supplierSystem } from './supplier.ts';
 import { accessProblem, CredentialError, fallbackModels, type GeminiConfig, geminiConfig, generateContent, quotaMessage, thinkingConfig } from './google.ts';
 
 let MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
@@ -37,7 +38,7 @@ async function paused(admin: SupabaseClient, orgId: string | null) {
   const { data } = await admin.rpc('svc_feature', { p_org: orgId, p_feature: 'ai_reading' });
   return data === false;
 }
-const PAUSED = { ok: false, reason: 'paused', error: 'AI reading is paused for this business by TaxStreem. Type the details in for now.' };
+const PAUSED = { ok: false, reason: 'paused', error: 'AI reading is off for this business (paused by TaxStreem, or not in its plan). Type the details in for now.' };
 const isUuid = (v: unknown) => typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v);
 
 const cors = {
@@ -61,7 +62,13 @@ const noThinking = new Set<string>();
 // search: true lets Gemini search Google (grounding); the answer then comes as JSON text, since older models do not
 // combine a response schema with tools, and the sources come back as grounding.
 async function gemini(system: string, parts: Part[], schema: unknown, temperature = 0.1,
-  opts: { thinking?: 'low'; timeoutMs?: number; search?: boolean } = {}): Promise<{ data: any; model: string; grounding?: any }> {
+  opts: { thinking?: 'low'; timeoutMs?: number; search?: boolean; org?: string | null; kind?: string } = {}): Promise<{ data: any; model: string; grounding?: any }> {
+  // A business's plan may limit documents read and questions answered each month: the database says whether this one fits.
+  const metered = opts.kind && READ_KINDS.has(opts.kind) ? 'ai_reads' : opts.kind && ASSISTANT_KINDS.has(opts.kind) ? 'assistant' : null;
+  if (metered && isUuid(opts.org)) {
+    const { data: ent } = await meterDb.rpc('svc_entitle', { p_org: opts.org, p_meter: metered });
+    if (ent && ent.ok === false) throw new Error(String(ent.message || 'Your plan has no room for this this month.'));
+  }
   let lastErr = '';
   const all = [MODEL, ...fallbackModels(CFG).filter((m) => m !== MODEL)];
   const ready = all.filter((m) => (resting.get(m) || 0) < Date.now());
@@ -100,11 +107,29 @@ async function gemini(system: string, parts: Part[], schema: unknown, temperatur
     const body = await res.json();
     const text = body?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || '';
     if (!text) throw new Error('Gemini returned no content' + (body?.promptFeedback?.blockReason ? ` (${body.promptFeedback.blockReason})` : ''));
+    meter(opts.org, opts.kind || 'other', model, body, Boolean(opts.search));
     if (opts.search) return { data: looseJson(text), model, grounding: body?.candidates?.[0]?.groundingMetadata || null };
     return { data: JSON.parse(text), model };
   }
   throw new Error(lastErr || 'No Gemini model available');
 }
+
+// Every Gemini call is counted for TaxStreem's cost view: the business, what it was for, the model and the tokens.
+// Best effort: a call is never held up or failed by the count.
+const meterDb = createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false } });
+// The kinds the plans' AI quotas count (private.ai_read_kinds and private.ai_assistant_kinds in the database).
+const READ_KINDS = new Set(['read_invoice', 'read_statement', 'read_purchase_invoice', 'read_cac_document', 'read_nin_slip', 'read_product', 'supplier_invoice', 'extract_rows']);
+const ASSISTANT_KINDS = new Set(['ask', 'chat', 'check', 'business_insights']);
+function meter(org: string | null | undefined, kind: string, model: string, body: any, grounded = false) {
+  const u = body?.usageMetadata || {};
+  const tin = Number(u.promptTokenCount) || 0, tout = (Number(u.candidatesTokenCount) || 0) + (Number(u.thoughtsTokenCount) || 0);
+  if (!tin && !tout) return;
+  // Gemini 3 bills each search the model ran; older models one per grounded prompt.
+  const searches = Array.isArray(body?.candidates?.[0]?.groundingMetadata?.webSearchQueries) ? body.candidates[0].groundingMetadata.webSearchQueries.length : (grounded ? 1 : 0);
+  meterDb.rpc('svc_usage', { p: { org_id: isUuid(org) ? org : null, service: 'gemini', kind, item: model, qty_in: tin, qty_out: tout, searches } })
+    .then(() => {}, () => {});
+}
+const orgOf = (b: any) => (isUuid(b?.org_id) ? String(b.org_id) : null);
 
 const S = {
   str: { type: 'STRING' }, num: { type: 'NUMBER' }, int: { type: 'INTEGER' }, bool: { type: 'BOOLEAN' },
@@ -197,7 +222,7 @@ KNOWN VENDORS: ${JSON.stringify(vendors)}`;
 
   let out: any; let model = MODEL;
   try {
-    const res = await gemini(system, [{ text: 'Read this invoice.' }, { inlineData: { mimeType: mime, data: encodeBase64(bytes) } }], INVOICE_SCHEMA);
+    const res = await gemini(system, [{ text: 'Read this invoice.' }, { inlineData: { mimeType: mime, data: encodeBase64(bytes) } }], INVOICE_SCHEMA, 0.1, { org: r.org_id, kind: 'read_invoice' });
     out = res.data; model = res.model;
   } catch (e) {
     return fail('Could not read the invoice: ' + (e as Error).message);
@@ -274,7 +299,7 @@ async function ask(body: any) {
   };
   try {
     const { data, model } = await gemini(MARTINA + NL + 'Pick cta_route for the page where the owner acts on your answer. Use action draft_po (with the item id) only when they ask to order or reorder a specific item.',
-      [{ text: 'SNAPSHOT:' + NL + JSON.stringify(body.context).slice(0, 120000) + NL + NL + 'QUESTION: ' + String(body.question || '').slice(0, 500) }], schema, 0.2);
+      [{ text: 'SNAPSHOT:' + NL + JSON.stringify(body.context).slice(0, 120000) + NL + NL + 'QUESTION: ' + String(body.question || '').slice(0, 500) }], schema, 0.2, { org: orgOf(body), kind: 'ask' });
     return json({ ok: true, answer: data, model });
   } catch (e) {
     return json({ ok: false, reason: 'error', error: (e as Error).message });
@@ -300,7 +325,7 @@ async function chat(body: any) {
     const { data, model } = await gemini(MARTINA + `
 You are chatting on a phone, WhatsApp-style. Keep replies to 1-3 short sentences. Offer up to 3 quick_replies the owner might tap next.
 When the owner asks about an item running low or asks to reorder, set action.type = "offer_po" with the item id, a sensible qty_purchase_units (use the reorder suggestion when present) and the preferred vendor id if known, and ask them to confirm. Do not claim anything was sent; the app handles approval.`,
-      [{ text: 'SNAPSHOT:' + NL + JSON.stringify(body.context).slice(0, 100000) + NL + NL + 'CONVERSATION:' + NL + history }], schema, 0.3);
+      [{ text: 'SNAPSHOT:' + NL + JSON.stringify(body.context).slice(0, 100000) + NL + NL + 'CONVERSATION:' + NL + history }], schema, 0.3, { org: orgOf(body), kind: 'chat' });
     return json({ ok: true, ...data, model });
   } catch (e) {
     return json({ ok: false, reason: 'error', error: (e as Error).message });
@@ -318,19 +343,36 @@ async function voice(body: any) {
       transcript: S.str, language: S.str,
       movement: { type: 'STRING', enum: ['sale', 'receipt', 'unknown'] },
       item_id: S.nstr, qty: S.nnum, unit_kind: { type: 'STRING', enum: ['purchase', 'selling'] }, location_name: S.nstr,
+      sales: {
+        type: 'ARRAY', description: 'Every sale in the note, one per customer or separate sale, in the order said',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            customer_name: { type: 'STRING', nullable: true, description: 'The buyer\'s name only when it is said' },
+            payment: { type: 'STRING', enum: ['cash', 'transfer', 'pos', 'card', 'later', 'unknown'] },
+            lines: { type: 'ARRAY', items: { type: 'OBJECT', properties: { item_id: S.str, qty: S.num, unit_kind: { type: 'STRING', enum: ['purchase', 'selling'] } },
+              required: ['item_id', 'qty', 'unit_kind'] } },
+          },
+          required: ['payment', 'lines'],
+        },
+      },
       confidence: S.int, readback: { type: 'STRING', description: 'One plain English sentence confirming what will be recorded, with naira value if known' },
       problem: { type: 'STRING', nullable: true, description: 'Why it cannot be recorded, if so' },
     },
     required: ['transcript', 'movement', 'confidence', 'readback'],
   };
   try {
-    const { data, model } = await gemini(`You transcribe short voice notes from shop staff in Nigeria (Nigerian Pidgin, Yoruba, Hausa, Igbo or English) and turn them into one stock movement.
+    const { data, model } = await gemini(`You transcribe short voice notes from shop staff in Nigeria (Nigerian Pidgin, Yoruba, Hausa, Igbo or English) and turn them into stock movements.
 "I don sell three cartons of Indomie" means a SALE of 3 purchase units (cartons) of the matching Indomie item. "We collect 5 bag of rice" is a RECEIPT.
 Match the item from ITEMS by meaning. qty is a number; unit_kind "purchase" for cartons/bags/bales/crates, "selling" for packs/tins/bottles/pieces.
+A note may hold several sales: "Mama Bisi buy two Indomie and one Coke, she pay transfer; Chidi take one carton semo, e go pay later" is two sales.
+For a sale, list every sale in sales, each with all its products in lines, the buyer's name in customer_name only when said (never invent one),
+and payment: cash, transfer, pos, card, later (on credit, "e go pay", "I go collect am later"), or unknown when the note does not say.
+Also fill item_id, qty and unit_kind with the first product of the first sale.
 If the location is mentioned, return its name exactly as in LOCATIONS. If anything essential is missing, set movement "unknown" and explain in problem.
 ITEMS: ${JSON.stringify(body.items || []).slice(0, 60000)}
 LOCATIONS: ${JSON.stringify(body.locations || [])}`,
-      [{ text: 'Transcribe and interpret this voice note.' }, { inlineData: { mimeType: body.mime || 'audio/webm', data: body.audio_base64 } }], schema, 0.1);
+      [{ text: 'Transcribe and interpret this voice note.' }, { inlineData: { mimeType: body.mime || 'audio/webm', data: body.audio_base64 } }], schema, 0.1, { org: orgOf(body), kind: 'voice' });
     return json({ ok: true, ...data, model });
   } catch (e) {
     return json({ ok: false, reason: 'error', error: (e as Error).message });
@@ -380,7 +422,7 @@ FIELDS: ${JSON.stringify(fields)}
 BRANCHES: ${JSON.stringify(body.locations || [])}
 INDUSTRY: ${String(body.industry || 'retail')}`,
       [{ text: 'HEADERS (index: name):\n' + headers.map((h, i) => `${i}: ${h}`).join('\n') + '\n\nSAMPLE ROWS:\n' + samples.map((r) => JSON.stringify(r)).join('\n') }],
-      schema, 0.1, { thinking: 'low' });
+      schema, 0.1, { thinking: 'low', org: orgOf(body), kind: 'map_columns' });
     return json({ ok: true, ...data, model });
   } catch (e) {
     return json({ ok: false, reason: 'error', error: (e as Error).message });
@@ -423,7 +465,7 @@ Always convert quantities, costs and prices to SELLING units using the pack size
 Use item_type only when obvious: raw_material, packaging, consumable, spare_part, chemical, finished_good or merchandise.
 attributes may only use these keys: ${JSON.stringify(attrKeys)}. Return one item per input line, with its row number. Skip lines that are headings or totals.
 INDUSTRY: ${String(body.industry || 'retail')}`,
-      [{ text: lines.map((l) => `${l.row}: ${l.text}`).join('\n') }], schema, 0.1, { thinking: 'low' });
+      [{ text: lines.map((l) => `${l.row}: ${l.text}`).join('\n') }], schema, 0.1, { thinking: 'low', org: orgOf(body), kind: 'extract_rows' });
     const items = (data.items || []).map((it: any) => ({
       ...it, attributes: Object.fromEntries((it.attributes || []).filter((a: any) => attrKeys.includes(a.key)).map((a: any) => [a.key, a.value])),
     }));
@@ -498,10 +540,10 @@ ${first > 1 ? `These are pages from page ${first} on: the statement's header may
       || ls.some((l: any) => /[\r\n]|\s\|\s/.test(`${l?.reference ?? ''}${l?.date ?? ''}`) || String(l?.reference ?? '').length > 80);
   };
   try {
-    let { data, model } = await gemini(system, parts, STATEMENT_SCHEMA, 0, { thinking: 'low', timeoutMs: 80_000 });
+    let { data, model } = await gemini(system, parts, STATEMENT_SCHEMA, 0, { thinking: 'low', timeoutMs: 80_000, org: orgOf(body), kind: 'read_statement' });
     if (garbled(data)) {
       try {
-        const again = await gemini(system, parts, STATEMENT_SCHEMA, 0, { thinking: 'low', timeoutMs: 80_000 });
+        const again = await gemini(system, parts, STATEMENT_SCHEMA, 0, { thinking: 'low', timeoutMs: 80_000, org: orgOf(body), kind: 'read_statement' });
         if (!garbled(again.data)) ({ data, model } = again);
       } catch { /* the first answer stands, and the checks in the app show what is wrong with it */ }
     }
@@ -541,7 +583,7 @@ async function classifyVat(admin: SupabaseClient, items: VatItem[]): Promise<{ a
   const answers: VatAnswer[] = [];
   for (let i = 0; i < items.length; i += 30) {
     const chunk = items.slice(i, i + 30);
-    const { data, model } = await gemini(VAT_SYSTEM, [{ text: vatPrompt(chunk) }], VAT_SCHEMA, 0.1, { thinking: 'low' });
+    const { data, model } = await gemini(VAT_SYSTEM, [{ text: vatPrompt(chunk) }], VAT_SCHEMA, 0.1, { thinking: 'low', org: chunk[0]?.org_id, kind: 'vat_classify' });
     answers.push(...cleanVat(chunk, data?.results || [], 'gemini', model));
   }
   return { answers };
@@ -636,7 +678,7 @@ Rules:
 - Never invent a figure that is not on the document.`;
   let out: any, model = MODEL;
   try {
-    const res = await gemini(system, [{ text: 'Read this purchase invoice.' }, { inlineData: { mimeType: mime, data: encodeBase64(bytes) } }], PURCHASE_SCHEMA, 0.1, { thinking: 'low' });
+    const res = await gemini(system, [{ text: 'Read this purchase invoice.' }, { inlineData: { mimeType: mime, data: encodeBase64(bytes) } }], PURCHASE_SCHEMA, 0.1, { thinking: 'low', org: orgId, kind: 'read_purchase_invoice' });
     out = res.data; model = res.model;
   } catch (e) {
     if (e instanceof CredentialError) return json(notConfigured());
@@ -705,7 +747,7 @@ async function mapAccounts(sb: SupabaseClient, body: any) {
   for (let i = 0; i < todo.length; i += 80) {
     const chunkIds = new Set(todo.slice(i, i + 80).map((a: any) => a.id));
     const chunkRows = rows.split(NL).filter((r: string) => chunkIds.has(JSON.parse(r).id)).join(NL);
-    const out = await gemini(MAP_SYSTEM, [{ text: prompt.replace(rows, () => chunkRows) }], MAP_SCHEMA, 0.1, { thinking: 'low' });
+    const out = await gemini(MAP_SYSTEM, [{ text: prompt.replace(rows, () => chunkRows) }], MAP_SCHEMA, 0.1, { thinking: 'low', org: mig.org_id, kind: 'map_accounts' });
     model = out.model;
     results.push(...((out.data?.results || []) as any[]).filter((r) => chunkIds.has(r.id)));
   }
@@ -741,7 +783,7 @@ async function citMap(sb: SupabaseClient, body: any) {
   } else {
     return json({ ok: false, error: 'Upload the audited financial statements or a trial balance.' });
   }
-  const { data, model } = await gemini(CIT_MAP_SYSTEM, parts, CIT_MAP_SCHEMA, 0.1, { timeoutMs: 120_000 });
+  const { data, model } = await gemini(CIT_MAP_SYSTEM, parts, CIT_MAP_SCHEMA, 0.1, { timeoutMs: 120_000, org: orgId, kind: 'cit_map' });
   const { lines: placed, dropped } = cleanCitLines(data?.lines || [], lines);
   if (!placed.length) return json({ ok: false, error: 'No figures could be read from it. Check it is the full statements for ' + year + '.', warnings: data?.warnings || [] });
   const totals = data?.totals || {};
@@ -769,7 +811,7 @@ async function businessInsights(sb: SupabaseClient, admin: SupabaseClient, body:
   const list = (cats || []) as Category[];
   let found: any; let model = '';
   try {
-    const r = await gemini(INSIGHT_SYSTEM, [{ text: insightPrompt(k.business, list) }], null, 0.3, { search: true, timeoutMs: 60_000 });
+    const r = await gemini(INSIGHT_SYSTEM, [{ text: insightPrompt(k.business, list) }], null, 0.3, { search: true, timeoutMs: 60_000, org: orgId, kind: 'business_insights' });
     found = cleanInsight(r.data, list, r.grounding); model = r.model;
   } catch (e) {
     if (e instanceof CredentialError) throw e;
@@ -797,7 +839,7 @@ async function readCacDocument(sb: SupabaseClient, admin: SupabaseClient, body: 
   const mime = blob.type && blob.type !== 'application/octet-stream' ? blob.type : path.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
   if (!/^(application\/pdf|image\/(jpeg|png|webp))$/.test(mime)) return json({ ok: false, error: 'Upload the document as a PDF or a picture.' });
   const { data, model } = await gemini(CAC_DOC_SYSTEM, [{ text: `The person added this as: ${k.doc.kind}.` },
-    { inlineData: { mimeType: mime, data: encodeBase64(new Uint8Array(await blob.arrayBuffer())) } }], CAC_DOC_SCHEMA, 0.1, { timeoutMs: 90_000 });
+    { inlineData: { mimeType: mime, data: encodeBase64(new Uint8Array(await blob.arrayBuffer())) } }], CAC_DOC_SCHEMA, 0.1, { timeoutMs: 90_000, org: orgId, kind: 'read_cac_document' });
   const extract = cleanCacDoc(data);
   const checks = cacDocChecks(extract, k.business, String(k.doc.kind || 'other'));
   const { data: kyc, error: e2 } = await admin.rpc('svc_kyc_store', { p_user: userId, p_part: 'doc',
@@ -824,7 +866,7 @@ async function readNinSlip(sb: SupabaseClient, admin: SupabaseClient, body: any,
   const mime = blob.type && blob.type !== 'application/octet-stream' ? blob.type : path.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
   if (!/^(application\/pdf|image\/(jpeg|png|webp))$/.test(mime)) return json({ ok: false, error: 'Add the NIN slip as a PDF or a photo.' });
   const { data } = await gemini(NIN_SLIP_SYSTEM, [{ text: 'Read this identity document.' },
-    { inlineData: { mimeType: mime, data: encodeBase64(new Uint8Array(await blob.arrayBuffer())) } }], NIN_SLIP_SCHEMA, 0, { timeoutMs: 60_000 });
+    { inlineData: { mimeType: mime, data: encodeBase64(new Uint8Array(await blob.arrayBuffer())) } }], NIN_SLIP_SCHEMA, 0, { timeoutMs: 60_000, org: orgId, kind: 'read_nin_slip' });
   const extract = cleanNinSlip(data);
   const { data: identity, error: e2 } = await admin.rpc('svc_identity_slip', { p_user: userId, p_org: orgId, p_extract: extract });
   if (e2) return json({ ok: false, error: e2.message });
@@ -859,6 +901,114 @@ async function tellReviewers(admin: SupabaseClient, orgId: string) {
   } catch (e) { console.warn('nin review email', (e as Error).message); }
 }
 
+// ---------------------------------------------------------------- supplier invoices
+// From the invoice portal (a supplier, no sign-in) or uploaded by someone in the business. Counta reads the invoice, asks
+// the bank whose name the account is in, writes what it read (the database finds or adds the supplier, writes a draft bill
+// and checks the invoice), checks a new Tax ID with the NRS, and then tells the supplier what is wrong.
+async function hookSecret(admin: SupabaseClient) {
+  const env = (Deno.env.get('PUSH_HOOK_SECRET') || '').trim();
+  if (env) return env;
+  const { data } = await admin.rpc('app_secret', { p_name: 'PUSH_HOOK_SECRET' });
+  return typeof data === 'string' ? data.trim() : '';
+}
+async function callHook(admin: SupabaseClient, fn: string, body: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
+  const key = await hookSecret(admin);
+  if (!key) return null;
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/${fn}`, { method: 'POST', signal: AbortSignal.timeout(timeoutMs),
+      headers: { 'Content-Type': 'application/json', 'x-counta-hook': key, Authorization: `Bearer ${SERVICE}` }, body: JSON.stringify(body) });
+    return await r.json().catch(() => null);
+  } catch (e) { console.warn('hook', fn, (e as Error).message); return null; }
+}
+const MAX_INVOICE = 8 * 1024 * 1024;
+async function readSupplier(admin: SupabaseClient, open: any, bytes: Uint8Array, mime: string) {
+  const sha = await sha256hex(bytes);
+  const fileMeta = { path: open.path, sha256: sha, file_size: bytes.length, mime };
+  const finish = async (p: Record<string, unknown>) => {
+    const { data, error } = await admin.rpc('svc_si_read', { p_id: open.id, p: { ...fileMeta, ...p } });
+    if (error) throw new Error(error.message);
+    return data;
+  };
+  if (!aiOn()) return await finish({ error: 'Counta could not read it: AI reading is not switched on yet. Enter the bill by hand from the invoice.' });
+  if (await paused(admin, open.org_id)) return await finish({ error: 'AI reading is paused for this business. Enter the bill by hand from the invoice.' });
+  const { data: org } = await admin.from('orgs').select('name, tin').eq('id', open.org_id).maybeSingle();
+  let x: any, model = MODEL;
+  try {
+    const r = await gemini(supplierSystem({ name: org?.name || open.business, tin: org?.tin }, open.accounts || [], open.wht || []),
+      [{ text: 'Read this invoice.' }, { inlineData: { mimeType: mime, data: encodeBase64(bytes) } }], SUPPLIER_SCHEMA, 0,
+      { thinking: 'low', timeoutMs: 80_000, org: open.org_id, kind: 'supplier_invoice' });
+    x = cleanSupplier(r.data); model = r.model;
+  } catch (e) {
+    if (e instanceof CredentialError) return await finish({ error: 'Counta could not read it just now (AI reading is not available). Enter the bill by hand from the invoice.' });
+    return await finish({ error: 'Counta could not read the invoice: ' + (e as Error).message });
+  }
+  // Whose name the bank holds the account in, when the invoice gives one.
+  let resolved: string | null = null;
+  const acct = String(x.bank?.account_number || '').replace(/\D/g, '');
+  if (/^\d{10}$/.test(acct)) {
+    const r = await callHook(admin, 'payments', { action: 'resolve_hook', account_number: acct, bank_name: x.bank?.bank_name || '' });
+    if (r?.ok && r.account_name) resolved = String(r.account_name).slice(0, 160);
+  }
+  const read = await finish({ extract: x, model, bank_resolved_name: resolved });
+  // A Tax ID Counta has not checked yet is checked with the NRS before the checks are final.
+  if (read?.tin_check) await callHook(admin, 'mono', { action: 'verify_vendor_tin', org_id: open.org_id, vendor_id: read.tin_check }, 25_000);
+  const { data: done, error } = await admin.rpc('svc_si_finish', { p_id: open.id });
+  if (error) throw new Error(error.message);
+  return done;
+}
+
+// What the supplier is told on the page: the problems Counta found that are theirs to fix.
+const supplierView = (si: any) => ({ number: si?.number, status: si?.status, business: si?.business,
+  issues: (Array.isArray(si?.checks) ? si.checks : []).filter((c: any) => c.notify && c.severity !== 'info').map((c: any) => String(c.text)),
+  emailed: si?.notice_status === 'sent', failed: si?.status === 'failed' });
+
+async function portalUpload(admin: SupabaseClient, req: Request, body: any) {
+  const raw = String(body.file || '');
+  if (!raw) return json({ ok: false, error: 'Choose the invoice file.' }, 400);
+  if (raw.length > Math.ceil(MAX_INVOICE / 3) * 4 + 8) return json({ ok: false, error: 'The file is larger than 8 MB. Send a smaller PDF or a photo.' }, 413);
+  let bytes: Uint8Array;
+  try { bytes = Uint8Array.from(atob(raw.replace(/^data:[^,]+,/, '')), (c) => c.charCodeAt(0)); } catch { return json({ ok: false, error: 'The file could not be read.' }, 400); }
+  const mime = sniff(bytes);
+  if (!mime) return json({ ok: false, error: 'Send the invoice as a PDF or a photo (JPEG, PNG or WebP).' }, 400);
+  if (bytes.length > MAX_INVOICE) return json({ ok: false, error: 'The file is larger than 8 MB. Send a smaller PDF or a photo.' }, 413);
+  const ip = (req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip') || '').split(',')[0].trim();
+  const ext = mime === 'application/pdf' ? 'pdf' : mime.split('/')[1].replace('jpeg', 'jpg');
+  const { data: open, error } = await admin.rpc('svc_si_open', { p: { source: 'portal', token: String(body.token || ''), submitter: body.submitter || {},
+    mime, file_name: String(body.file_name || '').slice(0, 160), file_size: bytes.length, sha256: await sha256hex(bytes),
+    ip_hash: ip ? (await sha256hex(ip + SERVICE.slice(-16))).slice(0, 32) : null } });
+  if (error) return json({ ok: false, error: error.message });
+  const path = `${open.org_id}/bills/supplier-${open.id}.${ext}`;
+  const up = await admin.storage.from('documents').upload(path, bytes, { contentType: mime, upsert: false });
+  if (up.error) return json({ ok: false, error: 'The file could not be saved just now. Try again.' }, 500);
+  open.path = path;
+  try {
+    const si = await readSupplier(admin, open, bytes, mime);
+    return json({ ok: true, invoice: { ...supplierView(si), business: open.business } });
+  } catch (e) {
+    console.error('portal invoice', (e as Error).message);
+    return json({ ok: true, invoice: { number: open.number, business: open.business, status: 'reading', issues: [], emailed: false } });
+  }
+}
+
+async function readSupplierUpload(sb: SupabaseClient, admin: SupabaseClient, body: any, userId: string) {
+  const orgId = String(body.org_id || ''), path = String(body.path || '');
+  if (!isUuid(orgId) || !path.startsWith(orgId + '/') || path.includes('..')) return json({ ok: false, error: 'Upload the invoice first.' }, 400);
+  const { data: me } = await sb.from('members').select('id').eq('org_id', orgId).eq('user_id', userId).eq('status', 'active').maybeSingle();
+  if (!me) return json({ ok: false, error: 'You are not a member of this business.' }, 403);
+  // Downloaded as the person: storage rules decide whether they may read it.
+  const { data: blob, error: dErr } = await sb.storage.from('documents').download(path);
+  if (dErr || !blob) return json({ ok: false, error: 'Could not open the uploaded file.' });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (bytes.length > MAX_INVOICE) return json({ ok: false, error: 'The file is larger than 8 MB. Upload a smaller PDF or a photo.' });
+  const mime = sniff(bytes);
+  if (!mime) return json({ ok: false, error: 'Upload the invoice as a PDF or a photo (JPEG, PNG or WebP).' });
+  const { data: open, error } = await admin.rpc('svc_si_open', { p: { source: 'upload', org_id: orgId, member_id: me.id, path, mime,
+    file_name: String(body.file_name || '').slice(0, 160), file_size: bytes.length, sha256: await sha256hex(bytes) } });
+  if (error) return json({ ok: false, error: error.message });
+  const si = await readSupplier(admin, open, bytes, mime);
+  return json({ ok: true, invoice: si });
+}
+
 // A product from photos of its front and back, for someone who may add products to the business.
 async function readProduct(sb: SupabaseClient, admin: SupabaseClient, body: any, userId: string) {
   if (!aiOn()) return json(notConfigured());
@@ -877,7 +1027,7 @@ async function readProduct(sb: SupabaseClient, admin: SupabaseClient, body: any,
     images.length > 1 ? 'The first photo is the front of the product, the second the back.' : 'One photo of the product.'].join(NL) }];
   for (const im of images) parts.push({ inlineData: { mimeType: im.mime, data: im.data } });
   try {
-    const { data, model } = await gemini(PRODUCT_SYSTEM, parts, PRODUCT_SCHEMA, 0.1, { thinking: 'low', timeoutMs: 45_000 });
+    const { data, model } = await gemini(PRODUCT_SYSTEM, parts, PRODUCT_SCHEMA, 0.1, { thinking: 'low', timeoutMs: 45_000, org: orgId, kind: 'read_product' });
     const product = cleanProduct(data, device, categories);
     if (!product.name) return json({ ok: false, error: 'The photo did not show the product name clearly. Take it again closer, or type it in.' });
     return json({ ok: true, product, model });
@@ -919,10 +1069,15 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: (e as Error).message }, 500);
     }
   }
-  const { data: u } = await sb.auth.getUser();
-  if (!u?.user) return json({ ok: false, error: 'Sign in first.' }, 401);
   let body: any;
   try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
+  // The invoice portal: a supplier with the business's link, no account.
+  if (body?.action === 'portal_upload') {
+    try { await loadKeys(admin); return await portalUpload(admin, req, body); }
+    catch (e) { return json({ ok: false, error: (e as Error).message }, 500); }
+  }
+  const { data: u } = await sb.auth.getUser();
+  if (!u?.user) return json({ ok: false, error: 'Sign in first.' }, 401);
   try {
     await loadKeys(admin);
     // Everything but the status and the connection check waits while TaxStreem has paused AI reading.
@@ -939,7 +1094,7 @@ Deno.serve(async (req) => {
         if (!aiOn()) return json(notConfigured());
         const t0 = Date.now();
         try {
-          const { data, model } = await gemini('Answer in JSON.', [{ text: 'Reply with ok set to true.' }], { type: 'OBJECT', properties: { ok: S.bool }, required: ['ok'] }, 0);
+          const { data, model } = await gemini('Answer in JSON.', [{ text: 'Reply with ok set to true.' }], { type: 'OBJECT', properties: { ok: S.bool }, required: ['ok'] }, 0, { kind: 'check' });
           return json({ ok: data?.ok === true, model, auth: CFG.mode, location: CFG.mode === 'vertex' ? CFG.location : undefined, ms: Date.now() - t0 });
         } catch (e) {
           return json({ ok: false, reason: 'error', error: (e as Error).message, auth: CFG.mode });
@@ -969,6 +1124,7 @@ Deno.serve(async (req) => {
       case 'read_cac_document': return await readCacDocument(sb, admin, body, u.user.id);
       case 'read_nin_slip': return await readNinSlip(sb, admin, body, u.user.id);
       case 'read_product': return await readProduct(sb, admin, body, u.user.id);
+      case 'read_supplier_invoice': return await readSupplierUpload(sb, admin, body, u.user.id);
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }
   } catch (e) {

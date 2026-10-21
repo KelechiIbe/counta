@@ -24,6 +24,7 @@ const Migrate = lazy(() => import('./pages/inventory/Migrate'));
 const Assistant = lazy(() => import('./pages/Assistant'));
 const Onboard = lazy(() => import('./pages/onboarding/Onboard'));
 const Settings = lazy(() => import('./pages/Settings'));
+const Subscription = lazy(() => import('./pages/settings/Subscription'));
 const Join = lazy(() => import('./pages/auth/Join'));
 const AdminApp = lazy(() => import('./admin/AdminApp'));
 
@@ -51,6 +52,7 @@ const Tax = lazy(() => import('./pages/accounting/Tax'));
 const PublicDoc = lazy(() => import('./pages/public/Public').then((m) => ({ default: m.PublicDoc })));
 const ShopPage = lazy(() => import('./pages/public/Public').then((m) => ({ default: m.ShopPage })));
 const Sso = lazy(() => import('./pages/public/Sso'));
+const InvoicePortal = lazy(() => import('./pages/public/InvoicePortal'));
 
 function Loading() {
   return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><Spinner /></div>;
@@ -142,6 +144,7 @@ export default function App() {
       <Route path="/onboarding" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><Onboard /></Suspense></RequireAuth>} />
       <Route path="/p/:token" element={<Suspense fallback={<Loading />}><PublicDoc /></Suspense>} />
       <Route path="/shop/:slug" element={<Suspense fallback={<Loading />}><ShopPage /></Suspense>} />
+      <Route path="/v/:token" element={<Suspense fallback={<Loading />}><InvoicePortal /></Suspense>} />
       <Route path="/sso" element={<Suspense fallback={<Loading />}><Sso /></Suspense>} />
       <Route path="/m/*" element={<RequireAuth><Suspense fallback={<Loading />}><MobileApp /></Suspense></RequireAuth>} />
       <Route element={<RequireAuth><AppShell /></RequireAuth>}>
@@ -185,6 +188,7 @@ export default function App() {
         <Route path="/inventory/migrate" element={<Migrate />} />
         <Route path="/assistant" element={<Assistant />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/settings/subscription" element={<Subscription />} />
         </Route>
       </Route>
       <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />

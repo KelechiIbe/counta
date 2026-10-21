@@ -15,7 +15,12 @@ import { enqueue } from './queue';
 import { toWav } from '../lib/audio';
 import { announce, browserSay } from '../lib/speech';
 
-type Heard = { transcript: string; movement: 'sale' | 'receipt' | 'unknown'; item_id: string | null; qty: number | null; unit_kind?: 'purchase' | 'selling'; location_name?: string | null; confidence: number; readback: string; problem?: string | null };
+type Pay = 'cash' | 'transfer' | 'pos' | 'card' | 'later';
+type HeardSale = { customer_name?: string | null; payment: Pay | 'unknown'; lines: { item_id: string; qty: number; unit_kind: 'purchase' | 'selling' }[] };
+type Heard = { transcript: string; movement: 'sale' | 'receipt' | 'unknown'; item_id: string | null; qty: number | null; unit_kind?: 'purchase' | 'selling'; location_name?: string | null; confidence: number; readback: string; problem?: string | null; sales?: HeardSale[] };
+// A sale as the person checks it before recording: the products Counta matched, the customer's name and how they paid.
+type Draft = { key: string; customer: string; pay: Pay; lines: { key: string; item: Item; qty: number; unit_kind: 'purchase' | 'selling' }[] };
+const PAYS: [Pay, string][] = [['cash', 'Cash'], ['transfer', 'Transfer'], ['pos', 'POS'], ['card', 'Card'], ['later', 'Later']];
 
 function pickMime(): string {
   const M: any = (window as any).MediaRecorder;
@@ -43,6 +48,7 @@ export default function SellScreen() {
   const [manual, setManual] = useState<Item | null>(null);
   const [fix, setFix] = useState(false);
   const [doneMsg, setDoneMsg] = useState('');
+  const [drafts, setDrafts] = useState<Draft[]>([]);
   const rec = useRef<{ mr: MediaRecorder; chunks: Blob[]; stream: MediaStream; timer: number } | null>(null);
   useEffect(() => () => { rec.current?.stream.getTracks().forEach((t) => t.stop()); window.clearTimeout(rec.current?.timer); }, []);
   if (!inv) return null;
@@ -81,6 +87,14 @@ export default function SellScreen() {
         locations: inv!.locations.map((l) => l.name),
       });
       if (!r.ok) { setErr(r.error || 'Could not understand that. Try again or record it by hand.'); setStage('idle'); return; }
+      // Several sales come back as a list; products Counta cannot find in the business are left out. A way of paying not said is
+      // left for later, to be chosen in Sales.
+      const ds: Draft[] = (r.movement === 'sale' && Array.isArray(r.sales) ? r.sales : []).map((x) => ({
+        key: crypto.randomUUID(), customer: String(x.customer_name || '').trim(), pay: (PAYS.some((p) => p[0] === x.payment) ? x.payment : 'later') as Pay,
+        lines: (x.lines || []).flatMap((l) => { const it = inv!.items.find((i) => i.id === l.item_id); return it && Number(l.qty) > 0
+          ? [{ key: crypto.randomUUID(), item: it, qty: Number(l.qty), unit_kind: (l.unit_kind === 'purchase' ? 'purchase' : 'selling') as 'purchase' | 'selling' }] : []; }),
+      })).filter((d) => d.lines.length > 0);
+      setDrafts(ds);
       setHeard(r); setStage('heard');
     } catch (e: any) { setErr(e.message); setStage('idle'); }
   }
@@ -97,7 +111,28 @@ export default function SellScreen() {
     setDoneMsg(`"${line}" Stock updated${pending ? '; the owner will review it' : ''}.`);
     setStage('done'); setRetries(0);
   }
-  const reset = () => { setStage('idle'); setHeard(null); setErr(null); setManual(null); setFix(false); };
+  const reset = () => { setStage('idle'); setHeard(null); setErr(null); setManual(null); setFix(false); setDrafts([]); };
+  // Every sale in the note, recorded together; each posts on its own, in order, from this phone's queue.
+  async function recordAll() {
+    if (!orgId || !drafts.length) return;
+    const lineSu = (l: Draft['lines'][number]) => l.qty * (l.unit_kind === 'purchase' ? l.item.pack_size : 1);
+    for (const d of drafts) {
+      const total = d.lines.reduce((a, l) => a + lineSu(l) * Number(l.item.price), 0);
+      await enqueue({
+        org: orgId, kind: 'quick_sale', label: d.customer ? `Voice sale to ${d.customer}` : 'Voice sale', author: me.display_name,
+        detail: `${d.lines.map((l) => `${num(l.qty)} ${l.unit_kind === 'purchase' ? l.item.purchase_unit.toLowerCase() : l.item.selling_unit} ${l.item.name}`).join(', ')} · ${N(total)} · ${PAYS.find((p) => p[0] === d.pay)![1]}`,
+        payload: { location_id: hereId, pay: d.pay, customer_name: d.customer || null, voice: true, voice_clean: retries === 0, note: heard?.transcript || null,
+          lines: d.lines.map((l) => ({ item_id: l.item.id, qty: l.qty, unit: l.unit_kind })) },
+      });
+    }
+    const total = drafts.reduce((a, d) => a + d.lines.reduce((b, l) => b + lineSu(l) * Number(l.item.price), 0), 0);
+    const line = heard?.readback || `${drafts.length} sale${drafts.length === 1 ? '' : 's'} recorded, ${N(total)}.`;
+    browserSay(line);
+    const later = drafts.filter((d) => d.pay === 'later').length;
+    setDoneMsg(`"${line}" ${drafts.length} sale${drafts.length === 1 ? '' : 's'}, ${N(total)}.${later ? ` ${later} to settle later in Sales, To settle.` : ''}${pending ? ' The owner will review them.' : ''}`);
+    setStage('done'); setRetries(0); setDrafts([]);
+  }
+  const multi = stage === 'heard' && heard?.movement === 'sale' && drafts.length > 0 && (drafts.length > 1 || drafts[0].lines.length > 1 || !!drafts[0].customer || drafts[0].pay !== 'later');
 
   if (stage === 'done') return <><MTop title="Talk to record" right={<BranchChip />} /><QueueBanner /><Done title="Recorded" body={doneMsg} action="Record another" onAction={reset} /></>;
   return (
@@ -105,7 +140,41 @@ export default function SellScreen() {
       <MTop title="Talk to record" right={<BranchChip />} />
       <QueueBanner />
       <div className="m-pad stack" style={{ gap: 16, flex: 1 }}>
-        {stage === 'heard' && heard ? (
+        {multi && heard ? (
+          <div className="stack rise" style={{ gap: 12 }}>
+            <div className="muted" style={{ fontSize: 12 }}>I heard</div>
+            <div style={{ fontSize: 15, fontStyle: 'italic', background: '#FAFAFA', borderRadius: 12, padding: 12 }}>"{heard.transcript}"</div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{drafts.length === 1 ? 'One sale' : `${drafts.length} sales`}. Check them, then record.</div>
+            {drafts.map((d, i) => (
+              <div key={d.key} className="m-card stack" style={{ gap: 8, padding: 12 }}>
+                <div className="row" style={{ gap: 8 }}>
+                  <input className="input input-sm grow" value={d.customer} onChange={(e) => setDrafts((ds) => ds.map((x) => (x.key === d.key ? { ...x, customer: e.target.value } : x)))}
+                    placeholder="Customer's name (optional)" aria-label={`Customer for sale ${i + 1}`} />
+                  <button className="btn btn-ghost btn-xs" aria-label={`Remove sale ${i + 1}`} onClick={() => setDrafts((ds) => ds.filter((x) => x.key !== d.key))}><Icon name="trash" size={13} /></button>
+                </div>
+                {d.lines.map((l) => (
+                  <div key={l.key} className="row" style={{ gap: 8, fontSize: 13 }}>
+                    <span className="grow ellipsis" style={{ minWidth: 0 }}>{l.item.name}</span>
+                    <input className="input input-sm num" style={{ width: 64 }} inputMode="decimal" value={l.qty} aria-label={`Quantity of ${l.item.name}`}
+                      onChange={(e) => { const q = Number(e.target.value); setDrafts((ds) => ds.map((x) => (x.key !== d.key ? x : { ...x, lines: x.lines.map((y) => (y.key === l.key ? { ...y, qty: Number.isFinite(q) ? q : 0 } : y)) }))); }} />
+                    <span className="faint" style={{ width: 54, fontSize: 12 }}>{l.unit_kind === 'purchase' ? pluralUnit(l.item.purchase_unit.toLowerCase(), l.qty) : pluralUnit(l.item.selling_unit, l.qty)}</span>
+                    <button className="btn btn-ghost btn-xs" aria-label={`Remove ${l.item.name}`} onClick={() => setDrafts((ds) => ds.map((x) => (x.key !== d.key ? x : { ...x, lines: x.lines.filter((y) => y.key !== l.key) })).filter((x) => x.lines.length))}><Icon name="x" size={12} /></button>
+                  </div>
+                ))}
+                <div className="row" style={{ gap: 4, flexWrap: 'wrap' }} role="radiogroup" aria-label={`How sale ${i + 1} was paid`}>
+                  {PAYS.map(([k, label]) => <button key={k} role="radio" aria-checked={d.pay === k} className={'pill' + (d.pay === k ? ' on' : '')} onClick={() => setDrafts((ds) => ds.map((x) => (x.key === d.key ? { ...x, pay: k } : x)))}>{label}</button>)}
+                </div>
+                <div className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span className="muted">{d.pay === 'later' ? 'To settle later in Sales' : PAYS.find((p) => p[0] === d.pay)![1]}</span>
+                  <b className="num">{N(d.lines.reduce((a, l) => a + l.qty * (l.unit_kind === 'purchase' ? l.item.pack_size : 1) * Number(l.item.price), 0))}</b></div>
+              </div>
+            ))}
+            {pending && <div style={{ fontSize: 12, color: '#A16207', background: '#FEFCE8', borderRadius: 10, padding: 10, lineHeight: 1.45 }}>Voice entries from {me.display_name.split(' ')[0]} are flagged for owner review until {inv.org.voice_trust_threshold} are confirmed without correction ({me.voice_confirmed} so far).</div>}
+            <div className="row" style={{ gap: 8, marginTop: 4 }}>
+              <button className="m-btn secondary" style={{ flex: 1 }} onClick={() => { setRetries((r) => r + 1); setHeard(null); setDrafts([]); setStage('idle'); }}>Wrong, say again</button>
+              <button className="m-btn" style={{ flex: 1 }} disabled={!drafts.length || drafts.some((d) => d.lines.some((l) => !(l.qty > 0)))} onClick={recordAll}>Record {drafts.length === 1 ? 'the sale' : `${drafts.length} sales`}</button>
+            </div>
+          </div>
+        ) : stage === 'heard' && heard ? (
           fix && item ? <SaleSheet item={item} voice={{ qty: Number(heard.qty) || 1, unit_kind: heard.unit_kind || 'selling', transcript: heard.transcript, clean: false, location_id: hereId }} onCancel={() => setFix(false)} onDone={(m) => { setDoneMsg(m); setStage('done'); }} /> : (
             <div className="stack rise" style={{ gap: 12 }}>
               <div className="muted" style={{ fontSize: 12 }}>I heard</div>
@@ -133,7 +202,7 @@ export default function SellScreen() {
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '12px 0 4px', textAlign: 'center' }}>
             {voiceReady ? (
               <>
-                <div className="ink3" style={{ fontSize: 15, lineHeight: 1.5 }}>{stage === 'listening' ? 'Listening… tap again when you finish.' : stage === 'thinking' ? 'Understanding…' : <>Say what happened. For example:<br /><b style={{ color: '#111827' }}>"I don sell three cartons of Indomie"</b></>}</div>
+                <div className="ink3" style={{ fontSize: 15, lineHeight: 1.5 }}>{stage === 'listening' ? 'Listening… tap again when you finish.' : stage === 'thinking' ? 'Understanding…' : <>Say what happened. For example:<br /><b style={{ color: '#111827' }}>"I don sell three cartons of Indomie"</b><br /><span style={{ fontSize: 13 }}>Several sales at once work too: "Mama Bisi buy two Milo, she pay transfer; Chidi take one carton of semo, e go pay later."</span></>}</div>
                 <button onClick={stage === 'listening' ? stop : start} disabled={stage === 'thinking'} aria-label={stage === 'listening' ? 'Stop recording' : 'Start recording'}
                   style={{ position: 'relative', width: 88, height: 88, borderRadius: '50%', border: 'none', background: '#0072F5', display: 'grid', placeItems: 'center', cursor: 'pointer', boxShadow: '0 12px 32px rgba(0,114,245,.28)' }}>
                   {stage === 'listening' && <span style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: '#3E88FF', animation: 'tsPulse 1.2s ease-out infinite' }} />}

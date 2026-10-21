@@ -8,6 +8,7 @@ import { Alert, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import { useToast } from '../../state/session';
 import { FEATURES, featureLabel, tidyError } from '../api';
 import { Card, grid, PageHead } from '../ui';
+import { OrgPlan } from './OrgPlan';
 
 type Row = {
   id: string; name: string; rc_number: string | null; created_at: string; is_sample: boolean; identity_status: string; offering: string | null; industry: string | null;
@@ -167,6 +168,7 @@ export function Business() {
           </div>
         ))}
       </Card>
+      <OrgPlan orgId={id} />
       <Card title="Switches for this business" sub="As everyone follows the setting under Limits and switches. On or Off holds for this business whatever everyone else has." pad={false}>
         {d.switches.map((s) => <SwitchRow key={s.feature} orgId={id} s={s} />)}
       </Card>
