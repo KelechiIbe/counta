@@ -23,6 +23,12 @@
 //                                          agrees, paid from the tax wallet
 //   POST /taxstreem/flux/payment-status body { counta_org_id, prn, status: confirmed|not_received|expired, receipt_ref, message }
 //   Header: x-counta-signature, the same scheme signed with FLUX_SECRET.
+// Each of the four can carry the files Rev360 gave (the filing acknowledgement or evidence, the PRN page, the payment
+// receipt), which Counta keeps in the business's Documents:
+//   documents: [{ kind: acknowledgement|filing_evidence|assessment|prn|payment_receipt|tax_clearance|other, name,
+//                 content_type, url (https, on Flux's own host or FLUX_FILE_HOSTS) | content_base64 }]
+//   up to 10 a call, 15 MB each and 40 MB together; PDF, PNG, JPEG, WebP, Excel, CSV or Word. The answer then says
+//   { documents: { stored, failed: [{ name, why }] } }; a file that fails never undoes the status.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { SsoError, verifyBody, verifySsoToken } from './sso.ts';
 
@@ -101,6 +107,107 @@ async function signedJson(raw: string, sig: string | null): Promise<{ body: any 
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// ------------------------------------------------------------------ files Flux sends back
+const DOC_KINDS = ['acknowledgement', 'filing_evidence', 'assessment', 'prn', 'payment_receipt', 'tax_clearance', 'other'];
+const DOC_TYPES: Record<string, string> = {
+  'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'text/csv': 'csv',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx', 'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+};
+const ONE_MB = 1024 * 1024, PER_FILE = 15 * ONE_MB, PER_CALL = 40 * ONE_MB;
+const startsWith = (b: Uint8Array, sig: number[], at = 0) => sig.every((x, i) => b[at + i] === x);
+// The bytes are what the type says: a page of HTML called a PDF is refused.
+function looksLike(type: string, b: Uint8Array): boolean {
+  switch (DOC_TYPES[type]) {
+    case 'pdf': return startsWith(b, [0x25, 0x50, 0x44, 0x46]);
+    case 'png': return startsWith(b, [0x89, 0x50, 0x4e, 0x47]);
+    case 'jpg': return startsWith(b, [0xff, 0xd8, 0xff]);
+    case 'webp': return startsWith(b, [0x52, 0x49, 0x46, 0x46]) && startsWith(b, [0x57, 0x45, 0x42, 0x50], 8);
+    case 'xlsx': case 'docx': return startsWith(b, [0x50, 0x4b, 0x03, 0x04]);
+    case 'xls': return startsWith(b, [0xd0, 0xcf, 0x11, 0xe0]);
+    case 'csv': return !/^\s*</.test(new TextDecoder().decode(b.slice(0, 64)));
+    default: return false;
+  }
+}
+const storageSafe = (name: string) => name.normalize('NFKD').replace(/[^\w.\-() ]+/g, '_').replace(/\s+/g, ' ').trim().slice(-120) || 'file';
+// Where Flux's links may point: Flux's own address, and any hosts named in FLUX_FILE_HOSTS (comma separated).
+async function fileOrigins(): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const raw of [await secret('FLUX_URL'), ...(await secret('FLUX_FILE_HOSTS')).split(',')]) {
+    const v = raw.trim();
+    if (!v) continue;
+    try { out.add(new URL(/^https?:\/\//i.test(v) ? v : `https://${v}`).origin); } catch { /* not an address */ }
+  }
+  return out;
+}
+async function readCapped(res: Response, cap: number): Promise<Uint8Array> {
+  const len = Number(res.headers.get('content-length') || 0);
+  if (len > cap) { await res.body?.cancel(); throw new Error(`larger than ${cap / ONE_MB} MB`); }
+  const reader = res.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const parts: Uint8Array[] = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > cap) { await reader.cancel(); throw new Error(`larger than ${cap / ONE_MB} MB`); }
+    parts.push(value);
+  }
+  const all = new Uint8Array(n); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.length; }
+  return all;
+}
+
+type Where = { tax: string; period?: string | null; year?: number | null; prn?: string | null };
+async function keepDocuments(org: string, list: unknown, where: Where) {
+  const out = { stored: 0, failed: [] as { name: string; why: string }[] };
+  if (!Array.isArray(list) || !list.length) return null;
+  if (!['vat', 'wht', 'wvat', 'cit'].includes(where.tax)) return { stored: 0, failed: [{ name: 'documents', why: 'Counta could not tell which return they belong to.' }] };
+  if (list.length > 10) out.failed.push({ name: `${list.length - 10} more`, why: 'At most 10 files a call.' });
+  const origins = await fileOrigins();
+  let used = 0;
+  for (const d of list.slice(0, 10)) {
+    const kind = DOC_KINDS.includes(String(d?.kind)) ? String(d.kind) : 'other';
+    let type = String(d?.content_type || '').split(';')[0].trim().toLowerCase();
+    let name = String(d?.name || '').replace(/[\\/]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 160);
+    try {
+      let bytes: Uint8Array;
+      if (typeof d?.content_base64 === 'string' && d.content_base64) {
+        const b64 = d.content_base64.replace(/^data:[^,]*,/, '').replace(/\s+/g, '');
+        if (b64.length * 0.75 > PER_FILE) throw new Error('larger than 15 MB');
+        try { bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)); } catch { throw new Error('content_base64 is not base64'); }
+      } else if (typeof d?.url === 'string' && d.url) {
+        let u: URL;
+        try { u = new URL(d.url); } catch { throw new Error('the url is not an address'); }
+        if (u.protocol !== 'https:' && !origins.has(u.origin)) throw new Error('the url must be https');
+        if (!origins.has(u.origin)) throw new Error(`${u.host} is not one of Flux's file hosts`);
+        const res = await fetch(u, { redirect: 'manual', signal: AbortSignal.timeout(20_000) });
+        if (!res.ok) { await res.body?.cancel(); throw new Error(`the link answered ${res.status}`); }
+        if (!type) type = String(res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+        bytes = await readCapped(res, PER_FILE);
+      } else throw new Error('send url or content_base64');
+      if (!bytes.length) throw new Error('the file is empty');
+      if (!DOC_TYPES[type]) throw new Error(`${type || 'a file with no type'} is not a type Counta keeps`);
+      if (!looksLike(type, bytes)) throw new Error(`the file is not a ${DOC_TYPES[type].toUpperCase()}`);
+      if (used + bytes.length > PER_CALL) throw new Error('the files in one call add up to more than 40 MB');
+      used += bytes.length;
+      if (!name) name = `${kind.replace(/_/g, ' ')}.${DOC_TYPES[type]}`;
+      if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += `.${DOC_TYPES[type]}`;
+      const folder = where.tax === 'cit' ? String(where.year || 'year') : String(where.period || 'month');
+      const path = `${org}/tax/flux/${where.tax}/${folder}/${crypto.randomUUID()}-${storageSafe(name)}`;
+      const up = await admin.storage.from('documents').upload(path, bytes, { contentType: type, upsert: false });
+      if (up.error) throw new Error(`storage: ${up.error.message}`);
+      const { error } = await admin.rpc('svc_document_add', { p: { org_id: org, tax: where.tax, period: where.tax === 'cit' ? null : where.period, year: where.year ?? null,
+        prn: where.prn ?? null, kind, name, path, mime: type, size: bytes.length } });
+      if (error) { await admin.storage.from('documents').remove([path]); throw new Error(error.message); }
+      out.stored++;
+    } catch (e) {
+      out.failed.push({ name: name || kind, why: (e as Error).message.slice(0, 200) });
+    }
+  }
+  return out;
+}
+
 async function fluxReturn(raw: string, sig: string | null) {
   const v = await signedJson(raw, sig);
   if (v instanceof Response) return v;
@@ -116,7 +223,8 @@ async function fluxReturn(raw: string, sig: string | null) {
   if (Array.isArray(b.files)) p.files = b.files.slice(0, 20);
   const { data, error } = await admin.rpc('svc_flux_return_update', { p_org: b.counta_org_id, p_tax: b.tax, p_period: `${period}-01`, p_authority: 'NRS', p });
   if (error) return json({ ok: false, error: error.message }, 422);
-  return json({ ok: true, status: data.status });
+  const documents = await keepDocuments(b.counta_org_id, b.documents, { tax: b.tax, period, year: Number(period.slice(0, 4)) });
+  return json({ ok: true, status: data.status, ...(documents ? { documents } : {}) });
 }
 
 // A PRN and the account Rev360's payment page gave. Stored first; then the payments function checks the account with the
@@ -125,9 +233,12 @@ async function fluxReturn(raw: string, sig: string | null) {
 async function fluxPayment(raw: string, sig: string | null) {
   const v = await signedJson(raw, sig);
   if (v instanceof Response) return v;
-  const { data, error } = await admin.rpc('svc_flux_payment_instruction', { p: v.body });
+  const { documents: files, ...instruction } = v.body || {};
+  const { data, error } = await admin.rpc('svc_flux_payment_instruction', { p: instruction });
   if (error) return json({ ok: false, error: error.message }, 422);
   const out: Record<string, unknown> = { ok: true, id: data.id, status: data.status, duplicate: data.duplicate };
+  const documents = await keepDocuments(String(instruction.counta_org_id), files, instructionWhere(instruction));
+  if (documents) out.documents = documents;
   if (data.duplicate || data.status !== 'received') return json(out);
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/payments`, { method: 'POST',
@@ -142,9 +253,22 @@ async function fluxPayment(raw: string, sig: string | null) {
 async function fluxPaymentStatus(raw: string, sig: string | null) {
   const v = await signedJson(raw, sig);
   if (v instanceof Response) return v;
-  const { data, error } = await admin.rpc('svc_flux_payment_status', { p: v.body });
+  const { documents: files, ...p } = v.body || {};
+  const { data, error } = await admin.rpc('svc_flux_payment_status', { p });
   if (error) return json({ ok: false, error: error.message }, 422);
-  return json({ ok: true, status: data.status });
+  let documents = null;
+  if (Array.isArray(files) && files.length) {
+    const { data: i } = await admin.from('tax_payment_instructions').select('tax, period, accounting_year, prn').eq('id', data.id).maybeSingle();
+    if (i) documents = await keepDocuments(String(p.counta_org_id), files, instructionWhere(i));
+  }
+  return json({ ok: true, status: data.status, ...(documents ? { documents } : {}) });
+}
+// Where a payment's files go: its tax, and its month (or its year for CIT).
+function instructionWhere(i: any): Where {
+  const tax = String(i.tax || '');
+  const period = String(i.period || '').slice(0, 7);
+  const year = Number(i.accounting_year) || Number(period.slice(0, 4)) || null;
+  return { tax, period: /^\d{4}-\d{2}$/.test(period) ? period : null, year, prn: i.prn ? String(i.prn) : null };
 }
 
 async function flux(raw: string, sig: string | null) {
@@ -161,7 +285,8 @@ async function flux(raw: string, sig: string | null) {
   if (body.rev360_computation && typeof body.rev360_computation === 'object') p.rev360_computation = body.rev360_computation;
   const { data, error } = await admin.rpc('svc_cit_flux_update', { p_org: org, p_year: year, p });
   if (error) return json({ ok: false, error: error.message }, 422);
-  return json({ ok: true, status: data.status, flux_status: status });
+  const documents = await keepDocuments(org, body.documents, { tax: 'cit', year });
+  return json({ ok: true, status: data.status, flux_status: status, ...(documents ? { documents } : {}) });
 }
 
 Deno.serve(async (req) => {

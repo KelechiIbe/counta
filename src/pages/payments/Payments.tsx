@@ -265,7 +265,7 @@ type TransferSettings = { mode: 'wallet' | 'one_time'; name: string | null; defa
   seen: { label: string; shown: string | null; bank: string | null; error: string | null; at: string } | null };
 
 // How a customer pays by transfer: to the business's own wallet number with a reference, or to a one-time account for each
-// payment, named TaxStreem-<business>. The owner can ask Counta what name a bank shows for such an account.
+// payment, named TaxStreem <business>. The owner can ask Counta what name a bank shows for such an account.
 function TransferChoice() {
   const { orgId } = useSession();
   const toast = useToast();
@@ -294,7 +294,7 @@ function TransferChoice() {
     if (r.ok === false && !r.settings) toast(r.error || 'The check did not finish.', 'err');
   }
   const seen = t.seen;
-  const pre = `${t.prefix}${t.separator ?? '-'}`;
+  const pre = `${t.prefix}${t.separator ?? ' '}`;
   return (
     <div className="stack" style={{ gap: 8 }} data-testid="transfer-choice">
       <div className="field-label">When a customer pays by transfer</div>

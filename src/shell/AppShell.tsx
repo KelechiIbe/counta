@@ -27,7 +27,7 @@ const TITLES: Record<string, string> = {
   '/accounting/inbox': 'Books inbox', '/accounting/banking': 'Banking & reconciliation', '/accounting/statements': 'Financial statements',
   '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close',
   '/tax': 'Tax returns', '/tax/vat': 'VAT returns', '/tax/wht': 'Withholding tax', '/tax/cit': 'Companies income tax',
-  '/accounting/journals': 'Journals', '/accounting/migrate': 'Move your books', '/assistant': 'AI Assistant', '/settings': 'Settings', '/settings/subscription': 'Subscription', '/integrations': 'Integrations',
+  '/accounting/journals': 'Journals', '/accounting/migrate': 'Move your books', '/assistant': 'AI Assistant', '/settings': 'Settings', '/settings/subscription': 'Subscription', '/integrations': 'Integrations', '/documents': 'Documents',
 };
 export const titleFor = (path: string) => TITLES[path] || TITLES[Object.keys(TITLES).filter((k) => path.startsWith(k + '/')).sort((x, y) => y.length - x.length)[0]] || 'Counta';
 const PICKER = new Set(['/inventory', '/inventory/items', '/inventory/insights']);
@@ -191,6 +191,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
             ['/accounting/close', 'Period close'], ['/accounting/migrate', 'Move your books']]} />
         <Group to="/tax/vat" label="Tax returns" icon="percent" active={p.startsWith('/tax/') || p === '/tax'} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'file_tax')}
           subs={[['/tax/vat', 'VAT', n('vat') + n('schedules_draft')], ['/tax/wht', 'Withholding tax', n('wht')], ['/tax/cit', 'Companies income tax', n('cit')]]} />
+        {link('/documents', 'Documents', 'folder')}
         {external('Taxes', 'landmark')}
         {link('/assistant', 'AI Assistant', 'martina')}
       </nav>

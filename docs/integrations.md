@@ -14,12 +14,34 @@ Only the owner, or someone whose role manages settings, connects or changes a to
 | Shopify | A look every five minutes | `*.myshopify.com` address and a custom app's Admin API token (`shpat_…`) with `read_orders` |
 | Selar | Webhook | Counta's webhook address into Selar, or into Zapier when the Selar plan has no webhooks |
 | Zapier or Make | Webhook | Counta's webhook address in a "POST JSON" step |
-| Bumpa | CSV upload | The orders file exported from Bumpa |
+| Bumpa | A look every five minutes with the store's secret key; or a CSV upload | Secret API key from the Bumpa dashboard (and a location ID for a store with several), or the orders file |
 | Slack | Counta posts | An incoming webhook URL, and which alerts to post |
 | WhatsApp Business | Messages go out from it | A QR scan from the business's phone (see [messaging.md](messaging.md)) |
 | Bank accounts | Mono bank feeds | Set up in Banking (see [banking-and-feeds.md](banking-and-feeds.md)) |
 
-Bumpa and Selar publish no API a business can hand a key to, so Bumpa comes in by its CSV export and Selar by its webhook (or through Zapier).
+Selar publishes no API a business can hand a key to, so it comes in by its webhook (or through Zapier).
+
+## Bumpa
+
+Bumpa's Commerce API ([docs.bumpa.io](https://docs.bumpa.io), in public beta) lets a store make a secret API key in its
+Bumpa dashboard. With one, Counta reads the store's paid orders every five minutes:
+
+```
+GET https://api.getbumpa.com/api/commerce/v1/orders?payment_status=paid&from_date=YYYY-MM-DD&to_date=YYYY-MM-DD
+    &orderByField=created_at&orderBy=asc&limit=50&page=N[&location_id=...]
+X-Api-Key: <the store's secret key>
+```
+
+- Each look goes back to the day before the last one, up to five pages of 50 orders, and leaves out orders seen already.
+- An order counts when its payment status is paid and it is not cancelled, refunded or voided. Its products, quantities and
+  prices become the sale's lines, and the delivery fee a line of its own.
+- The order number is the one the store sees, `#` taken off. A CSV export of the same orders uses the same numbers, so an
+  order brought in both ways is recorded once. The CSV upload stays on the drawer for older orders.
+- A location ID is only for a store with more than one location in Bumpa; empty means the main location.
+- Bumpa publishes no sample responses and no way to sign webhooks yet, so Counta reads orders on a schedule rather than
+  waiting for Bumpa to post them. The fields read are in `bumpaSale` in `supabase/functions/integrations/providers.ts`,
+  with fallbacks for the names Bumpa uses in its exports.
+- `BUMPA_BASE_URL` points the function at a stand-in for tests.
 
 ## How a sale is booked
 

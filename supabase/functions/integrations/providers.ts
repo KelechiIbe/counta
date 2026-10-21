@@ -141,6 +141,75 @@ export async function shopifySince(shop: string, token: string, since: string | 
   return (b?.orders || []).filter((o: any) => o.financial_status === 'paid' && !o.cancelled_at).map(shopifySale);
 }
 
+// ------------------------------------------------------------------ Bumpa (a store's secret key, Commerce API v1, in public beta)
+// docs.bumpa.io gives the routes and filters but no sample answers yet, so an order is read by the names Bumpa uses in its
+// exports and its Laravel paginator, with fallbacks. Orders carry the number the store sees, the same number the CSV export
+// carries, so an order imported both ways is recorded once.
+export const BUMPA = () => env('BUMPA_BASE_URL', 'https://api.getbumpa.com/api/commerce/v1');
+export const bumpaKeyOk = (k: string) => /^[A-Za-z0-9][A-Za-z0-9_\-.:|]{19,199}$/.test(k);
+export const bumpaLocationOk = (l: string) => /^[A-Za-z0-9_-]{1,64}$/.test(l);
+const bumpaHead = (key: string) => ({ 'X-Api-Key': key, Accept: 'application/json' });
+const bumpaLoc = (loc?: string | null) => (loc ? `&location_id=${encodeURIComponent(loc)}` : '');
+const pick = (o: any, ...keys: string[]) => {
+  for (const k of keys) { const v = k.split('.').reduce((x: any, p) => (x == null ? x : x[p]), o); if (v != null && v !== '') return v; }
+  return null;
+};
+// The orders on one page of Bumpa's answer, and whether there is another page.
+function bumpaPage(b: any): { orders: any[]; more: boolean } {
+  const p = b?.orders ?? b?.data ?? null;
+  if (Array.isArray(p)) return { orders: p, more: false };
+  const orders = Array.isArray(p?.data) ? p.data : [];
+  return { orders, more: Boolean(p?.next_page_url) || (n(p?.current_page) > 0 && n(p?.current_page) < n(p?.last_page)) };
+}
+export async function bumpaCheck(key: string, loc?: string | null) {
+  const b = await getJson(`${BUMPA()}/orders?limit=1${bumpaLoc(loc)}`, { headers: bumpaHead(key) });
+  if (!b || b.success === false || !(b.orders || b.data)) throw new ToolError('Bumpa did not accept the key.', 401);
+  return { ok: true };
+}
+export const bumpaPaid = (o: any) => {
+  const s = String(pick(o, 'payment_status', 'paymentStatus', 'payment.status') ?? (o?.is_paid === true || o?.paid === true ? 'paid' : '')).toLowerCase();
+  const st = String(pick(o, 'status', 'order_status') ?? '').toLowerCase();
+  return /^(paid|success(ful)?|complete(d)?)$/.test(s) && !/^(cancel+ed|refunded|voided?)$/.test(st);
+};
+export function bumpaSale(o: any): Sale {
+  const no = String(pick(o, 'order_number', 'order_no', 'orderNumber', 'reference', 'code', 'id') ?? '').replace(/^#/, '');
+  const c = o?.customer || {};
+  const items: any[] = pick(o, 'items', 'order_items', 'products', 'line_items') || [];
+  const ship = n(pick(o, 'shipping_fee', 'delivery_fee', 'shipping_cost', 'shipping.amount', 'shipping_amount'));
+  const lines = (Array.isArray(items) ? items : []).map((l: any) => {
+    const qty = n(pick(l, 'quantity', 'qty')) || 1;
+    const unit = n(pick(l, 'price', 'unit_price', 'selling_price', 'amount')) || (n(pick(l, 'total', 'subtotal')) / qty);
+    return { name: String(pick(l, 'product_name', 'name', 'title', 'product.name') || 'Item').slice(0, 200), sku: pick(l, 'sku', 'product.sku'), qty, unit_price: r2(unit) };
+  }).concat(ship > 0 ? [{ name: 'Delivery', sku: null, qty: 1, unit_price: r2(ship) }] : []);
+  return { external_id: `bumpa:${no}`.slice(0, 200), occurred_at: pick(o, 'paid_at', 'payment_date', 'created_at', 'order_date', 'date'),
+    amount: r2(n(pick(o, 'total', 'total_amount', 'grand_total', 'amount', 'total_price'))), fee: 0, currency: String(pick(o, 'currency', 'currency_code') || 'NGN'),
+    reference: no ? `#${no}` : null, method: 'other',
+    customer: { name: pick(o, 'customer_name') || pick(c, 'name', 'full_name') || [c.first_name, c.last_name].filter(Boolean).join(' ') || null,
+      email: pick(o, 'customer_email') || c.email || null, phone: pick(o, 'customer_phone') || c.phone || c.phone_number || null },
+    lines: lines.length ? lines : undefined, note: no ? `Bumpa order ${no}` : 'Bumpa order' };
+}
+// Paid orders from the day before the last look, oldest first, up to five pages of 50.
+export async function bumpaSince(key: string, loc: string | null | undefined, since: string | null) {
+  const from = (since || new Date(Date.now() - 2 * 86400_000).toISOString()).slice(0, 10);
+  const to = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
+  const out: Sale[] = [];
+  for (let page = 1; page <= 5; page++) {
+    const b = await getJson(`${BUMPA()}/orders?payment_status=paid&from_date=${from}&to_date=${to}&orderByField=created_at&orderBy=asc&limit=50&page=${page}${bumpaLoc(loc)}`,
+      { headers: bumpaHead(key) });
+    const { orders, more } = bumpaPage(b);
+    // Bumpa filters by day; orders already seen on an earlier look that day are left out here rather than recorded again.
+    const after = since ? Date.parse(since) : 0;
+    for (const o of orders) {
+      if (!bumpaPaid(o) || !(n(pick(o, 'total', 'total_amount', 'grand_total', 'amount', 'total_price')) > 0)) continue;
+      const sale = bumpaSale(o), at = Date.parse(String(sale.occurred_at || ''));
+      if (after && Number.isFinite(at) && at < after) continue;
+      out.push(sale);
+    }
+    if (!more || !orders.length) break;
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ Selar, Zapier and Make: a sale posted to Counta's address
 // Selar's sale notifications and Zapier's or Make's webhooks differ in shape; the common names for the same things are read.
 export function genericSale(b: any, prefix: string): Sale | null {

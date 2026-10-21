@@ -197,6 +197,33 @@ Answer `2xx`. Counta retries every five minutes for a week until it gets one.
 - `not_received`: the owner is told, with `message`.
 - `expired`: an unpaid request is marked expired and the owner is told.
 
+## 6. Files Flux sends back
+
+Each of the four requests Flux sends (`/flux/return-status`, `/flux/payment`, `/flux/payment-status` and
+`/flux/cit-status` in [flux-cit-handoff.md](flux-cit-handoff.md)) can carry the files Rev360 gave, and Counta keeps them in
+the business's Documents:
+
+```json
+"documents": [
+  { "kind": "acknowledgement", "name": "WHT August 2026 acknowledgement.pdf", "content_type": "application/pdf", "content_base64": "JVBERi0xLjQK..." },
+  { "kind": "filing_evidence", "name": "Schedule evidence", "url": "https://<flux host>/files/abc.png" }
+]
+```
+
+- `kind`: `acknowledgement`, `filing_evidence` or `assessment` (filed under **Filing evidence**), `prn` (**PRN and
+  payment**), `payment_receipt` or `tax_clearance` (**Payment receipts**), `other` (**From Flux**).
+- Send each file inline as `content_base64` (a `data:` prefix is fine), or as an `https` `url` on Flux's own host
+  (`FLUX_URL`) or a host in `FLUX_FILE_HOSTS` (admin portal, Keys and services, TaxStreem). Counta does not follow redirects.
+- PDF, PNG, JPEG, WebP, Excel (`.xlsx`, `.xls`), CSV or Word (`.docx`). The bytes must be what the type says.
+- Up to 10 files a request, 15 MB each and 40 MB together.
+- `name` is what the business sees; Counta adds the extension when it is missing.
+- The files are filed with the return's tax and month (the year for CIT). For `/flux/payment-status`, with the PRN's.
+- The same request sent again adds the files again; send each file once.
+
+The answer then carries `"documents": { "stored": 2, "failed": [{ "name": "...", "why": "..." }] }`. A file Counta refuses
+never undoes the status: the status is kept, and the reason says what to change. Nothing is kept from a request that is not
+signed, or about a return Counta never sent.
+
 ## Testing
 
 `supabase/migrations/20261028000100_flux_tax_payments.sql` holds the database side, and

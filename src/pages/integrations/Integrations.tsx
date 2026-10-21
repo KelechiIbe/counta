@@ -26,7 +26,7 @@ const TOOLS: Tool[] = [
   { id: 'paystack', name: 'Paystack', mark: 'PS', tone: '#0BA4DB', group: 'Get paid', what: 'Every successful payment to your Paystack account becomes a paid sale, with Paystack\'s fee booked.' },
   { id: 'flutterwave', name: 'Flutterwave', mark: 'FW', tone: '#F5A623', group: 'Get paid', what: 'Payments to your own Flutterwave account become paid sales, checked with Flutterwave first.' },
   { id: 'selar', name: 'Selar', mark: 'SE', tone: '#7B2FF7', group: 'Sell online', what: 'Each Selar sale of your courses, e-books or products is recorded as it happens.' },
-  { id: 'bumpa', name: 'Bumpa', mark: 'BU', tone: '#00B37E', group: 'Sell online', what: 'Upload the orders you export from Bumpa; the paid ones become sales.' },
+  { id: 'bumpa', name: 'Bumpa', mark: 'BU', tone: '#00B37E', group: 'Sell online', what: 'Paid Bumpa orders come in through your API key every few minutes, or from the orders you export.' },
   { id: 'woocommerce', name: 'WooCommerce', mark: 'WC', tone: '#7F54B3', group: 'Sell online', what: 'Paid orders from your WordPress store come in every few minutes.' },
   { id: 'shopify', name: 'Shopify', mark: 'SH', tone: '#5E8E3E', group: 'Sell online', what: 'Paid Shopify orders come in every few minutes, products matched to yours.' },
   { id: 'zapier', name: 'Zapier or Make', mark: 'ZP', tone: '#FF4F00', group: 'Sell online', what: 'Anything else that can send a webhook: post its sales to Counta\'s address.' },
@@ -107,7 +107,14 @@ function ToolDrawer({ t, page, onClose }: { t: Tool; page: Page; onClose: () => 
       <div className="drawer-body stack" style={{ gap: 14, padding: 20, overflowY: 'auto' }} data-testid="tool-drawer">
         {t.id === 'whatsapp' ? <WhatsAppOwn page={page} />
           : t.id === 'bank' ? <div className="stack" style={{ gap: 10 }}><div style={{ fontSize: 14, lineHeight: 1.6 }}>Bank feeds bring your bank lines in through Mono, a licensed open-banking provider, so Counta can match them to sales, bills and transfers. Settlements from Paystack, Flutterwave and your stores show up there; match each to the tool's balance account.</div><div><Link className="btn btn-primary btn-sm" to="/accounting/banking">Open Banking</Link></div></div>
-          : t.id === 'bumpa' ? <><BumpaImport page={page} />{c && <Connected t={t} c={c} page={page} />}</>
+          : t.id === 'bumpa' ? (
+            <>
+              {c?.settings?.api ? <>{fresh && <ConnectedNote t={t} done={fresh} />}<Connected t={t} c={c} page={page} /></> : <Connect t={t} page={page} onDone={setFresh} />}
+              <div className="mini-label" style={{ marginTop: 6 }}>{c?.settings?.api ? 'Older orders, from a file' : 'Or upload the orders you export'}</div>
+              <BumpaImport page={page} />
+              {c && !c.settings?.api && <Connected t={t} c={c} page={page} />}
+            </>
+          )
           : c ? <>{fresh && <ConnectedNote t={t} done={fresh} />}<Connected t={t} c={c} page={page} /></>
           : <Connect t={t} page={page} onDone={setFresh} />}
       </div>
@@ -124,8 +131,10 @@ const HOW: Partial<Record<Provider, string[]>> = {
   selar: ['Connect, then copy the address Counta gives you.', 'In Selar, open Settings, Integrations or Webhooks, and paste it as the address for sale notifications. If your Selar plan has no webhooks, use it in Zapier with "Webhooks by Zapier".'],
   zapier: ['Connect, then copy the address Counta gives you.', 'In Zapier or Make, add a webhook action that POSTs JSON to it with the sale\'s id, amount, currency, product and customer.'],
   slack: ['In Slack, add the Incoming Webhooks app to the channel your team reads.', 'Copy the webhook URL (https://hooks.slack.com/services/…) and paste it here.'],
-  bumpa: ['In Bumpa, open Orders and export them as CSV.', 'Upload the file here. Paid orders become sales; the same order is never recorded twice.'],
+  bumpa: ['In your Bumpa dashboard (app.getbumpa.com), create a secret API key. Bumpa\'s API is in beta, so keep the key to yourself and paste it only here.',
+    'Paid orders then come in every few minutes, with their products and delivery. An order already uploaded from a file is not recorded twice.'],
 };
+const HOW_CSV = ['In Bumpa, open Orders and export them as CSV.', 'Upload the file here. Paid orders become sales; the same order is never recorded twice.'];
 
 type Done = { webhook_url?: string; secret_hash?: string; first?: { recorded?: number } | null; renewed?: boolean };
 
@@ -133,7 +142,7 @@ function Connect({ t, page, onDone }: { t: Tool; page: Page; onDone: (d: Done) =
   const { orgId } = useSession();
   const qc = useQueryClient();
   const toast = useToast();
-  const [f, setF] = useState({ key: '', secret: '', site: '', shop: '', url: '', location_id: '' });
+  const [f, setF] = useState({ key: '', secret: '', site: '', shop: '', url: '', location_id: '', bumpa_location: '' });
   const [kinds, setKinds] = useState<string[]>(['payments', 'tax']);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -152,6 +161,14 @@ function Connect({ t, page, onDone }: { t: Tool; page: Page; onDone: (d: Done) =
     <div className="stack" style={{ gap: 12 }} data-testid="connect-form">
       <ol className="stack" style={{ gap: 6, margin: 0, paddingLeft: 18, fontSize: 14, lineHeight: 1.55 }}>{(HOW[p] || []).map((h) => <li key={h}>{h}</li>)}</ol>
       {(p === 'paystack' || p === 'flutterwave') && <Field label="Secret key"><input className="input" type="password" autoComplete="off" value={f.key} onChange={(e) => setF({ ...f, key: e.target.value })} disabled={!can} /></Field>}
+      {p === 'bumpa' && (
+        <>
+          <Field label="Bumpa secret API key"><input className="input" type="password" autoComplete="off" value={f.key} onChange={(e) => setF({ ...f, key: e.target.value })} disabled={!can} /></Field>
+          <Field label="Bumpa location ID" hint="Only if the store has more than one location in Bumpa. Empty means the store's main location.">
+            <input className="input" autoComplete="off" value={f.bumpa_location} onChange={(e) => setF({ ...f, bumpa_location: e.target.value })} disabled={!can} />
+          </Field>
+        </>
+      )}
       {p === 'woocommerce' && (
         <>
           <Field label="Shop address"><input className="input" placeholder="https://yourshop.com.ng" value={f.site} onChange={(e) => setF({ ...f, site: e.target.value })} disabled={!can} /></Field>
@@ -180,7 +197,7 @@ function Connect({ t, page, onDone }: { t: Tool; page: Page; onDone: (d: Done) =
       )}
       <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>Counta keeps keys in an encrypted vault and only uses them to read your payments and orders. It never moves money with them. Disconnecting deletes them.</div>
       {err && <Alert kind="red" icon="alert">{err}</Alert>}
-      <div><button className="btn btn-primary" disabled={!can || busy} onClick={connect} data-testid="connect">{busy ? <Spinner small /> : <Icon name="link" size={14} color="#fff" />}Connect {t.name}</button></div>
+      <div><button className="btn btn-primary" disabled={!can || busy || (p === 'bumpa' && !f.key.trim())} onClick={connect} data-testid="connect">{busy ? <Spinner small /> : <Icon name="link" size={14} color="#fff" />}Connect {t.name}</button></div>
     </div>
   );
 }
@@ -273,10 +290,10 @@ function Connected({ t, c, page }: { t: Tool; c: Conn; page: Page }) {
       {c.provider === 'slack' && <Kinds value={c.settings.kinds || ['payments', 'tax']} onChange={(k) => settings({ kinds: k }, 'Saved')} />}
       {can && (
         <div className="row wrap" style={{ gap: 8 }}>
-          {['paystack', 'flutterwave', 'woocommerce', 'shopify'].includes(c.provider) && c.status !== 'paused' && <button className="btn btn-primary btn-sm" disabled={busy !== null} onClick={() => act('sync')}>{busy === 'sync' ? <Spinner small /> : <Icon name="refresh" size={14} color="#fff" />}Look for new sales</button>}
-          {c.provider !== 'bumpa' && c.provider !== 'selar' && c.provider !== 'zapier' && <button className="btn btn-secondary btn-sm" disabled={busy !== null} onClick={() => act('test')}>{busy === 'test' ? <Spinner small /> : <Icon name="check" size={14} />}{c.provider === 'slack' ? 'Send a test' : 'Check the key'}</button>}
+          {(['paystack', 'flutterwave', 'woocommerce', 'shopify'].includes(c.provider) || (c.provider === 'bumpa' && c.settings?.api)) && c.status !== 'paused' && <button className="btn btn-primary btn-sm" disabled={busy !== null} onClick={() => act('sync')}>{busy === 'sync' ? <Spinner small /> : <Icon name="refresh" size={14} color="#fff" />}Look for new sales</button>}
+          {(c.provider !== 'bumpa' || c.settings?.api) && c.provider !== 'selar' && c.provider !== 'zapier' && <button className="btn btn-secondary btn-sm" disabled={busy !== null} onClick={() => act('test')}>{busy === 'test' ? <Spinner small /> : <Icon name="check" size={14} />}{c.provider === 'slack' ? 'Send a test' : 'Check the key'}</button>}
           {c.has_hook && <button className="btn btn-secondary btn-sm" disabled={busy !== null} onClick={() => act('new_address')}>{busy === 'new_address' ? <Spinner small /> : <Icon name="link" size={14} />}New webhook address</button>}
-          {c.provider !== 'bumpa' && <button className="btn btn-ghost btn-sm" disabled={busy !== null} onClick={() => settings({ paused: c.status !== 'paused' }, c.status === 'paused' ? 'On again' : 'Paused')}>{c.status === 'paused' ? 'Turn back on' : 'Pause'}</button>}
+          {(c.provider !== 'bumpa' || c.settings?.api) && <button className="btn btn-ghost btn-sm" disabled={busy !== null} onClick={() => settings({ paused: c.status !== 'paused' }, c.status === 'paused' ? 'On again' : 'Paused')}>{c.status === 'paused' ? 'Turn back on' : 'Pause'}</button>}
         </div>
       )}
       {addr && <ConnectedNote t={t} done={addr} />}
@@ -326,7 +343,7 @@ function BumpaImport({ page }: { page: Page }) {
   }
   return (
     <div className="stack" style={{ gap: 10 }} data-testid="bumpa-import">
-      <ol className="stack" style={{ gap: 6, margin: 0, paddingLeft: 18, fontSize: 14, lineHeight: 1.55 }}>{(HOW.bumpa || []).map((h) => <li key={h}>{h}</li>)}</ol>
+      <ol className="stack" style={{ gap: 6, margin: 0, paddingLeft: 18, fontSize: 14, lineHeight: 1.55 }}>{HOW_CSV.map((h) => <li key={h}>{h}</li>)}</ol>
       <input ref={input} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); }} data-testid="bumpa-file" />
       <div><button className="btn btn-primary btn-sm" disabled={!page.can_manage || busy} onClick={() => input.current?.click()}>{busy ? <Spinner small /> : <Icon name="upload" size={14} color="#fff" />}Upload Bumpa orders</button></div>
       {err && <Alert kind="red" icon="alert">{err}</Alert>}
