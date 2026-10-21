@@ -4,6 +4,7 @@ import { can, useInventory, useSession } from './state/session';
 import type { Inventory } from './lib/types';
 import { refreshPushSubscription, store } from './lib/pwa';
 import { Spinner } from './components/ui';
+import { UpdateNotice } from './components/UpdateNotice';
 import AppShell from './shell/AppShell';
 import { AuthPage, UpdatePasswordPage } from './pages/auth/Auth';
 import { GuideProvider } from './guide/GuideProvider';
@@ -136,6 +137,7 @@ export default function App() {
   return (
     <GuideProvider>
     <DeviceHooks />
+    <UpdateNotice />
     <GuideDock />
     <Routes>
       <Route path="/login" element={<AuthPage mode="login" />} />
