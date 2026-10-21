@@ -64,4 +64,16 @@ export const GROUPS: { id: string; title: string; what: string; test?: boolean }
 ];
 
 export const pct = (v: number | null | undefined, dp = 2) => (v == null ? '—' : `${(Math.round(Number(v) * 100 * 10 ** dp) / 10 ** dp).toString()}%`);
-export const tidyError = (e: unknown) => String((e as Error)?.message || e || 'Something went wrong.');
+// The database's own wording for a refused value, in words an admin can act on. Anything not listed is shown as it came.
+const PLAIN: [RegExp, string][] = [
+  [/plans_code_check/, 'The plan code must start with a letter and use 2 to 30 lowercase letters, numbers or hyphens.'],
+  [/plans_code_key/, 'Another plan already uses that code. Choose a different one.'],
+  [/plans_name_check/, 'A plan name has 2 to 40 characters.'],
+  [/plan_modules_key_check/, 'A module key must start with a letter and use 2 to 40 lowercase letters, numbers or underscores.'],
+  [/plan_modules_name_check/, 'A module name has 2 to 60 characters.'],
+  [/invalid input syntax for type (numeric|integer)/, 'One of the numbers is not written as a number. Use digits only, like 35000.'],
+];
+export const tidyError = (e: unknown) => {
+  const m = String((e as Error)?.message || e || 'Something went wrong.');
+  return PLAIN.find(([re]) => re.test(m))?.[1] ?? m;
+};
