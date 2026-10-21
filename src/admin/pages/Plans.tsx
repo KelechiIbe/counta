@@ -65,15 +65,30 @@ export default function Plans() {
           </Card>
         </>
       )}
-      {editing && d && <PlanEditor plan={editing} modules={(d.modules || []).filter((m: any) => m.active)} onClose={() => setEditing(null)} />}
-      {module && d && <ModuleEditor m={module} features={d.features || []} meters={d.meters || []} onClose={() => setModule(null)} />}
+      {editing && d && <PlanEditor plan={editing} modules={(d.modules || []).filter((m: any) => m.active)} plans={d.plans || []} onClose={() => setEditing(null)} />}
+      {module && d && <ModuleEditor m={module} features={d.features || []} meters={d.meters || []} taken={(d.modules || []).map((x: any) => x.key)} onClose={() => setModule(null)} />}
     </div>
   );
 }
 
 type Ent = { included: boolean; quota: string; enforce: 'block' | 'warn' };
 
-function PlanEditor({ plan, modules, onClose }: { plan: any; modules: any[]; onClose: () => void }) {
+// Codes and keys are made from the name, so nobody has to invent one: "Growth Plus" becomes growth-plus. The database takes
+// a plan code that starts with a letter and runs 2 to 30 characters, and a module key that starts with a letter and runs 2 to 40.
+export const PLAN_CODE = /^[a-z][a-z0-9_-]{1,29}$/;
+export const MODULE_KEY = /^[a-z][a-z0-9_]{1,39}$/;
+export function slugFrom(name: string, sep: '-' | '_', max: number, prefix: string) {
+  let c = name.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, sep).split(sep).filter(Boolean).join(sep);
+  if (c && !/^[a-z]/.test(c)) c = prefix + sep + c;
+  c = c.slice(0, max).replace(/[-_]+$/, '');
+  return c.length >= 2 || !c ? c : `${c}${sep}${prefix}`;
+}
+// Amounts as people type them ("35,000", "₦35000") become plain numbers; anything else is left for the check to name.
+const plainNum = (v: string) => String(v ?? '').replace(/[,\s₦]/g, '');
+const isMoney = (v: string) => /^\d+(\.\d{1,2})?$/.test(plainNum(v));
+const isWhole = (v: string) => /^\d+$/.test(plainNum(v));
+
+function PlanEditor({ plan, modules, plans, onClose }: { plan: any; modules: any[]; plans: any[]; onClose: () => void }) {
   const toast = useToast();
   const qc = useQueryClient();
   const isNew = !plan.id;
@@ -85,21 +100,44 @@ function PlanEditor({ plan, modules, onClose }: { plan: any; modules: any[]; onC
     return [m.key, { included: e ? !!e.included : true, quota: e?.quota != null ? String(Number(e.quota)) : '', enforce: (e?.enforce || 'warn') as 'block' | 'warn' }];
   })));
   const [busy, setBusy] = useState(false);
+  // A new plan's code follows its name until someone types a code of their own.
+  const [ownCode, setOwnCode] = useState(!isNew);
   const set = (k: string, v: any) => setF((x: any) => ({ ...x, [k]: v }));
+  const setName = (v: string) => setF((x: any) => ({ ...x, name: v, ...(ownCode ? {} : { code: slugFrom(v, '-', 30, 'plan') }) }));
+  const setCode = (v: string) => {
+    const code = v.toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 30);
+    setOwnCode(code !== '');
+    setF((x: any) => ({ ...x, code: code || slugFrom(x.name, '-', 30, 'plan') }));
+  };
   const setE = (k: string, p: Partial<Ent>) => setEnts((x) => ({ ...x, [k]: { ...x[k], ...p } }));
   // The calculator, asked again a moment after the price, margin or a quota changes.
   const quotas = useMemo(() => Object.fromEntries(Object.entries(ents).filter(([, e]) => e.included && e.quota !== '').map(([k, e]) => [k, Number(e.quota)])), [ents]);
-  const [calcArgs, setCalcArgs] = useState({ price_month: Number(f.price_month) || 0, target_margin: Number(f.target_margin) / 100, quotas });
-  useEffect(() => { const t = window.setTimeout(() => setCalcArgs({ price_month: Number(f.price_month) || 0, target_margin: Math.min(Math.max(Number(f.target_margin) || 0, 0), 99) / 100, quotas }), 400); return () => window.clearTimeout(t); },
+  const [calcArgs, setCalcArgs] = useState({ price_month: Number(plainNum(f.price_month)) || 0, target_margin: Number(f.target_margin) / 100, quotas });
+  useEffect(() => { const t = window.setTimeout(() => setCalcArgs({ price_month: Number(plainNum(f.price_month)) || 0, target_margin: Math.min(Math.max(Number(f.target_margin) || 0, 0), 99) / 100, quotas }), 400); return () => window.clearTimeout(t); },
     [f.price_month, f.target_margin, quotas]);
   const calc = useQuery({ queryKey: ['admin-plan-calc', calcArgs], queryFn: () => rpc<any>('admin_plan_calc', { p: calcArgs }) });
   const c = calc.data;
   const row = (k: string) => (c?.modules || []).find((x: any) => x.module === k);
+  const feats = modules.filter((m) => m.kind === 'feature'), qs = modules.filter((m) => m.kind === 'quota');
+  // Everything the database would refuse, said in words before Save is pressed.
+  const codeErr = !f.code ? null : !PLAN_CODE.test(f.code) ? 'Start with a letter; use 2 to 30 lowercase letters, numbers or hyphens.'
+    : plans.some((p) => p.code === f.code && p.id !== plan.id) ? `Another plan already uses ${f.code}. Change the name or the code.` : null;
+  const name = f.name.trim();
+  const problem = !name ? 'Give the plan a name.' : name.length < 2 ? 'The name needs at least 2 letters.'
+    : !f.code ? 'The plan needs a code.' : codeErr ? `Code: ${codeErr}`
+    : !isMoney(f.price_month) ? 'Write the monthly price as a number, like 35000.'
+    : f.price_year !== '' && !isMoney(f.price_year) ? 'Write the yearly price as a number, like 350000, or leave it empty.'
+    : !isWhole(f.trial_days) || Number(plainNum(f.trial_days)) > 90 ? 'A free trial runs from 0 to 90 days.'
+    : !/^\d+(\.\d+)?$/.test(plainNum(f.target_margin)) || Number(plainNum(f.target_margin)) >= 100 ? 'The target margin is a percentage from 0 to 99.'
+    : !/^-?\d+$/.test(plainNum(f.sort)) ? 'The order shown is a whole number.'
+    : qs.find((m) => ents[m.key].included && ents[m.key].quota !== '' && !/^\d+(\.\d+)?$/.test(ents[m.key].quota)) ? 'Each limit is a number, or empty for no limit.'
+    : null;
   async function save() {
+    if (problem) { toast(problem, 'err'); return; }
     setBusy(true);
     try {
-      await rpc('admin_save_plan', { p: { id: plan.id || null, code: f.code, name: f.name, description: f.description, price_month: f.price_month, price_year: f.price_year || null,
-        trial_days: f.trial_days, target_margin: Math.min(Math.max(Number(f.target_margin) || 0, 0), 99) / 100, public: f.public, active: f.active, is_default: f.is_default, sort: f.sort,
+      await rpc('admin_save_plan', { p: { id: plan.id || null, code: f.code, name, description: f.description, price_month: plainNum(f.price_month), price_year: plainNum(f.price_year) || null,
+        trial_days: plainNum(f.trial_days), target_margin: Math.min(Math.max(Number(plainNum(f.target_margin)) || 0, 0), 99) / 100, public: f.public, active: f.active, is_default: f.is_default, sort: plainNum(f.sort),
         entitlements: modules.map((m) => ({ module: m.key, included: ents[m.key].included, quota: m.kind === 'quota' && ents[m.key].quota !== '' ? ents[m.key].quota : null, enforce: ents[m.key].enforce })) } });
       toast(`${f.name} saved`); await qc.invalidateQueries({ queryKey: ['admin-plans'] }); onClose();
     } catch (e) { toast(tidyError(e), 'err'); }
@@ -112,14 +150,13 @@ function PlanEditor({ plan, modules, onClose }: { plan: any; modules: any[]; onC
       return n;
     });
   }
-  const feats = modules.filter((m) => m.kind === 'feature'), qs = modules.filter((m) => m.kind === 'quota');
   return (
     <Modal onClose={onClose} width={980}>
       <ModalHead title={isNew ? 'New plan' : `Edit ${plan.name}`} sub={isNew ? undefined : `${plan.businesses ?? 0} businesses on it`} onClose={onClose} />
       <div className="modal-body stack" style={{ gap: 14 }}>
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr 1fr 1fr', gap: 10 }}>
-          <Field label="Code" hint="Lowercase, no spaces"><input className="input" value={f.code} onChange={(e) => set('code', e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))} /></Field>
-          <Field label="Name"><input className="input" value={f.name} onChange={(e) => set('name', e.target.value)} /></Field>
+          <Field label="Name"><input className="input" value={f.name} maxLength={40} onChange={(e) => setName(e.target.value)} /></Field>
+          <Field label="Code" hint={codeErr ? undefined : isNew && !ownCode ? 'Made from the name' : 'Lowercase, no spaces'} error={codeErr}><input className="input mono" value={f.code} maxLength={30} onChange={(e) => setCode(e.target.value)} /></Field>
           <Field label="A month (₦, VAT in)"><input className="input num" inputMode="decimal" value={f.price_month} onChange={(e) => set('price_month', e.target.value)} /></Field>
           <Field label="A year (₦)" hint="Empty: 12 months"><input className="input num" inputMode="decimal" value={f.price_year} onChange={(e) => set('price_year', e.target.value)} /></Field>
           <Field label="Target margin (%)"><input className="input num" inputMode="decimal" value={f.target_margin} onChange={(e) => set('target_margin', e.target.value)} /></Field>
@@ -186,22 +223,41 @@ function PlanEditor({ plan, modules, onClose }: { plan: any; modules: any[]; onC
           <div className="faint" style={{ fontSize: 12 }}>One unit's cost comes from the rates on the Cost of service page and the last 30 days of use (or a cost set on the module). The suggestion splits the budget the way the average business's costs are made up.</div>
         </div>
       </div>
-      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" disabled={busy || !f.code || f.name.trim().length < 2} onClick={save}>{busy ? 'Saving…' : 'Save the plan'}</button></div>
+      <div className="modal-ft m-wrap">{problem && <span className="grow" style={{ color: '#B91C1C', fontSize: 13 }} role="status">{problem}</span>}
+        <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy || !!problem} onClick={save}>{busy ? 'Saving…' : 'Save the plan'}</button></div>
     </Modal>
   );
 }
 
-function ModuleEditor({ m, features, meters, onClose }: { m: any; features: string[]; meters: string[]; onClose: () => void }) {
+function ModuleEditor({ m, features, meters, taken, onClose }: { m: any; features: string[]; meters: string[]; taken: string[]; onClose: () => void }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const isNew = !m.key;
   const [f, setF] = useState<any>({ ...m, unit_cost_ngn: m.unit_cost_ngn != null ? String(Number(m.unit_cost_ngn)) : '' });
   const [busy, setBusy] = useState(false);
+  // A new module's key follows its name until someone types a key of their own. An existing key never changes.
+  const [ownKey, setOwnKey] = useState(!isNew);
   const set = (k: string, v: any) => setF((x: any) => ({ ...x, [k]: v }));
+  const setName = (v: string) => setF((x: any) => ({ ...x, name: v, ...(ownKey ? {} : { key: slugFrom(v, '_', 40, 'module') }) }));
+  const setKey = (v: string) => {
+    const key = v.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 40);
+    setOwnKey(key !== '');
+    setF((x: any) => ({ ...x, key: key || slugFrom(x.name || '', '_', 40, 'module') }));
+  };
+  // Saving a new module under a key already in use would overwrite that module, so it is stopped here.
+  const keyErr = !isNew || !f.key ? null : !MODULE_KEY.test(f.key) ? 'Start with a letter; use 2 to 40 lowercase letters, numbers or underscores.'
+    : taken.includes(f.key) ? `A module called ${f.key} already exists. Change the name or the key.` : null;
+  const nm = String(f.name || '').trim();
+  const problem = !nm ? 'Give the module a name.' : nm.length < 2 ? 'The name needs at least 2 letters.' : !f.key ? 'The module needs a key.' : keyErr ? `Key: ${keyErr}`
+    : f.kind === 'quota' && !f.meter ? 'Choose what it counts.' : f.kind === 'feature' && !f.feature ? 'Choose what it switches.'
+    : f.unit_cost_ngn !== '' && !/^\d+(\.\d{1,4})?$/.test(plainNum(f.unit_cost_ngn)) ? 'Write the cost of one unit as a number, like 5.50, or leave it empty.'
+    : !/^-?\d+$/.test(plainNum(String(f.sort ?? 100))) ? 'The order is a whole number.' : null;
   async function save() {
+    if (problem) { toast(problem, 'err'); return; }
     setBusy(true);
-    try { await rpc('admin_save_module', { p: { key: f.key, name: f.name, kind: f.kind, meter: f.kind === 'quota' ? f.meter : null, feature: f.kind === 'feature' ? f.feature : null,
-      unit: f.unit || '', what: f.what || '', unit_cost_ngn: f.unit_cost_ngn, sort: f.sort, active: f.active } });
+    try { await rpc('admin_save_module', { p: { key: f.key, name: nm, kind: f.kind, meter: f.kind === 'quota' ? f.meter : null, feature: f.kind === 'feature' ? f.feature : null,
+      unit: f.unit || '', what: f.what || '', unit_cost_ngn: plainNum(f.unit_cost_ngn), sort: plainNum(String(f.sort ?? 100)), active: f.active } });
       toast('Module saved'); await qc.invalidateQueries({ queryKey: ['admin-plans'] }); onClose(); }
     catch (e) { toast(tidyError(e), 'err'); }
     setBusy(false);
@@ -211,8 +267,8 @@ function ModuleEditor({ m, features, meters, onClose }: { m: any; features: stri
       <ModalHead title={m.key ? m.name : 'New module'} sub={m.updated_at ? `Changed ${when(m.updated_at)}` : undefined} onClose={onClose} />
       <div className="modal-body stack" style={{ gap: 10 }}>
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 10 }}>
-          <Field label="Key"><input className="input" disabled={!!m.key} value={f.key || ''} onChange={(e) => set('key', e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))} /></Field>
-          <Field label="Name"><input className="input" value={f.name || ''} onChange={(e) => set('name', e.target.value)} /></Field>
+          <Field label="Name"><input className="input" value={f.name || ''} maxLength={60} onChange={(e) => setName(e.target.value)} /></Field>
+          <Field label="Key" hint={keyErr ? undefined : isNew && !ownKey ? 'Made from the name' : undefined} error={keyErr}><input className="input mono" disabled={!isNew} value={f.key || ''} maxLength={40} onChange={(e) => setKey(e.target.value)} /></Field>
         </div>
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 10 }}>
           <Field label="Kind"><select className="input" value={f.kind} disabled={!!m.key} onChange={(e) => set('kind', e.target.value)}><option value="quota">A limit</option><option value="feature">A feature</option></select></Field>
@@ -229,8 +285,9 @@ function ModuleEditor({ m, features, meters, onClose }: { m: any; features: stri
           <label className="check" style={{ marginTop: 20 }}><input type="checkbox" checked={f.active !== false} onChange={(e) => set('active', e.target.checked)} />On</label>
         </div>
       </div>
-      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" disabled={busy || !f.key || !f.name || (f.kind === 'quota' ? !f.meter : !f.feature)} onClick={save}>Save</button></div>
+      <div className="modal-ft m-wrap">{problem && <span className="grow" style={{ color: '#B91C1C', fontSize: 13 }} role="status">{problem}</span>}
+        <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy || !!problem} onClick={save}>Save</button></div>
     </Modal>
   );
 }

@@ -12,7 +12,7 @@ A plan is made of modules. A module is either a feature a business has or not, o
 | Quota each month | Sales (receipts and invoices), AI reads (invoices, statements, photos, documents), questions to Martina, phone call minutes, WhatsApp messages, emails, Tax ID checks, supplier invoices, payouts |
 | Quota at any time | Team members, branches, linked bank accounts |
 
-Admins add modules (Plans, New module): a feature switches one of Counta's switches; a quota counts one of the meters above. A module can carry a cost per unit set by hand; otherwise its cost comes from the rates (below).
+Admins add modules (Plans, New module): a feature switches one of Counta's switches; a quota counts one of the meters above. A module can carry a cost per unit set by hand; otherwise its cost comes from the rates (below). A new module's key, like a new plan's code, is made from its name (Extra reports becomes extra_reports, 35k Premium becomes plan-35k-premium) and can be typed over; a key or code already in use is refused before Save, and so is any field the database would turn away, with the reason shown beside the Save button.
 
 ## Plans and entitlements
 
