@@ -39,9 +39,11 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         runtimeCaching: [
           {
+            // Fonts come from the saved copy once there is one (refreshed monthly). Fetching them again on every page load
+            // kept the old version busy on slow connections, which holds a new version back when Update now is pressed.
             urlPattern: ({ url }) => url.origin === 'https://fonts.googleapis.com' || url.origin === 'https://fonts.gstatic.com',
-            handler: 'StaleWhileRevalidate',
-            options: { cacheName: 'fonts' }
+            handler: 'CacheFirst',
+            options: { cacheName: 'fonts', expiration: { maxEntries: 40, maxAgeSeconds: 30 * 24 * 3600 }, cacheableResponse: { statuses: [0, 200] } }
           },
           {
             urlPattern: ({ url }) => /\/assets\/(exceljs|xlsx-|pdf-vendor-|pdfjs-|pdf\.worker)/.test(url.pathname),

@@ -11,13 +11,17 @@ export function UpdateNotice() {
     <div className="update-notice" role="status" aria-live="polite" data-testid="update-notice">
       <span className="update-notice-icon"><Icon name="refresh" size={18} color="#0072F5" /></span>
       <div className="grow" style={{ minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: 14 }}>A new version of Counta is ready</div>
-        <div className="muted" style={{ fontSize: 13, lineHeight: 1.45 }}>Updating takes a few seconds and brings you back to this page. Save anything you are typing first.</div>
+        <div style={{ fontWeight: 600, fontSize: 14 }}>{s.busy ? 'Updating Counta' : 'A new version of Counta is ready'}</div>
+        <div className="muted" style={{ fontSize: 13, lineHeight: 1.45 }} data-testid="update-text">
+          {!s.busy ? 'Updating takes a few seconds and brings you back to this page. Save anything you are typing first.'
+            : s.slow ? 'Still finishing: a slow connection is holding it up. This page reloads by itself as soon as it is done.'
+            : 'This page reloads by itself in a moment.'}
+        </div>
       </div>
       <div className="update-notice-actions">
         <button className="btn btn-ghost btn-sm" onClick={updateLater} disabled={s.busy}>Later</button>
         <button className="btn btn-primary btn-sm" onClick={() => void updateNow()} disabled={s.busy} data-testid="update-now">
-          {s.busy ? <Spinner small /> : <Icon name="refresh" size={14} color="#fff" />}Update now
+          {s.busy ? <Spinner small /> : <Icon name="refresh" size={14} color="#fff" />}{s.busy ? 'Updating' : 'Update now'}
         </button>
       </div>
     </div>
