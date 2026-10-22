@@ -25,6 +25,16 @@ When the customer quotes no reference, the amount does the matching. A transfer 
 
 Goods leave once the money is confirmed. With Deliveries wait for the payment on (Sell, Online shop; on by default), a delivery cannot be marked dispatched or delivered while its sale is unpaid, waiting for a transfer, or paid by a transfer not yet confirmed. A manager can agree payment on delivery for a customer they trust, and the delivery shows who agreed it.
 
+## When Flutterwave cannot make a wallet's account number
+
+Flutterwave sometimes refuses a new wallet with "Error occurred while generating your nuban account" and gives no reason. Counta then tries again in order:
+
+1. without the phone number, on an address of the wallet's own (`name+w…@domain`, or `+wt…` for a tax wallet)
+2. on an address of Counta's (`wallet-…@counta.ng`, or `tax-…@counta.ng`)
+3. under the name with " Wallet" after it, first with the business's email and phone, then on the last address without the phone
+
+The wallet keeps the name Flutterwave opened it under, so a business may see "<name> Wallet" on its account. The third step exists because Flutterwave would not open any wallet named "Taxstreem Technologies Limited", the name on TaxStreem's own Flutterwave account, while "Taxstreem Technologies Limited Tax" opened. When every try fails, the wallet records each one with Flutterwave's answer, and Open wallet tries again from the start.
+
 ## Transfers need the relay
 
 Flutterwave takes transfers (payouts, bulk payments, sweeps, moves between a business's two wallets and tax payments) only from IP addresses whitelisted on TaxStreem's account. Supabase's servers have no fixed address, so Counta sends every transfer through TaxStreem's relay, a small server with one fixed address: see [transfer-relay.md](transfer-relay.md). Without the relay set up (`FLW_RELAY_URL` and `FLW_RELAY_SECRET` in the admin portal), transfers wait: a payout stays approved, a sweep stays pending, a move to the tax wallet waits, and each goes once the relay works. Collections need no relay.
