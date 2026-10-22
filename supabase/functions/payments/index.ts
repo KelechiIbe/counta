@@ -316,7 +316,8 @@ const flutterwave: Rail = {
       }
     }
     if (!r) {
-      const err = new UserError(`${(last as Error).message} Counta tried again without the phone number, on ${fallbacks.length === 1 ? 'another email address' : 'two other email addresses'} and as "${renamed}", and Flutterwave still could not make it.`);
+      const asRenamed = tries.some((x) => x.how.startsWith('as "')) ? ` and as "${renamed}"` : '';
+      const err = new UserError(`${(last as Error).message} Counta tried again without the phone number, on ${fallbacks.length === 1 ? 'another email address' : 'two other email addresses'}${asRenamed}, and Flutterwave still could not make it.`);
       // Each try with what Flutterwave said; an answer the same as the one before is not repeated.
       (err as any).record = `Flutterwave could not create the account number. ${tries.map((x, i) => `Try ${i + 1}, ${x.how}: ${i && x.said === tries[i - 1].said ? 'the same' : x.said}`).join(' · ')}`.slice(0, 500);
       throw err;
