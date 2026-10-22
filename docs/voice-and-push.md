@@ -42,12 +42,19 @@ Counta looks for a new version when it opens, whenever it comes back to the scre
 when the connection returns, and every half hour while it stays open. A new version downloads in the background and then
 waits. A notice at the top of every screen, the phone app and sign-in included, says a new version is ready:
 
-- **Update now** starts it at once. The page reloads on the new version and opens where the person was.
+- **Update now** starts it. The page reloads on the new version, where the person was, as soon as the new version has
+  taken over. The browser holds a new version back while the old one is still answering a request (a slow connection,
+  a file still loading), so until then the notice says "Updating Counta", and after ten seconds that a slow connection is
+  holding it up. The page is never reloaded early: a page reloaded before the new version has taken over comes back on
+  the old one with the notice again. A reload by hand meanwhile carries on with the update without asking again.
 - **Later** puts the notice away until the app next comes back to the screen. Closing every Counta window also starts the
   new version the next time Counta opens.
 
 How it works: `vite.config.ts` registers the service worker in prompt mode, so a new one waits. `src/lib/update.ts` looks
-for new versions and tells the waiting service worker to take over (`SKIP_WAITING`) when the person presses Update now;
+for new versions and tells the waiting service worker to take over (`SKIP_WAITING`) when the person presses Update now,
+asking again every few seconds and reloading the page only once that service worker is active (Update now is remembered in
+the tab for three minutes, in `sessionStorage`, for a reload in between); fonts are served from the saved copy (`CacheFirst`,
+refreshed monthly) so fetching them again cannot keep the old service worker busy;
 `src/components/UpdateNotice.tsx` is the notice. Pages from before the notice cannot show it, so `public/push-sw.js` lets a
 new version take over at once (as it always did) until the newer pages have run on that device and left a marker in the
 `counta-meta` cache. That way the first release with the notice reaches everyone without waiting, and every release after
