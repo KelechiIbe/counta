@@ -144,14 +144,22 @@ function Layout({ admin, children }: { admin: boolean; children: ReactNode }) {
 export default function AdminApp() {
   const qc = useQueryClient();
   const me = useAdminMe();
+  const { session, signOut } = useSession();
   if (me.isLoading) return <Centre><Spinner /></Centre>;
   if (!me.data?.staff) {
+    // Says which account is signed in, so someone with more than one can switch to the one that is an admin.
     return (
       <Centre>
-        <div className="card card-pad stack" style={{ gap: 10, width: 'min(440px, 100%)', textAlign: 'center' }}>
-          <b style={{ fontSize: 18 }}>This page is not available</b>
-          <div className="muted" style={{ fontSize: 14 }}>There is nothing here for your account.</div>
-          <div><Link className="btn btn-secondary btn-sm" to="/">Go to Counta</Link></div>
+        <div className="card card-pad stack" style={{ gap: 10, width: 'min(440px, 100%)', textAlign: 'center' }} data-testid="admin-not-staff">
+          <b style={{ fontSize: 18 }}>This account is not a TaxStreem admin</b>
+          <div className="muted" style={{ fontSize: 14, lineHeight: 1.5 }}>
+            You are signed in as <b style={{ color: 'var(--ink)', wordBreak: 'break-all' }}>{session?.user.email}</b>. Sign in with your admin account,
+            or ask a TaxStreem admin to add this one in Admin team.
+          </div>
+          <div className="row" style={{ gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary btn-sm" onClick={() => void signOut()}>Sign in with another account</button>
+            <Link className="btn btn-secondary btn-sm" to="/">Go to Counta</Link>
+          </div>
         </div>
       </Centre>
     );
