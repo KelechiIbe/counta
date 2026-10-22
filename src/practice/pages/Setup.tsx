@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { cleanError, rpc } from '../../lib/supabase';
+import { localPhone } from '../../lib/format';
 import { useSession } from '../../state/session';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Spinner } from '../../components/ui';
@@ -23,7 +24,7 @@ export default function Setup({ invitations, again }: { invitations: Invitation[
   async function create() {
     setBusy(true); setErr(null);
     try {
-      const h = await rpc<Home>('create_practice', { p: { ...f, licence_body: f.licence_no.trim() ? f.licence_body : null, licence_no: f.licence_no.trim() || null } });
+      const h = await rpc<Home>('create_practice', { p: { ...f, phone: localPhone(f.phone), licence_body: f.licence_no.trim() ? f.licence_body : null, licence_no: f.licence_no.trim() || null } });
       savePractice(h.practice.id);
       await qc.invalidateQueries({ queryKey: ['practices-mine'] });
       nav(`/practice/${h.practice.id}`, { replace: true });
@@ -56,7 +57,7 @@ export default function Setup({ invitations, again }: { invitations: Invitation[
             <select className="input" value={f.kind} onChange={up('kind')}><option value="firm">A firm</option><option value="sole">Me, practising on my own</option></select>
           </Field>
           <Field label="Practice email" hint="Clients' replies go here."><input className="input" type="email" value={f.email} onChange={up('email')} /></Field>
-          <Field label="Phone"><input className="input" value={f.phone} onChange={up('phone')} maxLength={30} /></Field>
+          <Field label="Phone"><input className="input" value={f.phone} onChange={up('phone')} maxLength={30} placeholder="0803 123 4567" inputMode="tel" /></Field>
           <Field label="Firm registration (optional)" hint="ICAN or CAC firm number"><input className="input" value={f.firm_reg} onChange={up('firm_reg')} maxLength={40} /></Field>
           <Field label="Your name as clients see it"><input className="input" value={f.my_name} onChange={up('my_name')} maxLength={80} /></Field>
           <Field label="Your professional body">

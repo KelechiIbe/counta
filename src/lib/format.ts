@@ -117,3 +117,20 @@ export function amountInWords(amount: number, currency = 'naira', minor = 'kobo'
   const text = `${wholeWords(whole)} ${currency}${cents ? ` and ${wholeWords(cents)} ${minor}` : ''} only`;
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+// A phone number the way Counta keeps it (the database does the same): 11 digits from 0 for a Nigerian number, such as
+// 09031571395 for "+234 903 157 1395"; + and the digits for a number abroad; anything else as it was typed.
+export function localPhone(raw: string | null | undefined): string {
+  const t = String(raw ?? '').trim();
+  let d = t.replace(/\D/g, '');
+  if (!t) return '';
+  if (!d) return t;
+  const abroad = t.startsWith('+') || d.startsWith('00');
+  if (d.startsWith('00')) d = d.slice(2);
+  if (/^2340\d{10}$/.test(d)) return d.slice(3);
+  if (/^234\d{10}$/.test(d)) return '0' + d.slice(3);
+  if (/^0\d{10}$/.test(d)) return d;
+  if (!abroad && /^[789][01]\d{8}$/.test(d)) return '0' + d;
+  if (abroad && d.length >= 8 && d.length <= 15) return '+' + d;
+  return t;
+}

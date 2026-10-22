@@ -64,6 +64,10 @@ const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { sta
 
 class UserError extends Error {}
 class NotConfigured extends UserError {}
+// What Flutterwave answered when it said no: the HTTP status and its whole reply, for the record a failed wallet keeps.
+class FlwError extends UserError { constructor(msg: string, public http = 0, public reply: unknown = null) { super(msg); } }
+const flwAnswer = (e: unknown) => e instanceof FlwError
+  ? `HTTP ${e.http} ${(typeof e.reply === 'string' ? e.reply : JSON.stringify(e.reply)).slice(0, 220)}` : String((e as Error)?.message || e).slice(0, 220);
 
 const secrets = new Map<string, { v: string; at: number }>();
 const SECRET_CACHE_MS = Number(Deno.env.get('SECRET_CACHE_MS') || 60_000);
@@ -160,7 +164,7 @@ async function readFlw(res: Response) {
   if (!res.ok || (body && body.status === 'error')) {
     const msg = typeof body === 'string' ? body : body?.message || JSON.stringify(body);
     if (WHITELIST.test(String(msg))) throw new TransfersOff(TRANSFERS_OFF);
-    throw new UserError(`Flutterwave: ${String(msg).slice(0, 300)}`);
+    throw new FlwError(`Flutterwave: ${String(msg).slice(0, 300)}`, res.status, body);
   }
   return body;
 }
@@ -252,20 +256,54 @@ function ngPhone(p?: string | null): string | undefined {
   return n.length >= 10 && n.length <= 14 ? n : undefined;
 }
 
+// Flutterwave could not make the account number for a new wallet ("Error occurred while generating your nuban account").
+const nubanFailed = (e: unknown) => /nuban|account number|generat/i.test(String((e as Error)?.message || ''));
+
 const flutterwave: Rail = {
   async configured() { return Boolean(await secret('FLW_SECRET_KEY')); },
   async openWallet(org) {
     // The tax wallet is a second payout subaccount; Flutterwave keeps one per email, so it takes a tagged address.
     const base = (org.email || `wallet-${org.id.slice(0, 8)}@counta.ng`).toLowerCase();
     const email = org.purpose === 'tax' ? base.replace('@', `+tax${org.id.slice(0, 6)}@`) : base;
-    const payload = (e: string) => JSON.stringify({ account_name: org.name.slice(0, 60), email: e, mobilenumber: ngPhone(org.phone), country: 'NG' });
-    let r: any;
-    try { r = await flw('/payout-subaccounts', { method: 'POST', body: payload(email) }); }
+    const tagged = (tag: string) => { const [local, domain] = email.split('@'); return `${local}+${tag}${org.id.slice(0, 6)}@${domain}`; };
+    const phone = ngPhone(org.phone), t = org.purpose === 'tax' ? 't' : '';
+    const tries: string[] = [];
+    const attempt = async (e: string, withPhone: boolean) => {
+      try {
+        return await flw('/payout-subaccounts', { method: 'POST', body: JSON.stringify({ account_name: org.name.slice(0, 60), email: e,
+          ...(withPhone && phone ? { mobilenumber: phone } : {}), country: 'NG' }) });
+      } catch (err) {
+        const said = `${withPhone && phone ? 'with' : 'without'} the phone number: ${flwAnswer(err)}`;
+        tries.push(said);
+        console.log('flutterwave wallet', org.id, org.purpose || 'main', said);
+        (err as any).record = `${(err as Error).message} (Flutterwave answered ${said})`.slice(0, 500);
+        throw err;
+      }
+    };
+    let r: any = null;
+    try { r = await attempt(email, true); }
     catch (e) {
-      // Flutterwave keeps one wallet per email: a business sharing an email with another gets a tagged address.
-      if (!/email/i.test((e as Error).message)) throw e;
-      const [local, domain] = email.split('@');
-      r = await flw('/payout-subaccounts', { method: 'POST', body: payload(`${local}+counta${org.purpose === 'tax' ? 't' : ''}${org.id.slice(0, 6)}@${domain}`) });
+      if (/email/i.test((e as Error).message)) {
+        // Flutterwave keeps one wallet per email: a business sharing an email with another gets a tagged address.
+        try { r = await attempt(tagged(`counta${t}`), true); }
+        catch (e2) { if (!nubanFailed(e2) && !/email/i.test((e2 as Error).message)) throw e2; }
+      } else if (!nubanFailed(e)) throw e;
+    }
+    // Flutterwave could not make the account number: once more without the phone number (Flutterwave lists it as optional,
+    // and one already used for other wallets is a likely reason) on an address of the wallet's own; then, for a business
+    // whose email is on its own domain (TaxStreem's own business uses taxstreem.com, the domain of TaxStreem's Flutterwave
+    // account), on an address of Counta's.
+    const counta = `${org.purpose === 'tax' ? 'tax' : 'wallet'}-${org.id.slice(0, 8)}@counta.ng`;
+    const fallbacks = [tagged(`w${t}`), ...(email.endsWith('@counta.ng') ? [] : [counta])];
+    let last: unknown = null;
+    for (const addr of r ? [] : fallbacks) {
+      try { r = await attempt(addr, false); break; }
+      catch (e3) { last = e3; }
+    }
+    if (!r) {
+      const err = new UserError(`${(last as Error).message} Counta tried again without the phone number and on ${fallbacks.length === 1 ? 'another email address' : 'two other email addresses'}, and Flutterwave still could not make it.`);
+      (err as any).record = `Flutterwave could not create the account number. ${tries.map((x, i) => `Try ${i + 1}, ${x}`).join(' · ')}`.slice(0, 500);
+      throw err;
     }
     const d = r.data || {};
     let nuban = d.nuban, bank = d.bank_name;
@@ -816,7 +854,7 @@ async function openTaxWallet(orgId: string, memberId: string) {
   try {
     return await svc('svc_tax_wallet_ready', { p_wallet: t.tax_wallet.id, d: await rail.openWallet(t.org) });
   } catch (e) {
-    await svc('svc_tax_wallet_ready', { p_wallet: t.tax_wallet.id, d: { error: (e as Error).message } });
+    await svc('svc_tax_wallet_ready', { p_wallet: t.tax_wallet.id, d: { error: (e as any).record || (e as Error).message } });
     throw e;
   }
 }
@@ -1248,7 +1286,7 @@ Deno.serve(async (req) => {
           try {
             wallet = await svc('svc_wallet_ready', { p_wallet: w.wallet.id, d: await rail.openWallet(w.org) });
           } catch (e) {
-            await svc('svc_wallet_ready', { p_wallet: w.wallet.id, d: { error: (e as Error).message } });
+            await svc('svc_wallet_ready', { p_wallet: w.wallet.id, d: { error: (e as any).record || (e as Error).message } });
             throw e;
           }
         }

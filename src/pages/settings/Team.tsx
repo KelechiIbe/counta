@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useInventory, useSession } from '../../state/session';
 import { useAction } from '../../lib/queries';
 import { rpc } from '../../lib/supabase';
-import { initials, when } from '../../lib/format';
+import { initials, localPhone, when } from '../../lib/format';
 import { PERMS, ROLE_LABEL, type Perm, type Role } from '../../lib/types';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Modal, ModalHead, SkeletonRows } from '../../components/ui';
@@ -189,7 +189,7 @@ export function PersonModal({ team, member, onClose }: { team: Team; member: Tea
   const { orgId } = useSession();
   const { data: inv } = useInventory();
   const { run, busy } = useAction();
-  const [f, setF] = useState({ name: member?.display_name || '', email: member?.email || '', phone: member?.phone || '', title: member?.title || '',
+  const [f, setF] = useState({ name: member?.display_name || '', email: member?.email || '', phone: localPhone(member?.phone), title: member?.title || '',
     role: (member?.role || 'staff') as Exclude<Role, 'owner'>, location_id: member?.location_id || '' });
   const roleRow = team.roles.find((r) => r.role === f.role)!;
   // What this person will hold: the role's permissions, with their own exceptions (cleared when the role changes).
@@ -208,9 +208,9 @@ export function PersonModal({ team, member, onClose }: { team: Team; member: Tea
     if (!member && f.email && !/^\S+@\S+\.\S+$/.test(f.email.trim())) { setErr('That email address does not look right.'); return; }
     if (broken) { setErr('Someone who records sales cannot also edit prices or approve adjustments.'); return; }
     const r = await run(() => member
-      ? rpc('update_member', { p_member: member.id, p_patch: { display_name: f.name, role: f.role, title: f.title, phone: f.phone, location_id: f.location_id || '',
+      ? rpc('update_member', { p_member: member.id, p_patch: { display_name: f.name, role: f.role, title: f.title, phone: localPhone(f.phone), location_id: f.location_id || '',
           reset_perms: true, perms: own } })
-      : rpc('invite_member', { p_org: orgId, p_name: f.name, p_email: f.email.trim() || null, p_role: f.role, p_title: f.title || null, p_location: f.location_id || null, p_phone: f.phone || null }),
+      : rpc('invite_member', { p_org: orgId, p_name: f.name, p_email: f.email.trim() || null, p_role: f.role, p_title: f.title || null, p_location: f.location_id || null, p_phone: localPhone(f.phone) || null }),
     { ok: member ? 'Saved' : f.email.trim() ? `Invitation sent to ${f.email.trim()} · the link works for seven days` : `${f.name.split(' ')[0]} added without a login`, invalidate: ['team', 'inv'] });
     if (r !== undefined) onClose();
   }

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { cleanError, rpc } from '../../lib/supabase';
+import { localPhone } from '../../lib/format';
 import { useToast } from '../../state/session';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Spinner } from '../../components/ui';
@@ -14,14 +15,14 @@ export default function SettingsPage({ pid }: { pid: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const p = h.practice;
-  const [f, setF] = useState({ name: p.name, kind: p.kind, email: p.email || '', phone: p.phone || '', address: p.address || '', state: p.state || '', firm_reg: p.firm_reg || '' });
+  const [f, setF] = useState({ name: p.name, kind: p.kind, email: p.email || '', phone: localPhone(p.phone), address: p.address || '', state: p.state || '', firm_reg: p.firm_reg || '' });
   const [lic, setLic] = useState({ licence_body: h.me.licence_body || 'ICAN', licence_no: h.me.licence_no || '' });
   const [busy, setBusy] = useState<'p' | 'l' | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const partner = h.me.role === 'partner';
   async function save() {
     setBusy('p'); setErr(null);
-    try { await rpc('update_practice', { p_practice: pid, p: f }); await qc.invalidateQueries({ queryKey: ['practice-home', pid] }); await qc.invalidateQueries({ queryKey: ['practices-mine'] }); toast('Saved'); }
+    try { await rpc('update_practice', { p_practice: pid, p: { ...f, phone: localPhone(f.phone) } }); await qc.invalidateQueries({ queryKey: ['practice-home', pid] }); await qc.invalidateQueries({ queryKey: ['practices-mine'] }); toast('Saved'); }
     catch (e) { setErr(cleanError(e)); }
     setBusy(null);
   }
@@ -52,7 +53,7 @@ export default function SettingsPage({ pid }: { pid: string }) {
           <Field label="Name"><input className="input" value={f.name} onChange={up('name')} disabled={!partner} maxLength={120} /></Field>
           <Field label="It is"><select className="input" value={f.kind} onChange={up('kind')} disabled={!partner}><option value="firm">A firm</option><option value="sole">A sole practitioner</option></select></Field>
           <Field label="Email"><input className="input" value={f.email} onChange={up('email')} disabled={!partner} /></Field>
-          <Field label="Phone"><input className="input" value={f.phone} onChange={up('phone')} disabled={!partner} maxLength={30} /></Field>
+          <Field label="Phone"><input className="input" value={f.phone} onChange={up('phone')} disabled={!partner} maxLength={30} placeholder="0803 123 4567" inputMode="tel" /></Field>
           <Field label="Address"><input className="input" value={f.address} onChange={up('address')} disabled={!partner} maxLength={300} /></Field>
           <Field label="State"><input className="input" value={f.state} onChange={up('state')} disabled={!partner} maxLength={40} /></Field>
           <Field label="Firm registration"><input className="input" value={f.firm_reg} onChange={up('firm_reg')} disabled={!partner} maxLength={40} /></Field>

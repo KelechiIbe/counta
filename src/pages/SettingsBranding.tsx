@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useInventory, useSession, useToast, can } from '../state/session';
 import { photoUrl, rpc, supabase } from '../lib/supabase';
+import { localPhone } from '../lib/format';
 import { Icon } from '../components/Icon';
 import { useTinCheck } from './purchases/TinCheck';
 import { Alert, Field, Label } from '../components/ui';
@@ -60,7 +61,7 @@ export function BrandingSection() {
     if (!o) return;
     setF({ logo_path: o.logo_path || '', brand_color: cleanHex(o.brand_color), invoice_template: o.invoice_template || 'classic', website: o.website || '',
       invoice_footer: o.invoice_footer || '', invoice_note: o.invoice_note || '', address: o.address || '', tin: o.tin || '', rc_number: o.rc_number || '',
-      phone: o.phone || '', email: o.email || '',
+      phone: localPhone(o.phone), email: o.email || '',
       invoice_show: { tin: true, rc_number: true, vat_status: true, amount_in_words: true, signature: false, ...(o.invoice_show || {}) } });
   }, [o?.id, o?.brand_color, o?.invoice_template, o?.logo_path]); // eslint-disable-line react-hooks/exhaustive-deps
   const preview = useMemo(() => o && sampleDoc({ name: o.name, address: f.address, phone: f.phone, email: f.email, tin: f.tin, rc_number: f.rc_number, logo_path: f.logo_path || null,
@@ -83,7 +84,7 @@ export function BrandingSection() {
     if (tinErr) { toast(tinErr, 'err'); return; }
     setBusy('save');
     try {
-      await rpc('update_org_settings', { p_org: orgId, p_patch: { address: f.address, tin: f.tin, rc_number: f.rc_number, phone: f.phone, email: f.email } });
+      await rpc('update_org_settings', { p_org: orgId, p_patch: { address: f.address, tin: f.tin, rc_number: f.rc_number, phone: localPhone(f.phone), email: f.email } });
       await rpc('update_branding', { p_org: orgId, p_patch: { logo_path: f.logo_path || '', brand_color: f.brand_color, invoice_template: f.invoice_template, website: f.website,
         invoice_footer: f.invoice_footer, invoice_note: f.invoice_note, invoice_show: f.invoice_show } });
       toast('Branding saved'); await qc.invalidateQueries({ queryKey: ['inv'] });

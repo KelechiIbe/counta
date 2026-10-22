@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { edge } from '../lib/api';
 import { rpc } from '../lib/supabase';
+import { localPhone } from '../lib/format';
 import { useSession } from '../state/session';
 import {
   cacSearch, cacSelect, cacStatusReport, classLabel, guideConsent, guideLanguage, guideMark, kycAnswer, kycManual, kycSubmit, openWallet, QUESTION_ORDER, readCacDocument, saveVoice,
@@ -205,7 +206,7 @@ export function GuideProvider({ children }: { children: ReactNode }) {
         return { business: businessBrief(k), category: k.category?.label, answers: k.answers, still_missing: k.missing.length ? k.missing : 'nothing, all answered' };
       }),
       submit_profile: safe(async ({ trading_name }) => {
-        const phone = (session?.user?.user_metadata as any)?.phone;
+        const phone = localPhone((session?.user?.user_metadata as any)?.phone);
         const r = await kycSubmit({ ...(trading_name ? { trading_name } : {}), ...(phone ? { phone } : {}) });
         await refreshMemberships(); setOrgId(r.org_id); refresh(); goOnboard('score'); celebrate();
         void guideMark('score_seen').catch(() => null);
@@ -262,7 +263,7 @@ export function GuideProvider({ children }: { children: ReactNode }) {
       call_consent: safe(async ({ consent, phone }) => {
         const g = await guideConsent(Boolean(consent), phone || (session?.user?.user_metadata as any)?.phone);
         refresh();
-        return g.call.consent ? { saved: true, number: g.call.phone } : { saved: true, consent: false };
+        return g.call.consent ? { saved: true, number: localPhone(g.call.phone) } : { saved: true, consent: false };
       }),
       celebrate: safe(async () => { celebrate(); return 'Done.'; }),
       verify_nin: safe(async ({ nin }) => {
