@@ -289,15 +289,21 @@ const flutterwave: Rail = {
         catch (e2) { if (!nubanFailed(e2) && !/email/i.test((e2 as Error).message)) throw e2; }
       } else if (!nubanFailed(e)) throw e;
     }
-    // Flutterwave could not make the account number: once more, without the phone number (Flutterwave lists it as
-    // optional, and one already used for other wallets is a likely reason) and on an address of the wallet's own.
+    // Flutterwave could not make the account number: once more without the phone number (Flutterwave lists it as optional,
+    // and one already used for other wallets is a likely reason) on an address of the wallet's own; then, for a business
+    // whose email is on its own domain (TaxStreem's own business uses taxstreem.com, the domain of TaxStreem's Flutterwave
+    // account), on an address of Counta's.
+    const counta = `${org.purpose === 'tax' ? 'tax' : 'wallet'}-${org.id.slice(0, 8)}@counta.ng`;
+    const fallbacks = [tagged(`w${t}`), ...(email.endsWith('@counta.ng') ? [] : [counta])];
+    let last: unknown = null;
+    for (const addr of r ? [] : fallbacks) {
+      try { r = await attempt(addr, false); break; }
+      catch (e3) { last = e3; }
+    }
     if (!r) {
-      try { r = await attempt(tagged(`w${t}`), false); }
-      catch (e3) {
-        const err = new UserError(`${(e3 as Error).message} Counta tried again without the phone number, on an email address of the wallet's own, and Flutterwave said the same.`);
-        (err as any).record = `Flutterwave could not create the account number. ${tries.map((x, i) => `Try ${i + 1}, ${x}`).join(' · ')}`.slice(0, 500);
-        throw err;
-      }
+      const err = new UserError(`${(last as Error).message} Counta tried again without the phone number and on ${fallbacks.length === 1 ? 'another email address' : 'two other email addresses'}, and Flutterwave still could not make it.`);
+      (err as any).record = `Flutterwave could not create the account number. ${tries.map((x, i) => `Try ${i + 1}, ${x}`).join(' · ')}`.slice(0, 500);
+      throw err;
     }
     const d = r.data || {};
     let nuban = d.nuban, bank = d.bank_name;
