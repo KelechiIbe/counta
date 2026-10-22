@@ -23,7 +23,7 @@ export function publicUrl(raw: string): URL {
   return u;
 }
 
-async function getJson(url: string, init: RequestInit = {}, timeout = 20_000): Promise<any> {
+export async function getJson(url: string, init: RequestInit = {}, timeout = 20_000): Promise<any> {
   let res: Response;
   try { res = await fetch(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(timeout) }); }
   catch (e) { throw new ToolError((e as Error).name === 'TimeoutError' ? 'The tool did not answer in time.' : 'Counta could not reach the tool.'); }
