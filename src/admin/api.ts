@@ -23,7 +23,7 @@ export type KeysStatus = {
 export const useKeys = () => useQuery({ queryKey: ['admin-keys'], queryFn: () => edge<KeysStatus>('admin', { action: 'status' }) });
 
 export type Settings = {
-  martina: { tone: 'calm' | 'warm' | 'lively'; default_voice_id: string | null };
+  martina: { tone: 'calm' | 'warm' | 'lively'; default_voice_id: string | null; voice_model?: 'eleven_v4_turbo' | 'eleven_turbo_v2_5' | 'eleven_flash_v2_5' };
   limits: Record<string, any>; switches: Record<string, boolean>;
   defaults: { martina: any; limits: Record<string, any>; switches: Record<string, boolean> };
   voices: { voice_id: string; name: string; gender: string | null; age: string | null; accent: string | null; description: string | null; preview_url: string | null;

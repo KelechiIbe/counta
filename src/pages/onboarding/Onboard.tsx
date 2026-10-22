@@ -7,8 +7,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import {
-  cacSearch, cacSelect, cacStatusReport, classLabel, FILING, guideLanguage, guideMark, kycAnswer, kycManual, kycSubmit, longDate, naira, OFFERING, PAY, QUESTION_LABEL, readCacDocument,
-  REASONS, RECEIVE, REVENUE, TAXES, titleCase, uploadCacDocument, useCategories, useGuide, useKyc, useScore, yearsSince, type Answers, type Candidate, type Kyc, type Score,
+  answered, cacSearch, cacSelect, cacStatusReport, classLabel, FILING, guideLanguage, guideMark, kycAnswer, kycManual, kycSubmit, longDate, naira, OFFERING, PAY, QUESTION_LABEL,
+  QUESTION_ORDER, readCacDocument, REASONS, RECEIVE, REVENUE, TAXES, titleCase, uploadCacDocument, useCategories, useGuide, useKyc, useScore, yearsSince, type Answers, type Candidate,
+  type Kyc, type Score,
 } from '../../lib/onboard';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Spinner } from '../../components/ui';
@@ -70,7 +71,7 @@ export default function Onboard() {
 
   const live = g.status === 'live';
   const talk = (text?: boolean) => { setStarted(true); void g.start({ text }); };
-  async function setLang(l: 'en' | 'pcm') { try { await guideLanguage(l); await guide.refetch(); g.notify(`The person switched the language to ${l === 'pcm' ? 'Pidgin' : 'English'}.`); } catch (e) { toast((e as Error).message, 'err'); } }
+  async function setLang(l: 'en' | 'pcm') { try { await guideLanguage(l); await guide.refetch(); g.answer(l === 'pcm' ? 'Make we talk Pidgin.' : "Let's talk in English.", 'They switched the language on screen.'); } catch (e) { toast((e as Error).message, 'err'); } }
 
   async function sample() {
     try {
@@ -105,7 +106,8 @@ export default function Onboard() {
             : screen === 'found' ? <Found k={k} live={live} onNext={() => go('questions')} onBack={() => go('find')} />
             : screen === 'questions' ? <Questions k={k} live={live} onNext={() => go('summary')} />
             : screen === 'summary' ? <Summary k={k} live={live} onEdit={() => go('questions')} onDone={(org) => { setOrgId(org); go('score'); }} />
-            : screen === 'score' ? <ScoreView orgId={orgId} first={first} live={live} next={idOpen ? 'Next: confirm a director' : 'Next: your CAC document'} onNext={() => go(idOpen ? 'identity' : 'document')} />
+            : screen === 'score' ? <ScoreView orgId={orgId} first={first} live={live} next={idOpen ? 'Next: confirm a director' : 'Next: your CAC document'}
+                onNext={() => { g.answer("Let's move on.", idOpen ? 'The director NIN check is on screen now.' : 'The CAC document step is on screen now.'); go(idOpen ? 'identity' : 'document'); }} />
             : screen === 'identity' ? <IdentityStep orgId={orgId} first={first} live={live} lang={lang} onNext={() => { setSkippedId(true); go('document'); }} />
             : screen === 'document' ? <Document k={k} orgId={orgId} live={live} onDone={() => go('done')} />
             : <Done first={first} orgName={k.business?.name} onGo={() => nav('/home', { replace: true })} />}
@@ -128,7 +130,9 @@ function IdentityStep({ orgId, first, live, lang, onNext }: { orgId: string | nu
       </Say>
       <div className="ob-card stack" style={{ gap: 14 }}>
         <h2 className="ob-h2">Confirm you are a director</h2>
-        <IdentityPanel orgId={orgId} live={live} askOpen={g.uploadAsk?.kind === 'nin_slip' ? g.uploadAsk.at : undefined} onDone={onNext} onSkip={onNext} />
+        <IdentityPanel orgId={orgId} live={live} askOpen={g.uploadAsk?.kind === 'nin_slip' ? g.uploadAsk.at : undefined} onResult={g.answer}
+          onDone={() => { g.answer('Carry on.', 'The CAC document step is on screen now.'); onNext(); }}
+          onSkip={() => { g.answer("I'm not a director, skip it for now.", 'Payments stay locked until a director checks in Settings. The CAC document step is on screen now.'); onNext(); }} />
       </div>
     </>
   );
@@ -196,7 +200,10 @@ function Find({ k, live, onFound, onManual }: { k: Kyc; live: boolean; onFound: 
     e?.preventDefault(); setErr(null);
     if (q.trim().length < 2) { setErr('Type the business name or its RC number.'); return; }
     setBusy('search');
-    try { const x = await cacSearch(q.trim()); put(x); void qc.invalidateQueries({ queryKey: ['kyc'] }); g.notify(`On screen, the person searched CAC for "${q.trim()}" and sees ${x.search.candidates.length} matches.`); }
+    try {
+      const x = await cacSearch(q.trim()); put(x); void qc.invalidateQueries({ queryKey: ['kyc'] });
+      g.answer(`Find "${q.trim()}".`, `Searched on screen: ${x.search.candidates.length} ${x.search.candidates.length === 1 ? 'match is' : 'matches are'} showing.`);
+    }
     catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
   }
   async function pick(c: Candidate) {
@@ -204,7 +211,7 @@ function Find({ k, live, onFound, onManual }: { k: Kyc; live: boolean; onFound: 
     try {
       const r = await cacSelect(c.id); put(r.kyc); void qc.invalidateQueries({ queryKey: ['kyc'] });
       void g.insights();
-      g.notify(`On screen, the person picked ${c.name} (RC ${c.rc_number}) as their business. Call web_insights before you describe what the web says.`);
+      g.answer(`That's my business: ${titleCase(c.name)}.`, `Chosen and saved on screen (RC ${c.rc_number}). Call web_insights before you say what the web says.`);
       onFound();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
   }
@@ -250,7 +257,11 @@ function Manual({ onDone }: { onDone: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   async function save() {
     setErr(null); setBusy(true);
-    try { await kycManual(f); await qc.invalidateQueries({ queryKey: ['kyc'] }); g.notify(`On screen, the person said ${f.name} is ${f.kind === 'pending' ? 'still registering' : 'not on CAC'}.`); onDone(); }
+    try {
+      await kycManual(f); await qc.invalidateQueries({ queryKey: ['kyc'] });
+      g.answer(`${f.name} is ${f.kind === 'pending' ? 'still registering with CAC' : f.kind === 'other' ? 'not on the CAC register' : 'not registered with CAC yet'}.`, 'Saved on screen. The questions are next.');
+      onDone();
+    }
     catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
   return (
@@ -333,8 +344,8 @@ function Found({ k, live, onNext, onBack }: { k: Kyc; live: boolean; onNext: () 
           </>}
       </div>
       <div className="ob-sticky">
-        <button className="btn btn-secondary" onClick={onBack}>Not us</button>
-        <button className="btn btn-primary" onClick={() => { g.notify('On screen, the person confirmed the business and moved to the questions.'); onNext(); }} style={{ boxShadow: 'var(--shadow-cta)' }}>That's us<Icon name="arrow" size={16} color="#fff" /></button>
+        <button className="btn btn-secondary" onClick={() => { g.answer("That's not us.", 'The search is on screen again.'); onBack(); }}>Not us</button>
+        <button className="btn btn-primary" onClick={() => { g.answer("That's us.", 'The first question is on screen now.'); onNext(); }} style={{ boxShadow: 'var(--shadow-cta)' }}>That's us<Icon name="arrow" size={16} color="#fff" /></button>
       </div>
     </>
   );
@@ -374,6 +385,10 @@ function adviceFor(a: Answers): string[] {
   return out.slice(0, 2);
 }
 
+// One question at a time: the one Martina is asking (show_question), or the first still open. A tap answers it: it is saved,
+// Martina hears it at once as the person's answer, and the next open question shows. Questions that take several answers
+// keep their picks quiet until Done.
+const MULTI = new Set(['receive_methods', 'pay_methods', 'reasons', 'examples']);
 function Questions({ k, live, onNext }: { k: Kyc; live: boolean; onNext: () => void }) {
   const g = useGuideTalk();
   const qc = useQueryClient();
@@ -384,97 +399,174 @@ function Questions({ k, live, onNext }: { k: Kyc; live: boolean; onNext: () => v
   const [tag, setTag] = useState('');
   const [note, setNote] = useState(k.answers?.reason_note || '');
   useEffect(() => { setA(k.answers || {}); }, [k.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  const order = QUESTION_ORDER as readonly string[];
+  const aRef = useRef(a);
+  aRef.current = a;
+  // The next question still open after this one (wrapping round), never this one.
+  const nextOpen = (after: string | null, ans: Answers = aRef.current) => {
+    const i = after ? order.indexOf(after) : -1;
+    for (const q of [...order.slice(i + 1), ...order.slice(0, Math.max(i, 0))]) if (q !== after && !answered(q, ans)) return q;
+    return null;
+  };
+  const [cur, setCurState] = useState<string | null>(() => (g.question && order.includes(g.question.id) ? g.question.id
+    : order.find((q) => !answered(q, k.answers || {})) || null));
+  // When the question on screen last changed: an answer Martina saved before then does not move it on.
+  const curAt = useRef(Date.now());
+  const setCur = (q: string | null) => { curAt.current = Date.now(); setCurState(q); };
+  useEffect(() => { if (g.question && order.includes(g.question.id)) setCur(g.question.id); }, [g.question?.at]); // eslint-disable-line react-hooks/exhaustive-deps
+  // An answer Martina saved by voice for the question on screen moves it on, once the answer has reached the screen (the
+  // marks can come before the answers, and she may fill several at once).
+  const f = g.filled;
+  useEffect(() => {
+    if (!cur || !answered(cur, a)) return;
+    const t = cur === 'reasons' ? Math.max(f.reasons || 0, f.reason_note || 0) : f[cur] || 0;
+    if (t && t >= curAt.current && Date.now() - t < 4000) setCur(nextOpen(cur, a));
+  }, [f, a]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setTag(''); }, [cur]);
   const w = k.web;
-  async function save(p: Partial<Answers>, say?: string) {
+  async function save(p: Partial<Answers>) {
     setErr(null);
-    setA((x) => ({ ...x, ...p, ...(p.filing ? { filing: { ...(x.filing || {}), ...p.filing } } : {}) }));
+    const merged = { ...aRef.current, ...p, ...(p.filing ? { filing: { ...(aRef.current.filing || {}), ...p.filing } } : {}) };
+    setA(merged); aRef.current = merged;
     try {
       const x = await kycAnswer(p);
       qc.setQueriesData({ queryKey: ['kyc'] }, (old: any) => (old && old.id === x.id ? x : old));
-      if (say) g.notify(`On screen, the person answered ${say}.`);
-    } catch (e) { setErr((e as Error).message); }
+      return merged;
+    } catch (e) { setErr((e as Error).message); return null; }
+  }
+  // A single answer: saved, told to Martina, and on to the next question.
+  async function pick(id: string, p: Partial<Answers>, said: string) {
+    const merged = await save(p);
+    if (!merged) return;
+    g.answer(said);
+    setCur(nextOpen(id, merged));
   }
   const toggle = (key: 'receive_methods' | 'pay_methods' | 'reasons', id: string) => {
-    const cur = a[key] || [];
-    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
-    void save({ [key]: next }, `${key.replace('_', ' ')}: ${next.join(', ') || 'none'}`);
+    const now = aRef.current[key] || [];
+    void save({ [key]: now.includes(id) ? now.filter((x) => x !== id) : [...now, id] });
   };
-  const missing = k.missing;
+  // The picks in the order they are on screen.
+  const label = (list: readonly { id: string; label: string }[], ids?: readonly string[]) =>
+    [...list.filter((x) => (ids || []).includes(x.id)).map((x) => x.label), ...(ids || []).filter((i) => !list.some((x) => x.id === i))].join(', ');
+  // Done on a question with several answers.
+  async function done(id: string) {
+    let ans = aRef.current;
+    if (id === 'examples' && tag.trim()) { ans = (await save({ examples: [...(ans.examples || []), tag.trim()] })) || ans; setTag(''); }
+    if (id === 'reasons' && note !== (ans.reason_note || '')) ans = (await save({ reason_note: note })) || ans;
+    if (!answered(id, ans)) return;
+    const said = id === 'receive_methods' ? `Customers pay me by ${label(RECEIVE, ans.receive_methods)}.`
+      : id === 'pay_methods' ? `I pay suppliers and bills by ${label(PAY, ans.pay_methods)}.`
+      : id === 'reasons' ? `I want Counta to ${[label(REASONS, ans.reasons).toLowerCase(), ans.reason_note].filter(Boolean).join('. ')}.`
+      : `Things I sell: ${(ans.examples || []).join(', ')}.`;
+    g.answer(said);
+    setCur(nextOpen(id, ans));
+  }
+  const back = () => {
+    const i = cur ? order.indexOf(cur) : order.length;
+    if (i <= 0) return;
+    const q = order[i - 1];
+    setCur(q); g.notify(`On screen, the person went back to the question about ${QUESTION_LABEL[q].toLowerCase()}.`);
+  };
   const list = cats.data || [];
   const fit = list.filter((c) => !a.offering || a.offering === 'both' || c.kind === a.offering || c.kind === 'both');
   const suggested = w?.category_guess || null;
   const shown = (all ? fit : fit.slice(0, 10)).sort((x, y) => Number(y.id === suggested) - Number(x.id === suggested));
   if (a.category && !shown.some((c) => c.id === a.category)) { const c = list.find((x) => x.id === a.category); if (c) shown.unshift(c); }
-  const f = g.filled;
   const tips = adviceFor(a);
-  const left = missing.length;
-  return (
-    <>
-      <Say live={live}>{left === 0 ? <>That's everything. Let's check the summary.</>
-        : left > 8 ? <>Quick ones now, so Counta fits how you actually work. Tap, type, or just tell me.</>
-        : <>{left} to go. You're flying.</>}</Say>
-      <div className="ob-card stack" style={{ gap: 12 }}>
+  const left = order.filter((q) => !answered(q, a)).length;
+  const idx = cur ? order.indexOf(cur) : -1;
+  const tax = cur?.startsWith('filing_') ? TAXES.find((t) => 'filing_' + t.id === cur) : null;
+  const question = (() => {
+    switch (cur) {
+      case 'offering': return (
         <Q id="offering" title="Do you sell goods, services or both?" done={!!a.offering} filled={f.offering}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>
             {OFFERING.map((o) => (
-              <button key={o.id} className={'ob-tile' + (a.offering === o.id ? ' on' : '')} onClick={() => save({ offering: o.id }, `offering: ${o.id}`)}>
+              <button key={o.id} className={'ob-tile' + (a.offering === o.id ? ' on' : '')} onClick={() => pick('offering', { offering: o.id }, `${o.label}.`)}>
                 <b>{o.label}</b><span className="faint" style={{ fontSize: 12 }}>{o.hint}</span>
                 {w?.offering_guess === o.id && !a.offering && <span className="chip t-purple" style={{ alignSelf: 'flex-start', marginTop: 4 }}>Martina's guess</span>}
               </button>
             ))}
           </div>
-        </Q>
+        </Q>);
+      case 'category': return (
         <Q id="category" title="Which of these fits you best?" hint={suggested && list.find((c) => c.id === suggested) ? <>From what I read, I'd say <b>{list.find((c) => c.id === suggested)!.label}</b>.</> : undefined} done={!!a.category} filled={f.category}>
           <div className="ob-chips">
             {shown.map((c) => (
-              <button key={c.id} className={'ob-chip' + (a.category === c.id ? ' on' : '')} onClick={() => save({ category: c.id }, `category: ${c.label}`)}>
+              <button key={c.id} className={'ob-chip' + (a.category === c.id ? ' on' : '')} onClick={() => pick('category', { category: c.id }, `${c.label}.`)}>
                 {c.label}{c.id === suggested && a.category !== c.id && <span className="sug">pick</span>}
               </button>
             ))}
             {fit.length > 10 && <button className="ob-chip" onClick={() => setAll(!all)} style={{ borderStyle: 'dashed' }}>{all ? 'Fewer' : `More (${fit.length - 10})`}</button>}
           </div>
-        </Q>
+        </Q>);
+      case 'revenue_band': return (
         <Q id="revenue_band" title="Roughly how much do you sell in a year?" hint="A band is fine. It decides which taxes apply to you." done={!!a.revenue_band} filled={f.revenue_band}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
             {REVENUE.map((r) => (
-              <button key={r.id} className={'ob-tile' + (a.revenue_band === r.id ? ' on' : '')} onClick={() => save({ revenue_band: r.id }, `yearly sales: ${r.label}`)}>
+              <button key={r.id} className={'ob-tile' + (a.revenue_band === r.id ? ' on' : '')} onClick={() => pick('revenue_band', { revenue_band: r.id }, `${r.label} a year.`)}>
                 <b>{r.label}</b><span className="faint" style={{ fontSize: 12 }}>{r.hint}</span>
               </button>
             ))}
           </div>
-        </Q>
-        <Q id="receive_methods" title="How do customers pay you today?" hint="Pick all that apply." done={!!a.receive_methods?.length} filled={f.receive_methods}>
+        </Q>);
+      case 'receive_methods': return (
+        <Q id="receive_methods" title="How do customers pay you today?" hint="Pick all that apply, then Done." done={!!a.receive_methods?.length} filled={f.receive_methods}>
           <div className="ob-chips">{RECEIVE.map((m) => <button key={m.id} className={'ob-chip' + (a.receive_methods?.includes(m.id) ? ' on' : '')} onClick={() => toggle('receive_methods', m.id)}>{m.label}</button>)}</div>
-        </Q>
-        <Q id="pay_methods" title="And how do you pay suppliers and bills?" done={!!a.pay_methods?.length} filled={f.pay_methods}>
+        </Q>);
+      case 'pay_methods': return (
+        <Q id="pay_methods" title="And how do you pay suppliers and bills?" hint="Pick all that apply, then Done." done={!!a.pay_methods?.length} filled={f.pay_methods}>
           <div className="ob-chips">{PAY.map((m) => <button key={m.id} className={'ob-chip' + (a.pay_methods?.includes(m.id) ? ' on' : '')} onClick={() => toggle('pay_methods', m.id)}>{m.label}</button>)}</div>
-        </Q>
-        <Q id="reasons" title="What do you want Counta to do for you?" done={!!a.reasons?.length || !!a.reason_note} filled={f.reasons || f.reason_note}>
+        </Q>);
+      case 'reasons': return (
+        <Q id="reasons" title="What do you want Counta to do for you?" hint="Pick all that apply, then Done." done={!!a.reasons?.length || !!a.reason_note} filled={f.reasons || f.reason_note}>
           <div className="ob-chips">{REASONS.map((m) => <button key={m.id} className={'ob-chip' + (a.reasons?.includes(m.id) ? ' on' : '')} onClick={() => toggle('reasons', m.id)}>{m.label}</button>)}</div>
-          <input className="input input-sm" value={note} onChange={(e) => setNote(e.target.value)} onBlur={() => note !== (a.reason_note || '') && save({ reason_note: note }, `their reason: ${note}`)}
+          <input className="input input-sm" value={note} onChange={(e) => setNote(e.target.value)} onBlur={() => note !== (a.reason_note || '') && void save({ reason_note: note })}
             placeholder="Anything else, in your own words (optional)" aria-label="Your reason in your own words" />
-        </Q>
-        <Q id="examples" title="Name a few things you sell" hint="Three or more helps Counta set up your items and VAT." done={!!a.examples?.length} filled={f.examples}>
+        </Q>);
+      case 'examples': return (
+        <Q id="examples" title="Name a few things you sell" hint="Three or more helps Counta set up your items and VAT. Press Enter after each, then Done." done={!!a.examples?.length} filled={f.examples}>
           <div className="ob-tags" onClick={(e) => (e.currentTarget.querySelector('input') as HTMLInputElement)?.focus()}>
             {(a.examples || []).map((x) => (
               <span key={x} className="ob-tag">{x}<button aria-label={`Remove ${x}`} onClick={() => save({ examples: (a.examples || []).filter((y) => y !== x) })} style={{ border: 0, background: 'none', cursor: 'pointer', padding: 0 }}><Icon name="x" size={12} /></button></span>
             ))}
             <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder={(a.examples || []).length ? 'Add another…' : 'e.g. Peak Milk, haircuts, logo design'}
-              onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ',') && tag.trim()) { e.preventDefault(); void save({ examples: [...(a.examples || []), tag.trim()] }, `an example: ${tag.trim()}`); setTag(''); } }}
-              onBlur={() => { if (tag.trim()) { void save({ examples: [...(a.examples || []), tag.trim()] }); setTag(''); } }} aria-label="Something you sell" />
+              onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ',') && tag.trim()) { e.preventDefault(); void save({ examples: [...(a.examples || []), tag.trim()] }); setTag(''); } }}
+              aria-label="Something you sell" />
           </div>
-          {w?.sells?.filter((s) => !(a.examples || []).includes(s)).length ? (
+          {w?.sells?.filter((x) => !(a.examples || []).includes(x)).length ? (
             <div className="row wrap" style={{ gap: 6, fontSize: 12 }}><span className="faint">Seen online:</span>
-              {w.sells.filter((s) => !(a.examples || []).includes(s)).map((s) => <button key={s} className="ob-chip" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => save({ examples: [...(a.examples || []), s] })}><Icon name="plus" size={11} />{s}</button>)}
+              {w.sells.filter((x) => !(a.examples || []).includes(x)).map((x) => <button key={x} className="ob-chip" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => save({ examples: [...(a.examples || []), x] })}><Icon name="plus" size={11} />{x}</button>)}
             </div>) : null}
-        </Q>
-        {TAXES.map((t) => (
-          <Q key={t.id} id={'filing_' + t.id} title={t.q} hint={t.hint} done={!!a.filing?.[t.id]} filled={f['filing_' + t.id]}>
-            <div className="ob-chips">{FILING.map((o) => (
-              <button key={o.id} className={'ob-chip' + (a.filing?.[t.id] === o.id ? ' on' : '')} onClick={() => save({ filing: { [t.id]: o.id } }, `${t.label}: ${o.label}`)}>{o.label}</button>
-            ))}</div>
-          </Q>
-        ))}
+        </Q>);
+      default: return tax ? (
+        <Q id={'filing_' + tax.id} title={tax.q} hint={tax.hint} done={!!a.filing?.[tax.id]} filled={f['filing_' + tax.id]}>
+          <div className="ob-chips">{FILING.map((o) => (
+            <button key={o.id} className={'ob-chip' + (a.filing?.[tax.id] === o.id ? ' on' : '')} onClick={() => pick('filing_' + tax.id, { filing: { [tax.id]: o.id } }, `${tax.label}: ${o.label}.`)}>{o.label}</button>
+          ))}</div>
+        </Q>) : null;
+    }
+  })();
+  const multiReady = cur && MULTI.has(cur) && (answered(cur, a) || (cur === 'examples' && !!tag.trim()) || (cur === 'reasons' && !!note.trim()));
+  return (
+    <>
+      <Say live={live}>{!cur ? <>That's everything. Let's check the summary.</>
+        : live ? <>Tap your answer, or just tell me.</> : <>{left > 1 ? `${left} quick ones.` : 'Last one.'} Tap your answer.</>}</Say>
+      <div className="ob-card stack" style={{ gap: 12 }} data-testid="question-card">
+        <div className="row" style={{ justifyContent: 'space-between', gap: 10 }}>
+          <span className="faint" style={{ fontSize: 12.5 }} data-testid="question-count">{cur ? `Question ${idx + 1} of ${order.length}` : `All ${order.length} answered`}</span>
+          <div className="ob-dots" role="list" aria-label="Questions">
+            {order.map((q) => (
+              <button key={q} role="listitem" aria-label={`${QUESTION_LABEL[q]}${answered(q, a) ? ', answered' : ''}`} aria-current={q === cur ? 'step' : undefined}
+                className={'ob-dot' + (answered(q, a) ? ' done' : '') + (q === cur ? ' cur' : '')}
+                onClick={() => { setCur(q); if (q !== cur) g.notify(`On screen, the person opened the question about ${QUESTION_LABEL[q].toLowerCase()}.`); }} />
+            ))}
+          </div>
+        </div>
+        {question || <div className="stack" style={{ gap: 6, alignItems: 'flex-start' }} data-testid="questions-done">
+          <b className="ob-h2">That's all the questions.</b>
+          <span className="muted" style={{ fontSize: 14 }}>Check them on the summary. You can change any answer there.</span>
+        </div>}
         {err && <Alert kind="red" icon="alert">{err}</Alert>}
       </div>
       {tips.length > 0 && (
@@ -484,9 +576,17 @@ function Questions({ k, live, onNext }: { k: Kyc; live: boolean; onNext: () => v
         </div>
       )}
       <div className="ob-sticky">
-        <button className="btn btn-primary" disabled={left > 0} onClick={() => { g.notify('On screen, the person finished the questions and opened the summary.'); onNext(); }} style={{ boxShadow: 'var(--shadow-cta)' }}>
-          {left ? `${left} to go` : 'See the summary'}<Icon name="arrow" size={16} color="#fff" />
-        </button>
+        {idx > 0 && <button className="btn btn-secondary" onClick={back}>Back</button>}
+        {cur && MULTI.has(cur) && (
+          <button className="btn btn-primary" disabled={!multiReady} onClick={() => void done(cur)} data-testid="question-done" style={{ boxShadow: 'var(--shadow-cta)' }}>
+            Done<Icon name="arrow" size={16} color="#fff" />
+          </button>
+        )}
+        {!cur && (
+          <button className="btn btn-primary" disabled={left > 0} onClick={() => { g.answer("That's all the questions.", 'The summary is on screen now.'); onNext(); }} style={{ boxShadow: 'var(--shadow-cta)' }}>
+            See the summary<Icon name="arrow" size={16} color="#fff" />
+          </button>
+        )}
       </div>
     </>
   );
@@ -522,12 +622,12 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
       qc.setQueryData(['compliance', r.org_id], r.compliance);
       void qc.invalidateQueries({ queryKey: ['kyc'] }); void qc.invalidateQueries({ queryKey: ['guide'] });
       g.celebrate();
-      g.notify(`On screen, the person submitted the profile. ${r.name} is set up with a compliance score of ${r.compliance.score} out of ${r.compliance.total}. Call get_score and talk them through it.`);
+      g.answer('Set up my business.', `Done on screen: ${r.name} is set up with a compliance score of ${r.compliance.score} out of ${r.compliance.total}. Call get_score and talk them through it.`);
       void guideMark('score_seen').catch(() => null);
       onDone(r.org_id);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
-  const jump = (id: string) => { onEdit(); window.setTimeout(() => document.getElementById('q-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 250); };
+  const jump = (id: string) => { g.showQuestion(id); g.notify(`On screen, the person is changing their answer about ${(QUESTION_LABEL[id] || id).toLowerCase()}.`); onEdit(); };
   return (
     <>
       <Say live={live}>Here's everything in one place. Fix anything that looks off, then I'll set up {titleCase(b?.name) || 'the business'}.</Say>
@@ -640,7 +740,7 @@ function Document({ k, orgId, live, onDone }: { k: Kyc; orgId: string | null | u
   async function read() {
     if (!orgId) return;
     setBusy('read');
-    try { const r = await readCacDocument(orgId); setChecks(r.checks); g.notify(`On screen, Counta read the CAC document: ${r.checks.map((c) => c.note).join(' ')}`); }
+    try { const r = await readCacDocument(orgId); setChecks(r.checks); g.answer("I've added my CAC document.", `Counta read it on screen: ${r.checks.map((c) => c.note).join(' ')}`); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); void qc.invalidateQueries({ queryKey: ['kyc'] }); void qc.invalidateQueries({ queryKey: ['compliance'] }); void qc.invalidateQueries({ queryKey: ['guide'] }); }
   }
@@ -654,7 +754,10 @@ function Document({ k, orgId, live, onDone }: { k: Kyc; orgId: string | null | u
     setErr(null); setBusy('upload');
     try { await uploadCacDocument(orgId, f, kind); await read(); } catch (e) { setErr((e as Error).message); setBusy(null); }
   }
-  async function skip() { await guideMark('skip_cac_document').catch(() => null); void qc.invalidateQueries({ queryKey: ['guide'] }); onDone(); }
+  async function skip() {
+    await guideMark('skip_cac_document').catch(() => null); void qc.invalidateQueries({ queryKey: ['guide'] });
+    g.answer("I'll add the CAC document later.", 'Skipped for now. They are going into Counta.'); onDone();
+  }
   const has = Boolean(k.doc?.path);
   return (
     <>
@@ -695,7 +798,7 @@ function Document({ k, orgId, live, onDone }: { k: Kyc; orgId: string | null | u
       </div>
       <div className="ob-sticky">
         {!has && <button className="btn btn-secondary" onClick={skip}>Later</button>}
-        <button className="btn btn-primary" onClick={onDone} disabled={!has || !!busy} style={{ boxShadow: 'var(--shadow-cta)' }}>Into Counta<Icon name="arrow" size={16} color="#fff" /></button>
+        <button className="btn btn-primary" onClick={() => { g.answer('Take me into Counta.', 'The profile part is done.'); onDone(); }} disabled={!has || !!busy} style={{ boxShadow: 'var(--shadow-cta)' }}>Into Counta<Icon name="arrow" size={16} color="#fff" /></button>
       </div>
     </>
   );

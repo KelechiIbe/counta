@@ -29,7 +29,7 @@
 // when there are several). ELEVENLABS_BASE_URL is for tests.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
-import { CALM, FOLLOWUP_DATA, FOLLOWUP_PROMPT, firstMessage, GUIDE_PROMPT, GUIDE_TOOLS, stepLabel, toolConfig, type ToolDef, whatWeKnow } from './guide.ts';
+import { FOLLOWUP_DATA, FOLLOWUP_PROMPT, firstMessage, GUIDE_PROMPT, GUIDE_TOOLS, stepLabel, TALK, toolConfig, type ToolDef, whatWeKnow } from './guide.ts';
 import { ASSISTANT_PROMPT, ASSISTANT_TOOLS, assistantFirst, handsFreeFirst, PERM_WORDS } from './assistant.ts';
 import { wordingNote, wordsFor } from './wording.ts';
 import { cacheable, phrase, shortName } from './phrases.ts';
@@ -66,8 +66,9 @@ async function secret(name: string): Promise<string> {
 }
 // What TaxStreem set in the admin portal for Martina (tone, default voice), read again once a minute.
 let plat: { at: number; v: any } | null = null;
+const PLATFORM_MS = Number(Deno.env.get('SECRET_CACHE_MS') || 60_000);
 async function platform(): Promise<any> {
-  if (plat && Date.now() - plat.at < 60_000) return plat.v;
+  if (plat && Date.now() - plat.at < PLATFORM_MS) return plat.v;
   const { data } = await admin.rpc('svc_platform');
   plat = { at: Date.now(), v: data && typeof data === 'object' ? data : {} };
   return plat.v;
@@ -251,7 +252,7 @@ const RULES = `Speak clear, warm Nigerian English and understand Nigerian Pidgin
 You are an AI assistant. Say so if anyone asks, and never pretend to be a person.
 Never ask for or discuss bank details, card numbers, passwords or one-time codes. If payment comes up, say the owner will follow up.
 If the person is busy or asks you to call back, ask for a good time, thank them and end the call.
-${CALM}`;
+${TALK}`;
 
 // How Martina's voice carries. Calm is steady with no expressive audio tags; warm lets a few gentle tags through; lively is
 // the old, more animated delivery.
@@ -262,6 +263,18 @@ const TONES: Record<string, Record<string, unknown>> = {
       { tag: 'reassuring', description: 'When something went wrong or the person is worried' }] },
   lively: { expressive_mode: true, stability: 0.45, similarity_boost: 0.8, speed: 1.02 },
 };
+
+// The voice model Martina speaks with (admin portal, Martina and voices). Eleven v4 Turbo sounds the most natural and is
+// the only one that takes expressive cues; Turbo v2.5 and Flash v2.5 read plainly and never add sighs or laughs.
+export const VOICE_MODELS = ['eleven_v4_turbo', 'eleven_turbo_v2_5', 'eleven_flash_v2_5'];
+export function ttsConfig(tone: string, model: string, voiceId: string) {
+  const t: Record<string, unknown> = { ...(TONES[tone] || TONES.calm) };
+  const m = VOICE_MODELS.includes(model) ? model : VOICE_MODELS[0];
+  if (!m.startsWith('eleven_v4')) { delete t.expressive_mode; delete t.suggested_audio_tags; }
+  return { model_id: m, ...t, ...(voiceId ? { voice_id: voiceId } : {}) };
+}
+// Martina stops when the person says a word ("ok", "got it", "next"); a listening noise alone does not cut her off.
+export const IGNORE_WHILE_SPEAKING = ['mm', 'mmm', 'mhm', 'mm-hmm', 'uh-huh', 'hmm'];
 
 type Agent = { name: string; prompt: string; first: string; maxSecs: number; data: Record<string, unknown>; criteria: unknown[]; web?: boolean; temperature?: number;
   tools?: ToolDef[] };
@@ -381,7 +394,7 @@ ${RULES}`,
   },
   guide: {
     name: 'Counta · Martina onboarding guide',
-    first: 'Hi! I am Martina, your Counta guide. What is your business called?',
+    first: 'Hi, I\'m Martina. What\'s your business called?',
     maxSecs: 1500,
     prompt: GUIDE_PROMPT,
     temperature: 0.6,
@@ -395,7 +408,7 @@ ${RULES}`,
   },
   assistant: {
     name: 'Counta · Martina assistant',
-    first: 'Hi! Martina here. What can I help you with?',
+    first: 'Hi, Martina here. What can I help you with?',
     maxSecs: 900,
     prompt: ASSISTANT_PROMPT,
     temperature: 0.4,
@@ -432,7 +445,7 @@ async function ensureTools(list: ToolDef[]): Promise<string[]> {
   return ids;
 }
 
-function agentBody(kind: string, voiceId: string, toolIds: string[] = [], tone = 'calm') {
+export function agentBody(kind: string, voiceId: string, toolIds: string[] = [], tone = 'calm', model = VOICE_MODELS[0]) {
   const a = AGENTS[kind];
   return {
     name: a.name,
@@ -441,7 +454,8 @@ function agentBody(kind: string, voiceId: string, toolIds: string[] = [], tone =
       agent: { first_message: a.first, language: 'en',
         prompt: { prompt: a.prompt, temperature: a.temperature ?? 0.3, ...(toolIds.length ? { tool_ids: toolIds } : {}) } },
       conversation: { max_duration_seconds: a.maxSecs },
-      tts: { ...(TONES[tone] || TONES.calm), ...(voiceId ? { voice_id: voiceId } : {}) },
+      turn: { interruption_ignore_terms: IGNORE_WHILE_SPEAKING },
+      tts: ttsConfig(tone, model, voiceId),
     },
     platform_settings: {
       data_collection: a.data,
@@ -457,24 +471,48 @@ function agentBody(kind: string, voiceId: string, toolIds: string[] = [], tone =
   };
 }
 
+// The same agent without the newer settings, for when ElevenLabs refuses them: first without the words that do not
+// interrupt her, then without the voice model too. Martina keeps working as she did, and the refusal is logged.
+function withoutTurn(b: ReturnType<typeof agentBody>) {
+  const { turn: _turn, ...cc } = b.conversation_config;
+  return { ...b, conversation_config: cc };
+}
+function plainBody(b: ReturnType<typeof agentBody>) {
+  const cc = withoutTurn(b).conversation_config;
+  const { model_id: _m, ...tts } = cc.tts as Record<string, unknown>;
+  return { ...b, conversation_config: { ...cc, tts } };
+}
+
 async function ensureAgent(kind: string): Promise<string> {
   const voiceId = await defaultVoice();
   const toolIds = AGENTS[kind].tools ? await ensureTools(AGENTS[kind].tools!) : [];
-  const bodyObj = agentBody(kind, voiceId, toolIds, String((await platform())?.martina?.tone || 'calm'));
+  const m = (await platform())?.martina || {};
+  const bodyObj = agentBody(kind, voiceId, toolIds, String(m.tone || 'calm'), String(m.voice_model || VOICE_MODELS[0]));
   const body = JSON.stringify(bodyObj);
   const version = AGENT_VERSION * 100000 + hashNum(body);
   const { data: row } = await admin.from('voice_agents').select('*').eq('kind', kind).maybeSingle();
   if (row && row.version === version) return row.agent_id;
+  // Sends the agent (update or create), falling back to the plain one if ElevenLabs refuses the settings as invalid.
+  const send = async (path: string, method: string) => {
+    const tries = [body, JSON.stringify(withoutTurn(bodyObj)), JSON.stringify(plainBody(bodyObj))];
+    for (let i = 0; ; i++) {
+      try { return await xi(path, { method, body: tries[i] }); } catch (e) {
+        const st = (e as any).status;
+        if ((st !== 400 && st !== 422) || i === tries.length - 1) throw e;
+        console.error('voice agent settings refused, trying with fewer', kind, i, String((e as Error).message).slice(0, 300));
+      }
+    }
+  };
   if (row) {
     try {
-      await xi(`/v1/convai/agents/${row.agent_id}`, { method: 'PATCH', body });
+      await send(`/v1/convai/agents/${row.agent_id}`, 'PATCH');
       await admin.from('voice_agents').update({ version, updated_at: new Date().toISOString() }).eq('kind', kind);
       return row.agent_id;
     } catch (e) {
       if ((e as any).status !== 404) throw e;
     }
   }
-  const created = await xi('/v1/convai/agents/create', { method: 'POST', body });
+  const created = await send('/v1/convai/agents/create', 'POST');
   await admin.from('voice_agents').upsert({ kind, agent_id: created.agent_id, version, updated_at: new Date().toISOString() });
   return created.agent_id;
 }

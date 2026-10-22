@@ -45,7 +45,7 @@ export function VoicePicker({ onChosen, compact }: { onChosen?: () => void; comp
       await saveVoice(orgId, { voice_id: v.voice_id, voice_lang: language });
       await guideMark('voice_chosen').catch(() => null);
       await qc.invalidateQueries({ queryKey: ['voice-settings'] }); void qc.invalidateQueries({ queryKey: ['guide'] });
-      g.notify(`The person chose ${v.name} (${language === 'pcm' ? 'Pidgin' : 'English'}) as the payment voice.`);
+      g.answer(`I'll take ${v.name}, in ${language === 'pcm' ? 'Pidgin' : 'English'}.`, 'Saved on screen as the voice that announces payments.');
       // The moment: a pretend payment lands, in the voice just chosen.
       const r = await fetchSpeech('payment_demo', { org_id: orgId }, 8000);
       g.celebrate();

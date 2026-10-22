@@ -120,3 +120,25 @@
 .g-confirm { border: 1px solid var(--primary-line, #BFD9FF); background: #F5F9FF; border-radius: 14px; padding: 10px 12px; animation: gSlide .2s ease-out; }
 .g-confirm-lines { margin: 4px 0 2px; padding-left: 18px; font-size: 13px; line-height: 1.45; color: var(--ink); }
 .g-dock-hf { padding: 6px 14px 8px; border-top: 1px solid var(--row); }
+
+/* One question at a time: a dot per question, filled when answered, long for the one on screen. Each dot is a 24px target. */
+.ob-dots { display: flex; flex-wrap: wrap; gap: 2px; justify-content: flex-end; }
+.ob-dot { position: relative; width: 18px; height: 24px; border: 0; background: none; padding: 0; cursor: pointer; }
+.ob-dot::after { content: ''; position: absolute; left: 4px; top: 8px; width: 9px; height: 9px; border-radius: 5px; background: var(--line); transition: width .2s, background .2s; }
+.ob-dot.done::after { background: #93C5FD; }
+.ob-dot.cur { width: 28px; }
+.ob-dot.cur::after { width: 20px; background: #0072F5; }
+.ob-dot:focus-visible { outline: 2px solid #0072F5; outline-offset: 1px; border-radius: 6px; }
+
+/* On a phone in onboarding the conversation is compact, and the page's buttons sit above it. */
+.g-dock.compact .g-dock-hd { padding: 8px 10px 6px 12px; }
+.g-dock.compact .g-dock-body { max-height: 64px; padding: 6px 12px; gap: 6px; }
+.g-dock.compact .g-line { font-size: 13px; padding: 6px 10px; max-width: 100%; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.g-dock.compact .g-dock-ft { padding: 6px 10px 8px; }
+body.g-docked .ob-sticky { bottom: calc(var(--g-dock-h, 0px) + 32px); }
+body.g-docked .ob-main { padding-bottom: calc(var(--g-dock-h, 0px) + 110px); }
+body.g-docked-side .ob-main { padding-right: 400px; }
+@media (max-width: 700px) {
+  body.g-docked .ob-sticky { bottom: calc(var(--g-dock-h, 0px) + 20px); }
+  body.g-docked .ob-main { padding-bottom: calc(var(--g-dock-h, 0px) + 96px); }
+}
