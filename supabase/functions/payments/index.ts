@@ -267,20 +267,16 @@ const flutterwave: Rail = {
     const email = org.purpose === 'tax' ? base.replace('@', `+tax${org.id.slice(0, 6)}@`) : base;
     const tagged = (tag: string) => { const [local, domain] = email.split('@'); return `${local}+${tag}${org.id.slice(0, 6)}@${domain}`; };
     const phone = ngPhone(org.phone), t = org.purpose === 'tax' ? 't' : '';
-    const tries: { how: string; said: string }[] = [];
-    let named = org.name.slice(0, 60);
-    const attempt = async (e: string, withPhone: boolean, name = org.name.slice(0, 60)) => {
+    const tries: string[] = [];
+    const attempt = async (e: string, withPhone: boolean) => {
       try {
-        const res = await flw('/payout-subaccounts', { method: 'POST', body: JSON.stringify({ account_name: name, email: e,
+        return await flw('/payout-subaccounts', { method: 'POST', body: JSON.stringify({ account_name: org.name.slice(0, 60), email: e,
           ...(withPhone && phone ? { mobilenumber: phone } : {}), country: 'NG' }) });
-        named = name;
-        return res;
       } catch (err) {
-        const how = `${name === org.name.slice(0, 60) ? '' : `as "${name}", `}${withPhone && phone ? 'with' : 'without'} the phone number`;
-        const said = flwAnswer(err);
-        tries.push({ how, said });
-        console.log('flutterwave wallet', org.id, org.purpose || 'main', `${how}: ${said}`);
-        (err as any).record = `${(err as Error).message} (Flutterwave answered ${how}: ${said})`.slice(0, 500);
+        const said = `${withPhone && phone ? 'with' : 'without'} the phone number: ${flwAnswer(err)}`;
+        tries.push(said);
+        console.log('flutterwave wallet', org.id, org.purpose || 'main', said);
+        (err as any).record = `${(err as Error).message} (Flutterwave answered ${said})`.slice(0, 500);
         throw err;
       }
     };
@@ -304,22 +300,9 @@ const flutterwave: Rail = {
       try { r = await attempt(addr, false); break; }
       catch (e3) { last = e3; }
     }
-    // Still no account number: once more under the name with " Wallet" after it, first as the business (its email and
-    // phone), then on the wallet's last address without the phone. Flutterwave would not make one under "Taxstreem
-    // Technologies Limited", the name on TaxStreem's own Flutterwave account, on any address, with or without the phone,
-    // while "Taxstreem Technologies Limited Tax" opened (22 October 2026).
-    const renamed = `${org.name.slice(0, 53)} Wallet`;
-    if (!r && nubanFailed(last)) {
-      for (const [addr, withPhone] of [[email, true], [fallbacks[fallbacks.length - 1], false]] as [string, boolean][]) {
-        try { r = await attempt(addr, withPhone, renamed); break; }
-        catch (e4) { last = e4; if (!nubanFailed(e4) && !/email/i.test((e4 as Error).message)) break; }
-      }
-    }
     if (!r) {
-      const asRenamed = tries.some((x) => x.how.startsWith('as "')) ? ` and as "${renamed}"` : '';
-      const err = new UserError(`${(last as Error).message} Counta tried again without the phone number, on ${fallbacks.length === 1 ? 'another email address' : 'two other email addresses'}${asRenamed}, and Flutterwave still could not make it.`);
-      // Each try with what Flutterwave said; an answer the same as the one before is not repeated.
-      (err as any).record = `Flutterwave could not create the account number. ${tries.map((x, i) => `Try ${i + 1}, ${x.how}: ${i && x.said === tries[i - 1].said ? 'the same' : x.said}`).join(' · ')}`.slice(0, 500);
+      const err = new UserError(`${(last as Error).message} Counta tried again without the phone number and on ${fallbacks.length === 1 ? 'another email address' : 'two other email addresses'}, and Flutterwave still could not make it.`);
+      (err as any).record = `Flutterwave could not create the account number. ${tries.map((x, i) => `Try ${i + 1}, ${x}`).join(' · ')}`.slice(0, 500);
       throw err;
     }
     const d = r.data || {};
@@ -328,7 +311,7 @@ const flutterwave: Rail = {
       const s = await flw(`/payout-subaccounts/${encodeURIComponent(d.account_reference)}/static-account?currency=NGN`);
       nuban = s.data?.static_account; bank = s.data?.bank_name || bank;
     }
-    return { account_ref: d.account_reference, barter_id: d.barter_id, account_number: nuban, bank_name: bank || 'Flutterwave MFB', account_name: d.account_name || named };
+    return { account_ref: d.account_reference, barter_id: d.barter_id, account_number: nuban, bank_name: bank || 'Flutterwave MFB', account_name: d.account_name || org.name };
   },
   async collect(ctx, method) {
     const r = ctx.request, c = ctx.customer || {};
