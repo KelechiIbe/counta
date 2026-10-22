@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../state/session';
 import { useAction } from '../lib/queries';
 import { must, rpc, supabase } from '../lib/supabase';
+import { localPhone } from '../lib/format';
 import { isOn, offNote, useFeatures } from '../lib/features';
 import { Icon } from '../components/Icon';
 import { Alert, Field, Label } from '../components/ui';
@@ -238,7 +239,7 @@ export default function Settings() {
   useEffect(() => {
     if (!inv) return;
     const o = inv.org;
-    setF({ name: o.name, industry: o.industry || 'retail', offering: o.offering || 'goods', email: o.email || '', phone: o.phone || '', vat_registered: o.vat_registered, margin_threshold: String(o.margin_threshold), safety_days: String(o.safety_days),
+    setF({ name: o.name, industry: o.industry || 'retail', offering: o.offering || 'goods', email: o.email || '', phone: localPhone(o.phone), vat_registered: o.vat_registered, margin_threshold: String(o.margin_threshold), safety_days: String(o.safety_days),
       cover_days: String(o.cover_days), cash_available: o.cash_available == null ? '' : String(o.cash_available), voice_trust_threshold: String(o.voice_trust_threshold) });
   }, [inv?.org]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -255,7 +256,7 @@ export default function Settings() {
     if (!(mt >= 0 && mt < 100)) { toast('Margin threshold must be between 0 and 99%.', 'err'); return; }
     if (!(sd >= 0) || !(cd >= 1) || !(vt >= 0)) { toast('Days must be whole numbers; cover needs at least 1 day.', 'err'); return; }
     await run(() => must(supabase.from('orgs').update({
-      name: f.name.trim(), industry: f.industry || 'retail', offering: f.offering || 'goods', email: f.email.trim() || null, phone: f.phone.trim() || null, vat_registered: !!f.vat_registered, margin_threshold: mt, safety_days: sd, cover_days: cd,
+      name: f.name.trim(), industry: f.industry || 'retail', offering: f.offering || 'goods', email: f.email.trim() || null, phone: localPhone(f.phone) || null, vat_registered: !!f.vat_registered, margin_threshold: mt, safety_days: sd, cover_days: cd,
       cash_available: f.cash_available === '' ? null : Math.max(0, Number(f.cash_available)), voice_trust_threshold: vt,
     }).eq('id', inv!.org.id).select().single()), { ok: 'Settings saved', invalidate: ['inv'] });
     refreshMemberships().catch(() => {});
@@ -276,7 +277,7 @@ export default function Settings() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
           <Field label="Business name"><input className="input" disabled={!edit} value={f.name || ''} onChange={(e) => set('name', e.target.value)} /></Field>
           <Field label="Email"><input className="input" disabled={!edit} value={f.email || ''} onChange={(e) => set('email', e.target.value)} /></Field>
-          <Field label="Phone"><input className="input" disabled={!edit} value={f.phone || ''} onChange={(e) => set('phone', e.target.value)} /></Field>
+          <Field label="Phone"><input className="input" disabled={!edit} value={f.phone || ''} onChange={(e) => set('phone', e.target.value)} placeholder="0803 123 4567" inputMode="tel" /></Field>
         </div>
         <Field label="Kind of business" hint={`Sets the item fields, units and import template. ${industryOf(f.industry).blurb}.`}>
           <select className="input" disabled={!edit} value={f.industry || 'retail'} onChange={(e) => set('industry', e.target.value)} style={{ maxWidth: 420 }}>

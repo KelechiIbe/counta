@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase, cleanError } from '../../lib/supabase';
+import { localPhone } from '../../lib/format';
 import { useSession } from '../../state/session';
 import { Alert, Field, Spinner } from '../../components/ui';
 import { Icon } from '../../components/Icon';
@@ -75,7 +76,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
       } else if (mode === 'signup') {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(), password,
-          options: { data: { full_name: name.trim(), ...(tel ? { phone: tel } : {}) }, emailRedirectTo: window.location.origin + after },
+          options: { data: { full_name: name.trim(), ...(tel ? { phone: localPhone(tel) } : {}) }, emailRedirectTo: window.location.origin + after },
         });
         if (error) throw error;
         if (data.session) nav(after, { replace: true });

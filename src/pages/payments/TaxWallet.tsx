@@ -13,6 +13,15 @@ import { Alert, Empty, Field, Modal, ModalHead, SkeletonRows, Spinner } from '..
 import { StatusChip } from '../sell/common';
 import { FluxPayments, useFluxTax } from './FluxPayments';
 
+// Why a wallet could not be opened, as the business reads it. The record keeps Flutterwave's whole reply for TaxStreem's
+// admin portal; the business sees the reason without it.
+export function walletError(e: string | null | undefined): string {
+  const s = String(e || '').trim();
+  if (!s) return 'The last attempt failed.';
+  if (s.includes(' Try 1, ')) return `${s.split(' Try 1, ')[0]} Counta tried again without the phone number. Try again later, or ask TaxStreem to look at it.`;
+  return s.replace(/ \(Flutterwave answered [\s\S]*\)$/, '');
+}
+
 type Due = { kind: 'vat' | 'wht' | 'wvat'; period: string; amount: number; authority?: string | null };
 const TAX: Record<string, string> = { vat: 'VAT', wht: 'WHT', wvat: 'Withholding VAT', cit: 'CIT' };
 const monthOf = (d: string) => new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
@@ -72,7 +81,7 @@ export function TaxWalletPanel() {
       <div className="card card-pad stack" style={{ gap: 12, maxWidth: 760 }}>
         <div style={{ fontSize: 18, fontWeight: 600 }}>Open the tax wallet</div>
         <div className="muted" style={{ fontSize: 14, lineHeight: 1.6 }}>A second account number in your business&apos;s name, kept for tax. The VAT in every payment that reaches the business wallet moves into it on its own, with the WHT you keep back when you pay suppliers from the wallet. It pays only tax, to the tax offices&apos; accounts, so the money is there on the 21st.</div>
-        {t?.status === 'failed' && <Alert kind="red" icon="alert">{t.error || 'The last attempt failed.'}</Alert>}
+        {t?.status === 'failed' && <Alert kind="red" icon="alert">{walletError(t.error)}</Alert>}
         {!d.business_wallet && <Alert kind="grey" icon="info">Open the business wallet first, above.</Alert>}
         {d.can?.open && d.business_wallet
           ? <div><button className="btn btn-primary" disabled={!!busy} onClick={open}>{busy === 'open' ? 'Opening…' : 'Open the tax wallet'}</button></div>

@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useInventory, useSession, useToast } from '../../state/session';
 import { guideConsent, guideMark, openWallet, STEP_TEXT, useGuide, type GuideStep } from '../../lib/onboard';
+import { localPhone } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Spinner } from '../../components/ui';
 import { Orb } from '../../guide/GuideDock';
@@ -24,7 +25,7 @@ export function GuideChecklist() {
   const guide = useGuide(Boolean(orgId), orgId);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [phone, setPhone] = useState<string>(() => (session?.user?.user_metadata as any)?.phone || '');
+  const [phone, setPhone] = useState<string>(() => localPhone((session?.user?.user_metadata as any)?.phone));
   const [askCall, setAskCall] = useState(false);
   const [showDone, setShowDone] = useState(false);
   const gs = guide.data;
@@ -117,7 +118,7 @@ export function GuideChecklist() {
       <div className="row wrap" style={{ gap: 10, padding: '12px 18px', borderTop: '1px solid var(--row)', fontSize: 13, background: 'var(--canvas)' }}>
         <Icon name="phone" size={15} color="#6B7280" />
         {gs.call.consent ? (
-          <><span className="grow">If you stop part-way, Martina calls <b>{gs.call.phone}</b> once, between 9am and 6:30pm, to help you finish.</span>
+          <><span className="grow">If you stop part-way, Martina calls <b>{localPhone(gs.call.phone)}</b> once, between 9am and 6:30pm, to help you finish.</span>
             <button className="btn btn-ghost btn-xs" onClick={() => consent(false)} disabled={busy === 'call'}>Don't call</button></>
         ) : askCall ? (
           <><input className="input input-sm" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0803 123 4567" inputMode="tel" aria-label="Phone number for Martina's call" style={{ width: 160 }} />

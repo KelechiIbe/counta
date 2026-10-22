@@ -6,6 +6,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
+import { localPhone } from '../../lib/format';
 import {
   answered, cacSearch, cacSelect, cacStatusReport, classLabel, FILING, guideLanguage, guideMark, kycAnswer, kycManual, kycSubmit, longDate, naira, OFFERING, PAY, QUESTION_LABEL,
   QUESTION_ORDER, readCacDocument, REASONS, RECEIVE, REVENUE, TAXES, titleCase, uploadCacDocument, useCategories, useGuide, useKyc, useScore, yearsSince, type Answers, type Candidate,
@@ -599,7 +600,7 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
   const qc = useQueryClient();
   const meta = (session?.user?.user_metadata || {}) as any;
   const b = k.business;
-  const [f, setF] = useState({ trading_name: titleCase(b?.name), phone: meta.phone || '', email: b?.email?.toLowerCase() || session?.user?.email || '', address: titleCase(b?.address) });
+  const [f, setF] = useState({ trading_name: titleCase(b?.name), phone: localPhone(meta.phone), email: b?.email?.toLowerCase() || session?.user?.email || '', address: titleCase(b?.address) });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const a = k.answers || {};
@@ -617,7 +618,7 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
   async function submit() {
     setErr(null); setBusy(true);
     try {
-      const r = await kycSubmit({ trading_name: f.trading_name, phone: f.phone || undefined, email: f.email || undefined, address: f.address || undefined });
+      const r = await kycSubmit({ trading_name: f.trading_name, phone: localPhone(f.phone) || undefined, email: f.email || undefined, address: f.address || undefined });
       await refreshMemberships();
       qc.setQueryData(['compliance', r.org_id], r.compliance);
       void qc.invalidateQueries({ queryKey: ['kyc'] }); void qc.invalidateQueries({ queryKey: ['guide'] });

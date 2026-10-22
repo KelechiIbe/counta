@@ -17,7 +17,7 @@ import { useDraft, type Drafts } from '../../lib/drafts';
 import type { Customer, PayRequest } from '../../lib/api';
 import { BatchList, BatchModal, BulkPayModal, TemplateButton } from './BulkPay';
 import { isOn, offNote, useFeatures } from '../../lib/features';
-import { TaxWalletPanel } from './TaxWallet';
+import { TaxWalletPanel, walletError } from './TaxWallet';
 
 export default function Payments() {
   const { data: inv } = useInventory();
@@ -72,7 +72,7 @@ export default function Payments() {
         <div className="card card-pad stack" style={{ gap: 12, maxWidth: 760 }}>
           <div style={{ fontSize: 18, fontWeight: 600 }}>Open the business wallet</div>
           <div className="muted" style={{ fontSize: 14, lineHeight: 1.6 }}>The wallet is an account number in your business's name{d?.rail ? ` at ${d.rail.name}` : ''}. Money customers pay by transfer, link or QR lands in it and is confirmed the moment it arrives; you pay suppliers and staff from it, and withdraw to your bank whenever you like. TaxStreem holds the funds with {d?.rail?.code === 'flutterwave' || !d?.rail ? 'Flutterwave' : d.rail.name}, a licensed payments company.</div>
-          {w?.status === 'failed' && <Alert kind="red" icon="alert">{w.error || 'The last attempt failed.'}</Alert>}
+          {w?.status === 'failed' && <Alert kind="red" icon="alert">{walletError(w.error)}</Alert>}
           {w?.status === 'creating' && <Alert kind="blue" icon="clock">Opening…</Alert>}
           {d?.can?.open_wallet ? <div><button className="btn btn-primary" disabled={!!busy || inv.org.payments_open === false} onClick={openWallet}>{busy === 'open' ? 'Opening…' : 'Open the wallet'}</button></div>
             : <Alert kind="grey" icon="shield">The owner or someone who keeps the books opens the wallet.</Alert>}
