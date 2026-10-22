@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase, cleanError } from '../../lib/supabase';
 import { localPhone } from '../../lib/format';
+import { refCode, REF_RE } from '../../lib/partners';
 import { useSession } from '../../state/session';
 import { Alert, Field, Spinner } from '../../components/ui';
 import { Icon } from '../../components/Icon';
@@ -55,6 +56,9 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
   const next = asked.startsWith('/') && !asked.startsWith('//') ? asked : '/';
   const joining = next.startsWith('/join');
   const after = mode === 'signup' && !joining ? '/onboarding' : next;
+  // An accountant's link (/r/CODE) sends people here with its code, kept for Home to offer connecting the accountant.
+  const ref = params.get('ref') || '';
+  useEffect(() => { if (REF_RE.test(ref)) refCode.set(ref); }, [ref]);
 
   if (ready && session && mode !== 'reset') return <Navigate to={after} replace />;
   if (codeFor) return <CodeStep email={codeFor} redirect={after} onBack={() => setCodeFor(null)} onDone={async () => { await refreshMemberships().catch(() => []); nav(after, { replace: true }); }} />;
@@ -76,7 +80,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
       } else if (mode === 'signup') {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(), password,
-          options: { data: { full_name: name.trim(), ...(tel ? { phone: localPhone(tel) } : {}) }, emailRedirectTo: window.location.origin + after },
+          options: { data: { full_name: name.trim(), ...(tel ? { phone: localPhone(tel) } : {}), ...(refCode.get() ? { ref: refCode.get() } : {}) }, emailRedirectTo: window.location.origin + after },
         });
         if (error) throw error;
         if (data.session) nav(after, { replace: true });

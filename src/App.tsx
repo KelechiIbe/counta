@@ -57,6 +57,7 @@ const Tax = lazy(() => import('./pages/accounting/Tax'));
 const PublicDoc = lazy(() => import('./pages/public/Public').then((m) => ({ default: m.PublicDoc })));
 const ShopPage = lazy(() => import('./pages/public/Public').then((m) => ({ default: m.ShopPage })));
 const Sso = lazy(() => import('./pages/public/Sso'));
+const Referral = lazy(() => import('./pages/public/Referral'));
 const InvoicePortal = lazy(() => import('./pages/public/InvoicePortal'));
 
 function Loading() {
@@ -151,6 +152,7 @@ export default function App() {
       <Route path="/review" element={<Navigate to="/admin/reviews" replace />} />
       <Route path="/onboarding" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><Onboard /></Suspense></RequireAuth>} />
       <Route path="/p/:token" element={<Suspense fallback={<Loading />}><PublicDoc /></Suspense>} />
+      <Route path="/r/:code" element={<Suspense fallback={<Loading />}><Referral /></Suspense>} />
       <Route path="/shop/:slug" element={<Suspense fallback={<Loading />}><ShopPage /></Suspense>} />
       <Route path="/v/:token" element={<Suspense fallback={<Loading />}><InvoicePortal /></Suspense>} />
       <Route path="/sso" element={<Suspense fallback={<Loading />}><Sso /></Suspense>} />

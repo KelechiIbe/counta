@@ -10,6 +10,7 @@ import { presetLabel, useScreenPeriod } from '../../lib/period';
 import { Empty, SkeletonRows } from '../../components/ui';
 import { StatusChip } from '../sell/common';
 import { GuideChecklist } from './GuideChecklist';
+import { PartnerInvite } from '../settings/Partners';
 import { PaymentsLock } from '../onboarding/Identity';
 import { cap, useWords } from '../../lib/wording';
 
@@ -63,6 +64,7 @@ export default function Home() {
           {can(inv, 'keep_books') && <button className="btn btn-secondary btn-sm" onClick={() => nav('/accounting/banking')}><Icon name="upload" size={14} />Bank statement</button>}
         </div>
       </div>
+      <PartnerInvite />
       <GuideChecklist />
       <PaymentsLock />
       {money && <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>

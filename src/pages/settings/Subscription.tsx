@@ -9,6 +9,7 @@ import { edge } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Alert, Field, Modal, ModalHead, SkeletonRows, Spinner } from '../../components/ui';
 import { StatusChip } from '../sell/common';
+import { OfferNote } from './Partners';
 
 const nf = (n: number) => n.toLocaleString('en-NG', { maximumFractionDigits: 2 });
 const limitText = (e: any) => (e.kind === 'feature' ? (e.included ? 'Included' : 'Not included') : !e.included ? 'Not included' : e.quota == null ? 'No limit' : `${nf(Number(e.quota))} ${e.unit || ''}`.trim());
@@ -63,6 +64,7 @@ export default function Subscription() {
       {checking && <Alert kind="blue" icon="clock"><span className="row" style={{ gap: 8 }}><Spinner small />Checking the payment with Flutterwave…</span></Alert>}
       {s.is_sample && <Alert kind="grey" icon="info">This is the sample business. Its plan does not change; set up your own business to choose one.</Alert>}
       {!s.can_change && <Alert kind="grey" icon="shield">Only the owner or an admin of the business changes its plan.</Alert>}
+      {!s.is_sample && <OfferNote />}
       <div className="card card-pad stack" style={{ gap: 10 }}>
         <div className="row wrap" style={{ justifyContent: 'space-between', gap: 10 }}>
           <div>
