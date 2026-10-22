@@ -934,6 +934,10 @@ async function poll() {
   try { out.tax_payments = await checkTaxPayments(); } catch (e) { console.log('poll tax payments', (e as Error).message); }
   try { out.tax_instructions = await taxInstructionWork(); } catch (e) { console.log('poll tax instructions', (e as Error).message); }
   try { out.subscriptions = await subscriptionWork(); } catch (e) { console.log('poll subscriptions', (e as Error).message); }
+  // Accountants' commissions: the monthly listing (once, from the payout day), approved payouts sent, sent ones followed up.
+  try {
+    out.partner_payouts = { listed: await svc('svc_partner_payout_run', { p_force: false }), sent: await sendPartnerPayouts(), settled: await checkPartnerPayouts() };
+  } catch (e) { console.log('poll partner payouts', (e as Error).message); }
   return out;
 }
 
@@ -1098,6 +1102,69 @@ async function subscriptionWork() {
   return out;
 }
 
+// ------------------------------------------------------------------ Counta Partner payouts
+// Accountants' commissions, listed monthly in the database and approved by TaxStreem in the admin portal, go out as bank
+// transfers from TaxStreem's own Flutterwave balance (no subaccount), through the relay like every transfer.
+async function sendPartnerPayouts() {
+  const out = { sent: 0, failed: 0, waiting: 0 };
+  if (!(await flutterwave.configured()) || !(await transfersReady())) {
+    const { count } = await admin.from('partner_payouts').select('id', { count: 'exact', head: true }).eq('status', 'approved');
+    out.waiting = count || 0;
+    return out;
+  }
+  for (const p of (await svc<any[]>('svc_partner_payouts_claim', {})) || []) {
+    try {
+      const r = await flw('/transfers', { method: 'POST', body: JSON.stringify({ account_bank: p.bank_code, account_number: p.account_number, amount: num(p.net),
+        currency: 'NGN', debit_currency: 'NGN', reference: p.reference, narration: `Counta partner commission ${String(p.period).slice(0, 7)}`.slice(0, 80) }) });
+      const d = r?.data || {};
+      const s = String(d.status || '').toUpperCase();
+      await svc('svc_partner_payout_update', { p_reference: p.reference, p: { status: s === 'SUCCESSFUL' ? 'successful' : s === 'FAILED' ? 'failed' : 'processing',
+        provider_ref: d.id ? String(d.id) : null, fee: d.fee ?? null, error: d.complete_message || null } });
+      out.sent++;
+    } catch (e) {
+      // Refused (or the relay refused it): nothing left TaxStreem's balance, so TaxStreem sees why and sends it again.
+      // No answer: it may have gone, so it stays "sending" until the webhook or the poll says what happened.
+      if (e instanceof UserError) {
+        await svc('svc_partner_payout_update', { p_reference: p.reference, p: { status: 'failed', error: (e as Error).message } });
+        out.failed++;
+      } else console.log('partner payout without an answer', p.reference, (e as Error).message);
+    }
+  }
+  return out;
+}
+
+async function checkPartnerPayouts() {
+  let n = 0;
+  for (const p of (await svc<any[]>('svc_partner_payouts_open', {})) || []) {
+    try {
+      const v = await flutterwave.verifyPayout(p.reference, p.provider_ref);
+      if (v && v.status !== 'processing') { await svc('svc_partner_payout_update', { p_reference: p.reference, p: v }); n++; }
+    } catch (e) { console.log('partner payout check', p.reference, (e as Error).message); }
+  }
+  return n;
+}
+
+// A partner saves the account the practice is paid into: the bank says whose name it is in, and Counta notes whether
+// that is the practice or one of its partners.
+async function savePartnerBank(sb: SupabaseClient, userId: string, body: any) {
+  const practiceId = String(body.practice_id || '');
+  const acct = String(body.account_number || '').replace(/\D/g, '');
+  const code = String(body.bank_code || '');
+  if (!/^\d{10}$/.test(acct)) throw new UserError('Account numbers have 10 digits.');
+  if (!/^[0-9A-Za-z]{2,12}$/.test(code)) throw new UserError('Choose the bank.');
+  const { data: who, error } = await sb.rpc('practice_bank_check', { p_practice: practiceId });
+  if (error) throw new UserError(error.message);
+  const bank = (await flutterwave.banks()).find((b) => b.code === code);
+  if (!bank) throw new UserError('Choose the bank from the list.');
+  let name = '';
+  try { name = (await flutterwave.resolveAccount(acct, code)).trim(); }
+  catch (e) { if (e instanceof UserError) throw new UserError('The bank could not find that account. Check the number and the bank.'); throw e; }
+  if (!name) throw new UserError('The bank did not give a name for that account. Check the number and the bank.');
+  const match = [who?.practice, ...((who?.partners as string[]) || [])].some((n) => n && namesMatch(String(n), name));
+  return await svc('svc_practice_bank_save', { p_practice: practiceId, p_user: userId, p: { bank_code: code, bank_name: bank.name, account_number: acct,
+    account_name: name, name_match: match } });
+}
+
 // ------------------------------------------------------------------ webhooks
 async function flutterwaveWebhook(req: Request) {
   const hash = await secret('FLW_WEBHOOK_HASH');
@@ -1144,6 +1211,11 @@ async function flutterwaveWebhook(req: Request) {
         const v = await rail.verifyPayout(ref, String(d.id || ''));
         if (v) await svc('svc_tax_payment_update', { p_reference: ref, d: v });
         outcome = `tax_payment:${v?.status}`;
+      } else if (ref.startsWith('CNTR-')) {
+        // An accountant's commission payout: Flutterwave is asked, never the event's own fields.
+        const v = await flutterwave.verifyPayout(ref, String(d.id || ''));
+        if (v) await svc('svc_partner_payout_update', { p_reference: ref, p: v });
+        outcome = `partner_payout:${v?.status}`;
       } else if (ref.startsWith('SWP-')) {
         const tx = ref.match(/^SWP-(CNT-[A-Z0-9]{16})/)?.[1];
         const ok = String(d.status).toUpperCase() === 'SUCCESSFUL';
@@ -1375,6 +1447,14 @@ Deno.serve(async (req) => {
         if (!me?.admin || !me?.aal2) throw new UserError('This is only for TaxStreem\'s admins.');
         return json({ ok: true, relay: await relayCheck(), transfers_ready: await transfersReady() });
       }
+      case 'partner_payouts_send': {
+        // TaxStreem's admins, right after approving payouts in the admin portal (the poll sends them too).
+        const { data: me } = await sb.rpc('admin_me');
+        if (!me?.admin || !me?.aal2) throw new UserError('This is only for TaxStreem\'s admins.');
+        const r = await sendPartnerPayouts();
+        return json({ ok: true, ...r, transfers_ready: await transfersReady() });
+      }
+      case 'practice_bank_save': return json({ ok: true, bank: await savePartnerBank(sb, u.user.id, body) });
       case 'banks': {
         const { rail } = await railFor(String(body.rail || 'flutterwave'));
         return json({ ok: true, banks: await rail.banks() });

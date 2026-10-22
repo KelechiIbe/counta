@@ -9,6 +9,7 @@ import { Icon } from '../../components/Icon';
 import { Alert, Field, Spinner } from '../../components/ui';
 import { type FileBrief, openDoc, type RequestRow, sendInvite, serviceLabel, serviceList, STATUS_CHIP } from '../../practice/api';
 import { FileReview } from '../../practice/FileReview';
+import { ConnectedBadge, PartnerDirectory } from './Partners';
 
 type OrgAccountants = {
   can_manage: boolean;
@@ -39,6 +40,7 @@ export function AccountantSection() {
         Invite your accountant by email. Once they accept in Counta's accountant portal, they keep your books and prepare your returns from inside Counta, alongside their
         other clients. They never move money, and you can end it at any time.</div>}
       {d.can_manage && <Invite d={d} />}
+      {d.can_manage && <PartnerDirectory />}
       {(owner || waiting.length > 0) && d.requests.length > 0 && (
         <div className="stack" style={{ gap: 8 }}>
           <b style={{ fontSize: 14 }}>Requests from your accountant{waiting.length ? ` (${waiting.length} waiting)` : ''}</b>
@@ -85,7 +87,7 @@ function Practice({ p, canManage }: { p: OrgAccountants['practices'][number]; ca
           <b style={{ fontSize: 15 }}>{p.practice.name}</b>
           <div className="faint" style={{ fontSize: 13 }}>{[p.practice.email, p.practice.phone, p.practice.firm_reg && `Firm ${p.practice.firm_reg}`, `since ${fmtDay(p.started_at?.slice(0, 10))}`].filter(Boolean).join(' · ')}</div>
         </div>
-        {p.pays_plan && <span className="chip t-green">Pays for your Counta plan</span>}
+        <span className="row wrap" style={{ gap: 6 }}><ConnectedBadge practiceId={p.practice.id} />{p.pays_plan && <span className="chip t-green">Pays for your Counta plan</span>}</span>
       </div>
       {p.partners.map((x) => (
         <div key={x.name} style={{ fontSize: 14 }}>{x.name} <span className="faint">· {x.licence}</span> {x.verified && <Icon name="shield" size={14} color="#15803D" />}</div>

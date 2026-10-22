@@ -10,6 +10,7 @@ import { Icon } from '../../components/Icon';
 import { Alert, Field, Modal, ModalHead, Spinner } from '../../components/ui';
 import { PageHead, Tile, grid } from '../../admin/ui';
 import { type ClientRow, type Home, sendInvite, SERVICES, serviceLabel, serviceList, usePracticeHome } from '../api';
+import { RequestsNote } from './Earnings';
 
 // How urgent a client is: overdue tax first, then what is due soon, then the books.
 function weight(c: ClientRow) {
@@ -47,6 +48,7 @@ export default function Overview({ pid }: { pid: string }) {
     <>
       <PageHead title="Clients" sub={`${h.practice.name}: ${active.length} ${active.length === 1 ? 'business' : 'businesses'} you look after${h.me.role === 'staff' ? ' (the ones assigned to you)' : ''}.`}
         right={lead && <button className="btn btn-primary btn-sm" onClick={() => setInviting(true)}><Icon name="plus" size={14} color="#fff" />Invite a business</button>} />
+      {lead && <RequestsNote pid={pid} />}
       {h.me.licence_status === 'rejected' && <Alert kind="red" icon="alert">TaxStreem could not confirm your licence number{h.me.licence_note ? `: ${h.me.licence_note}` : ''}. Correct it under Practice.</Alert>}
       <div style={grid(170)}>
         <Tile label="Tax deadlines passed" value={totals.overdue} tone={totals.overdue ? '#B91C1C' : undefined} sub="across your clients" />
