@@ -43,7 +43,9 @@ export async function uploadNinSlip(orgId: string, file: File) {
 const group = (d: string) => d.replace(/\D/g, '').slice(0, 11).replace(/^(\d{3})(\d{0,4})(\d{0,4}).*$/, (_m, a, b, c) => [a, b, c].filter(Boolean).join(' '));
 const listNames = (names: string[]) => names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 
-export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen }: { orgId: string; onDone?: () => void; onSkip?: () => void; live?: boolean; askOpen?: number }) {
+// onResult: what happened, for Martina to hear as the person's own news (never the NIN itself).
+export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }: { orgId: string; onDone?: () => void; onSkip?: () => void; live?: boolean; askOpen?: number;
+  onResult?: (said: string, note?: string) => void }) {
   const id = useIdentity(orgId);
   const qc = useQueryClient();
   const [nin, setNin] = useState('');
@@ -66,9 +68,11 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen }: { orgId:
     try {
       const r = await checkNin(orgId, d);
       setNin('');
-      if (!r.result.verified) setMiss(r.result.reason === 'not_account_holder' ? 'The name on that NIN is not the name on your Counta account.'
+      const why = r.result.verified ? '' : r.result.reason === 'not_account_holder' ? 'The name on that NIN is not the name on your Counta account.'
         : r.result.reason === 'no_directors_on_record' ? 'CAC has no directors on record for the business, so the NIN cannot be matched.'
-        : `The name on that NIN does not match ${names.length ? listNames(names) : 'the directors CAC lists'}.`);
+        : `The name on that NIN does not match ${names.length ? listNames(names) : 'the directors CAC lists'}.`;
+      if (!r.result.verified) setMiss(why);
+      onResult?.('I checked my NIN on screen.', r.result.verified ? `It matched ${r.result.matched || 'a director'}. Payments can open.` : `It did not match. ${why} Ask them to add the NIN slip.`);
       await refresh();
     } catch (e) { setErr((e as Error).message); }
     setBusy(null);
@@ -76,7 +80,7 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen }: { orgId:
   async function slip(f: File | undefined) {
     if (!f) return;
     setErr(null); setBusy('slip');
-    try { await uploadNinSlip(orgId, f); await refresh(); } catch (e) { setErr((e as Error).message); }
+    try { await uploadNinSlip(orgId, f); await refresh(); onResult?.('I added my NIN slip.', 'Counta is checking it on screen; the result shows there.'); } catch (e) { setErr((e as Error).message); }
     setBusy(null);
     if (file.current) file.current.value = '';
   }

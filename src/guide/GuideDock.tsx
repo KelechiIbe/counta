@@ -72,6 +72,17 @@ export function Confetti({ fire }: { fire: number }) {
 
 const HIDDEN = /^\/(p|shop|sso|login|signup|reset|update-password|join|review|admin|practice)(\/|$)/;
 
+function useNarrow(q = '(max-width: 700px)') {
+  const [m, setM] = useState(() => typeof window !== 'undefined' && window.matchMedia(q).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(q);
+    const on = () => setM(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, [q]);
+  return m;
+}
+
 export function GuideDock() {
   const g = useGuideTalk();
   const { session, orgId } = useSession();
@@ -101,6 +112,30 @@ export function GuideDock() {
     const t = window.setInterval(() => setOverlay(Boolean(document.querySelector('.drawer, .modal-wrap:not(.g-own)'))), 500);
     return () => window.clearInterval(t);
   }, [g.status]);
+  // Onboarding's own buttons (Done, See the summary) sit at the bottom of the page, where the conversation would cover them.
+  // On a wide screen the page moves left of it. Narrower, the conversation shrinks to its header, her last line and the
+  // controls, and those buttons move up above it.
+  const narrow = useNarrow();
+  const onboarding = loc.pathname.startsWith('/onboarding');
+  const notWide = useNarrow('(max-width: 1179px)');
+  const compact = onboarding && notWide;
+  const dock = useRef<HTMLDivElement>(null);
+  const shown = !hidden && g.status !== 'idle' && !(g.minimized || (overlay && narrow));
+  useEffect(() => {
+    const el = dock.current;
+    if (!onboarding || !shown || !el) return;
+    if (!compact) {
+      document.body.classList.add('g-docked-side');
+      return () => document.body.classList.remove('g-docked-side');
+    }
+    const root = document.documentElement;
+    const set = () => root.style.setProperty('--g-dock-h', `${Math.ceil(el.getBoundingClientRect().height)}px`);
+    set();
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(set);
+    ro?.observe(el);
+    document.body.classList.add('g-docked');
+    return () => { ro?.disconnect(); document.body.classList.remove('g-docked'); root.style.removeProperty('--g-dock-h'); };
+  }, [onboarding, compact, shown]);
   const extras = <><Confetti fire={g.confetti} />{g.voicePicker && <VoicePickerModal onClose={() => g.setVoicePicker(false)} />}</>;
   if (hidden) return extras;
   if (g.status === 'idle') {
@@ -128,11 +163,11 @@ export function GuideDock() {
   if (g.minimized || (overlay && window.innerWidth < 700)) {
     return <>{extras}<button className={'g-mini' + (overlay ? ' left' : '')} onClick={() => g.setMinimized(false)} aria-label="Open Martina"><Orb size={62} live={g.status === 'live'} /></button></>;
   }
-  const last = g.lines.slice(-6);
+  const last = compact ? g.lines.filter((l) => l.role === 'agent').slice(-1) : g.lines.slice(-6);
   return (
     <>
       {extras}
-      <div className={'g-dock' + (overlay ? ' left' : '')} role="dialog" aria-label="Martina, your Counta guide">
+      <div ref={dock} className={'g-dock' + (overlay ? ' left' : '') + (compact ? ' compact' : '')} role="dialog" aria-label="Martina, your Counta guide">
         <div className="g-dock-hd">
           <Orb size={38} live={g.status === 'live'} />
           <div className="grow" style={{ minWidth: 0 }}>

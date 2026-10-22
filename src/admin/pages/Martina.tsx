@@ -12,8 +12,15 @@ import { Card, PageHead, Toggle } from '../ui';
 
 const TONES: { id: 'calm' | 'warm' | 'lively'; label: string; what: string }[] = [
   { id: 'calm', label: 'Calm', what: 'Steady and unhurried, with no expressive cues. Pleased when things go well, never excited.' },
-  { id: 'warm', label: 'Warm', what: 'Calm, with a few gentle cues: warm when greeting or thanking, reassuring when something went wrong.' },
-  { id: 'lively', label: 'Lively', what: 'The more animated delivery Martina had before. Expressive cues are free.' },
+  { id: 'warm', label: 'Warm', what: 'Calm, with a few gentle cues: warm when greeting or thanking, reassuring when something went wrong. The cues need Eleven v4 Turbo.' },
+  { id: 'lively', label: 'Lively', what: 'The more animated delivery Martina had before. Expressive cues are free with Eleven v4 Turbo.' },
+];
+
+// The ElevenLabs model she speaks with. v4 Turbo is the most lifelike; the v2.5 models read plainly and never sigh or laugh.
+const MODELS: { id: 'eleven_v4_turbo' | 'eleven_turbo_v2_5' | 'eleven_flash_v2_5'; label: string; what: string }[] = [
+  { id: 'eleven_v4_turbo', label: 'Natural · Eleven v4 Turbo', what: 'The most lifelike, and what she has used so far. It can add the odd breath or sigh; her instructions now rule them out.' },
+  { id: 'eleven_turbo_v2_5', label: 'Steady · Turbo v2.5', what: 'Clear and even. Never sighs or laughs, and sounds a little less lively.' },
+  { id: 'eleven_flash_v2_5', label: 'Plain · Flash v2.5', what: 'The quickest to answer and the flattest delivery. Never sighs or laughs.' },
 ];
 
 // One player for every preview on the page, so two never talk over each other.
@@ -44,11 +51,12 @@ export default function Martina() {
   const [libErr, setLibErr] = useState<string | null>(null);
   // The choice shows at once; it goes back if the save is refused.
   const [tone, setTone] = useState<string | null>(null);
+  const [model, setModel] = useState<string | null>(null);
   const d = s.data;
   async function save(patch: Partial<Settings['martina']>, ok: string) {
     setBusy('m');
     try { await rpc('admin_save_setting', { p_key: 'martina', p_value: patch }); toast(ok); await qc.invalidateQueries({ queryKey: ['admin-settings'] }); }
-    catch (e) { toast(tidyError(e), 'err'); setTone(null); }
+    catch (e) { toast(tidyError(e), 'err'); setTone(null); setModel(null); }
     setBusy(null);
   }
   async function offer(id: string, active: boolean) {
@@ -88,6 +96,20 @@ export default function Martina() {
               <span><b>{t.label}</b><span className="muted" style={{ display: 'block', fontSize: 13, lineHeight: 1.5 }}>{t.what}</span></span>
             </label>
           ))}
+        </div>
+        <div className="stack" style={{ gap: 8 }} role="radiogroup" aria-label="Martina's voice model" data-testid="voice-model">
+          <b style={{ fontSize: 14, marginTop: 6 }}>Her voice model</b>
+          <span className="muted" style={{ fontSize: 13, marginTop: -4 }}>For Martina everywhere: the setup guide, the assistant and her phone calls. Try one, then talk to her.</span>
+          {MODELS.map((m) => {
+            const cur = model ?? d.martina.voice_model ?? 'eleven_v4_turbo';
+            return (
+              <label key={m.id} className="row" style={{ gap: 10, alignItems: 'flex-start', cursor: 'pointer', padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 12,
+                background: cur === m.id ? 'var(--primary-soft)' : '#fff' }}>
+                <input type="radio" name="voice_model" checked={cur === m.id} disabled={busy !== null} onChange={() => { setModel(m.id); void save({ voice_model: m.id }, `Martina speaks with ${m.label.split(' · ')[1]} now`); }} style={{ marginTop: 3 }} />
+                <span><b>{m.label}</b><span className="muted" style={{ display: 'block', fontSize: 13, lineHeight: 1.5 }}>{m.what}</span></span>
+              </label>
+            );
+          })}
         </div>
         <Field label="Her voice where a business has not chosen one" hint="Calls and the in-app guide use the business's own announcement voice when it has one.">
           <select className="input" style={{ maxWidth: 360 }} value={d.martina.default_voice_id || ''} disabled={busy !== null}

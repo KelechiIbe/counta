@@ -77,6 +77,19 @@ export const TAXES = [
   { id: 'wht', label: 'Withholding tax', q: 'Do you deduct and file withholding tax?', hint: 'When you pay for services, rent and contracts' },
   { id: 'cit', label: 'Companies income tax', q: 'Do you file your income tax return?', hint: 'Once a year, within six months of your year end' },
 ] as const;
+// The onboarding questions in the order Martina asks them; the screen shows one at a time in the same order.
+export const QUESTION_ORDER = ['offering', 'category', 'revenue_band', 'receive_methods', 'pay_methods', 'reasons', 'examples', 'filing_vat', 'filing_wht', 'filing_cit'] as const;
+export type QuestionId = (typeof QUESTION_ORDER)[number];
+// Whether a question has its answer (the same rules as the database's list of what is missing).
+export function answered(id: string, a: Partial<Answers>): boolean {
+  switch (id) {
+    case 'offering': case 'category': case 'revenue_band': return Boolean((a as any)[id]);
+    case 'receive_methods': case 'pay_methods': case 'examples': return Boolean(((a as any)[id] || []).length);
+    case 'reasons': return Boolean((a.reasons || []).length || String(a.reason_note || '').trim());
+    case 'filing_vat': case 'filing_wht': case 'filing_cit': return Boolean(a.filing?.[id.slice(7) as 'vat' | 'wht' | 'cit']);
+    default: return false;
+  }
+}
 export const QUESTION_LABEL: Record<string, string> = {
   offering: 'Goods or services', category: 'Category', revenue_band: 'Yearly sales', receive_methods: 'How customers pay you', pay_methods: 'How you pay others',
   reasons: 'Why Counta', examples: 'What you sell', filing_vat: 'VAT returns', filing_wht: 'Withholding tax', filing_cit: 'Companies income tax',

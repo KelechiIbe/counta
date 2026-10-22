@@ -7,7 +7,7 @@ import { edge } from '../lib/api';
 import { rpc } from '../lib/supabase';
 import { useSession } from '../state/session';
 import {
-  cacSearch, cacSelect, cacStatusReport, classLabel, guideConsent, guideLanguage, guideMark, kycAnswer, kycManual, kycSubmit, openWallet, readCacDocument, saveVoice,
+  cacSearch, cacSelect, cacStatusReport, classLabel, guideConsent, guideLanguage, guideMark, kycAnswer, kycManual, kycSubmit, openWallet, QUESTION_ORDER, readCacDocument, saveVoice,
   webInsights, type Answers, type Category, type GuideState, type Kyc, type Score, type WebInsights,
 } from '../lib/onboard';
 import { fetchSpeech, playAudio } from '../lib/speech';
@@ -19,6 +19,7 @@ import { checkNin } from '../pages/onboarding/Identity';
 
 export type Line = { role: 'agent' | 'user'; text: string; at: number };
 export type Status = 'idle' | 'connecting' | 'live' | 'ending';
+type Heard = { message: string; source?: string; role?: string };
 type Conv = {
   endSession: () => Promise<void>; sendUserMessage: (t: string) => void; sendContextualUpdate: (t: string) => void; setMicMuted: (m: boolean) => void;
   getInputVolume: () => number; getOutputVolume: () => number; setVolume?: (o: { volume: number }) => void; getId?: () => string;
@@ -33,6 +34,11 @@ interface GuideCtx {
   start: (o?: { text?: boolean; agent?: Agent; first?: string; handsFree?: boolean }) => Promise<boolean>; end: () => Promise<void>; send: (t: string) => void; toggleMute: () => void; setMinimized: (v: boolean) => void;
   // What the person does on screen, told to Martina so she keeps up.
   notify: (t: string) => void;
+  // A choice tapped on screen, given to Martina as the person's answer: she stops, confirms it and moves on. Returns whether
+  // she heard it (false when no conversation is going).
+  answer: (said: string, note?: string) => boolean;
+  // The onboarding question on screen: the one Martina is asking (show_question), or one picked on screen.
+  question: { id: string; at: number } | null; showQuestion: (id: string | null) => void;
   volumes: () => { input: number; output: number };
   screen: OnboardScreen | null; setScreen: (s: OnboardScreen | null) => void;
   filled: Record<string, number>; markFilled: (keys: string[]) => void;
@@ -78,6 +84,10 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const [status, setStatus] = useState<Status>('idle');
   const [textOnly, setTextOnly] = useState(false);
+  const textOnlyRef = useRef(false);
+  const speakingRef = useRef(false);
+  const heardRef = useRef<(m: Heard) => void>(() => {});
+  const modeRef = useRef<(m: { mode: string }) => void>(() => {});
   const [speaking, setSpeaking] = useState(false);
   const [muted, setMuted] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
@@ -90,6 +100,8 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [confetti, setConfetti] = useState(0);
   const [agent, setAgent] = useState<Agent>('guide');
+  const [question, setQuestion] = useState<{ id: string; at: number } | null>(null);
+  const showQuestion = useCallback((id: string | null) => setQuestion(id ? { id, at: Date.now() } : null), []);
   const agentRef = useRef<Agent>('guide');
   const conv = useRef<Conv | null>(null);
   // An NIN said or typed to Martina: the conversation is deleted from ElevenLabs once it ends.
@@ -180,6 +192,12 @@ export function GuideProvider({ children }: { children: ReactNode }) {
         markFilled([...Object.keys(a).filter((x) => x !== 'filing'), ...Object.keys(filing).map((t) => 'filing_' + t)]);
         refresh(); if (live.current.path.startsWith('/onboarding')) setScreen((s) => (s === 'summary' ? s : 'questions')); else goOnboard('questions');
         return { saved: Object.keys(a), still_missing: k.missing.length ? k.missing : 'nothing, all answered' };
+      }),
+      show_question: safe(async ({ question: q }) => {
+        if (!(QUESTION_ORDER as readonly string[]).includes(q)) return { error: 'Unknown question.' };
+        setQuestion({ id: q, at: Date.now() });
+        if (live.current.path.startsWith('/onboarding')) setScreen('questions'); else goOnboard('questions');
+        return 'On screen.';
       }),
       show_summary: safe(async () => {
         const k = await rpc<Kyc>('kyc_draft', {});
@@ -295,12 +313,12 @@ export function GuideProvider({ children }: { children: ReactNode }) {
         : await edge<any>('voice', { action: 'guide_token', text, ...(live.current.orgId ? { org_id: live.current.orgId } : {}) });
       if (!t.ok) throw new Error(t.error || 'Martina is not available just now.');
       const { Conversation } = await import('@elevenlabs/client');
-      setTextOnly(text);
+      setTextOnly(text); textOnlyRef.current = text;
       const base = {
         dynamicVariables: t.dynamic_variables, overrides: t.overrides, clientTools: tools,
         onConnect: () => { setStatus('live'); if (which === 'guide') void guideMark('intro_heard').catch(() => null); },
         onDisconnect: () => {
-          conv.current = null; setStatus('idle'); setSpeaking(false); clearPending(); said.current = [];
+          conv.current = null; setStatus('idle'); setSpeaking(false); clearPending(); said.current = []; unhush();
           // ElevenLabs finishes the conversation first; anything it still holds is retried every quarter of an hour.
           if (saidNin.current) {
             saidNin.current = false;
@@ -309,13 +327,8 @@ export function GuideProvider({ children }: { children: ReactNode }) {
           }
         },
         onError: (m: string) => setError(typeof m === 'string' ? m : 'The conversation dropped.'),
-        onMessage: (m: { message: string; source?: string; role?: string }) => {
-          const who = (m.role || m.source) === 'user' ? 'user' : 'agent';
-          if (who === 'user' && looksLikeNin(m.message)) saidNin.current = true;
-          lastHeard.current = Date.now();
-          add(who, m.message);
-        },
-        onModeChange: (m: { mode: string }) => { speakingRef.current = m.mode === 'speaking'; lastHeard.current = Date.now(); setSpeaking(m.mode === 'speaking'); },
+        onMessage: (m: Heard) => heardRef.current(m),
+        onModeChange: (m: { mode: string }) => modeRef.current(m),
       };
       const c = text
         ? await Conversation.startSession({ ...base, signedUrl: t.signed_url, textOnly: true, connectionType: 'websocket' } as any)
@@ -346,6 +359,43 @@ export function GuideProvider({ children }: { children: ReactNode }) {
     add('user', v); conv.current.sendUserMessage(v);
   }, [add]);
   const notify = useCallback((t: string) => { try { conv.current?.sendContextualUpdate(t); } catch { /* not live */ } }, []);
+  // A tap that answers what Martina asked reaches her as the person's own words, so she stops, confirms it and moves on. If
+  // she is mid-sentence, her voice is muted at once and comes back as soon as that speech stops or her reply to the tap
+  // begins, or after twelve seconds at most.
+  const hushed = useRef<number | null>(null);
+  const tapped = useRef<{ said: string; note?: string; at: number }[]>([]);
+  const unhush = useCallback(() => {
+    if (hushed.current == null) return;
+    window.clearTimeout(hushed.current); hushed.current = null;
+    try { conv.current?.setVolume?.({ volume: 1 }); } catch { /* gone */ }
+  }, []);
+  const answer = useCallback((said: string, note?: string) => {
+    const v = String(said || '').trim();
+    if (!v) return false;
+    if (import.meta.env.VITE_GUIDE_TEST === '1') tapped.current = [...tapped.current.slice(-30), { said: v, ...(note ? { note } : {}), at: Date.now() }];
+    const c = conv.current;
+    if (!c) return false;
+    if (speakingRef.current && !textOnlyRef.current && hushed.current == null) {
+      try { c.setVolume?.({ volume: 0 }); hushed.current = window.setTimeout(unhush, 12_000); } catch { /* keep going */ }
+    }
+    add('user', v);
+    try { c.sendUserMessage(`(Tapped on screen) ${v}${note ? ` ${note}` : ''}`); } catch { unhush(); return false; }
+    return true;
+  }, [add, unhush]);
+  // What the conversation hears and says, and when she starts and stops speaking.
+  heardRef.current = (m: Heard) => {
+    const who = (m.role || m.source) === 'user' ? 'user' : 'agent';
+    if (who === 'user' && looksLikeNin(m.message)) saidNin.current = true;
+    lastHeard.current = Date.now();
+    add(who, m.message);
+    // Her reply to a tap has begun: her voice comes back for it, whether or not the earlier speech was cut off.
+    if (who === 'agent') unhush();
+  };
+  modeRef.current = (m: { mode: string }) => {
+    speakingRef.current = m.mode === 'speaking'; lastHeard.current = Date.now(); setSpeaking(m.mode === 'speaking');
+    // What she was saying when the person tapped has stopped: her voice comes back for the reply.
+    if (m.mode !== 'speaking') unhush();
+  };
   const toggleMute = useCallback(() => { setMuted((m) => { conv.current?.setMicMuted(!m); return !m; }); }, []);
   const volumes = useCallback(() => {
     try { return { input: conv.current?.getInputVolume() ?? 0, output: conv.current?.getOutputVolume() ?? 0 }; } catch { return { input: 0, output: 0 }; }
@@ -358,7 +408,6 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   const [micBusy, setMicBusy] = useState(micBusyNow());
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState !== 'hidden');
   const handsFreeTalk = useRef(false);
-  const speakingRef = useRef(false);
   const lastHeard = useRef(0);
   const endSoon = useRef<(() => void) | null>(null);
   const listener = useRef<WakeListener | null>(null);
@@ -447,14 +496,28 @@ export function GuideProvider({ children }: { children: ReactNode }) {
     if (import.meta.env.VITE_GUIDE_TEST !== '1') return;
     (window as any).__countaGuide = { tool: (name: string, p: unknown) => tools[name]?.(p), lines: () => lines,
       // What the person says, as the conversation would hear it.
-      say: (t: string) => add('user', t) };
-  }, [tools, lines, add]);
+      say: (t: string) => add('user', t),
+      // The taps that went to Martina as answers.
+      tapped: () => tapped.current,
+      // A stand-in voice conversation: what reaches it is logged in window.__countaFake.log, and mode() and reply() play
+      // the parts ElevenLabs would (her speaking, her answer).
+      fake: () => {
+        const log: [string, unknown][] = [];
+        conv.current = { endSession: async () => { conv.current = null; setStatus('idle'); }, sendUserMessage: (t) => log.push(['user', t]),
+          sendContextualUpdate: (t) => log.push(['context', t]), setMicMuted: () => {}, getInputVolume: () => 0, getOutputVolume: () => 0,
+          setVolume: (o) => log.push(['volume', o.volume]) };
+        textOnlyRef.current = false; setTextOnly(false); setStatus('live');
+        (window as any).__countaFake = { log, mode: (m: string) => modeRef.current({ mode: m }), reply: (t: string) => heardRef.current({ message: t, source: 'ai' }),
+          stop: () => { void end(); } };
+        return true;
+      } };
+  }, [tools, lines, add, end]);
 
   const value = useMemo<GuideCtx>(() => ({
-    status, textOnly, speaking, muted, lines, error, minimized, agent, start, end, send, toggleMute, setMinimized, notify, volumes,
+    status, textOnly, speaking, muted, lines, error, minimized, agent, start, end, send, toggleMute, setMinimized, notify, answer, question, showQuestion, volumes,
     screen, setScreen, filled, markFilled, uploadAsk, voicePicker, setVoicePicker, wallet, setWallet, confetti, celebrate, insights,
     handsFree, setHandsFree, wakeSupported: wakeSupported(), wakeState, wakeNote, approvePending, cancelPending,
-  }), [status, textOnly, speaking, muted, lines, error, minimized, agent, start, end, send, toggleMute, notify, volumes, screen, filled, markFilled, uploadAsk,
+  }), [status, textOnly, speaking, muted, lines, error, minimized, agent, start, end, send, toggleMute, notify, answer, question, showQuestion, volumes, screen, filled, markFilled, uploadAsk,
     voicePicker, wallet, confetti, celebrate, insights, handsFree, setHandsFree, wakeState, wakeNote, approvePending, cancelPending]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
