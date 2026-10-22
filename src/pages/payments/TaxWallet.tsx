@@ -18,7 +18,10 @@ import { FluxPayments, useFluxTax } from './FluxPayments';
 export function walletError(e: string | null | undefined): string {
   const s = String(e || '').trim();
   if (!s) return 'The last attempt failed.';
-  if (s.includes(' Try 1, ')) return `${s.split(' Try 1, ')[0]} Counta tried again without the phone number. Try again later, or ask TaxStreem to look at it.`;
+  if (s.includes(' Try 1, ')) {
+    const renamed = s.match(/ · Try \d+, as "([^"]+)"/)?.[1];
+    return `${s.split(' Try 1, ')[0]} Counta tried again without the phone number${renamed ? ` and as "${renamed}"` : ''}. Try again later, or ask TaxStreem to look at it.`;
+  }
   return s.replace(/ \(Flutterwave answered [\s\S]*\)$/, '');
 }
 
