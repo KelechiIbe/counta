@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase, cleanError } from '../../lib/supabase';
 import { localPhone } from '../../lib/format';
@@ -41,6 +41,11 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
   const { session, ready, refreshMemberships } = useSession();
   const [params] = useSearchParams();
   const nav = useNavigate();
+  // Signing in or confirming the code makes a session, and this page then moves on by itself (the Navigate below). The
+  // navigation after the businesses load is only for when it has not, so a late one cannot pull the person back from the
+  // page they went on to (an invitation they have already accepted, say).
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [name, setName] = useState('');
   const [email, setEmail] = useState(params.get('email') || '');
   const [phone, setPhone] = useState('');
@@ -51,17 +56,18 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
   // After sign-up: the code from the confirmation email (the link in it works too). Supabase sends 6 to 10 digits, as the
   // project is set (8 on Counta's project), so the field takes any of those lengths.
   const [codeFor, setCodeFor] = useState<string | null>(null);
-  // Where to go afterwards: a path inside Counta only (an invitation link brings people back to /join).
+  // Where to go afterwards: a path inside Counta only (an invitation link brings people back to /join, or to /admin/join for
+  // the admin portal's team, rather than on to setting up a business).
   const asked = params.get('next') || '';
   const next = asked.startsWith('/') && !asked.startsWith('//') ? asked : '/';
-  const joining = next.startsWith('/join');
+  const joining = next.startsWith('/join') || next.startsWith('/admin/join');
   const after = mode === 'signup' && !joining ? '/onboarding' : next;
   // An accountant's link (/r/CODE) sends people here with its code, kept for Home to offer connecting the accountant.
   const ref = params.get('ref') || '';
   useEffect(() => { if (REF_RE.test(ref)) refCode.set(ref); }, [ref]);
 
   if (ready && session && mode !== 'reset') return <Navigate to={after} replace />;
-  if (codeFor) return <CodeStep email={codeFor} redirect={after} onBack={() => setCodeFor(null)} onDone={async () => { await refreshMemberships().catch(() => []); nav(after, { replace: true }); }} />;
+  if (codeFor) return <CodeStep email={codeFor} redirect={after} onBack={() => setCodeFor(null)} onDone={async () => { await refreshMemberships().catch(() => []); if (alive.current) nav(after, { replace: true }); }} />;
 
   async function submit(e: FormEvent) {
     e.preventDefault(); setErr(null);
@@ -76,7 +82,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (error) throw error;
         await refreshMemberships().catch(() => []);
-        nav(next, { replace: true });
+        if (alive.current) nav(next, { replace: true });
       } else if (mode === 'signup') {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(), password,

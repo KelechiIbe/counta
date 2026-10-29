@@ -18,11 +18,22 @@
 //                                             logins of people in no other business, its bank feeds at Mono and any
 //                                             WhatsApp number it linked on OpenWA, and emails every admin
 //   { action: 'delete_business_finish', audit_id } -> tries again whatever a deletion could not finish
+//   { action: 'add_staff', email, role }   -> Admin team, Add (admin_add_staff): someone with a Counta account gets the role
+//                                             and the welcome email; anyone else gets an invitation email. Every other admin
+//                                             is told
+//   { action: 'resend_staff_invite', id }  -> the invitation again, with a fresh link (the old one stops working)
+//   { action: 'resend_staff_welcome', user_id, role } -> the welcome again, for someone who has not opened the portal yet
+//   { action: 'accept_staff_invite', token } -> the invitation's link, accepted by the person it was for (signed in with that
+//                                             address; no authenticator code yet, since they have not set one up). Every
+//                                             admin is told
+//   x-counta-hook { action: 'welcome_pending' } -> the welcome, once, to people added before these emails existed who have
+//                                             not opened the portal (asked for by the database once, in the hand-over)
 //
 // Keys are read Vault first, then the Edge Function secret, exactly as the other functions read them; the value of a
 // secret never leaves this function.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { COUNTA_SESSION, ensureSession, INBOUND_EVENTS, type OpenWa, owa, owaError, RECEIPT_EVENTS, sessionState, setWebhooks } from './openwa.ts';
+import { staffHtml, staffText, type StaffWords } from './mail.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -198,18 +209,61 @@ async function openwa(sb: SupabaseClient, action: string, userId: string) {
 }
 
 // ------------------------------------------------------------------ alerts
-// Every admin hears about every key change, by email, when email is set up.
-async function alert(actor: string, label: string, what: string, tail = 'If this was not you or someone you expected, sign in to the admin portal, check Keys and services, and change the key at the provider.') {
+// Every admin hears about every key change, by email, when email is set up. skip: addresses the alert is about, who get
+// their own email instead.
+async function alert(actor: string, label: string, what: string, tail = 'If this was not you or someone you expected, sign in to the admin portal, check Keys and services, and change the key at the provider.', skip: string[] = []) {
   const k = await key('RESEND_API_KEY'), from = senderAddress(await key('RESEND_FROM'));
   if (!k || !from) return false;
   const { data: to } = await admin.rpc('svc_admin_emails');
-  const list = (Array.isArray(to) ? to : []).filter((e: unknown) => typeof e === 'string').slice(0, 20);
+  const left = new Set(skip.map((e) => String(e || '').toLowerCase()));
+  const list = (Array.isArray(to) ? to : []).filter((e: unknown) => typeof e === 'string' && !left.has(e.toLowerCase())).slice(0, 20);
   if (!list.length) return false;
   const when = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos', dateStyle: 'medium', timeStyle: 'short' });
   const text = `${actor} ${what} in the Counta admin portal on ${when} (Lagos time).\n\n${label}\n\n${tail}`;
   const r = await call(`${RESEND}/emails`, { method: 'POST', headers: { Authorization: `Bearer ${k}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ from: `Counta admin <${from}>`, to: list, subject: `Counta admin: ${label.split('\n')[0]}`, text }) });
   return r.ok;
+}
+
+// ------------------------------------------------------------------ the admin team's emails
+const STAFF_TAIL = 'If this was not you or someone you expected, sign in to the admin portal and remove them, or withdraw the invitation, on the Admin team page.';
+const roleWords = (role: string) => (role === 'admin' ? 'an admin' : 'a reviewer');
+// The database's hook secret, read the way the other functions read it: the Edge Function secret when one is set, else
+// the copy in Vault (svc_secret answers only for the keys the portal manages; app_secret also answers for this one).
+async function hookSecret(): Promise<string> {
+  const env = (Deno.env.get('PUSH_HOOK_SECRET') || '').trim();
+  if (env) return env;
+  const { data } = await admin.rpc('app_secret', { p_name: 'PUSH_HOOK_SECRET' });
+  return typeof data === 'string' ? data.trim() : '';
+}
+const same = (a: string, b: string) => {
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+  if (!x.length || x.length !== y.length) return false;
+  let d = 0;
+  for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i];
+  return d === 0;
+};
+
+// An invitation (a fresh one-time link each time) or the welcome, written by the database and sent through Resend. What
+// became of it is written back: the welcome noted when it went, an invitation's error shown on the Admin team page.
+async function staffMail(kind: 'invite' | 'welcome', id: string, role?: string): Promise<{ ok: boolean; error?: string }> {
+  const k = await key('RESEND_API_KEY'), from = senderAddress(await key('RESEND_FROM'));
+  if (!k || !from) {
+    const error = 'Email is not set up yet: add the Resend API key and the sending address under Keys and services, then send it again.';
+    await admin.rpc('svc_staff_mail_sent', { p_kind: kind, p_id: id, p_role: role || null, p_error: error });
+    return { ok: false, error };
+  }
+  const { data, error } = await admin.rpc('svc_staff_mail', { p_kind: kind, p_id: id, p_role: role || null });
+  if (error) return { ok: false, error: error.message };
+  const w = data as StaffWords | null;
+  if (!w?.to) return { ok: false, error: kind === 'invite' ? 'That invitation was already accepted or withdrawn.' : 'They are no longer on the admin team.' };
+  const r = await call(`${RESEND}/emails`, { method: 'POST',
+    headers: { Authorization: `Bearer ${k}`, 'Content-Type': 'application/json', 'Idempotency-Key': `counta-staff-${kind}-${id}-${hex(6)}` },
+    body: JSON.stringify({ from: `Counta <${from}>`, to: [w.to], ...(senderAddress(w.reply_to || '') ? { reply_to: senderAddress(w.reply_to || '') } : {}),
+      subject: w.subject, html: staffHtml(w), text: staffText(w), tags: [{ name: 'template', value: `staff_${kind}` }] }) });
+  const err = r.ok ? null : `Resend: ${why(r)}`;
+  await admin.rpc('svc_staff_mail_sent', { p_kind: kind, p_id: id, p_role: role || null, p_error: err });
+  return err ? { ok: false, error: err } : { ok: true };
 }
 
 // ------------------------------------------------------------------ deleting a business
@@ -274,8 +328,29 @@ Deno.serve(async (req) => {
   let body: any;
   try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
   try {
+    // The database's own call: the welcome for people added before these emails existed, sent once.
+    const hook = req.headers.get('x-counta-hook') || '';
+    if (hook) {
+      if (!same(hook, await hookSecret())) return json({ ok: false, error: 'Not allowed.' }, 401);
+      if (body.action !== 'welcome_pending') return json({ ok: false, error: 'Unknown action.' }, 400);
+      const { data: list, error } = await admin.rpc('svc_staff_welcome_pending');
+      if (error) return json({ ok: false, error: error.message });
+      const results = [];
+      for (const x of ((list as { user_id: string; role: string }[]) || []).slice(0, 20)) {
+        results.push({ user_id: x.user_id, role: x.role, ...(await staffMail('welcome', x.user_id, x.role)) });
+      }
+      return json({ ok: true, results });
+    }
     const { data: u } = await sb.auth.getUser();
     if (!u?.user) return json({ ok: false, error: 'Sign in first.' }, 401);
+    // The person an invitation was for: not an admin until the database accepts it, and without an authenticator yet.
+    if (body.action === 'accept_staff_invite') {
+      const { data, error } = await sb.rpc('admin_accept_staff_invite', { p_token: String(body.token || '') });
+      if (error) return json({ ok: false, error: error.message });
+      const alerted = await alert(u.user.email || data.email, `${data.email} accepted the invitation and is now ${roleWords(data.role)}`, 'joined the admin team',
+        STAFF_TAIL, [data.email]);
+      return json({ ok: true, role: data.role, email: data.email, alerted });
+    }
     const { data: me } = await sb.rpc('admin_me');
     if (!me?.admin) return json({ ok: false, error: 'This is only for TaxStreem\'s admins.' }, 403);
     if (!me?.aal2) return json({ ok: false, reason: 'aal2', error: 'Enter the code from your authenticator app to open the admin portal.' }, 403);
@@ -331,6 +406,28 @@ Deno.serve(async (req) => {
         const row = ((open as any[]) || []).find((d) => Number(d.id) === Number(body.audit_id));
         if (!row) return json({ ok: false, error: 'That deletion is already finished.' });
         return json({ ok: true, name: row.name, audit_id: row.id, ...(await finishDeletion(Number(row.id))) });
+      }
+      case 'add_staff': {
+        const { data, error } = await sb.rpc('admin_add_staff', { p_email: String(body.email ?? ''), p_role: String(body.role ?? '') });
+        if (error) return json({ ok: false, error: error.message });
+        if (data.status === 'already') return json({ ok: true, ...data, sent: false });
+        const added = data.status === 'added';
+        const mail = added ? await staffMail('welcome', data.user_id, data.role) : await staffMail('invite', data.invite_id);
+        const alerted = await alert(actor, added ? `${data.email} was made ${roleWords(data.role)}` : `${data.email} was invited to be ${roleWords(data.role)}`,
+          added ? 'added someone to the admin team' : 'invited someone to the admin team', STAFF_TAIL, [data.email]);
+        return json({ ok: true, ...data, sent: mail.ok, mail_error: mail.error, alerted });
+      }
+      case 'resend_staff_invite': {
+        const { data, error } = await sb.rpc('admin_resend_staff_invite', { p_id: String(body.id || '') });
+        if (error) return json({ ok: false, error: error.message });
+        const mail = await staffMail('invite', data.invite_id);
+        return json({ ok: mail.ok, sent: mail.ok, email: data.email, error: mail.error });
+      }
+      case 'resend_staff_welcome': {
+        const { data, error } = await sb.rpc('admin_staff_resend_welcome', { p_user: String(body.user_id || ''), p_role: String(body.role || '') });
+        if (error) return json({ ok: false, error: error.message });
+        const mail = await staffMail('welcome', data.user_id, data.role);
+        return json({ ok: mail.ok, sent: mail.ok, email: data.email, error: mail.error });
       }
       default:
         return json({ ok: false, error: 'Unknown action.' }, 400);
