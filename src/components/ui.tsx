@@ -142,7 +142,7 @@ export function Pills<T extends string>({ value, options, onChange }: { value: T
   return (
     <div className="row wrap" style={{ gap: 6 }}>
       {options.map((o) => (
-        <button key={o.id} className={'pill' + (value === o.id ? ' on' : '')} onClick={() => onChange(o.id)}>
+        <button key={o.id} type="button" className={'pill' + (value === o.id ? ' on' : '')} onClick={() => onChange(o.id)}>
           {o.label}{o.count != null && <span className="count">{o.count}</span>}
         </button>
       ))}

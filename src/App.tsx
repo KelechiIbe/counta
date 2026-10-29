@@ -32,6 +32,7 @@ const Join = lazy(() => import('./pages/auth/Join'));
 const AdminApp = lazy(() => import('./admin/AdminApp'));
 const PracticeApp = lazy(() => import('./practice/PracticeApp'));
 const PracticeJoin = lazy(() => import('./practice/Join'));
+const AdminJoin = lazy(() => import('./admin/Join'));
 
 const MobileApp = lazy(() => import('./mobile/MobileApp'));
 const HomePage = lazy(() => import('./pages/home/Home'));
@@ -146,6 +147,7 @@ export default function App() {
       <Route path="/reset" element={<AuthPage mode="reset" />} />
       <Route path="/update-password" element={<UpdatePasswordPage />} />
       <Route path="/join" element={<Suspense fallback={<Loading />}><Join /></Suspense>} />
+      <Route path="/admin/join" element={<Suspense fallback={<Loading />}><AdminJoin /></Suspense>} />
       <Route path="/admin/*" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><AdminApp /></Suspense></RequireAuth>} />
       <Route path="/practice/join" element={<Suspense fallback={<Loading />}><PracticeJoin /></Suspense>} />
       <Route path="/practice/*" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><PracticeApp /></Suspense></RequireAuth>} />
