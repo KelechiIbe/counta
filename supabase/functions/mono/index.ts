@@ -27,6 +27,8 @@
 // Each paid lookup is counted per person per day in the database (svc_kyc_take), and only the server writes what CAC
 // and the NRS return (svc_kyc_store), so nobody can type in a registry record. Directors' dates of birth, ID numbers,
 // phone numbers, emails and home addresses are dropped before anything is kept.
+// A lookup that fails, or comes back with no record, is written to lookup_failures (svc_lookup_failure) with Mono's HTTP
+// status, how long it took and its message, long numbers cut to their last four digits. TaxStreem's admin portal shows them.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { fetchStart, isDay, windows } from './history.ts';
 
@@ -229,25 +231,53 @@ async function syncAll() {
 async function lookupKey() {
   return (await secret('MONO_LOOKUP_SECRET_KEY')) || (await secret('MONO_SECRET_KEY'));
 }
-type LookupResult = { status: number; body: any };
+type LookupResult = { status: number; body: any; secs: number };
+// A lookup Mono did not answer properly: its HTTP status (null when it did not answer at all), its message and the time it took.
+class LookupFailed extends UserError {
+  constructor(msg: string, readonly status: number | null, readonly reason: string, readonly secs: number) { super(msg); }
+}
+const since = (t0: number) => Math.round((Date.now() - t0) / 100) / 10;
+const reasonOf = (body: any, fallback: string) =>
+  String((typeof body === 'string' ? body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : body?.message || body?.error || '') || fallback).slice(0, 200);
 async function lookup(path: string, init: RequestInit = {}): Promise<LookupResult> {
   const key = await lookupKey();
   if (!key) throw new UserError('The CAC lookup is not switched on yet. Type the business details in yourself for now.');
-  const res = await fetch(MONO + path, {
-    ...init,
-    headers: { 'mono-sec-key': key, accept: 'application/json', 'Content-Type': 'application/json', ...(init.headers || {}) },
-    signal: AbortSignal.timeout(30_000),
-  });
+  const t0 = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(MONO + path, {
+      ...init,
+      headers: { 'mono-sec-key': key, accept: 'application/json', 'Content-Type': 'application/json', ...(init.headers || {}) },
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    const why = (e as Error).name === 'TimeoutError' ? 'No answer within 30 seconds' : `No answer (${(e as Error).name})`;
+    throw new LookupFailed(`The CAC lookup failed: ${why.toLowerCase()}.`, null, why, since(t0));
+  }
   const text = await res.text();
   let body: any = text;
   try { body = JSON.parse(text); } catch { /* not json */ }
-  if (res.status === 404) return { status: 404, body };
+  const secs = since(t0);
+  if (res.status === 404) return { status: 404, body, secs };
   if (!res.ok || body?.status === 'failed' || body?.status === 'error') {
-    const msg = String((typeof body === 'string' ? body : body?.message || body?.error || '') || res.statusText).slice(0, 200);
-    throw new UserError(`The CAC lookup failed: ${msg || 'no reason given'}.`);
+    const msg = reasonOf(body, res.statusText);
+    throw new LookupFailed(`The CAC lookup failed: ${msg || 'no reason given'}.`, res.status, msg || 'no reason given', secs);
   }
-  return { status: res.status, body };
+  return { status: res.status, body, secs };
 }
+
+// Where a failed lookup is written down. Best effort: the person's answer never waits on it or fails because of it.
+type LookupKind = 'cac_search' | 'cac_record' | 'cac_status_report' | 'tin' | 'nin';
+type Ctx = { kind: LookupKind; org?: string | null; user?: string | null; check?: string | null };
+const maskLookup = (s: string) => String(s || '').replace(/[A-Z0-9._%+-]+@[A-Z0-9-]+(\.[A-Z0-9-]+)+/gi, '[email]')
+  .replace(/\d{5,}/g, (d) => '•••' + d.slice(-4)).slice(0, 300);
+async function noteLookup(ctx: Ctx, outcome: 'failed' | 'no_record', status: number | null, reason: string, secs: number) {
+  try {
+    await admin.rpc('svc_lookup_failure', { p: { kind: ctx.kind, outcome, org_id: ctx.org ?? null, user_id: ctx.user ?? null, check_id: ctx.check ?? null,
+      http_status: status, seconds: secs, message: maskLookup(reason) } });
+  } catch { /* the record is a help, never a reason to fail */ }
+}
+const noteFailed = (ctx: Ctx, e: unknown) => (e instanceof LookupFailed ? noteLookup(ctx, 'failed', e.status, e.reason, e.secs) : Promise.resolve());
 const rows = (b: any): any[] => Array.isArray(b?.data) ? b.data : Array.isArray(b?.data?.data) ? b.data.data : Array.isArray(b) ? b : [];
 
 const filled = (v: unknown) => v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '');
@@ -338,6 +368,7 @@ function companyProfile(raw: any, c: any, extra: { directors?: unknown; sharehol
 // The director's NIN. Mono looks it up; only the names on the record and the last four digits go on to the database, which
 // compares them with the directors on the CAC record. The NIN itself, the photo, date of birth and address stop here.
 async function ninCheck(sb: SupabaseClient, user: string, orgId: string, nin: unknown, conversation: unknown) {
+  const ctx: Ctx = { kind: 'nin', org: orgId, user };
   const { data: st, error } = await sb.rpc('identity_state', { p_org: orgId });
   if (error) throw new UserError(error.message);
   if (!st?.can_check) throw new UserError('Only the owner confirms a director\'s identity.');
@@ -356,10 +387,15 @@ async function ninCheck(sb: SupabaseClient, user: string, orgId: string, nin: un
   } catch (e) {
     const msg = (e as Error).message;
     if (/not switched on/i.test(msg)) throw new UserError('The NIN check is not switched on yet. Add the NIN slip instead.');
-    throw new UserError(/not found|invalid|no record|does not exist/i.test(msg) ? 'NIMC has no record of that NIN. Check the 11 digits.'
+    const none = /not found|invalid|no record|does not exist/i.test(msg);
+    if (e instanceof LookupFailed) await noteLookup(ctx, none ? 'no_record' : 'failed', e.status, e.reason, e.secs);
+    throw new UserError(none ? 'NIMC has no record of that NIN. Check the 11 digits.'
       : 'The NIN check did not go through just now. Try again in a minute, or add the NIN slip instead.');
   }
-  if (r.status === 404) throw new UserError('NIMC has no record of that NIN. Check the 11 digits.');
+  if (r.status === 404) {
+    await noteLookup(ctx, 'no_record', 404, reasonOf(r.body, 'Not found'), r.secs);
+    throw new UserError('NIMC has no record of that NIN. Check the 11 digits.');
+  }
   const d = r.body?.data && typeof r.body.data === 'object' && !Array.isArray(r.body.data) ? r.body.data : r.body;
   const first = text(pick(d, 'firstname', 'first_name', 'firstName'), 80);
   const middle = text(pick(d, 'middlename', 'middle_name', 'middleName', 'othername', 'other_names'), 80);
@@ -386,32 +422,55 @@ function taxRecord(b: any) {
 }
 
 // The NRS record for a Tax ID or an RC number (Mono's Tax ID lookup), or null when the NRS has none.
-async function nrsLookup(number: string, channel: 'tin' | 'cac') {
+// Only a prompt answer that says there is no record counts as "no record". An answer that took longer than LOOKUP_SLOW_MS
+// (20 seconds) is Mono's provider timing out, as in Mono's Tax ID outage of 29 October 2026, when every check came back
+// empty after about 27 seconds. That, a server error, an answer that speaks of the provider or the service, or a record with
+// nothing in it means the check did not run: CheckFailed, and the Tax ID is marked neither way.
+const SLOW_MS = Number(Deno.env.get('LOOKUP_SLOW_MS') || 20_000);
+const NO_RECORD = /not found|no record|does not exist|invalid (tin|tax)|no tin/i;
+const NOT_RUN = /unavailable|downtime|time[ -]?out|timed out|provider|upstream|service|temporar|try again|gateway|internal/i;
+class CheckFailed extends UserError {}
+const CHECK_FAILED = 'The NRS check did not go through: Mono\'s Tax ID lookup is not answering properly just now. '
+  + 'Counta has not marked the Tax ID either way. Try again later.';
+async function nrsLookup(number: string, channel: 'tin' | 'cac', ctx: Ctx) {
   let r: LookupResult;
   try {
     r = await lookup('/v3/lookup/tin', { method: 'POST', body: JSON.stringify({ number, channel }) });
   } catch (e) {
     const msg = (e as Error).message;
     if (/not switched on/i.test(msg)) throw new UserError('Tax ID checks are not switched on yet. TaxStreem is setting them up.');
-    if (/not found|no record|does not exist|invalid (tin|tax)|no tin/i.test(msg)) return null;
-    throw new UserError('The NRS check did not go through just now. Try again in a minute.');
+    if (!(e instanceof LookupFailed)) throw e;
+    if (e.status !== null && e.status < 500 && e.secs * 1000 < SLOW_MS && NO_RECORD.test(e.reason) && !NOT_RUN.test(e.reason)) {
+      await noteLookup(ctx, 'no_record', e.status, e.reason, e.secs);
+      return null;
+    }
+    await noteLookup(ctx, 'failed', e.status, e.reason, e.secs);
+    throw new CheckFailed(CHECK_FAILED);
   }
-  if (r.status === 404) return null;
+  const reason = reasonOf(r.body, r.status === 404 ? 'Not found' : 'An empty record');
+  if (r.status === 404) {
+    if (r.secs * 1000 >= SLOW_MS || NOT_RUN.test(reason)) { await noteLookup(ctx, 'failed', 404, reason, r.secs); throw new CheckFailed(CHECK_FAILED); }
+    await noteLookup(ctx, 'no_record', 404, reason, r.secs);
+    return null;
+  }
   const t = taxRecord(r.body);
-  return t.nrs_tin || t.taxpayer_name || t.firstin || t.jittin || t.tin_type ? t : null;
+  if (t.nrs_tin || t.taxpayer_name || t.firstin || t.jittin || t.tin_type) return t;
+  await noteLookup(ctx, 'failed', r.status, `Mono answered with an empty record: ${reason}`, r.secs);
+  throw new CheckFailed(CHECK_FAILED);
 }
 
 // Checks the business's Tax ID (no vendor) or a supplier's with the NRS. The database decides who may ask, counts the
 // lookups and compares the names; only the outcome, the NRS name, type and tax office are kept.
-async function verifyTin(mine: <T = any>(fn: string, args: Record<string, unknown>) => Promise<T>, orgId: string, vendorId: string | null) {
+async function verifyTin(mine: <T = any>(fn: string, args: Record<string, unknown>) => Promise<T>, orgId: string, vendorId: string | null, user: string | null) {
   const target = await mine<any>('tin_check_target', { p_org: orgId, p_vendor: vendorId });
-  const rec: any = await nrsLookup(String(target.number), target.channel === 'cac' ? 'cac' : 'tin');
+  const rec: any = await nrsLookup(String(target.number), target.channel === 'cac' ? 'cac' : 'tin', { kind: 'tin', org: orgId, user, check: target.check_id });
   return await svc('svc_tin_result', { p_org: orgId, p_vendor: vendorId, p: {
     check_id: target.check_id, found: Boolean(rec), nrs_tin: rec?.nrs_tin ?? null, taxpayer_name: rec?.taxpayer_name ?? null, tin_type: rec?.tin_type ?? null,
     tax_office: rec?.tax_office ?? null, channel: target.channel, number: target.number } });
 }
 
 async function cacSearch(user: string, query: unknown) {
+  const ctx: Ctx = { kind: 'cac_search', user };
   const q = String(query ?? '').replace(/\s+/g, ' ').trim();
   if (q.length < 2 || q.length > 100) throw new UserError('Type at least two letters of the business name, or its RC number.');
   if (!(await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'search' }))) {
@@ -419,7 +478,13 @@ async function cacSearch(user: string, query: unknown) {
   }
   // "RC 1234567", "rc1234567" and "BN 1234567" search by the number.
   const rc = q.match(/^(?:rc|bn|it)?\s*-?\s*(\d{3,9})$/i);
-  const { status, body } = await lookup(`/v3/lookup/cac?${new URLSearchParams({ search: rc ? rc[1] : q })}`);
+  let res: LookupResult;
+  try { res = await lookup(`/v3/lookup/cac?${new URLSearchParams({ search: rc ? rc[1] : q })}`); }
+  catch (e) {
+    if (e instanceof LookupFailed) await noteLookup(ctx, 'failed', e.status, `Searching for "${q.slice(0, 60)}": ${e.reason}`, e.secs);
+    throw e;
+  }
+  const { status, body } = res;
   const found = status === 404 ? [] : rows(body).map(candidate).filter((c) => c.id !== null && c.name);
   // Exact and active matches first, then the rest as CAC returned them.
   const want = q.toLowerCase();
@@ -435,7 +500,8 @@ async function cacSelect(user: string, draft: any, cacId: unknown) {
     throw new UserError('That is a lot of company lookups for one day. Type the business details in yourself, or try again tomorrow.');
   }
   const id = encodeURIComponent(String(c.id));
-  const soft = (p: Promise<LookupResult>) => p.then((r) => (r.status === 404 ? null : r.body)).catch(() => null);
+  const ctx: Ctx = { kind: 'cac_record', user };
+  const soft = (p: Promise<LookupResult>) => p.then((r) => (r.status === 404 ? null : r.body)).catch(async (e) => { await noteFailed(ctx, e); return null; });
   const [profile, psc, secretary] = await Promise.all([
     c.rc_number ? soft(lookup(`/v3/lookup/cac/profile/${encodeURIComponent(digits(c.rc_number) || c.rc_number)}`)) : Promise.resolve(null),
     soft(lookup(`/v3/lookup/cac/company/${id}/psc`)),
@@ -461,12 +527,16 @@ async function cacSelect(user: string, draft: any, cacId: unknown) {
   let taxNote: string | null = null;
   const rcDigits = digits(record.profile.rc_number);
   if (rcDigits && await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'tin' })) {
+    const tctx: Ctx = { kind: 'tin', user };
     try {
-      const { status, body } = await lookup('/v3/lookup/tin', { method: 'POST', body: JSON.stringify({ number: rcDigits, channel: 'cac' }) });
+      const { status, body, secs } = await lookup('/v3/lookup/tin', { method: 'POST', body: JSON.stringify({ number: rcDigits, channel: 'cac' }) });
       const t = status === 404 ? null : taxRecord(body);
       if (t && (t.nrs_tin || t.firstin || t.jittin)) kyc = await svc('svc_kyc_store', { p_user: user, p_part: 'tin', p_data: t });
-      else taxNote = 'The NRS did not return a Tax ID for this RC number.';
-    } catch (e) { taxNote = (e as Error).message; }
+      else {
+        taxNote = 'The NRS did not return a Tax ID for this RC number.';
+        await noteLookup(tctx, 'no_record', status, `RC number ${rcDigits}: ${reasonOf(body, status === 404 ? 'Not found' : 'An empty record')}`, secs);
+      }
+    } catch (e) { taxNote = (e as Error).message; await noteFailed(tctx, e); }
   }
   return { kyc, tax_note: taxNote };
 }
@@ -479,12 +549,25 @@ async function cacStatusReport(user: string, orgId: string, draft: any) {
   }
   const key = await lookupKey();
   if (!key) throw new UserError('The CAC lookup is not switched on yet. Upload the status report yourself for now.');
-  const res = await fetch(`${MONO}/v3/lookup/cac/company/${encodeURIComponent(String(cacId))}/status-report`, {
-    headers: { 'mono-sec-key': key, accept: 'application/pdf' }, signal: AbortSignal.timeout(45_000),
-  });
+  const ctx: Ctx = { kind: 'cac_status_report', org: orgId, user };
+  const t0 = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(`${MONO}/v3/lookup/cac/company/${encodeURIComponent(String(cacId))}/status-report`, {
+      headers: { 'mono-sec-key': key, accept: 'application/pdf' }, signal: AbortSignal.timeout(45_000),
+    });
+  } catch (e) {
+    await noteLookup(ctx, 'failed', null, (e as Error).name === 'TimeoutError' ? 'No answer within 45 seconds' : `No answer (${(e as Error).name})`, since(t0));
+    throw new UserError('CAC did not send the status report just now. Try again in a few minutes, or upload it yourself.');
+  }
   const bytes = new Uint8Array(await res.arrayBuffer());
   const isPdf = bytes.length > 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
   if (!res.ok || !isPdf) {
+    const raw = new TextDecoder().decode(bytes.slice(0, 600));
+    let body: any = raw;
+    try { body = JSON.parse(raw); } catch { /* not json */ }
+    const why = res.ok ? `Not a PDF (${res.headers.get('content-type') || 'no type'}, ${bytes.length} bytes): ${reasonOf(body, '')}` : reasonOf(body, res.statusText);
+    await noteLookup(ctx, res.status === 404 ? 'no_record' : 'failed', res.status, why, since(t0));
     if (res.status === 404) throw new UserError('CAC has no status report for this business yet. Upload the one you have, or the application for registration.');
     throw new UserError('CAC did not send the status report just now. Try again in a few minutes, or upload it yourself.');
   }
@@ -564,7 +647,7 @@ Deno.serve(async (req) => {
         const orgId = String(body.org_id || ''), vendorId = String(body.vendor_id || '');
         if (!UUID.test(orgId) || !UUID.test(vendorId)) return json({ ok: false, error: 'Choose the supplier.' }, 400);
         const asService = <T = any>(fn: string, args: Record<string, unknown>) => svc<T>(fn === 'tin_check_target' ? 'svc_tin_check_target' : fn, args);
-        return json({ ok: true, ...(await verifyTin(asService, orgId, vendorId)) });
+        return json({ ok: true, ...(await verifyTin(asService, orgId, vendorId, null)) });
       }
       return json({ ok: true, result: await syncAll() });
     }
@@ -599,7 +682,7 @@ Deno.serve(async (req) => {
         if (!UUID.test(orgId)) throw new UserError('Choose the business first.');
         const vendorId = body.vendor_id == null || body.vendor_id === '' ? null : String(body.vendor_id);
         if (vendorId !== null && !UUID.test(vendorId)) throw new UserError('Choose the supplier.');
-        return json({ ok: true, ...(await verifyTin(mine, orgId, vendorId)) });
+        return json({ ok: true, ...(await verifyTin(mine, orgId, vendorId, u.user.id)) });
       }
       // A contractor's Tax ID from a bulk payment file, checked before the contractor is on file. The database decides who
       // may ask and counts the lookup; a number checked today comes back without asking the NRS again.
@@ -609,7 +692,7 @@ Deno.serve(async (req) => {
         const name = String(body.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
         const target = await mine<any>('tin_check_number', { p_org: orgId, p: { number: String(body.number ?? ''), name } });
         if (target.done) return json({ ok: true, number: target.number, status: target.status, taxpayer_name: target.taxpayer_name ?? null });
-        const rec: any = await nrsLookup(String(target.number), 'tin');
+        const rec: any = await nrsLookup(String(target.number), 'tin', { kind: 'tin', org: orgId, user: u.user.id, check: target.check_id });
         return json({ ok: true, ...(await svc('svc_tin_number_result', { p_org: orgId, p: {
           check_id: target.check_id, found: Boolean(rec), nrs_tin: rec?.nrs_tin ?? null, taxpayer_name: rec?.taxpayer_name ?? null, name } })) });
       }
