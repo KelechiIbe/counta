@@ -228,6 +228,14 @@ async function alert(actor: string, label: string, what: string, tail = 'If this
 // ------------------------------------------------------------------ the admin team's emails
 const STAFF_TAIL = 'If this was not you or someone you expected, sign in to the admin portal and remove them, or withdraw the invitation, on the Admin team page.';
 const roleWords = (role: string) => (role === 'admin' ? 'an admin' : 'a reviewer');
+// The database's hook secret, read the way the other functions read it: the Edge Function secret when one is set, else
+// the copy in Vault (svc_secret answers only for the keys the portal manages; app_secret also answers for this one).
+async function hookSecret(): Promise<string> {
+  const env = (Deno.env.get('PUSH_HOOK_SECRET') || '').trim();
+  if (env) return env;
+  const { data } = await admin.rpc('app_secret', { p_name: 'PUSH_HOOK_SECRET' });
+  return typeof data === 'string' ? data.trim() : '';
+}
 const same = (a: string, b: string) => {
   const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
   if (!x.length || x.length !== y.length) return false;
@@ -323,7 +331,7 @@ Deno.serve(async (req) => {
     // The database's own call: the welcome for people added before these emails existed, sent once.
     const hook = req.headers.get('x-counta-hook') || '';
     if (hook) {
-      if (!same(hook, await key('PUSH_HOOK_SECRET'))) return json({ ok: false, error: 'Not allowed.' }, 401);
+      if (!same(hook, await hookSecret())) return json({ ok: false, error: 'Not allowed.' }, 401);
       if (body.action !== 'welcome_pending') return json({ ok: false, error: 'Unknown action.' }, 400);
       const { data: list, error } = await admin.rpc('svc_staff_welcome_pending');
       if (error) return json({ ok: false, error: error.message });
