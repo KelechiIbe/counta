@@ -37,7 +37,7 @@ The draft bill uses Counta's own sums: VAT at the correct rate on what is VATabl
 
 ## The supplier
 
-Counta looks for the supplier by Tax ID, then by bank account, then by name. A new one is added with what the invoice gives: name, Tax ID, address, state, email, phone and bank account. A new supplier's Tax ID is checked with the NRS (through Mono) while the invoice is read, so a clean invoice is ready to approve at once. An existing supplier's details are never overwritten; a clash is shown as a check.
+Counta looks for the supplier by Tax ID, then by bank account, then by name. A new one is added with what the invoice gives: name, Tax ID, address, state, email, phone and bank account. A new supplier's Tax ID is checked with the NRS (through Mono) while the invoice is read, so a clean invoice is ready to approve at once. When Mono's Tax ID lookup does not answer properly, the Tax ID stays unchecked (never "not found") and the business checks it again later; see "A Tax ID check that could not run" in `onboarding-and-voices.md`. An existing supplier's details are never overwritten; a clash is shown as a check.
 
 ## Telling the supplier
 

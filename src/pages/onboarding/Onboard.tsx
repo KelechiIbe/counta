@@ -74,13 +74,18 @@ export default function Onboard() {
   const talk = (text?: boolean) => { setStarted(true); void g.start({ text }); };
   async function setLang(l: 'en' | 'pcm') { try { await guideLanguage(l); await guide.refetch(); g.answer(l === 'pcm' ? 'Make we talk Pidgin.' : "Let's talk in English.", 'They switched the language on screen.'); } catch (e) { toast((e as Error).message, 'err'); } }
 
+  // One tap at a time: the sample takes a few seconds to build, and the database makes it once per person in any case.
+  const [sampling, setSampling] = useState(false);
+  const sampleBusy = useRef(false);
   async function sample() {
+    if (sampleBusy.current) return;
+    sampleBusy.current = true; setSampling(true);
     try {
       const id = await rpc<string>('create_sample_business');
       await refreshMemberships(); setOrgId(id);
       toast('Sample business ready · Kelandellen Company Limited');
       nav('/home', { replace: true });
-    } catch (e) { toast((e as Error).message, 'err'); }
+    } catch (e) { toast((e as Error).message, 'err'); sampleBusy.current = false; setSampling(false); }
   }
 
   return (
@@ -102,7 +107,7 @@ export default function Onboard() {
       <div className="ob-main">
         <div className="ob-col">
           {!k ? <div className="row" style={{ justifyContent: 'center', padding: 60 }}><Spinner /></div>
-            : screen === 'welcome' ? <Welcome first={first} lang={lang} onTalk={() => talk()} onType={() => talk(true)} onSelf={() => { setStarted(true); go('find'); }} onSample={sample} hasOrgs={memberships.length > 0} />
+            : screen === 'welcome' ? <Welcome first={first} lang={lang} onTalk={() => talk()} onType={() => talk(true)} onSelf={() => { setStarted(true); go('find'); }} onSample={sample} sampling={sampling} hasOrgs={memberships.length > 0} />
             : screen === 'find' ? <Find k={k} live={live} onFound={() => go('found')} onManual={() => go('questions')} />
             : screen === 'found' ? <Found k={k} live={live} onNext={() => go('questions')} onBack={() => go('find')} />
             : screen === 'questions' ? <Questions k={k} live={live} onNext={() => go('summary')} />
@@ -140,7 +145,7 @@ function IdentityStep({ orgId, first, live, lang, onNext }: { orgId: string | nu
 }
 
 // ---------------------------------------------------------------- welcome
-function Welcome({ first, lang, onTalk, onType, onSelf, onSample, hasOrgs }: { first: string; lang: string; onTalk: () => void; onType: () => void; onSelf: () => void; onSample: () => void; hasOrgs: boolean }) {
+function Welcome({ first, lang, onTalk, onType, onSelf, onSample, sampling, hasOrgs }: { first: string; lang: string; onTalk: () => void; onType: () => void; onSelf: () => void; onSample: () => void; sampling: boolean; hasOrgs: boolean }) {
   const g = useGuideTalk();
   const nav = useNavigate();
   const pcm = lang === 'pcm';
@@ -171,7 +176,7 @@ function Welcome({ first, lang, onTalk, onType, onSelf, onSample, hasOrgs }: { f
           <div style={{ fontSize: 15, fontWeight: 600 }}>Just looking around?</div>
           <div className="muted" style={{ fontSize: 13, marginTop: 4, lineHeight: 1.45 }}>Open a sample shop with two Lagos branches and two months of history. It stays separate from your real business.</div>
         </div>
-        <button className="btn btn-secondary" onClick={onSample}>Open sample</button>
+        <button className="btn btn-secondary" onClick={onSample} disabled={sampling} aria-busy={sampling}>{sampling ? <><Spinner small />Opening…</> : 'Open sample'}</button>
       </div>
       <div className="ob-card row wrap" style={{ gap: 16, borderStyle: 'dashed', borderColor: 'var(--dashed)', boxShadow: 'none' }} data-testid="accountant-entry">
         <span style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--primary-soft)', display: 'grid', placeItems: 'center' }}><Icon name="book" size={22} color="#0072F5" /></span>

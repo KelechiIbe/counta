@@ -10,10 +10,14 @@ import { Card, grid, PageHead } from '../ui';
 type Act = {
   since: string; messages: Record<string, number>; calls: Record<string, number>; ai: Record<string, number>; martina: Record<string, number>;
   payouts: Record<string, { count: number; amount: number }>; payments: Record<string, { count: number; amount: number }>; signups: number; businesses: number;
+  tin_checks?: Record<string, number>;
   failures: { at: string; kind: string; what: string; org_id: string | null; business: string | null; error: string }[];
 };
 const AI_LABEL: Record<string, string> = { read_invoice: 'Invoices read', product: 'Product photos', nin_slip: 'NIN slips', document: 'CAC documents', web: 'Web lookups',
   search: 'CAC searches', profile: 'CAC records', tin: 'Tax ID lookups', status_report: 'Status reports', nin: 'NIN checks' };
+// Supplier, contractor and business Tax ID checks by what the NRS lookup came back with. "failed" is a check that did not run.
+const TIN_LABEL: Record<string, string> = { verified: 'Verified', mismatch: 'NRS name differs', not_found: 'Not on the NRS record', failed: 'Could not check (failed)',
+  asked: 'Unfinished' };
 
 function Counts({ data, label }: { data: Record<string, number>; label: (k: string) => string }) {
   const keys = Object.keys(data).sort();
@@ -46,6 +50,7 @@ export default function Activity() {
             <Card title="Phone calls"><Counts data={d.calls} label={split} /></Card>
             <Card title="AI reads"><Counts data={d.ai} label={(k) => AI_LABEL[k] || k.replace(/_/g, ' ')} /></Card>
             <Card title="Martina"><Counts data={d.martina} label={(k) => (k === 'assistant' ? 'Assistant conversations' : 'Onboarding conversations')} /></Card>
+            <Card title="Tax ID checks"><Counts data={d.tin_checks || {}} label={(k) => TIN_LABEL[k] || k.replace(/_/g, ' ')} /></Card>
             <Card title="Money">
               <div className="stack" style={{ gap: 4, fontSize: 14 }}>
                 {Object.entries(d.payments).map(([k, v]) => <div key={'p' + k} className="row" style={{ justifyContent: 'space-between', gap: 10 }}><span className="muted">Payment requests · {k}</span><b className="num">{num(v.count)} · {N(v.amount)}</b></div>)}

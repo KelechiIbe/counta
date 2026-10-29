@@ -37,6 +37,12 @@ The stages, worked out from the person's profile (`kyc_draft`) unless Martina or
 
 **Allowances.** Per person per day: 20 CAC searches, 6 company lookups, 6 Tax ID lookups, 3 status reports, 8 web searches and 6 document readings (`svc_kyc_take`).
 
+**Lookups that fail.** Every CAC search, CAC record, status report, Tax ID or NIN lookup that does not go through, or comes back with no record, is written to `lookup_failures` by the `mono` function (`svc_lookup_failure`): the kind, the business and person when known, Mono's HTTP status, how many seconds it took and Mono's message. Any run of five or more digits in the message is cut to its last four and email addresses are removed, so an NIN or Tax ID Mono echoes back is never stored whole. Rows go after 120 days. TaxStreem sees them in the admin portal under Activity, "What failed" (kind `lookup`), and on each business's page; Activity also counts Tax ID checks by outcome.
+
+**A Tax ID check that could not run.** Only a prompt answer that says there is no record marks a Tax ID "not on the NRS record". An answer that takes 20 seconds or more (`LOOKUP_SLOW_MS`), a server error, an answer that speaks of the provider or the service, or a record with nothing in it means the check did not run: the person is told so, the Tax ID is marked neither way, and the check's row in `tin_checks` reads `failed`. This came from Mono's Tax ID outage of 29 October 2026, when every check came back empty after about 27 seconds and Counta read that as "not on the NRS record". A supplier's bills stay held while its Tax ID is unchecked, as the 26 October rule requires, and the check can be run again once Mono answers.
+
+**The sample business.** `create_sample_business` makes one sample per person: it takes a lock for the person before it looks for an existing sample, so a second tap waits for the first and gets the same business. The function that builds the sample is `private.create_sample_business_build`.
+
 ## A director's NIN, and TaxStreem's review
 
 After the score, onboarding asks a director to type or say their NIN. Mono looks it up and the database compares the names
@@ -89,6 +95,7 @@ The voices on offer are the three most used female and three most used male Nige
 |---|---|
 | `ELEVENLABS_API_KEY` | Voices, announcements, Martina, calls |
 | `MONO_LOOKUP_SECRET_KEY` | CAC and Tax ID lookups, when the lookup product is on a different Mono app (otherwise `MONO_SECRET_KEY` is used) |
+| `LOOKUP_SLOW_MS` | Optional. How long (in milliseconds) a Tax ID lookup may take before an empty answer counts as Mono's provider timing out; 20000 unless set |
 | `ELEVENLABS_VOICE_IDS` (optional) | Comma-separated voice ids to offer instead of searching the library |
 | `ELEVENLABS_VOICE_ID` (optional) | Martina's default voice |
 | `ELEVENLABS_TTS_MODEL` (optional) | Announcement model, default `eleven_flash_v2_5` |
