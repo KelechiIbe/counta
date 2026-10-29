@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { can, useInventory } from '../state/session';
 import { useCashVsStock, useCounts, useFx, usePOs, useProposals, useReceipts, useTransfers } from '../lib/queries';
+import { useAttention } from '../lib/api';
 import { buildItems, cashVsStock, fxTrend, reorderSuggestions, type CashStory, type Suggestion } from '../lib/domain';
 import { daysBetween, plural } from '../lib/format';
 
@@ -36,6 +37,7 @@ export function useNeedsAction(): { rows: ActionRow[]; total: number; badges: { 
   const receipts = useReceipts(can(inv, 'receive_stock') || can(inv, 'see_margins'));
   const transfers = useTransfers();
   const { story } = useCashStory('ALL');
+  const at = useAttention().data;
   return useMemo(() => {
     const rows: ActionRow[] = [];
     const badges = { reorder: 0, pricing: 0, counts: 0, receive: 0, locations: 0 };
@@ -87,10 +89,21 @@ export function useNeedsAction(): { rows: ActionRow[]; total: number; badges: { 
       badges.locations = intransit.length;
       rows.push({ key: 'transfer', t: `${intransit.length} transfer${intransit.length === 1 ? '' : 's'} in transit`, d: 'Confirm when the receiving branch has the goods', cta: 'Open', to: '/inventory/locations', icon: 'arrowLR', color: '#7C3AED', bg: '#F5F3FF' });
     }
+    // The accountant waiting on an answer (owners and admins), and money in whose VAT the AI could not settle.
+    const asks = Number(at?.accountant_requests || 0);
+    if (asks > 0) {
+      rows.push({ key: 'accountant', t: `${asks} request${asks === 1 ? '' : 's'} from your accountant`, d: 'Waiting for your answer in Settings, Your accountant',
+        cta: 'Answer', to: '/settings#accountant', icon: 'chat', color: '#0072F5', bg: '#F0F7FF' });
+    }
+    const vatChecks = Number(at?.receipts_vat || 0);
+    if (vatChecks > 0) {
+      rows.push({ key: 'receipts_vat', t: `${vatChecks} payment${vatChecks === 1 ? '' : 's'} to check for VAT`, d: 'Money in with no invoice where the AI was not sure what was sold',
+        cta: 'Check', to: '/tax/vat?view=schedules', icon: 'percent', color: '#A16207', bg: '#FEFCE8' });
+    }
     const unpriced = inv.items.filter((i) => i.needs_review);
     if (unpriced.length && can(inv, 'edit_prices')) {
       rows.push({ key: 'newitems', t: `${unpriced.length} item${unpriced.length === 1 ? '' : 's'} need a quick check`, d: unpriced.slice(0, 2).map((i) => i.name).join(', ') + (unpriced.length > 2 ? '…' : ''), cta: 'Check', to: '/inventory/items', state: { filter: 'review' }, icon: 'pencil', color: '#0072F5', bg: '#F0F7FF' });
     }
     return { rows, total: rows.length, badges };
-  }, [inv, suggestions, proposals.data, counts.data, receipts.data, transfers.data, story]);
+  }, [inv, suggestions, proposals.data, counts.data, receipts.data, transfers.data, story, at]);
 }

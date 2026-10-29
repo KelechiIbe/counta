@@ -104,7 +104,9 @@ export const useBanking = (enabled = true, period?: { from: string; to: string }
 export const useInbox = (enabled = true) => useOrgQuery<any>(['inbox'], (o) => rpc('get_books_inbox', { p_org: o }), enabled, 60_000);
 // How many things need someone's action, by menu item, for this person's role (the red numbers in the menu).
 export type Attention = { invoices_overdue: number; orders_to_confirm: number; payments_to_confirm: number; bills_overdue: number; bank_lines: number; proposals: number;
-  schedules_draft: number; vat: number; wht: number; cit: number; tax_wallet: number; tax_id: number };
+  schedules_draft: number; vat: number; wht: number; cit: number; tax_wallet: number; tax_id: number;
+  // Requests from the accountant waiting for an answer (owners and admins); payments taken as sales whose VAT a person should check.
+  accountant_requests?: number; receipts_vat?: number };
 export const useAttention = (enabled = true) => useOrgQuery<Attention>(['attention'], (o) => rpc('get_attention', { p_org: o }), enabled, 120_000);
 export const useAssets = (enabled = true) => useOrgQuery<any>(['assets'], (o) => rpc('get_assets', { p_org: o }), enabled);
 // Home's figures for a period (this month when none is given) and the balances at its end.

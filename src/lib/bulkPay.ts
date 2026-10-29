@@ -109,6 +109,8 @@ export interface BulkRow {
   account_number: string; amount: number | null; narration: string; bill: string; supplier: string; account: string; reference: string;
   work: string; contractor_type: string; tin: string; address: string; state: string; gross: number | null;
   notes: string[]; issues: string[]; resolved?: string; resolving?: boolean; include: boolean; touched?: boolean; server?: any;
+  // Withholding tax ticked for this row on the review step, and the type of work picked there.
+  wht?: boolean; work_choice?: string;
 }
 
 const txt = (c: Cell | undefined) => cellText(c ?? null).trim();

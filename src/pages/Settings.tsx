@@ -22,6 +22,7 @@ import { PeopleCard, RolesCard } from './settings/Team';
 import { IdentityPanel, useIdentity } from './onboarding/Identity';
 import { MartinaAnywhere } from './settings/MartinaAnywhere';
 import { AccountantSection } from './settings/Accountant';
+import { useAttention } from '../lib/api';
 
 function Section({ id, title, sub, children }: { id?: string; title: string; sub?: string; children: ReactNode }) {
   return (
@@ -236,6 +237,8 @@ export default function Settings() {
   const [pw, setPw] = useState('');
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [chart, setChart] = useState(false);
+  // Requests from the accountant waiting for an answer: the count beside Settings, said at the top of the page.
+  const asks = Number(useAttention().data?.accountant_requests || 0);
   useEffect(() => {
     if (!inv) return;
     const o = inv.org;
@@ -273,6 +276,16 @@ export default function Settings() {
 
   return (
     <div className="container" style={{ maxWidth: 1000 }}>
+      {asks > 0 && (
+        <Alert kind="blue" icon="chat">
+          <div className="row wrap" style={{ gap: 10, justifyContent: 'space-between', alignItems: 'center' }} data-testid="settings-asks">
+            <span>Your accountant is waiting for {asks === 1 ? 'an answer' : `${asks} answers`}.</span>
+            <button className="btn btn-primary btn-sm" onClick={() => { nav('/settings#accountant', { replace: true }); document.getElementById('accountant')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+              {asks === 1 ? 'Answer it' : 'Answer them'}
+            </button>
+          </div>
+        </Alert>
+      )}
       <Section id="business" title="Business" sub={edit ? 'Shown on purchase orders and labels.' : 'Only people who can change settings edit these.'}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
           <Field label="Business name"><input className="input" disabled={!edit} value={f.name || ''} onChange={(e) => set('name', e.target.value)} /></Field>

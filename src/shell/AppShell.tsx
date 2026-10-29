@@ -190,7 +190,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
             ['/accounting/ledgers', 'Ledgers & reports'], ['/accounting/cfo', 'CFO pack'], ['/accounting/journals', 'Journals'], ['/accounting/assets', 'Fixed assets', Number(ib?.assets_to_confirm || 0)],
             ['/accounting/close', 'Period close'], ['/accounting/migrate', 'Move your books']]} />
         <Group to="/tax/vat" label="Tax returns" icon="percent" active={p.startsWith('/tax/') || p === '/tax'} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'file_tax')}
-          subs={[['/tax/vat', 'VAT', n('vat') + n('schedules_draft')], ['/tax/wht', 'Withholding tax', n('wht')], ['/tax/cit', 'Companies income tax', n('cit')]]} />
+          subs={[['/tax/vat', 'VAT', n('vat') + n('schedules_draft') + n('receipts_vat')], ['/tax/wht', 'Withholding tax', n('wht')], ['/tax/cit', 'Companies income tax', n('cit')]]} />
         {link('/documents', 'Documents', 'folder')}
         {external('Taxes', 'landmark')}
         {link('/assistant', 'AI Assistant', 'martina')}
@@ -199,7 +199,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
       <nav className="nav">
         {link('/integrations', 'Integrations', 'blocks')}
         {can(inv, 'manage_settings') && link('/settings/subscription', 'Subscription', 'card')}
-        {link('/settings', 'Settings', 'settings', undefined, n('tax_id'))}
+        {link('/settings', 'Settings', 'settings', undefined, n('tax_id') + n('accountant_requests'))}
         {link('/m', 'Phone app', 'phone', () => store.set('counta-view', 'phone'))}
       </nav>
       <div style={{ marginTop: 'auto', padding: '16px 0 12px', flex: 'none', position: 'relative' }}>

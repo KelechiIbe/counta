@@ -2,6 +2,7 @@
 // customers withheld, what is payable, and the input VAT credit carried forward. A month is filed once it has ended (freezing
 // its figures and clearing the VAT accounts), then paid. Whether the business must charge VAT at all is decided here too.
 import { useEffect, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useInventory, useSession, useToast } from '../../../state/session';
 import { rpc } from '../../../lib/supabase';
 import { money, moneyAccounts, today } from '../../../lib/api';
@@ -34,7 +35,10 @@ export default function VatTab() {
   const q = useVatPosition(from + '-01', to + '-01');
   const [open, setOpen] = useState<any>(null);
   const [modal, setModal] = useState<null | { kind: 'file' | 'pay' | 'reopen' | 'charge'; m?: any; charge?: boolean }>(null);
-  const [view, setView] = useState<'months' | 'schedules' | 'purchases' | 'customs'>('months');
+  // ?view=schedules opens a tab (the Home row for payments to check links to Sales from another POS).
+  const [params] = useSearchParams();
+  const asked = params.get('view');
+  const [view, setView] = useState<'months' | 'schedules' | 'purchases' | 'customs'>(asked === 'schedules' || asked === 'purchases' || asked === 'customs' ? asked : 'months');
   const src = useVatSources(orgId);
   const [nrs, setNrs] = useState<string | null>(null);
   const d = q.data;
@@ -54,7 +58,7 @@ export default function VatTab() {
           {(d.expiring || []).length > 0 && <Alert kind="amber" icon="clock">Input VAT credit from {(d.expiring as any[]).map((l) => `${monthShort(l.from)} (${N2(l.amount)})`).join(', ')} lapses five years after it arose. Use it or claim a refund.</Alert>}
           <div className="row wrap" style={{ justifyContent: 'space-between' }}>
             <Pills value={view} onChange={setView} options={[{ id: 'months', label: 'By month' },
-              { id: 'schedules', label: 'Sales from another POS', count: (src.data?.schedules || []).filter((s: any) => s.status === 'draft').length || undefined },
+              { id: 'schedules', label: 'Sales from another POS', count: ((src.data?.schedules || []).filter((s: any) => s.status === 'draft').length + Number(src.data?.receipt_counts?.to_check || 0)) || undefined },
               { id: 'purchases', label: 'Input VAT invoices' }, { id: 'customs', label: 'Customs entries' }]} />
             {view === 'months' && <div className="row wrap" style={{ gap: 8 }}>
             <PeriodPicker value={period} onChange={setPeriod} presets={['qtd', 'lq', 'ytd', 'ly', 'l12', 'all']} label="Months shown" align="end" />
@@ -68,7 +72,7 @@ export default function VatTab() {
           {view === 'customs' && <CustomsPanel canEdit={!!d.can_file} />}
           {view === 'schedules' && (src.isLoading ? <SkeletonRows n={3} /> : src.error ? <Alert kind="grey" icon="shield">{(src.error as Error).message}</Alert> : <>
             <SchedulesPanel data={src.data} canWork={!!src.data?.can?.work} />
-            <ReceiptsVatCard settings={src.data?.settings} canWork={!!src.data?.can?.work} />
+            <ReceiptsVatCard settings={src.data?.settings} receipts={src.data?.receipts} counts={src.data?.receipt_counts} canWork={!!src.data?.can?.work} />
           </>)}
           {view === 'purchases' && (src.isLoading ? <SkeletonRows n={3} /> : src.error ? <Alert kind="grey" icon="shield">{(src.error as Error).message}</Alert>
             : <PurchasesPanel data={src.data} canWork={!!src.data?.can?.work} />)}

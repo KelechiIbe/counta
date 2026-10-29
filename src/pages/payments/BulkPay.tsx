@@ -10,7 +10,8 @@ import { downloadBlob, safeName } from '../../lib/exporters';
 import { BULK_FIELDS, COMMON_BANKS, STATUS_WORD, bulkResultsXlsx, bulkTemplateXlsx, namesAgree, paidFor, readBulkRows, transferFee, type Bank, type BulkRow } from '../../lib/bulkPay';
 import { SheetRows } from '../../components/SheetRows';
 import { Icon } from '../../components/Icon';
-import { Alert, Empty, Field, Modal, ModalHead, SkeletonRows, Spinner } from '../../components/ui';
+import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
+import { NG_STATES } from '../../lib/countries';
 import { StatusChip } from '../sell/common';
 
 // Codes Counta posts to through a bill or a supplier, never straight from a bulk payment.
@@ -80,6 +81,10 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
   // Read by the check as soon as it changes on the review step (the state itself only updates on the next render).
   const defRef = useRef('');
   defRef.current = defaultAccount;
+  // Withholding tax on rows with no bill and no type of work in the file: none, every row, or the rows ticked.
+  const [whtMode, setWhtMode] = useState<'off' | 'all' | 'some'>('off');
+  const whtRef = useRef<'off' | 'all' | 'some'>('off');
+  whtRef.current = whtMode;
   const [rows, setRows] = useState<BulkRow[]>([]);
   const [file, setFile] = useState('');
   const [phase, setPhase] = useState<'upload' | 'checking' | 'review'>('upload');
@@ -96,7 +101,8 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
   const payload = (rs: BulkRow[]) => ({ title, default_account: defRef.current || null, file_name: file || null,
     rows: rs.map((r) => ({ row: r.row, name: r.name, bank_code: r.bank_code, bank_name: r.bank_name, account_number: r.account_number, account_name: r.resolved || '',
       amount: r.amount, narration: r.narration, bill: r.bill, supplier: r.supplier, account: r.account, reference: r.reference,
-      work: r.work || null, contractor_type: r.contractor_type || null, tin: r.tin || null, address: r.address || null, state: r.state || null, gross: r.gross })) });
+      work: r.work || null, contractor_type: r.contractor_type || null, tin: r.tin || null, address: r.address || null, state: r.state || null, gross: r.gross,
+      wht: whtRef.current === 'all' || (whtRef.current === 'some' && Boolean(r.wht)), work_choice: r.work_choice || null })) });
 
   async function runCheck(rs: BulkRow[]) {
     const ready = rs.filter((r) => !r.issues.length);
@@ -152,6 +158,18 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
     try { await Promise.all(Array.from({ length: Math.min(2, todo.length) }, worker)); await runCheck(rowsRef.current); }
     finally { setCheckingTins(false); }
   }
+
+  // A change to a row's WHT details on the review step, checked again with the books at once (text fields when they lose focus).
+  function editRow(i: number, p: Partial<BulkRow>, recheck = true) {
+    const next = rowsRef.current.map((x, j) => (j === i ? { ...x, ...p } : x));
+    rowsRef.current = next;
+    setRows(next);
+    if (recheck) void runCheck(next);
+  }
+  function setWht(m: 'off' | 'all' | 'some') { whtRef.current = m; setWhtMode(m); void runCheck(rowsRef.current); }
+  const whtTypes: { code: string; name: string; exempt: boolean }[] = check?.wht_types || [];
+  // A row WHT can be switched on for: no bill and no type of work in the file.
+  const whtable = (r: BulkRow) => !r.bill && !r.work && !r.issues.length;
 
   async function pickBank(i: number, code: string) {
     const b = banks.find((x) => x.code === code);
@@ -231,6 +249,19 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
               {phase === 'checking' ? <span className="row" style={{ gap: 6, fontSize: 13 }}><Spinner small />Checking names with the banks · {resolvedCount} of {rows.filter((r) => /^\d{10}$/.test(r.account_number) && r.bank_code).length}{resolving ? '' : ' · checking the books'}</span>
                 : <button className="btn btn-ghost btn-sm" onClick={() => { setRows([]); setCheck(null); setPhase('upload'); }}>Upload another file</button>}
             </div>
+            {phase === 'review' && rows.some(whtable) && (
+              <div className="card card-pad stack" style={{ gap: 8 }} data-testid="bulk-wht">
+                <div className="row wrap" style={{ gap: 10, justifyContent: 'space-between', alignItems: 'center' }}>
+                  <b style={{ fontSize: 14 }}>Withholding tax</b>
+                  <Pills value={whtMode} onChange={setWht} options={[{ id: 'off', label: 'Do not deduct' }, { id: 'all', label: 'Deduct from every payment' },
+                    { id: 'some', label: 'Deduct from the payments I tick' }]} />
+                </div>
+                <div className="faint" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+                  {whtMode === 'off' ? 'Rows with a bill or a type of work in the file keep their own WHT. Switch this on to deduct WHT from the other payments as well.'
+                    : 'Counta sets each rate from the WHT rules, by the type of work and by whether the payee is a company, a business name or a person. The amount in your file is the amount before WHT, so the payee receives it less WHT. Each row writes a bill for the payment in Purchases. Staff pay and money owed on a liability account take no WHT.'}
+                </div>
+              </div>
+            )}
             {phase === 'review' && tinsToCheck.length > 0 && (
               <Alert kind="blue" icon="shield">
                 <div className="row wrap" style={{ gap: 10, justifyContent: 'space-between', alignItems: 'center' }}>
@@ -287,7 +318,43 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
                         <td style={{ minWidth: 150 }}>
                           {s?.label ? <div>{s.label}</div> : <div className="faint">{r.bill || r.supplier || r.work || r.account || (defaultAccount ? `${defaultAccount}` : '—')}</div>}
                           {s?.kind === 'bill' && Number(s.wht) > 0 && <div className="faint" style={{ fontSize: 12 }}>Settles {N2(s.gross)}, WHT {N2(s.wht)}</div>}
+                          {phase === 'review' && whtMode === 'some' && whtable(r) && (
+                            <label className="check" style={{ fontSize: 12.5, marginTop: 2 }}>
+                              <input type="checkbox" aria-label={`Deduct WHT on row ${r.row}`} checked={Boolean(r.wht)} onChange={(e) => editRow(i, { wht: e.target.checked })} />Deduct WHT
+                            </label>
+                          )}
                           {s?.kind === 'contractor' && s.gross != null && <div className="faint" style={{ fontSize: 12 }}>Bill of {N2(s.gross)}{Number(s.wht) > 0 ? `, WHT ${N2(s.wht)} (${(Number(s.contractor?.rate) * 100).toLocaleString('en-NG', { maximumFractionDigits: 2 })}%)` : ', no WHT'}{s.contractor?.new ? ' · new supplier' : ''}</div>}
+                          {phase === 'review' && s?.kind === 'contractor' && whtTypes.length > 0 && (
+                            <div className="stack" style={{ gap: 4, marginTop: 4 }} data-testid={`wht-details-${r.row}`}>
+                              <select className="input input-sm" aria-label={`Type of work for row ${r.row}`} value={s.contractor?.work || ''}
+                                onChange={(e) => editRow(i, s.wht_on || !r.work ? { work_choice: e.target.value } : { work: e.target.value })}>
+                                {!s.contractor?.work && <option value="">Type of work…</option>}
+                                {whtTypes.map((t) => <option key={t.code} value={t.code}>{t.name}</option>)}
+                              </select>
+                              {s.contractor?.work_source && s.contractor.work_source !== 'you' && <span className="faint" style={{ fontSize: 11 }}>{s.contractor.work_source === 'supplier' ? 'From the supplier on file' : s.contractor.work_source === 'account' ? 'From the account it goes to' : 'From the narration'}</span>}
+                              {!s.contractor?.on_file?.type && (
+                                <select className="input input-sm" aria-label={`Company or individual for row ${r.row}`} value={s.contractor?.type || ''}
+                                  onChange={(e) => editRow(i, { contractor_type: e.target.value })}>
+                                  {!s.contractor?.type && <option value="">Company or individual?</option>}
+                                  <option value="company">Company</option><option value="business_name">Business name</option><option value="individual">Individual</option>
+                                </select>
+                              )}
+                              {s.contractor?.type_guessed && <span className="faint" style={{ fontSize: 11 }}>A guess from the bank's name for the account. Change it if it is wrong.</span>}
+                              {(s.needs || []).includes('tin') && (
+                                <input className="input input-sm" aria-label={`Tax ID for row ${r.row}`} placeholder="Payee's Tax ID" inputMode="numeric" value={r.tin}
+                                  onChange={(e) => editRow(i, { tin: e.target.value }, false)} onBlur={() => void runCheck(rowsRef.current)} />
+                              )}
+                              {(s.needs || []).includes('state') && (
+                                <select className="input input-sm" aria-label={`State for row ${r.row}`} value={r.state} onChange={(e) => editRow(i, { state: e.target.value })}>
+                                  <option value="">Payee's state…</option>{NG_STATES.map((st) => <option key={st} value={st}>{st}</option>)}
+                                </select>
+                              )}
+                              {(s.needs || []).includes('address') && (
+                                <input className="input input-sm" aria-label={`Address for row ${r.row}`} placeholder="Payee's address" value={r.address}
+                                  onChange={(e) => editRow(i, { address: e.target.value }, false)} onBlur={() => void runCheck(rowsRef.current)} />
+                              )}
+                            </div>
+                          )}
                           {s?.contractor?.tin && (() => { const n = nrs[s.contractor.tin]; return n?.busy ? <div className="faint" style={{ fontSize: 12 }}>Asking the NRS…</div>
                             : n?.error ? <div style={{ fontSize: 12, color: '#B91C1C' }}>{n.error}</div>
                             : n?.status ? <div style={{ fontSize: 12, color: n.status === 'verified' ? '#15803D' : '#B91C1C' }}>NRS: {n.status === 'verified' ? `found${n.taxpayer_name ? ` as ${n.taxpayer_name}` : ''}` : n.status === 'mismatch' ? `under ${n.taxpayer_name}` : 'no record'}</div>
@@ -301,6 +368,7 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
                           {dupes.has(r.row) && <div style={{ color: '#B45309' }}>Same account and amount as another row.</div>}
                           {recent.has(`${r.account_number}|${Number(s?.amount ?? r.amount)}`) && <div style={{ color: '#B45309' }}>Paid this amount in the last 7 days.</div>}
                           {r.notes.map((n, k) => <div key={'n' + k} className="faint">{n}</div>)}
+                          {(s?.notes || []).map((n: string, k: number) => <div key={'s' + k} className="faint">{n}</div>)}
                           {!problems.length && nameOk && !dupes.has(r.row) && s?.ok && <span className="faint">Ready</span>}
                         </td>
                       </tr>
@@ -319,7 +387,7 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
             )}
             {phase === 'review' && short > 0 && <Alert kind="red" icon="alert">The wallet is short by {N2(short)}. Fund it, or untick some rows.</Alert>}
             {phase === 'review' && needsApproval && <Alert kind="blue" icon="shield">Above {N2(threshold)}, so someone else who makes payments approves the batch before it goes. They get a notice.</Alert>}
-            {phase === 'review' && rows.some((r) => r.server?.kind === 'vendor') && <div className="faint" style={{ fontSize: 12 }}>Payments to a supplier without a bill reduce what you owe them; no withholding tax is deducted on those.</div>}
+            {phase === 'review' && rows.some((r) => r.server?.kind === 'vendor') && <div className="faint" style={{ fontSize: 12 }}>Payments to a supplier without a bill reduce what you owe them{whtMode === 'off' ? '. No withholding tax is deducted on those unless you switch it on above.' : '.'}</div>}
             {phase === 'review' && rows.some((r) => r.server?.kind === 'contractor') && <div className="faint" style={{ fontSize: 12 }}>Each contractor row writes and approves a bill for the work in Purchases, keeps the withholding tax back for the tax office and pays the rest. If the batch is declined or cancelled before the money leaves, those bills are voided.</div>}
           </>
         )}
