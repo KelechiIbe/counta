@@ -781,7 +781,7 @@ end $$;
 
 -- Money in posted to sales with no Counta invoice behind it: a receipt for the walk-in customer (or the customer named), its
 -- VAT worked back from the amount or added on top as the business answered, and decided per payment: p_meta.vat_treatment
--- when a person chose it, else private.receipt_vat_default until the AI looks.
+-- when a person chose it, else private.receipt_vat_default until the AI looks. The sender's name is not read for a product.
 create or replace function private.bank_line_sale(p_line uuid, p_account text, p_party_type text, p_party uuid, p_stage text, p_meta jsonb,
   m public.members) returns public.journals
 language plpgsql security definer set search_path = public, private as $$
@@ -794,7 +794,7 @@ begin
   v_amt := abs(bl.amount);
   v_def := case when coalesce(p_meta->>'vat_treatment', '') in ('standard', 'zero', 'exempt')
                 then jsonb_build_object('treatment', p_meta->>'vat_treatment', 'source', 'person', 'check', false, 'reason', nullif(p_meta->>'vat_reason', ''))
-                else private.receipt_vat_default(bl.org_id, concat_ws(' ', bl.description, bl.reference, bl.counterparty)) end;
+                else private.receipt_vat_default(bl.org_id, concat_ws(' ', bl.description, bl.reference)) end;
   v_treat := v_def->>'treatment';
   v_incl := coalesce(o.vat_on_receipts, 'inclusive') = 'inclusive';
   v_rate := case when v_treat = 'standard' then private.vat_rate(bl.line_date) else 0 end;
