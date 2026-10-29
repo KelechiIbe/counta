@@ -60,6 +60,18 @@ Each row needs the beneficiary's name, bank, 10-digit account number and the amo
 
 On upload Counta asks the bank for the name on every account (five at a time) and checks every row against the books: the bill exists and is approved, the amount is not more than is owed, the account can take a payment, the same bill is not paid twice. A row whose bank name differs from the sheet stays unticked until someone ticks it. Rows that pay the same account the same amount, or an amount paid to that account in the last seven days, are flagged. The batch must fit in the wallet with the estimated transfer fees (₦10.75 up to ₦5,000, ₦26.88 up to ₦50,000, ₦53.75 above).
 
+### Withholding tax on rows without a bill
+
+On the review step, Withholding tax offers three choices: Do not deduct (as before), Deduct from every payment, or Deduct from the payments I tick (a box on each row). It applies to rows with no bill number and no type of work in the file, since those already carry their own WHT.
+
+A row with WHT switched on is paid the way a contractor row is (below): Counta writes and approves a bill for it and keeps the WHT back. Its amount is the amount before WHT, and the payee receives it less WHT. The rate comes from the WHT rules, using the type of work and whether the payee is a company, a business name or a person:
+
+- The type of work is the one picked on the row, else the supplier's own on file, else what the row's account says (Consultancy Fees is professional services, Rent is rent, Diesel takes none), else the narration. When nothing says, the row asks for it.
+- Whether the payee is a company, a business name or a person comes from the supplier on file or the file. Failing both, it is guessed from the bank's name for the account (Ltd and Limited make a company, Ventures or Enterprises a business name, else a person) and the row says it is a guess.
+- The Tax ID, address and state rules below apply. A payee with no Tax ID waits for one, under the 26 October rule that a bill with WHT is paid only once the supplier's Tax ID is on record and checked. The row has fields for the Tax ID, the state and the address when it needs them.
+
+Some rows never take WHT and say why: staff pay (61xx except 6112, and 5201 and 5304: PAYE covers it), taxes and levies, and money owed on a liability account. A supplier in Counta with unpaid bills is paid by bill number instead, so its WHT comes from the bill.
+
 ### Contractors
 
 A contractor paid with no bill in Counta goes on the same sheet. The template's columns Type of work (a list: services, professional services, construction, supply of goods, rent, commission, brokerage, no withholding tax), Company or individual, Tax ID, Address, State and Contract amount before WHT (instead of Amount) carry what the books need. Counta finds the contractor among the business's suppliers by Tax ID, then by bank account, then by name, or adds them when the batch is saved. The withholding tax rate comes from the type of work and whether the contractor is a company, the small-company rule (no WHT while a month's purchases from a supplier with a Tax ID stay within ₦2 million) and exemptions on file. The contractor receives the contract amount less WHT.

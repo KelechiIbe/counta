@@ -36,6 +36,8 @@ Either side can end the work at any time. The practice's notes stay with the pra
 
 The accountant asks the business for a document, an answer or an approval. The owner is told at once and answers in Settings, Your accountant, with words, a file or both. Files go to the business's documents (`<org>/requests/<request>/…`).
 
+While a request waits for an answer, the owners and admins see it in four places: a count beside Settings in the menu, a row on Home among the things to review, the bell's count, and a note at the top of Settings that leads to the request. The count is `accountant_requests` in `get_attention`. It counts open requests from accountants still working on the books, and it does not count for the accountant's own people in the business. It goes as soon as the request is answered.
+
 ### Licence numbers
 
 Each accountant may give an ICAN, ANAN or CITN membership number. TaxStreem checks it in the admin portal (Accountants) against the professional body's register and verifies it, or says why not. Until then clients see it as unverified. The number, as checked, goes into the statement the accountant accepts when they change a return.

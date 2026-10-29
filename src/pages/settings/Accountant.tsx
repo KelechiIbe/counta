@@ -188,7 +188,8 @@ function Request({ r, canAnswer }: { r: RequestRow; canAnswer: boolean }) {
       }
       await rpc('org_request_answer', { p_request: r.id, p: { answer: text.trim() || null, file_path: path, file_name: file?.name.slice(0, 140) || null } });
       setText(''); setFile(null);
-      await qc.invalidateQueries({ queryKey: ['org-accountants'] });
+      // The count beside Settings, in the bell and on Home goes down with it.
+      await Promise.all([qc.invalidateQueries({ queryKey: ['org-accountants'] }), qc.invalidateQueries({ queryKey: ['attention'] })]);
       toast('Sent to your accountant');
     } catch (e) { toast(cleanError(e), 'err'); }
     setBusy(false);

@@ -637,6 +637,59 @@ async function vatClassifyText(sb: SupabaseClient, admin: SupabaseClient, body: 
   }) });
 }
 
+// ---------------------------------------------------------------- VAT on money in with no Counta invoice
+// A payment the business received with no invoice is taken as a sale; its VAT is decided per payment from what the business
+// sells and what the payment says. The database hands over the payments waiting (svc_receipts_for_vat) and books each answer
+// (svc_set_receipt_vat): at the business's threshold the sale is booked again, below it the payment is marked to check.
+const RECEIPTS_RULES = `
+
+You now decide the VAT on payments a Nigerian business received into its bank account or wallet with no invoice behind them. Each payment is taken as
+a sale of what the business sells. Decide, for each payment, the VAT treatment of what was most likely sold.
+- What the business sells comes first: its trade, the examples it gave of what it sells, and its products with the VAT each one carries.
+- The narration may name what was bought (an item, a service, "school fees", "consultation"). Use it when it does; it decides over the usual.
+- Most narrations name only the sender or a reference. Then decide from what the business sells. When everything it sells carries the same treatment,
+  give that treatment with high confidence. When it sells things with different treatments and the payment does not say which, give the treatment of
+  most of what it sells, with confidence below 0.8, so a person checks it.
+- A sender's name is never evidence of what was bought, and a payment from an individual is not a reason for any treatment.
+- reason: one short sentence the owner understands, saying what you went by (for example "Everything the business sells is medicine, which is
+  zero-rated" or "The payment says it was for school fees: tuition is zero-rated").`;
+
+async function vatReceiptsPending(admin: SupabaseClient) {
+  if (!aiOn()) return { ok: false, reason: 'not_configured' };
+  const { data: groups, error } = await admin.rpc('svc_receipts_for_vat', { p_limit: 40 });
+  if (error) return { ok: false, error: error.message };
+  let applied = 0, unsure = 0, failed = 0;
+  for (const g of (groups as any[]) || []) {
+    const sales: any[] = Array.isArray(g?.sales) ? g.sales : [];
+    if (!sales.length || await paused(admin, g.org_id)) continue;
+    const products = (Array.isArray(g.products) ? g.products : []).slice(0, 60)
+      .map((p: any) => `${String(p.name || '').slice(0, 80)}: ${p.vat}`).join('\n');
+    const examples = Array.isArray(g.business?.examples) ? g.business.examples.map((e: unknown) => String(e).slice(0, 80)).slice(0, 10) : [];
+    const text = `BUSINESS\n${JSON.stringify({ name: g.business?.name || '', trade: g.business?.industry || '', sells: g.business?.offering || '',
+      activity: g.business?.activity || '', category: g.business?.category || '', examples })}\n\nPRODUCTS (name: VAT)\n${products || '(none in Counta)'}\n\nPAYMENTS\n`
+      + sales.map((s) => JSON.stringify({ id: String(s.id), date: s.date, amount: s.amount, narration: String(s.narration || '').slice(0, 200) })).join('\n');
+    try {
+      const { data } = await gemini(VAT_SYSTEM + RECEIPTS_RULES, [{ text }], VAT_SCHEMA, 0.1, { thinking: 'low', org: g.org_id, kind: 'vat_receipts' });
+      const byId = new Map(((data?.results || []) as any[]).map((r) => [String(r?.id), r]));
+      for (const s of sales) {
+        const r = byId.get(String(s.id));
+        const t = ['standard', 'zero', 'exempt'].includes(r?.treatment) ? r.treatment : null;
+        const conf = Math.min(Math.max(Number(r?.confidence) || 0, 0), 1);
+        const { data: res } = await admin.rpc('svc_set_receipt_vat', { p_sale: s.id, p: { treatment: t, confidence: t ? conf : 0,
+          reason: r?.reason ? String(r.reason).slice(0, 300) : null } });
+        if ((res as any)?.applied) applied++; else unsure++;
+      }
+    } catch (e) {
+      failed += sales.length;
+      console.warn('vat_receipts', (e as Error).message);
+    }
+  }
+  return { ok: true, applied, unsure, failed };
+}
+
+// The kinds of purchase withholding tax tells apart, for an invoice the business paid (codes of wht_rates).
+const PURCHASE_WHT = ['goods', 'services', 'professional', 'rent', 'commission', 'brokerage', 'construction_roads', 'construction_other', 'colocation',
+  'ex_over_counter', 'ex_manufacturer', 'ex_telecom_airline', 'ex_petroleum', 'ex_insurance', 'ex_reimbursable', 'ex_bank_charges', 'none'];
 const PURCHASE_SCHEMA = {
   type: 'OBJECT',
   properties: {
@@ -645,6 +698,9 @@ const PURCHASE_SCHEMA = {
     net: { type: 'NUMBER', nullable: true, description: 'Amount before VAT' }, vat: { type: 'NUMBER', nullable: true, description: 'VAT shown on the invoice; 0 when none is shown' },
     total: S.nnum, vat_shown: S.bool, paid: { type: 'BOOLEAN', nullable: true, description: 'True when the document shows it was paid (receipt, PAID stamp, zero balance)' },
     confidence: S.int, warnings: { type: 'ARRAY', items: S.str },
+    supplier_type: { type: 'STRING', nullable: true, enum: ['company', 'business_name', 'individual'], description: 'What the seller is' },
+    supplier_address: S.nstr,
+    wht_category: { type: 'STRING', nullable: true, enum: PURCHASE_WHT, description: 'The kind of purchase for withholding tax' },
   },
   required: ['is_invoice', 'vat_shown', 'confidence', 'warnings'],
 };
@@ -675,6 +731,14 @@ Rules:
 - paid: true when it shows it was paid (a receipt, a PAID stamp, a zero balance), false when it shows an amount still due, null when you cannot tell.
 - confidence 0-100: how sure you are of the figures. Below 80 when digits could be read two ways or the figures do not add up.
 - warnings: short plain sentences about anything a person should check (the VAT is not 7.5% of the net, the buyer is someone else, the date is old).
+- supplier_type: company when the seller's name carries Ltd, Limited, PLC or an RC number; business_name for an enterprise, ventures or a BN number;
+  individual for a person; null when you cannot tell. supplier_address: the seller's address as printed, else null.
+- wht_category, the kind of purchase for withholding tax: goods (supply of goods), services (repairs, cleaning, security, transport, printing, catering,
+  events and other services), professional (consultancy, legal, audit, accounting, technical or management services), rent (rent, hire or lease),
+  commission, brokerage, construction_roads (roads, bridges, buildings, power plants), construction_other (other building or installation work),
+  colocation (telecom tower co-location), ex_over_counter (bought across the counter and paid on the spot, as at a shop), ex_manufacturer (goods the
+  seller makes itself), ex_telecom_airline (telephone, internet data, airline tickets), ex_petroleum (petrol, diesel, kerosene, cooking gas), ex_insurance
+  (insurance premiums), ex_reimbursable (costs reimbursed at cost), ex_bank_charges (bank charges), none when nothing applies.
 - Never invent a figure that is not on the document.`;
   let out: any, model = MODEL;
   try {
@@ -696,7 +760,10 @@ Rules:
     is_invoice: Boolean(out.is_invoice), supplier_name: out.supplier_name ? String(out.supplier_name).slice(0, 160) : null, supplier_tin: invoiceTin(out.supplier_tin),
     invoice_no: out.invoice_no ? String(out.invoice_no).slice(0, 60) : null, invoice_date: day, description: out.description ? String(out.description).slice(0, 200) : null,
     net, vat: out.vat_shown ? vat : 0, total, vat_shown: Boolean(out.vat_shown) && (vat || 0) > 0, paid: out.paid ?? null,
-    confidence: Math.max(0, Math.min(100, Math.round(Number(out.confidence) || 0))), warnings } });
+    confidence: Math.max(0, Math.min(100, Math.round(Number(out.confidence) || 0))), warnings,
+    supplier_type: ['company', 'business_name', 'individual'].includes(out.supplier_type) ? out.supplier_type : null,
+    supplier_address: out.supplier_address ? String(out.supplier_address).slice(0, 300) : null,
+    wht_category: PURCHASE_WHT.includes(out.wht_category) ? out.wht_category : null } });
 }
 
 // ---------------------------------------------------------------- moving the books: old chart to Counta's chart
@@ -1054,9 +1121,10 @@ Deno.serve(async (req) => {
     if (!expected || !sameSecret(expected, hook)) return json({ ok: false, error: 'Not allowed.' }, 401);
     let hb: any = {};
     try { hb = await req.json(); } catch { /* empty body */ }
-    if (hb.action !== 'vat_classify_pending') return json({ ok: false, error: 'Unknown action.' }, 400);
+    if (hb.action !== 'vat_classify_pending' && hb.action !== 'vat_receipts_pending') return json({ ok: false, error: 'Unknown action.' }, 400);
     try {
       await loadKeys(admin);
+      if (hb.action === 'vat_receipts_pending') return json(await vatReceiptsPending(admin));
       const { data: items } = await admin.rpc('svc_items_for_vat', { p_limit: 60 });
       const open = new Map<string, boolean>();
       const keep: VatItem[] = [];
