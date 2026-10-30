@@ -5,8 +5,9 @@
 //   platform_check { what: 'nrs' }  -> asks the NRS sandbox (or production) what its answers look like: the health check,
 //                                      every code list (copied into nrs_codes), the dashboard's key on TaxStreem's
 //                                      business (its entity record where NRS allows it, its invoices, and a test IRN made
-//                                      with the Service ID), and whether crypto_keys.txt can make a QR code. What it found goes to einvoice_checks, with numbers cut to their
-//                                      last four and no key or secret.
+//                                      with the Service ID), and whether crypto_keys.txt can make a QR code. What it
+//                                      found goes to einvoice_checks, with numbers cut to their last four and no key or
+//                                      secret.
 //   platform_check { what: 'kms' }  -> checks the Google Cloud HSM keys with only the roles Counta is given: a value
 //                                      encrypts and decrypts with nrs-credentials in the HSM, and a signature from
 //                                      invoice-signing (EC P-256, SHA-256, in the HSM) verifies with its public key.
