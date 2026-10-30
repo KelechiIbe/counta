@@ -3,10 +3,11 @@
 //
 // TaxStreem's admins, signed in with the authenticator code (Authorization: Bearer <user JWT>), POST { action, ... }:
 //   platform_check { what: 'nrs' }  -> asks the NRS sandbox (or production) what its answers look like: the health check,
-//                                      every code list (copied into nrs_codes), the entities the dashboard's key can see
-//                                      with the one holding the Business ID and its Service ID, and whether crypto_keys.txt
-//                                      can make a QR code. What it found goes to einvoice_checks, with numbers cut to their
-//                                      last four and no key or secret.
+//                                      every code list (copied into nrs_codes), the dashboard's key on TaxStreem's
+//                                      business (its entity record where NRS allows it, its invoices, and a test IRN made
+//                                      with the Service ID), and whether crypto_keys.txt can make a QR code. What it
+//                                      found goes to einvoice_checks, with numbers cut to their last four and no key or
+//                                      secret.
 //   platform_check { what: 'kms' }  -> checks the Google Cloud HSM keys with only the roles Counta is given: a value
 //                                      encrypts and decrypts with nrs-credentials in the HSM, and a signature from
 //                                      invoice-signing (EC P-256, SHA-256, in the HSM) verifies with its public key.
@@ -109,19 +110,21 @@ async function nrsCheck(userId: string) {
 
   // TaxStreem on the MBS, with the dashboard's key. GET /entity/{id} takes an entity's own id, which is not the Business
   // ID, so the entities this key can see are listed first, the one holding the Business ID is found among them, and its
-  // record is read for the Business ID and Service ID NRS has.
+  // record is read for the Business ID and Service ID NRS has. The sandbox keeps entity records from a provider's key
+  // (403, "user does not have access to this resource"), so the key is then proved on the business itself: its invoices
+  // (a read that takes the Business ID) and a test IRN made with the Service ID, which NRS validates without keeping.
   const SEARCH = '/api/v1/entity?size=20&page=1&sort_by=created_at&sort_direction_desc=true&reference=';
   const SVC_KEY = /^service_?id$/i;
   let nrsServiceIds: string[] = [];
+  let keyRefused = false;
   if (key && sec) {
     if (GAP_MS) await sleep(GAP_MS);
     const r = await nrsCall({ base, key, secret: sec }, SEARCH);
     results.entities = answer(r);
-    if (!r.ok) {
-      ok = false;
-      said.push(r.status === 401 || r.status === 403 ? `NRS refused the API key and secret (${r.status}): ${nrsWhy(r)}.`
-        : `The list of entities did not come back (${r.status || 'no answer'}): ${nrsWhy(r)}.`);
-    } else {
+    if (r.status === 401) { ok = false; keyRefused = true; said.push(`NRS refused the API key and secret (401): ${nrsWhy(r)}.`); }
+    else if (r.status === 403) said.push(`NRS keeps entity records from this key (403: ${nrsWhy(r)}), so it was tried on the business itself.`);
+    else if (!r.ok) said.push(`The list of entities did not come back (${r.status || 'no answer'}: ${nrsWhy(r)}), so the key was tried on the business itself.`);
+    else {
       const list = (firstList(r.body) || []) as any[];
       const names = list.map(entityName).filter(Boolean);
       const hit = biz ? list.find((e) => holds(e, biz)) : undefined;
@@ -140,18 +143,43 @@ async function nrsCheck(userId: string) {
       const inRecord = biz ? holds(record, biz) || Boolean(hit) : false;
       nrsServiceIds = [...new Set(valuesUnder(record, SVC_KEY).map((x) => x.toUpperCase()))];
       results.entity_match = { visible: list.length, business_found: inRecord, service_ids_found: nrsServiceIds.length };
-      if (!biz) { ok = false; said.push('Add the Business ID.'); }
-      else if (list.length && inRecord) said.push('The Business ID is one of its businesses.');
-      else if (list.length) { ok = false; said.push('The Business ID is not among the businesses this key can see. Copy it again from the NRS dashboard.'); }
+      if (biz && list.length && inRecord) said.push('The Business ID is one of its businesses.');
+      else if (biz && list.length) { ok = false; said.push('The Business ID is not among the businesses this key can see. Copy it again from the NRS dashboard.'); }
+    }
+    if (!keyRefused && !biz) { ok = false; said.push('Add the Business ID.'); }
+    if (!keyRefused && biz) {
+      // The business's invoices: proves the key may act for the Business ID.
+      if (GAP_MS) await sleep(GAP_MS);
+      const inv = await nrsCall({ base, key, secret: sec }, `/api/v1/invoice/${encodeURIComponent(biz)}?size=1&page=1&sort_by=created_at&sort_direction_desc=true`);
+      results.invoices = answer(inv);
+      if (inv.ok) said.push('The key may act for the Business ID.');
+      else {
+        ok = false;
+        said.push(inv.status === 401 ? `NRS refused the API key and secret (401): ${nrsWhy(inv)}.`
+          : inv.status === 403 || inv.status === 404 ? `NRS would not let the key reach the Business ID's invoices (${inv.status}: ${nrsWhy(inv)}). Check that the Business ID and the key come from the same NRS account.`
+          : `The Business ID's invoices did not come back (${inv.status || 'no answer'}: ${nrsWhy(inv)}).`);
+      }
+      // A test IRN with the Service ID and today's date in Lagos, validated and not kept.
+      if (inv.ok && /^[A-Z0-9]{8}$/.test(svc)) {
+        const day = new Date(Date.now() + 3600_000).toISOString().slice(0, 10).replace(/-/g, '');
+        const irn = `CNTCHK1-${svc}-${day}`;
+        if (GAP_MS) await sleep(GAP_MS);
+        const v = await nrsCall({ base, key, secret: sec }, '/api/v1/invoice/irn/validate', { method: 'POST', body: { invoice_reference: 'CNTCHK1', business_id: biz, irn } });
+        results.irn_validate = { ...answer(v), irn };
+        const code = Number(v.body?.code);
+        if (v.ok && !(code >= 400)) said.push(`NRS accepted ${irn} as an IRN for the business, so the Service ID is right.`);
+        else { ok = false; said.push(`NRS did not accept the test IRN ${irn} (${v.status || 'no answer'}: ${nrsWhy(v)}).`); }
+      }
     }
   } else {
     ok = false;
     said.push(`Add the ${[!key && 'API key', !sec && 'API secret'].filter(Boolean).join(' and ')} to check TaxStreem's record with NRS.`);
   }
+  // The APP key pair, when the dashboard gives one: tried on the business's invoices like the main key.
   if (appKey && appSec) {
     if (GAP_MS) await sleep(GAP_MS);
-    const r = await nrsCall({ base, key: appKey, secret: appSec }, SEARCH);
-    results.app_entities = answer(r);
+    const r = await nrsCall({ base, key: appKey, secret: appSec }, biz ? `/api/v1/invoice/${encodeURIComponent(biz)}?size=1&page=1&sort_by=created_at&sort_direction_desc=true` : SEARCH);
+    results.app_check = answer(r);
     said.push(r.ok ? 'The APP key works too.' : `NRS refused the APP key (${r.status || 'no answer'}): ${nrsWhy(r)}.`);
     if (!r.ok) ok = false;
   }

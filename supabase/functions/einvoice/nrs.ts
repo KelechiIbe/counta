@@ -28,10 +28,14 @@ export async function nrsCall(k: Pick<NrsKeys, 'base'> & Partial<NrsKeys>, path:
 
 const short = (v: unknown, n = 300) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 // NRS's own words for a refusal, wherever in the answer they are.
+// The sandbox puts its general words in message ("error has occurred") and the reason in error.public_message.
 export function nrsWhy(r: NrsAnswer): string {
   const b = r.body;
+  const words = (x: unknown) => (typeof x === 'string' && x.trim() ? x : '');
+  const e = b && typeof b === 'object' ? b.error : null;
   const pick = b && typeof b === 'object'
-    ? b.message || b.error?.message || b.error?.details || b.error || b.detail || b.data?.message || (Array.isArray(b.errors) ? b.errors.map((e: any) => e?.message || e).join('; ') : '')
+    ? words(e?.public_message) || words(e?.message) || words(e?.details) || words(e) || words(b.detail) || words(b.data?.message)
+      || (Array.isArray(b.errors) ? b.errors.map((x: any) => x?.message || x).join('; ') : '') || words(b.message)
     : b;
   return short(pick || (r.status ? `HTTP ${r.status}` : 'no answer'));
 }
