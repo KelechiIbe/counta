@@ -18,6 +18,8 @@ Counta is TaxStreem's operating system for trading businesses: selling, payments
 
 **Accounting** is Atlas: the books inbox (the agents' questions), banking and reconciliation (PDF, Excel and CSV statements from any Nigerian bank, and bank feeds through Mono; see `docs/banking-and-feeds.md`), financial statements with notes, the tax computation and capital allowances (`docs/tax-computation.md`), ledgers and reports, the CFO pack with a written commentary, journals, the fixed asset register and the month-end close. See `docs/atlas.md`. When an item is added, the tax agent (Numens, with Gemini standing in for testing) sets its VAT treatment under the Nigeria Tax Act 2025, so each sale posts its output VAT correctly.
 
+**E-invoicing**: TaxStreem is becoming a System Integrator and Access Point Provider on the NRS Merchant Buyer Solution, with Counta as the software. See `docs/e-invoicing.md`.
+
 **Messages** go out by email through Resend and by WhatsApp Business with a link to pay. See `docs/messaging.md`. **Single sign-on** from TaxStreem and Prism bills are in `docs/taxstreem-sso.md`.
 
 ## Inventory
@@ -72,6 +74,7 @@ supabase/
   functions/fx       daily USD/NGN rate for FX timing advice
   functions/voice    ElevenLabs outbound calls: vendor orders and staff reminders
   functions/push     Web Push delivery for the notifications table
+  functions/einvoice NRS e-invoicing (MBS): the sandbox and HSM checks; TaxStreem as System Integrator and Access Point Provider
 public/push-sw.js    push and notification-click handlers, imported into the Workbox service worker
 ```
 
@@ -145,6 +148,7 @@ Keys can be Edge Function secrets or rows in Supabase Vault with the same name. 
 | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN` | WhatsApp Business (`docs/messaging.md`) |
 | `TAXSTREEM_SSO_SECRET` | Single sign-on and Prism (`docs/taxstreem-sso.md`) |
 | `NUMENS_API_URL`, `NUMENS_API_KEY` | Optional. Numens answers VAT questions instead of Gemini (`docs/atlas.md`) |
+| `NRS_BASE_URL`, `NRS_API_KEY`, `NRS_API_SECRET`, `NRS_BUSINESS_ID`, `NRS_SERVICE_ID`, `NRS_CRYPTO_KEYS` | E-invoicing on the NRS Merchant Buyer Solution, with `GOOGLE_KMS_KEY_RING` for the HSM keys (`docs/e-invoicing.md`) |
 
 In Auth settings, set the Site URL and redirect URLs to the deployed domain. pg_cron runs the agents every three minutes, re-checks payments every five, retries messages every ten, sends payment reminders each morning, reconciles wallets nightly, quarantines expired batches and refreshes price alerts.
 

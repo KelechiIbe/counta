@@ -6,7 +6,8 @@
 //                                             the webhook addresses providers must call and when each last called
 //   { action: 'set_key', name, value }     -> writes a key or setting to Vault (admin_set_secret) and emails every admin
 //   { action: 'clear_key', name }          -> clears it in Vault, so the Edge Function secret (if any) applies again
-//   { action: 'test', group }              -> one harmless request to the provider with the key Counta will use
+//   { action: 'test', group }              -> one harmless request to the provider with the key Counta will use (for NRS
+//                                             e-invoicing and Google Cloud HSM, the einvoice function's own checks)
 //   { action: 'openwa_connect' }           -> TaxStreem's WhatsApp number on OpenWA: makes (or finds) the session, gives
 //                                             OpenWA a fresh webhook secret and Counta's webhook addresses, and answers the
 //                                             session's state with the QR code to scan while it waits for one
@@ -61,9 +62,9 @@ async function key(name: string): Promise<string> {
 const senderAddress = (raw: string) => String(raw || '').match(/[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/i)?.[0]?.toLowerCase() || '';
 const short = (v: unknown, n = 300) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
-async function call(url: string, init: RequestInit = {}) {
+async function call(url: string, init: RequestInit = {}, timeoutMs = 20_000) {
   try {
-    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
     const text = await res.text();
     let body: any = text;
     try { body = JSON.parse(text); } catch { /* not json */ }
@@ -162,6 +163,14 @@ async function test(group: string, auth: string) {
       const s = await key('TAXSTREEM_SSO_SECRET'), f = await key('FLUX_URL'), fs = await key('FLUX_SECRET');
       return { ok: Boolean(s), note: [s ? 'Single sign-on is set.' : 'Single sign-on has no secret yet.',
         f && fs ? 'Flux is connected.' : 'Flux is not connected: returns are downloaded and filed by hand.'].join(' ') };
+    }
+    case 'nrs': case 'kms': {
+      // The einvoice function's own checks: the NRS sandbox (code lists, TaxStreem's entity record, the QR keys) or the
+      // Google Cloud HSM key ring. The NRS check makes about a dozen calls with a pause between them.
+      const r = await call(`${SUPABASE_URL}/functions/v1/einvoice`, { method: 'POST', headers: { Authorization: auth, apikey: ANON, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'platform_check', what: group }) }, 120_000);
+      if (r.status === 0) return { ok: false, note: `The einvoice function did not answer: ${why(r)}` };
+      return { ok: Boolean(r.body?.ok), note: short(r.body?.note || r.body?.error || why(r), 1500) };
     }
     default:
       return { ok: false, note: 'Nothing to test for this group.' };
