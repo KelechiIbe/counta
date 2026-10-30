@@ -38,31 +38,41 @@ async function kms(cfg: GeminiConfig, path: string, body?: unknown): Promise<any
 
 export const getKey = (cfg: GeminiConfig, ring: string, name: string) => kms(cfg, `${ring}/cryptoKeys/${name}`);
 
-export async function encrypt(cfg: GeminiConfig, ring: string, plain: Uint8Array, aad?: string): Promise<string> {
+// Each answer says which key version did the work and its protection level, so the two roles Counta is given (Encrypter/
+// Decrypter and Signer/Verifier) are all it needs: reading a key's settings would take another role.
+export async function encryptDetail(cfg: GeminiConfig, ring: string, plain: Uint8Array, aad?: string): Promise<{ ciphertext: string; version: string; protectionLevel: string }> {
   const j = await kms(cfg, `${ring}/cryptoKeys/${CREDENTIALS_KEY}:encrypt`, { plaintext: b64(plain), ...(aad ? { additionalAuthenticatedData: b64(new TextEncoder().encode(aad)) } : {}) });
   if (!j.ciphertext) throw new KmsError('Cloud KMS sent no ciphertext.');
-  return String(j.ciphertext);
+  return { ciphertext: String(j.ciphertext), version: String(j.name || ''), protectionLevel: String(j.protectionLevel || '') };
 }
+export const encrypt = async (cfg: GeminiConfig, ring: string, plain: Uint8Array, aad?: string) => (await encryptDetail(cfg, ring, plain, aad)).ciphertext;
 
 export async function decrypt(cfg: GeminiConfig, ring: string, ciphertext: string, aad?: string): Promise<Uint8Array> {
   const j = await kms(cfg, `${ring}/cryptoKeys/${CREDENTIALS_KEY}:decrypt`, { ciphertext, ...(aad ? { additionalAuthenticatedData: b64(new TextEncoder().encode(aad)) } : {}) });
   return unb64(String(j.plaintext || ''));
 }
 
-// The newest enabled version of the signing key: asymmetric keys have no primary version.
-export async function signingVersion(cfg: GeminiConfig, ring: string): Promise<{ name: string; algorithm: string; protectionLevel: string }> {
-  const j = await kms(cfg, `${ring}/cryptoKeys/${SIGNING_KEY}/cryptoKeyVersions?filter=${encodeURIComponent('state=ENABLED')}`);
-  const list: any[] = (j.cryptoKeyVersions || []).filter((v: any) => v.state === 'ENABLED');
-  if (!list.length) throw new KmsError(`${SIGNING_KEY} has no enabled version.`);
-  list.sort((a, b) => Number(String(b.name).split('/').pop()) - Number(String(a.name).split('/').pop()));
-  return { name: String(list[0].name), algorithm: String(list[0].algorithm || ''), protectionLevel: String(list[0].protectionLevel || '') };
+// The newest enabled version of the signing key (asymmetric keys have no primary version). Listing versions takes a role
+// Counta is not given (Cloud KMS Viewer); without it, version 1, which is the version a new key starts with.
+export async function signingVersion(cfg: GeminiConfig, ring: string): Promise<{ name: string; listed: boolean }> {
+  try {
+    const j = await kms(cfg, `${ring}/cryptoKeys/${SIGNING_KEY}/cryptoKeyVersions?filter=${encodeURIComponent('state=ENABLED')}`);
+    const list: any[] = (j.cryptoKeyVersions || []).filter((v: any) => v.state === 'ENABLED');
+    if (!list.length) throw new KmsError(`${SIGNING_KEY} has no enabled version.`);
+    list.sort((a, b) => Number(String(b.name).split('/').pop()) - Number(String(a.name).split('/').pop()));
+    return { name: String(list[0].name), listed: true };
+  } catch (e) {
+    if (e instanceof KmsError && e.status === 403) return { name: `${ring}/cryptoKeys/${SIGNING_KEY}/cryptoKeyVersions/1`, listed: false };
+    throw e;
+  }
 }
 
-export async function publicKeyPem(cfg: GeminiConfig, version: string): Promise<string> {
+export async function publicKey(cfg: GeminiConfig, version: string): Promise<{ pem: string; algorithm: string; protectionLevel: string }> {
   const j = await kms(cfg, `${version}/publicKey`);
   if (!j.pem) throw new KmsError('Cloud KMS sent no public key.');
-  return String(j.pem);
+  return { pem: String(j.pem), algorithm: String(j.algorithm || ''), protectionLevel: String(j.protectionLevel || '') };
 }
+export const publicKeyPem = async (cfg: GeminiConfig, version: string) => (await publicKey(cfg, version)).pem;
 
 // An ECDSA P-256 signature over SHA-256(data), made inside the HSM. KMS answers in DER.
 export async function sign(cfg: GeminiConfig, version: string, data: Uint8Array): Promise<Uint8Array> {

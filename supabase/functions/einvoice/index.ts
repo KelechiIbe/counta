@@ -3,12 +3,13 @@
 //
 // TaxStreem's admins, signed in with the authenticator code (Authorization: Bearer <user JWT>), POST { action, ... }:
 //   platform_check { what: 'nrs' }  -> asks the NRS sandbox (or production) what its answers look like: the health check,
-//                                      every code list (copied into nrs_codes), TaxStreem's own entity record with the
-//                                      dashboard's key, and whether crypto_keys.txt can make a QR code. What it found goes
-//                                      to einvoice_checks, with numbers cut to their last four and no key or secret.
-//   platform_check { what: 'kms' }  -> checks the Google Cloud HSM key ring: both keys exist with protection level HSM,
-//                                      a value encrypts and decrypts, and a signature from invoice-signing verifies with
-//                                      its public key.
+//                                      every code list (copied into nrs_codes), the entities the dashboard's key can see
+//                                      with the one holding the Business ID and its Service ID, and whether crypto_keys.txt
+//                                      can make a QR code. What it found goes to einvoice_checks, with numbers cut to their
+//                                      last four and no key or secret.
+//   platform_check { what: 'kms' }  -> checks the Google Cloud HSM keys with only the roles Counta is given: a value
+//                                      encrypts and decrypts with nrs-credentials in the HSM, and a signature from
+//                                      invoice-signing (EC P-256, SHA-256, in the HSM) verifies with its public key.
 // The admin portal's Test buttons for NRS e-invoicing and Google Cloud HSM call these.
 //
 // Keys are read from Supabase Vault (set in the admin portal) first, then from the Edge Function secrets. NRS_BASE_URL is
@@ -18,7 +19,7 @@ import { publicEncrypt, constants } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { CredentialError, geminiConfig, type GeminiConfig } from './google.ts';
 import * as K from './kms.ts';
-import { codeRow, firstList, MAYBE_LISTS, nrsBase, nrsCall, nrsWhy, readCryptoKeys, RESOURCE_LISTS, shape, type NrsAnswer } from './nrs.ts';
+import { codeRow, entityName, firstList, holds, MAYBE_LISTS, nrsBase, nrsCall, nrsWhy, readCryptoKeys, RESOURCE_LISTS, shape, valuesUnder, type NrsAnswer } from './nrs.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -106,36 +107,67 @@ async function nrsCheck(userId: string) {
   if (copied.length) said.push(`Copied ${copied.join(', ')}.`);
   if (failed.length) { ok = false; said.push(`Not copied: ${failed.join(', ')}.`); }
 
-  // TaxStreem's own entity record, with the dashboard's key: proves the key, the secret and the Business ID together.
-  if (key && sec && biz) {
+  // TaxStreem on the MBS, with the dashboard's key. GET /entity/{id} takes an entity's own id, which is not the Business
+  // ID, so the entities this key can see are listed first, the one holding the Business ID is found among them, and its
+  // record is read for the Business ID and Service ID NRS has.
+  const SEARCH = '/api/v1/entity?size=20&page=1&sort_by=created_at&sort_direction_desc=true&reference=';
+  const SVC_KEY = /^service_?id$/i;
+  let nrsServiceIds: string[] = [];
+  if (key && sec) {
     if (GAP_MS) await sleep(GAP_MS);
-    const r = await nrsCall({ base, key, secret: sec }, `/api/v1/entity/${encodeURIComponent(biz)}`);
-    results.entity = answer(r);
-    if (r.ok) {
-      const e = r.body?.data && typeof r.body.data === 'object' ? r.body.data : r.body;
-      const name = String(e?.name || e?.business_name || e?.registered_name || e?.entity_name || e?.legal_name || '').trim();
-      said.push(`TaxStreem's entity record came back${name ? ` for ${name}` : ''}.`);
-    } else {
+    const r = await nrsCall({ base, key, secret: sec }, SEARCH);
+    results.entities = answer(r);
+    if (!r.ok) {
       ok = false;
       said.push(r.status === 401 || r.status === 403 ? `NRS refused the API key and secret (${r.status}): ${nrsWhy(r)}.`
-        : r.status === 404 ? `NRS has no entity with that Business ID (${nrsWhy(r)}).` : `The entity record did not come back (${r.status || 'no answer'}): ${nrsWhy(r)}.`);
+        : `The list of entities did not come back (${r.status || 'no answer'}): ${nrsWhy(r)}.`);
+    } else {
+      const list = (firstList(r.body) || []) as any[];
+      const names = list.map(entityName).filter(Boolean);
+      const hit = biz ? list.find((e) => holds(e, biz)) : undefined;
+      if (!list.length) { ok = false; said.push('The key works, but NRS lists no entity for it.'); }
+      else said.push(`The key works and sees ${list.length === 1 ? 'one entity' : `${list.length} entities`}${names.length ? ` (${names.slice(0, 3).join(', ')}${names.length > 3 ? ', …' : ''})` : ''}.`);
+      // The full record of the entity with the Business ID (or the only one), for its businesses and Service IDs.
+      const target = hit || (list.length === 1 ? list[0] : undefined);
+      const eid = target ? String(target.id || target.entity_id || '') : '';
+      let record: unknown = target;
+      if (eid) {
+        if (GAP_MS) await sleep(GAP_MS);
+        const er = await nrsCall({ base, key, secret: sec }, `/api/v1/entity/${encodeURIComponent(eid)}`);
+        results.entity = answer(er);
+        if (er.ok) record = er.body?.data && typeof er.body.data === 'object' ? er.body.data : er.body;
+      }
+      const inRecord = biz ? holds(record, biz) || Boolean(hit) : false;
+      nrsServiceIds = [...new Set(valuesUnder(record, SVC_KEY).map((x) => x.toUpperCase()))];
+      results.entity_match = { visible: list.length, business_found: inRecord, service_ids_found: nrsServiceIds.length };
+      if (!biz) { ok = false; said.push('Add the Business ID.'); }
+      else if (list.length && inRecord) said.push('The Business ID is one of its businesses.');
+      else if (list.length) { ok = false; said.push('The Business ID is not among the businesses this key can see. Copy it again from the NRS dashboard.'); }
     }
   } else {
     ok = false;
-    said.push(`Add the ${[!key && 'API key', !sec && 'API secret', !biz && 'Business ID'].filter(Boolean).join(', ')} to check TaxStreem's entity record.`);
+    said.push(`Add the ${[!key && 'API key', !sec && 'API secret'].filter(Boolean).join(' and ')} to check TaxStreem's record with NRS.`);
   }
-  if (appKey && appSec && biz) {
+  if (appKey && appSec) {
     if (GAP_MS) await sleep(GAP_MS);
-    const r = await nrsCall({ base, key: appKey, secret: appSec }, `/api/v1/entity/${encodeURIComponent(biz)}`);
-    results.app_entity = answer(r);
+    const r = await nrsCall({ base, key: appKey, secret: appSec }, SEARCH);
+    results.app_entities = answer(r);
     said.push(r.ok ? 'The APP key works too.' : `NRS refused the APP key (${r.status || 'no answer'}): ${nrsWhy(r)}.`);
     if (!r.ok) ok = false;
   }
 
-  if (svc) {
-    results.service_id = { looks_right: /^[A-Z0-9]{8}$/.test(svc) };
-    if (!/^[A-Z0-9]{8}$/.test(svc)) { ok = false; said.push('The Service ID should be 8 letters and numbers.'); }
-  } else { ok = false; said.push('Add TaxStreem\'s Service ID.'); }
+  // The Service ID: 8 letters and numbers, and the one NRS has for the business when its record shows it. What was
+  // entered is described, never repeated, in case something else was pasted there.
+  const svcOk = /^[A-Z0-9]{8}$/.test(svc);
+  const uuidLike = /^[0-9A-F]{8}-[0-9A-F]{4}-/.test(svc);
+  results.service_id = { looks_right: svcOk, length: svc.length, looks_like_uuid: uuidLike, matches_nrs: nrsServiceIds.length ? nrsServiceIds.includes(svc) : null };
+  const nrsHas = nrsServiceIds.length ? ` NRS has TaxStreem's Service ID as ${nrsServiceIds.join(' or ')}.` : '';
+  if (!svc) { ok = false; said.push(`Add TaxStreem's Service ID.${nrsHas}`); }
+  else if (!svcOk) {
+    ok = false;
+    said.push(`The Service ID should be 8 letters and numbers; the one entered is ${svc.length} characters long${uuidLike ? ' and looks like a Business ID' : ''}.${nrsHas}`);
+  } else if (nrsServiceIds.length && !nrsServiceIds.includes(svc)) { ok = false; said.push(`The Service ID differs from NRS's record.${nrsHas}`); }
+  else if (nrsServiceIds.length) said.push('The Service ID matches NRS\'s record.');
 
   // crypto_keys.txt: the QR code is the IRN (with a timestamp) and the certificate, encrypted with NRS's public key.
   if (cryptoRaw) {
@@ -181,21 +213,17 @@ async function kmsCheck(userId: string) {
   const done = async (ok: boolean) => { const note = said.join(' '); await saveCheck('kms', userId, ok, note, results); return { ok, note }; };
   const ENC_ROLE = 'Cloud KMS CryptoKey Encrypter/Decrypter', SIGN_ROLE = 'Cloud KMS CryptoKey Signer/Verifier';
 
-  // 1. nrs-credentials: symmetric, in the HSM, and a round trip works.
-  try {
-    const k = await K.getKey(cfg, ring, K.CREDENTIALS_KEY);
-    const level = k.versionTemplate?.protectionLevel || k.primary?.protectionLevel || '';
-    results.credentials_key = { purpose: k.purpose, protection: level, primary: k.primary?.state || null };
-    if (k.purpose !== 'ENCRYPT_DECRYPT') { said.push(`${K.CREDENTIALS_KEY} is for ${k.purpose}; it should be symmetric encrypt and decrypt.`); return done(false); }
-    if (level !== 'HSM') { said.push(`${K.CREDENTIALS_KEY} has protection level ${level || 'unknown'}; NRS wants HSM. Make a new key with protection level HSM.`); return done(false); }
-  } catch (e) {
-    said.push(kmsProblem(e, cfg, `read ${K.CREDENTIALS_KEY}`, ring, K.CREDENTIALS_KEY, ENC_ROLE));
-    return done(false);
-  }
+  // 1. nrs-credentials: a value encrypts and decrypts, and KMS says the version that did it is in the HSM. Only the two
+  // roles Counta is given are used: reading a key's settings would take another.
   try {
     const plain = crypto.getRandomValues(new Uint8Array(32));
-    const ct = await K.encrypt(cfg, ring, plain, 'counta-kms-check');
-    const back = await K.decrypt(cfg, ring, ct, 'counta-kms-check');
+    const enc = await K.encryptDetail(cfg, ring, plain, 'counta-kms-check');
+    results.credentials_key = { version: enc.version.split('/').pop() || null, protection: enc.protectionLevel || null };
+    if (enc.protectionLevel && enc.protectionLevel !== 'HSM') {
+      said.push(`${K.CREDENTIALS_KEY} has protection level ${enc.protectionLevel}; NRS wants HSM. Make a new key with protection level HSM.`);
+      return done(false);
+    }
+    const back = await K.decrypt(cfg, ring, enc.ciphertext, 'counta-kms-check');
     const same = back.length === plain.length && back.every((b, i) => b === plain[i]);
     results.round_trip = same;
     if (!same) { said.push(`${K.CREDENTIALS_KEY} gave back something different from what it encrypted.`); return done(false); }
@@ -205,25 +233,23 @@ async function kmsCheck(userId: string) {
     return done(false);
   }
 
-  // 2. invoice-signing: EC P-256 with SHA-256, in the HSM, and its signature verifies with its public key.
+  // 2. invoice-signing: its public key says EC P-256 with SHA-256 in the HSM, and a signature made with it verifies.
   try {
-    const k = await K.getKey(cfg, ring, K.SIGNING_KEY);
-    const level = k.versionTemplate?.protectionLevel || '';
-    const alg = k.versionTemplate?.algorithm || '';
-    results.signing_key = { purpose: k.purpose, protection: level, algorithm: alg };
-    if (k.purpose !== 'ASYMMETRIC_SIGN' || alg !== 'EC_SIGN_P256_SHA256') {
-      said.push(`${K.SIGNING_KEY} is ${k.purpose} ${alg}; it should be asymmetric signing with Elliptic Curve P-256 and a SHA-256 digest.`);
+    const v = await K.signingVersion(cfg, ring);
+    const pk = await K.publicKey(cfg, v.name);
+    const ver = v.name.split('/').pop();
+    results.signing_key = { version: ver, listed: v.listed, algorithm: pk.algorithm || null, protection: pk.protectionLevel || null };
+    if (pk.algorithm && pk.algorithm !== 'EC_SIGN_P256_SHA256') {
+      said.push(`${K.SIGNING_KEY} uses ${pk.algorithm}; it should be asymmetric signing with Elliptic Curve P-256 and a SHA-256 digest.`);
       return done(false);
     }
-    if (level !== 'HSM') { said.push(`${K.SIGNING_KEY} has protection level ${level || 'unknown'}; NRS wants HSM.`); return done(false); }
-    const v = await K.signingVersion(cfg, ring);
-    const pem = await K.publicKeyPem(cfg, v.name);
+    if (pk.protectionLevel && pk.protectionLevel !== 'HSM') { said.push(`${K.SIGNING_KEY} has protection level ${pk.protectionLevel}; NRS wants HSM.`); return done(false); }
     const data = new TextEncoder().encode(`counta-kms-check ${new Date().toISOString()}`);
     const sig = await K.sign(cfg, v.name, data);
-    const good = await K.verify(pem, data, sig);
-    results.signature = { version: v.name.split('/').pop(), verified: good };
+    const good = await K.verify(pk.pem, data, sig);
+    results.signature = { version: ver, verified: good };
     if (!good) { said.push(`A signature from ${K.SIGNING_KEY} did not verify with its own public key.`); return done(false); }
-    said.push(`${K.SIGNING_KEY} is an HSM key, and a test signature from version ${v.name.split('/').pop()} verified.`);
+    said.push(`${K.SIGNING_KEY} is an HSM key, and a test signature from version ${ver} verified.`);
   } catch (e) {
     said.push(kmsProblem(e, cfg, `sign with ${K.SIGNING_KEY}`, ring, K.SIGNING_KEY, SIGN_ROLE));
     return done(false);
