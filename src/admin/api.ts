@@ -54,7 +54,7 @@ export const FEATURES: { id: string; label: string; what: string }[] = [
 ];
 export const featureLabel = (id: string) => FEATURES.find((f) => f.id === id)?.label || id;
 
-export const GROUPS: { id: string; title: string; what: string; test?: boolean }[] = [
+export const GROUPS: { id: string; title: string; what: string; test?: boolean; noKeys?: string }[] = [
   { id: 'gemini', title: 'Google Gemini', what: 'Reads invoices, statements, product photos, CAC documents and NIN slips; the bookkeeper and Martina\'s typed answers.', test: true },
   { id: 'elevenlabs', title: 'ElevenLabs', what: 'The Nigerian voices, Martina by voice, and phone calls through the connected Twilio number.', test: true },
   { id: 'flutterwave', title: 'Flutterwave', what: 'Business account numbers, payment links, QR codes, payouts, and Counta plans paid by card or from the wallet.', test: true },
@@ -64,6 +64,9 @@ export const GROUPS: { id: string; title: string; what: string; test?: boolean }
   { id: 'openwa', title: 'WhatsApp through OpenWA', what: 'TaxStreem\'s own WhatsApp number on its OpenWA server: invoices, receipts, reminders and alerts, and Martina on WhatsApp. Unofficial: WhatsApp may restrict a number linked to it.', test: true },
   { id: 'numens', title: 'Numens', what: 'TaxStreem\'s tax model for the VAT treatment of items. Gemini stands in without it.', test: true },
   { id: 'taxstreem', title: 'TaxStreem', what: 'Single sign-on from TaxStreem, and Flux, which files returns on Rev360.', test: true },
+  { id: 'nrs', title: 'NRS e-invoicing (MBS)', what: 'TaxStreem as System Integrator and Access Point Provider on the NRS Merchant Buyer Solution. The test copies NRS\'s code lists, reads TaxStreem\'s entity record and checks the QR code keys.', test: true },
+  { id: 'kms', title: 'Google Cloud HSM', what: 'The hardware security module keys that hold each business\'s NRS credentials (nrs-credentials) and sign invoices (invoice-signing).', test: true,
+    noKeys: 'Signs in as the Gemini service account' },
   { id: 'counta', title: 'Counta', what: 'The web address in links, the contact for push notifications, and where word of a NIN slip to review goes.' },
 ];
 

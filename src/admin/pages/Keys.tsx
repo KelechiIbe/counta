@@ -18,7 +18,8 @@ function KeyLine({ k }: { k: KeyRow }) {
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const json = k.name.endsWith('_JSON');
+  // Whole files (a service account key, crypto_keys.txt) are pasted into a box rather than a line.
+  const json = k.name.endsWith('_JSON') || k.name === 'NRS_CRYPTO_KEYS';
   async function save() {
     if (!value.trim()) { setErr('Paste the value first.'); return; }
     setBusy(true); setErr(null);
@@ -55,7 +56,7 @@ function KeyLine({ k }: { k: KeyRow }) {
           : <span className="chip t-grey">Not set</span>}
         {editing && (
           <div className="stack" style={{ gap: 8, marginTop: 8 }}>
-            {json ? <textarea className="input mono" rows={6} style={{ fontSize: 12 }} placeholder='{ "type": "service_account", ... }' value={value} onChange={(e) => setValue(e.target.value)} aria-label={k.label} />
+            {json ? <textarea className="input mono" rows={6} style={{ fontSize: 12 }} placeholder={k.name === 'NRS_CRYPTO_KEYS' ? '{ "public_key": "...", "certificate": "..." }' : '{ "type": "service_account", ... }'} value={value} onChange={(e) => setValue(e.target.value)} aria-label={k.label} />
               : <input className="input mono" type={k.secret ? 'password' : 'text'} autoComplete="off" spellCheck={false} placeholder={k.secret ? 'Paste the key' : 'Enter the value'}
                   value={value} onChange={(e) => setValue(e.target.value)} aria-label={k.label} onKeyDown={(e) => { if (e.key === 'Enter') void save(); }} />}
             {err && <Alert kind="red" icon="alert">{err}</Alert>}
@@ -169,7 +170,8 @@ function Group({ g, data }: { g: (typeof GROUPS)[number]; data: KeysStatus }) {
   return (
     <Card title={g.title} sub={g.what} pad={false}
       right={<div className="row" style={{ gap: 8 }}>
-        <span className={'chip ' + (ready ? 't-green' : 't-amber')}>{ready ? 'Set up' : 'Missing a key'}</span>
+        {g.noKeys && !keys.some((k) => k.set || k.env) ? <span className="chip t-grey">{g.noKeys}</span>
+          : <span className={'chip ' + (ready ? 't-green' : 't-amber')}>{ready ? 'Set up' : 'Missing a key'}</span>}
         {g.test && <button className="btn btn-secondary btn-sm" disabled={busy} onClick={run}>{busy ? <Spinner small /> : <Icon name="zap" size={14} />}Test</button>}
       </div>}>
       {test && <div style={{ padding: '12px 16px 0' }}><Alert kind={test.ok ? 'green' : 'red'} icon={test.ok ? 'check' : 'alert'}>{test.note}</Alert></div>}
