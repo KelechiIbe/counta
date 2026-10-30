@@ -70,8 +70,9 @@ export function firstList(b: unknown, depth = 0): unknown[] | null {
   return null;
 }
 
-const CODE_KEYS = ['code', 'hs_code', 'hsn_code', 'hscode', 'service_code', 'isic_code', 'isic', 'alpha_2', 'alpha2', 'iso_code', 'iso', 'id', 'value', 'key'];
-const LABEL_KEYS = ['description', 'name', 'label', 'title', 'value', 'category', 'country_name', 'currency_name'];
+// The VAT exemption list keys its entries by harmonized_system_code, with the item's own name in tariff.
+const CODE_KEYS = ['code', 'hs_code', 'hsn_code', 'hscode', 'harmonized_system_code', 'service_code', 'isic_code', 'isic', 'alpha_2', 'alpha2', 'iso_code', 'iso', 'id', 'value', 'key'];
+const LABEL_KEYS = ['tariff', 'description', 'name', 'label', 'title', 'value', 'category', 'country_name', 'currency_name'];
 // One entry of a code list as Counta keeps it: its code, its words, and everything NRS sent with it.
 export function codeRow(x: unknown): { code: string; label: string | null; extra: Record<string, unknown> } | null {
   if (typeof x === 'string' || typeof x === 'number') return { code: String(x).trim(), label: null, extra: {} };
@@ -102,3 +103,23 @@ export function readCryptoKeys(raw: string): { pem: string; certificate: string 
   if (!/-----BEGIN (RSA )?PUBLIC KEY-----/.test(pem)) return { problem: 'The public_key in crypto_keys.txt is not a PEM public key.' };
   return { pem, certificate: String(j.certificate).trim() };
 }
+
+// Every string value under keys whose name matches, anywhere in an answer (an entity's businesses and their Service IDs).
+export function valuesUnder(v: unknown, key: RegExp, depth = 0, out: string[] = []): string[] {
+  if (!v || typeof v !== 'object' || depth > 6) return out;
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (key.test(k) && (typeof x === 'string' || typeof x === 'number') && String(x).trim()) out.push(String(x).trim());
+    else if (x && typeof x === 'object') valuesUnder(x, key, depth + 1, out);
+  }
+  return out;
+}
+
+// Whether a value (an ID) appears anywhere in an answer, ignoring case.
+export function holds(v: unknown, want: string, depth = 0): boolean {
+  if (typeof v === 'string' || typeof v === 'number') return String(v).trim().toLowerCase() === want.toLowerCase();
+  if (!v || typeof v !== 'object' || depth > 6) return false;
+  return Object.values(v as Record<string, unknown>).some((x) => holds(x, want, depth + 1));
+}
+
+// An entity's registered name, under whichever key NRS uses.
+export const entityName = (e: any) => String(e?.name || e?.business_name || e?.registered_name || e?.entity_name || e?.legal_name || e?.company_name || '').trim();
