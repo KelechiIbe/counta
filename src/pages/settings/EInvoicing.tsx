@@ -176,13 +176,14 @@ function HsToConfirm({ orgId, r }: { orgId: string; r: EinvReady | undefined }) 
   const nav = useNavigate();
   const q = useQuery({ queryKey: ['einvoice', 'hs-review', orgId, r?.counts?.review, r?.counts?.coded], queryFn: async () => {
     const { data, error } = await supabase.from('items').select('id, name, hs_code, hs_review').eq('org_id', orgId).eq('archived', false)
-      .or('hs_review.eq.true,hs_code.is.null').order('name').limit(12);
+      // Codes to confirm first, then items with none.
+      .eq('hs_review', true).order('hs_code', { ascending: true, nullsFirst: false }).order('name').limit(12);
     if (error) throw error;
     return (data || []) as { id: string; name: string; hs_code: string | null; hs_review: boolean }[];
   } });
   const c = r?.counts;
   if (!c || !c.items) return null;
-  const rows = (q.data || []).filter((x) => x.hs_review);
+  const rows = q.data || [];
   return (
     <div className="stack" style={{ gap: 6 }} data-testid="einv-hs">
       <div className="mini-label">HS codes on items</div>

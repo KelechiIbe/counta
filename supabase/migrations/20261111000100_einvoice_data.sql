@@ -564,7 +564,7 @@ begin
       else 'Add the ' || private.words_and(v_missing) || '.' end);
 
   -- NRS has accepted them.
-  v := v || jsonb_build_object('id', 'check', 'blocking', true, 'ok', coalesce(s.check_ok, false) and s.check_version = s.keys_version,
+  v := v || jsonb_build_object('id', 'check', 'blocking', true, 'ok', coalesce(s.check_ok and s.check_version = s.keys_version, false),
     'title', 'NRS accepts the keys', 'link', '/settings#einvoicing',
     'detail', case when s.checked_at is null or s.check_version is distinct from s.keys_version then 'Test the keys with NRS.'
       else coalesce(s.check_note, case when s.check_ok then 'NRS accepted them.' else 'NRS did not accept them.' end) end);
