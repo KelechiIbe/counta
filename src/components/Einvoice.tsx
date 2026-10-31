@@ -71,7 +71,7 @@ function BuyerDelivery({ sale, b, canAct }: { sale: Sale; b: NonNullable<SaleEin
   if (b.state === 'failed') {
     return (
       <Alert kind="amber" icon="alert">
-        <div data-testid="einv-buyer" data-state={b.state} style={{ wordBreak: 'break-word' }}>{words}{b.note && b.note !== 'NRS could not deliver it to the buyer\'s access point.' ? ` ${b.note}` : ''}</div>
+        <div data-testid="einv-buyer" data-state={b.state} style={{ wordBreak: 'break-word' }}>{words}{b.note && !/^NRS could not deliver/.test(b.note) ? ` ${b.note}` : ''}</div>
         {canAct && <div style={{ marginTop: 8 }}><button className="btn btn-secondary btn-sm" disabled={busy}
           onClick={() => run(() => rpc('einvoice_send_to_buyer', { p_sale: sale.id }), { ok: `${sale.number} is going to the buyer again`, invalidate: ['sale', 'sales', 'einvoice'] })}>Send to the buyer again</button></div>}
       </Alert>

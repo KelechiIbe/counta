@@ -683,7 +683,7 @@ async function transmitOne(saleId: string, base: string, app: AppKeys | null): P
     return 'retry';
   }
   if (verdict(r) === 'retry') { await xmDone({ outcome: 'retry', note: `NRS did not answer (${r.status || 'no answer'}: ${why}). Counta tries again shortly.` }); return 'retry'; }
-  await xmDone({ outcome: 'failed', note: `NRS did not send it to the buyer: ${why}` });
+  await xmDone({ outcome: 'failed', note: `NRS said: ${why}` });
   return 'failed';
 }
 
