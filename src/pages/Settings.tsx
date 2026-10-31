@@ -22,6 +22,7 @@ import { PeopleCard, RolesCard } from './settings/Team';
 import { IdentityPanel, useIdentity } from './onboarding/Identity';
 import { MartinaAnywhere } from './settings/MartinaAnywhere';
 import { AccountantSection } from './settings/Accountant';
+import { EInvoicingPanel } from './settings/EInvoicing';
 import { useAttention } from '../lib/api';
 
 function Section({ id, title, sub, children }: { id?: string; title: string; sub?: string; children: ReactNode }) {
@@ -327,6 +328,11 @@ export default function Settings() {
         <PostingRules owner={edit} onOpenChart={() => setChart(true)} />
       </Section>
       <TaxStreemSection />
+      {(edit || can(inv, 'keep_books') || can(inv, 'file_tax')) && (
+        <Section id="einvoicing" title="E-invoicing (NRS)" sub="Invoices to businesses and government bodies go through the Nigeria Revenue Service's e-invoicing system. TaxStreem connects Counta to it as System Integrator and Access Point Provider.">
+          <EInvoicingPanel />
+        </Section>
+      )}
       <NotificationsSection />
       <AlertsSection />
       <VoiceSection />

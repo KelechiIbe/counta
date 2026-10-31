@@ -11,6 +11,8 @@ import { CAC_DOC_SCHEMA, CAC_DOC_SYSTEM, cacDocChecks, type Category, cleanCacDo
 import { cleanProduct, PRODUCT_SCHEMA, PRODUCT_SYSTEM, validBarcode } from './product.ts';
 import { cleanSupplier, sha256hex, sniff, SUPPLIER_SCHEMA, supplierSystem } from './supplier.ts';
 import { accessProblem, CredentialError, fallbackModels, type GeminiConfig, geminiConfig, generateContent, quotaMessage, thinkingConfig } from './google.ts';
+import { cleanHs, cleanPick, cleanService, type CodeRow, HS_PICK_SCHEMA, HS_PICK_SYSTEM, HS_SCHEMA, HS_SYSTEM, type HsAnswer, type HsItem, hsPickPrompt, hsPrompt,
+  SERVICE_SCHEMA, SERVICE_SYSTEM, type ServiceOrg, servicePrompt } from './nrs_codes.ts';
 
 let MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -604,6 +606,78 @@ async function applyVat(admin: SupabaseClient, items: VatItem[]) {
   return { ok: true, checked: results.length, results };
 }
 
+// ---------------------------------------------------------------- the codes NRS wants on e-invoices
+// For businesses that have started on e-invoicing: their service code, then the HS codes of their items. Each HS code
+// Gemini gives is checked against NRS's list (the codes under its heading); one NRS does not list gets a second look
+// among the codes NRS has under that heading, or else under its chapter.
+async function nrsCodesPending(admin: SupabaseClient) {
+  if (!aiOn()) return { ok: false, error: 'No AI model is connected yet.' };
+  const out = { services: 0, items: 0, coded: 0, second_look: 0, no_code: 0, errors: [] as string[] };
+  const open = new Map<string, boolean>();
+  const isOpen = async (org: string) => { if (!open.has(org)) open.set(org, !(await paused(admin, org))); return open.get(org)!; };
+
+  const { data: orgs } = await admin.rpc('svc_orgs_for_service_code', { p_limit: 10 });
+  if ((orgs as ServiceOrg[] | null)?.length) {
+    const { data: list } = await admin.from('nrs_codes').select('code, label').eq('list', 'services-codes').order('code').limit(1000);
+    for (const o of orgs as ServiceOrg[]) {
+      if (!(await isOpen(o.org_id))) continue;
+      try {
+        const { data, model } = await gemini(SERVICE_SYSTEM, [{ text: servicePrompt(o, (list || []) as CodeRow[]) }], SERVICE_SCHEMA, 0.1,
+          { thinking: 'low', org: o.org_id, kind: 'nrs_code' });
+        await admin.rpc('svc_set_service_code', { p_org: o.org_id, p: { ...cleanService(data, (list || []) as CodeRow[]), model } });
+        out.services++;
+      } catch (e) { out.errors.push((e as Error).message.slice(0, 200)); }
+    }
+  }
+
+  const { data: items } = await admin.rpc('svc_items_for_hs', { p_limit: 100 });
+  const byOrg = new Map<string, HsItem[]>();
+  for (const it of (items as HsItem[]) || []) {
+    if (!(await isOpen(it.org_id))) continue;
+    byOrg.set(it.org_id, [...(byOrg.get(it.org_id) || []), it]);
+  }
+  const under = async (prefix: string): Promise<CodeRow[]> => {
+    const { data } = await admin.rpc('svc_nrs_codes_under', { p_list: 'hs-codes', p_prefix: prefix, p_limit: 200 });
+    return (data || []) as CodeRow[];
+  };
+  for (const [org, list] of byOrg) {
+    for (let i = 0; i < list.length; i += 25) {
+      const chunk = list.slice(i, i + 25);
+      let answers: HsAnswer[] = [], model = '';
+      try {
+        const r = await gemini(HS_SYSTEM, [{ text: hsPrompt(chunk) }], HS_SCHEMA, 0.1, { thinking: 'low', org, kind: 'nrs_code' });
+        answers = cleanHs(chunk, r.data?.results || []); model = r.model;
+      } catch (e) { out.errors.push((e as Error).message.slice(0, 200)); continue; }
+      const byId = new Map(answers.map((a) => [a.id, a]));
+      for (const it of chunk) {
+        const a = byId.get(it.id);
+        out.items++;
+        let p: Record<string, unknown> = { code: a?.code ?? null, confidence: a?.confidence ?? 0, reason: a?.reason || '', model, tried: a?.code ? [a.code] : [] };
+        const heading = a?.heading || a?.code?.slice(0, 4) || '';
+        if (a?.code && heading) {
+          let candidates = await under(heading);
+          if (!candidates.some((c) => c.code === a.code)) {
+            if (!candidates.length) candidates = await under(heading.slice(0, 2));
+            if (candidates.length) {
+              out.second_look++;
+              try {
+                const r2 = await gemini(HS_PICK_SYSTEM, [{ text: hsPickPrompt(it, candidates) }], HS_PICK_SCHEMA, 0.1, { thinking: 'low', org, kind: 'nrs_code' });
+                const pick = cleanPick(r2.data, candidates);
+                p = { code: pick.code, confidence: pick.confidence, reason: pick.reason || a.reason, model: r2.model, tried: [a.code, pick.code].filter(Boolean) };
+              } catch (e) { out.errors.push((e as Error).message.slice(0, 200)); continue; }
+            }
+            // With no NRS codes under the heading or chapter, the database decides (it takes the code only while
+            // NRS's list has not been copied at all).
+          }
+        }
+        const { data: r } = await admin.rpc('svc_set_item_hs', { p_item: it.id, p });
+        if (r?.ok) out.coded++; else if (r?.reason === 'no_code') out.no_code++;
+      }
+    }
+  }
+  return { ok: true, ...out, errors: out.errors.slice(0, 5) };
+}
+
 // ---------------------------------------------------------------- VAT from other systems' records
 // The lines of an uploaded sales schedule have no Counta product behind them: their VAT treatment is decided from the
 // description, the same way as an item's (Numens, or Gemini until it is connected). The answers go back to the page,
@@ -1110,7 +1184,8 @@ Deno.serve(async (req) => {
   const authHeader = req.headers.get('Authorization') || '';
   const sb = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: authHeader } }, auth: { persistSession: false } });
   const admin = createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false } });
-  // The database's own calls (new or renamed items waiting for a VAT decision) carry the shared hook secret, not a user.
+  // The database's own calls (new or renamed items waiting for a VAT decision or an HS code, payments waiting for their VAT,
+  // a business's service code for e-invoices) carry the shared hook secret, not a user.
   const hook = req.headers.get('x-counta-hook') || '';
   if (hook) {
     let expected = Deno.env.get('PUSH_HOOK_SECRET') || '';
@@ -1121,10 +1196,11 @@ Deno.serve(async (req) => {
     if (!expected || !sameSecret(expected, hook)) return json({ ok: false, error: 'Not allowed.' }, 401);
     let hb: any = {};
     try { hb = await req.json(); } catch { /* empty body */ }
-    if (hb.action !== 'vat_classify_pending' && hb.action !== 'vat_receipts_pending') return json({ ok: false, error: 'Unknown action.' }, 400);
+    if (!['vat_classify_pending', 'vat_receipts_pending', 'nrs_codes_pending'].includes(hb.action)) return json({ ok: false, error: 'Unknown action.' }, 400);
     try {
       await loadKeys(admin);
       if (hb.action === 'vat_receipts_pending') return json(await vatReceiptsPending(admin));
+      if (hb.action === 'nrs_codes_pending') return json(await nrsCodesPending(admin));
       const { data: items } = await admin.rpc('svc_items_for_vat', { p_limit: 60 });
       const open = new Map<string, boolean>();
       const keep: VatItem[] = [];

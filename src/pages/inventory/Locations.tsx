@@ -52,7 +52,7 @@ export default function Locations() {
                 <div className="row"><Icon name="pin" size={18} color="#0072F5" /><div style={{ fontSize: 16, fontWeight: 600 }}>{l.name}</div>{l.is_main && <span className="chip t-blue">Main</span>}</div>
                 {owner && <button className="x-btn" onClick={() => setBranch(l)} aria-label={'Edit ' + l.name}><Icon name="pencil" size={15} color="#9CA3AF" /></button>}
               </div>
-              <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{[l.address || l.code, [l.lga, l.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}{!l.state && <span style={{ color: '#B45309' }}> · add its state</span>}</div>
+              <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{[l.address || l.code, [l.city, l.lga, l.state].filter(Boolean).join(', '), l.postcode].filter(Boolean).join(' · ')}{!l.state && <span style={{ color: '#B45309' }}> · add its state</span>}</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginTop: 16 }}>
                 <div><div className="mini-label">Stock value</div><div style={{ fontSize: 20, fontWeight: 600, marginTop: 4, letterSpacing: '-.01em' }}>{costs ? K(value) : '—'}</div></div>
                 <div><div className="mini-label">Items</div><div style={{ fontSize: 20, fontWeight: 600, marginTop: 4 }}>{n}</div></div>
@@ -153,16 +153,22 @@ function BranchModal({ branch, onClose }: { branch: Location | null; onClose: ()
   const { run, busy } = useAction();
   const [name, setName] = useState(branch?.name || '');
   const [address, setAddress] = useState(branch?.address || '');
+  const [city, setCity] = useState(branch?.city || '');
+  const [postcode, setPostcode] = useState(branch?.postcode || '');
   const [place, setPlace] = useState({ state: branch?.state || '', lga: branch?.lga || '' });
   const [err, setErr] = useState<string | null>(null);
   async function save() {
     if (!name.trim()) { setErr('Enter the branch name.'); return; }
+    const pc = postcode.replace(/\s/g, '');
+    if (pc && !/^\d{6}$/.test(pc)) { setErr('A Nigerian postcode has 6 digits.'); return; }
     const base = name.trim().replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'BR';
     let code = base; let i = 2;
     while (!branch && inv?.locations.some((l) => l.code === code)) code = base + i++;
     const r = await run(() => branch
-      ? must(supabase.from('locations').update({ name: name.trim(), address: address.trim() || null, state: place.state || null, lga: place.lga || null }).eq('id', branch.id).select().single())
-      : must(supabase.from('locations').insert({ org_id: orgId, name: name.trim(), code, address: address.trim() || null, is_main: false, state: place.state || null, lga: place.lga || null }).select().single()),
+      ? must(supabase.from('locations').update({ name: name.trim(), address: address.trim() || null, city: city.trim() || null, postcode: pc || null, state: place.state || null, lga: place.lga || null })
+        .eq('id', branch.id).select().single())
+      : must(supabase.from('locations').insert({ org_id: orgId, name: name.trim(), code, address: address.trim() || null, city: city.trim() || null, postcode: pc || null, is_main: false,
+        state: place.state || null, lga: place.lga || null }).select().single()),
     { ok: branch ? 'Branch updated' : `${name.trim()} added`, invalidate: ['inv'] });
     if (r) onClose();
   }
@@ -172,6 +178,11 @@ function BranchModal({ branch, onClose }: { branch: Location | null; onClose: ()
       <div className="modal-body">
         <Field label="Branch name" req><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ikeja" /></Field>
         <Field label="Address"><input className="input" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street, area" /></Field>
+        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Field label="City or town"><input className="input" value={city} onChange={(e) => setCity(e.target.value)} placeholder="e.g. Lagos" /></Field>
+          <Field label="Postcode" hint={branch?.is_main ? 'Printed on e-invoices with the address.' : undefined}>
+            <input className="input" value={postcode} onChange={(e) => setPostcode(e.target.value)} inputMode="numeric" maxLength={7} placeholder="6 digits" /></Field>
+        </div>
         <StateLga state={place.state} lga={place.lga} onChange={(state, lga) => setPlace({ state, lga })} />
         {err && <Alert kind="red" icon="alert">{err}</Alert>}
         {!branch && <div className="hint">Stock at the new branch starts at zero. Move stock in with a transfer or receive straight into it.</div>}

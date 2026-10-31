@@ -4,7 +4,8 @@ TaxStreem is applying to NITDA as both a System Integrator (SI) and an Access Po
 
 The work comes in four parts:
 
-1. The keys and the first checks against the sandbox (this part).
+1. The keys and the first checks against the sandbox.
+   Part 2a: each business's own keys, the HS and service codes, NRS's place codes and what each invoice needs (below).
 2. The SI side: invoices to business and government buyers validated and signed before anyone sees them, till receipts reported within 24 hours, corrections by credit note only, and the IRN and QR code on every copy.
 3. The APP side: sending to buyers, receiving invoices as bills and checking their stamps, payment status, compliance reports and the copy of the data kept in Nigeria.
 4. A full run in the sandbox on the QA business, which is also the working product shown to NITDA and the software testing firm.
@@ -67,6 +68,31 @@ What the sandbox serves (31 October 2026): 249 countries, 118 currencies, 27 tax
 | --- | --- | --- |
 | `nrs_codes` | Anyone signed in | NRS's code lists: `list`, `code`, `label`, and everything NRS sent with the code in `extra` |
 | `einvoice_checks` | TaxStreem's admins (`admin_einvoice_checks`) | Each test: when, who, whether it passed, the note and what it found. Kept a year. |
+
+## Getting each business ready (part 2a)
+
+Each business sends invoices to NRS under its own NRS keys. Its owner, or whoever changes its settings, finds an E-invoicing (NRS) section in Settings. The first save starts it; Gemini then chooses the codes below while the rest is filled in.
+
+| What | Where it lives | Who sets it |
+| --- | --- | --- |
+| Business ID, Service ID | `einvoice_settings` | The owner, from the business's NRS dashboard |
+| API key, API secret, `crypto_keys.txt` | `einvoice_settings`, as Cloud KMS ciphertext | The owner, through the `einvoice` function (`settings_keys`) |
+| Service code (ISIC, 4 digits, NRS's list) | `einvoice_settings.service_code` | Gemini, then the owner if they change it |
+| HS code of each item (6 digits, NRS's list) | `items.hs_code` | Gemini, then a person who edits prices or keeps the books |
+| Street, city, postcode, state and LGA | The main branch (`locations`) | The owner, under Locations |
+| Government buyers | `customers.kind = 'government'` | Whoever records sales |
+
+The key, secret and `crypto_keys.txt` are wrapped with `nrs-credentials` in the HSM before they are stored, each bound to the business and the field (`counta:einvoice:<business>:<field>` as additional authenticated data), so a value copied to another business or field does not decrypt. Only their last four characters come back to the app. Saving new keys tests them at once (`settings_check`): NRS must let the key read the business's invoices, accept a test IRN made with its Service ID (NRS keeps nothing) and `crypto_keys.txt` must encrypt a QR code. A test counts only for the keys and IDs it ran on: any change needs a new one, and switches e-invoicing off until it passes.
+
+While NRS is in test mode, TaxStreem's admins can run a business on TaxStreem's own provider keys (admin portal, the business's page, E-invoicing). The QA business uses this for the sandbox demo. In production each business uses its own keys.
+
+**Places.** NRS codes states (`NG-LA`) and LGAs (`NG-LA-IKE`) itself. Each of the 774 LGAs Counta keeps (`ng_lgas`) has its NRS code in `ng_lgas.nrs_code`, matched by name against NRS's list of 31 October 2026 and by hand for the 43 NRS spells differently (Obia/Akpor for Obio/Akpor, Yenegoa for Yenagoa, Abuja Municipal for the Municipal Area Council, Oyo West for Oyo, and so on). NRS's list has two entries that are not LGAs, Ibadan Central and Karawa, which nothing maps to. `private.nrs_place(state, lga)` gives both codes from names as people type them.
+
+**HS codes.** Gemini gets each item's name, brand, category, description and the kind of business, and answers with a six-digit HS 2022 subheading. A code NRS lists is used; one it does not gets a second look among NRS's codes under the same heading (or chapter). Below the business's confidence threshold (at least 80%) the code is used and marked to confirm; with no code at all, invoice lines with that item will wait. A renamed item is coded again unless a person chose its code. The `counta-einvoice` cron job wakes Gemini every five minutes while anything waits, only for businesses that have started.
+
+**Readiness.** Before e-invoicing can be switched on: the business's Tax ID, its email and phone, the main branch's street, city, state and LGA, the five keys (or TaxStreem's test keys), a passed test, and the service code when the business sells services. Items without a confirmed HS code and business customers without a Tax ID are counted but do not hold the business back.
+
+**The IRN.** `private.nrs_irn(number, service_id, day)` makes it: the invoice number in letters and digits, the Service ID and the date.
 
 ## The NITDA guideline
 
