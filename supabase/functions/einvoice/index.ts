@@ -36,7 +36,7 @@ import { publicEncrypt, constants } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { CredentialError, geminiConfig, type GeminiConfig } from './google.ts';
 import * as K from './kms.ts';
-import { codeRow, entityName, firstList, holds, mask, MAYBE_LISTS, nrsBase, nrsCall, nrsWhy, readCryptoKeys, RESOURCE_LISTS, shape, valuesUnder, type NrsAnswer } from './nrs.ts';
+import { codeRow, entityName, firstList, holds, mask, MAYBE_LISTS, nrsBase, nrsCall, nrsWhy, QUANTITY_LISTS, readCryptoKeys, RESOURCE_LISTS, shape, valuesUnder, type NrsAnswer } from './nrs.ts';
 import { buildInvoice, type Claim, missing, missingNow, refusalInWords } from './invoice.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -72,6 +72,7 @@ const LIST_WORDS: Record<string, (n: number) => string> = {
   'tax-categories': (n) => plural(n, 'tax category').replace(/categorys$/, 'categories'), 'payment-means': (n) => `${n.toLocaleString('en-NG')} payment means`,
   'invoice-types': (n) => plural(n, 'invoice type'), 'services-codes': (n) => plural(n, 'service code'), 'vat-exemptions': (n) => plural(n, 'VAT exemption'),
   'hs-codes': (n) => plural(n, 'HS code'), 'states': (n) => plural(n, 'state'), 'lgas': (n) => plural(n, 'LGA'),
+  'invoice-quantity-codes': (n) => plural(n, 'quantity code'), 'quantity-codes': (n) => plural(n, 'quantity code'),
 };
 // What NRS answered, kept for support: the shape of the body, and its reason in full (shape() cuts long strings).
 const answer = (r: NrsAnswer) => ({ status: r.status, ms: r.ms, body: shape(r.body), why: mask(nrsWhy(r)) });
@@ -493,7 +494,14 @@ async function done(saleId: string, p: Record<string, unknown>) {
   return data;
 }
 
-async function sendOne(saleId: string, what: 'kick' | 'send', platformSvc: string, cache: Map<string, Keys>, base: string): Promise<string> {
+// NRS's quantity codes, as the admin portal's NRS test copied them (empty until it has).
+async function quantityCodes(): Promise<Set<string>> {
+  const { data, error } = await admin.from('nrs_codes').select('code').in('list', [...QUANTITY_LISTS]).limit(5000);
+  if (error) console.warn('einvoice: quantity codes', error.message);
+  return new Set(((data as any[]) || []).map((r) => String(r.code).trim().toUpperCase()).filter(Boolean));
+}
+
+async function sendOne(saleId: string, what: 'kick' | 'send', platformSvc: string, cache: Map<string, Keys>, base: string, units: Set<string>): Promise<string> {
   const { data: c, error } = await admin.rpc('svc_einvoice_claim', { p_sale: saleId, p_what: what, p: { service_id: platformSvc } });
   if (error) { console.error('einvoice: claim', saleId, error.message); return 'error'; }
   if (c?.skip) return `skip:${c.skip}`;
@@ -529,7 +537,7 @@ async function sendOne(saleId: string, what: 'kick' | 'send', platformSvc: strin
     }
     if (GAP_MS) await sleep(GAP_MS);
   }
-  const payload = buildInvoice(claim);
+  const payload = buildInvoice(claim, { units });
   const tell = async (r: NrsAnswer, step: string): Promise<string> => {
     const v = verdict(r), why = nrsWhy(r);
     // The owner reads the note; the HTTP status stays in the answer kept for support.
@@ -581,14 +589,15 @@ async function sendDue(saleId: string | null) {
   const base = nrsBase(await secret('NRS_BASE_URL'));
   const platformSvc = (await secret('NRS_SERVICE_ID')).toUpperCase();
   const cache = new Map<string, Keys>();
+  const units = await quantityCodes();
   const out: Record<string, number> = {};
   const count = (k: string) => { const key = k.split(':')[0]; out[key] = (out[key] || 0) + 1; };
-  if (saleId) { count(await sendOne(saleId, 'kick', platformSvc, cache, base)); return out; }
+  if (saleId) { count(await sendOne(saleId, 'kick', platformSvc, cache, base, units)); return out; }
   const stop = Date.now() + 110_000;
   const { data: due } = await admin.rpc('svc_einvoice_due', { p_limit: 300 });
   for (const d of (due as any[]) || []) {
     if (Date.now() > stop) { count('later'); continue; }
-    try { count(d.what === 'pay' ? await payOne(d.sale_id, cache, base) : await sendOne(d.sale_id, 'send', platformSvc, cache, base)); }
+    try { count(d.what === 'pay' ? await payOne(d.sale_id, cache, base) : await sendOne(d.sale_id, 'send', platformSvc, cache, base, units)); }
     catch (e) { console.error('einvoice: send', d.sale_id, (e as Error).message); count('error'); }
     if (GAP_MS) await sleep(GAP_MS);
   }

@@ -61,12 +61,37 @@ function party(x: Record<string, any>, country: string, description?: string) {
   return Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined));
 }
 
+// A line's unit as NRS's quantity code (UN/ECE Recommendation 20, with Recommendation 21's packaging codes), for
+// price_unit. Each of Counta's units has its codes in order of preference; the first one in NRS's own list is used. Until
+// Counta has NRS's list, every line goes as C62 ("one": the price is for one unit), the code every version of the list has.
+const UNIT_CODES: Record<string, string[]> = {
+  unit: ['C62', 'EA', 'H87'], one: ['C62'], each: ['EA', 'C62'], item: ['C62', 'EA'], piece: ['H87', 'C62'], pc: ['H87', 'C62'], pcs: ['H87', 'C62'],
+  bottle: ['XBO', 'BO', 'C62'], pack: ['XPK', 'XPA', 'PK', 'C62'], packet: ['XPA', 'XPK', 'C62'], package: ['XPK', 'PK', 'C62'],
+  carton: ['XCT', 'CT', 'C62'], box: ['XBX', 'BX', 'C62'], bag: ['XBG', 'BG', 'C62'], sack: ['XSA', 'XBG', 'C62'], bale: ['XBL', 'XBN', 'C62'],
+  tin: ['XTN', 'XCA', 'C62'], can: ['XCA', 'XTN', 'C62'], tube: ['XTU', 'C62'], sachet: ['XSH', 'C62'], bar: ['XBR', 'C62'], roll: ['XRO', 'C62'],
+  crate: ['XCR', 'C62'], drum: ['XDR', 'C62'], jar: ['XJR', 'C62'], cup: ['XCU', 'C62'], tray: ['XPU', 'C62'], bundle: ['XBE', 'C62'],
+  dozen: ['DZN', 'C62'], pair: ['PR', 'C62'], set: ['SET', 'C62'],
+  kg: ['KGM'], kilogram: ['KGM'], kilo: ['KGM'], g: ['GRM'], gram: ['GRM'], tonne: ['TNE'], ton: ['TNE'],
+  l: ['LTR'], litre: ['LTR'], liter: ['LTR'], ml: ['MLT'], millilitre: ['MLT'], cl: ['CLT'],
+  m: ['MTR'], metre: ['MTR'], meter: ['MTR'], cm: ['CMT'], yard: ['YRD'], foot: ['FOT'], sqm: ['MTK'],
+  minute: ['MIN'], hour: ['HUR'], hr: ['HUR'], day: ['DAY'], week: ['WEE'], month: ['MON'], year: ['ANN'],
+};
+export function unitCode(label: unknown, known?: Set<string> | null): string {
+  if (!known || !known.size) return 'C62';
+  let k = String(label ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!UNIT_CODES[k] && k.endsWith('es') && UNIT_CODES[k.slice(0, -2)]) k = k.slice(0, -2);
+  else if (!UNIT_CODES[k] && k.endsWith('s') && UNIT_CODES[k.slice(0, -1)]) k = k.slice(0, -1);
+  const prefs = [...(UNIT_CODES[k] || []), 'C62', 'EA', 'H87'];
+  return prefs.find((c) => known.has(c)) || 'C62';
+}
+
 export function invoiceKind(c: Claim): 'B2B' | 'B2G' | 'B2C' {
   if (c.kind === 'report') return 'B2C';
   return c.facts.customer.kind === 'government' ? 'B2G' : 'B2B';
 }
 
-export function buildInvoice(c: Claim): Record<string, unknown> {
+// `units`: NRS's quantity codes, when Counta has copied the list.
+export function buildInvoice(c: Claim, opts: { units?: Set<string> | null } = {}): Record<string, unknown> {
   const f = c.facts, s = f.sale, cur = String(s.currency || 'NGN').toUpperCase();
   const lines = (f.lines || []).filter((l) => Number(l.qty) > 0);
   const service = f.org.service_code ? { isic_code: String(f.org.service_code), service_category: text(f.org.service_label, 255) || 'Services' } : null;
@@ -83,8 +108,8 @@ export function buildInvoice(c: Claim): Record<string, unknown> {
       invoiced_quantity: qty,
       line_extension_amount: net,
       item,
-      // price_unit takes at most three characters (the sandbox refused "NGN per 1", 31 October 2026): the currency.
-      price: { price_amount: r2(qty ? net / qty : net), base_quantity: 1, price_unit: cur.slice(0, 3) },
+      // price_unit is a code from NRS's quantity code list (the sandbox refused "NGN per 1" and "NGN", 31 October 2026).
+      price: { price_amount: r2(qty ? net / qty : net), base_quantity: 1, price_unit: unitCode(l.unit_label, opts.units) },
     };
   });
 
