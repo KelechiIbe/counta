@@ -259,7 +259,7 @@ async function nrsCheck(userId: string) {
 // signed invoice looked up by its IRN and by the buyer's and seller's Tax IDs, and downloaded and opened. Then downloaded
 // with the keys that signed it, as before. Read only: nothing is sent to a buyer and no sale changes.
 async function exchangeProbe(base: string, results: Record<string, any>): Promise<string> {
-  const app = await appKeys();
+  const app = await appKeys(true);
   const out: Record<string, unknown> = { app_keys: app ? (app.own ? 'app' : 'dashboard') : null };
   const words: string[] = [];
   const ask = async (name: string, auth: NrsKeys, path: string) => {
@@ -653,16 +653,18 @@ async function payOne(saleId: string, cache: Map<string, Keys>, base: string): P
 }
 
 // ------------------------------------------------------------------ the exchange between access points (part 3)
-// TaxStreem's access point keys, from the APP portal's Developer section. Until those are set, TaxStreem's dashboard keys are
-// tried (NRS refuses a business's own keys for the exchange: 403, 31 October 2026).
+// TaxStreem's access point keys, from the APP portal's Developer section (NRS refuses a business's own keys for the exchange:
+// 403, 31 October 2026). Sales go to buyers only with them: until TaxStreem is an access point on NRS, each business's
+// default access point (NRS's own, "MBS DEFAULT") has its invoices. The admin test also tries TaxStreem's dashboard keys.
 type AppKeys = { key: string; secret: string; own: boolean };
-async function appKeys(): Promise<AppKeys | null> {
+async function appKeys(dashboard = false): Promise<AppKeys | null> {
   const k = await secret('NRS_APP_API_KEY'), s = await secret('NRS_APP_API_SECRET');
   if (k && s) return { key: k, secret: s, own: true };
+  if (!dashboard) return null;
   const k2 = await secret('NRS_API_KEY'), s2 = await secret('NRS_API_SECRET');
   return k2 && s2 ? { key: k2, secret: s2, own: false } : null;
 }
-const NO_APP = 'TaxStreem\'s access point keys are not set yet. Add the APP key and secret from NRS\'s APP portal in the admin portal.';
+const NO_APP = 'TaxStreem\'s access point keys are not set yet, so it waits to go to the buyer. Add the APP key and secret from NRS\'s APP portal in the admin portal.';
 
 // A signed sale to a business or government, sent to the buyer: NRS takes it (POST transmit/{irn}) and tells both access
 // points by webhook how it went. Every notification is recorded by the database; this only starts it.
