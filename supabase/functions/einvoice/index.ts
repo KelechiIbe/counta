@@ -36,8 +36,8 @@ import { publicEncrypt, constants } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { CredentialError, geminiConfig, type GeminiConfig } from './google.ts';
 import * as K from './kms.ts';
-import { codeRow, entityName, firstList, holds, MAYBE_LISTS, nrsBase, nrsCall, nrsWhy, readCryptoKeys, RESOURCE_LISTS, shape, valuesUnder, type NrsAnswer } from './nrs.ts';
-import { buildInvoice, type Claim, missing } from './invoice.ts';
+import { codeRow, entityName, firstList, holds, mask, MAYBE_LISTS, nrsBase, nrsCall, nrsWhy, readCryptoKeys, RESOURCE_LISTS, shape, valuesUnder, type NrsAnswer } from './nrs.ts';
+import { buildInvoice, type Claim, missing, missingNow, refusalInWords } from './invoice.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -73,7 +73,8 @@ const LIST_WORDS: Record<string, (n: number) => string> = {
   'invoice-types': (n) => plural(n, 'invoice type'), 'services-codes': (n) => plural(n, 'service code'), 'vat-exemptions': (n) => plural(n, 'VAT exemption'),
   'hs-codes': (n) => plural(n, 'HS code'), 'states': (n) => plural(n, 'state'), 'lgas': (n) => plural(n, 'LGA'),
 };
-const answer = (r: NrsAnswer) => ({ status: r.status, ms: r.ms, body: shape(r.body) });
+// What NRS answered, kept for support: the shape of the body, and its reason in full (shape() cuts long strings).
+const answer = (r: NrsAnswer) => ({ status: r.status, ms: r.ms, body: shape(r.body), why: mask(nrsWhy(r)) });
 
 // ------------------------------------------------------------------ the NRS sandbox
 async function nrsCheck(userId: string) {
@@ -508,10 +509,11 @@ async function sendOne(saleId: string, what: 'kick' | 'send', platformSvc: strin
   }
   if (!keys.crypto) { await done(saleId, { outcome: 'retry', qr, note: 'crypto_keys.txt is missing, so the QR code cannot be made.' }); return 'retry'; }
   const claim = { ...c, creds: { ...c.creds, business_id: keys.business } } as Claim;
-  // What NRS would refuse anyway is not sent. Codes Gemini is still choosing get a few tries' grace; then a person is asked.
+  // What NRS would refuse anyway is not sent. Codes Gemini is still choosing get a few tries' grace; anything else (the
+  // address, the Tax ID) needs a person at once.
   const lacking = missing(claim);
   if (lacking.length) {
-    const last = Number(c.tries) >= 4;
+    const last = missingNow(claim).length > 0 || Number(c.tries) >= 4;
     await done(saleId, { outcome: last ? 'refused' : 'retry', qr,
       note: last ? `Not sent to NRS: add ${lacking.join('; ')}, then send it again.` : `Waiting for ${lacking.join('; ')} before it goes to NRS.` });
     return last ? 'refused' : 'retry';
@@ -531,7 +533,11 @@ async function sendOne(saleId: string, what: 'kick' | 'send', platformSvc: strin
   const tell = async (r: NrsAnswer, step: string): Promise<string> => {
     const v = verdict(r), why = nrsWhy(r);
     // The owner reads the note; the HTTP status stays in the answer kept for support.
-    if (v === 'refused') { await done(saleId, { outcome: 'refused', qr, note: `NRS refused it at ${step}: ${why}`, answer: answer(r) }); return 'refused'; }
+    if (v === 'refused') {
+      const plain = refusalInWords(why);
+      await done(saleId, { outcome: 'refused', qr, note: `NRS refused it at ${step}: ${plain ? `${plain} NRS said: ${why}` : why}`, answer: answer(r) });
+      return 'refused';
+    }
     await done(saleId, { outcome: 'retry', qr, answer: answer(r),
       note: v === 'keys' ? `NRS refused the keys (${r.status}): ${why}. Check them in Settings, E-invoicing.` : `NRS did not answer (${r.status || 'no answer'}: ${why}). Counta tries again shortly.` });
     return 'retry';

@@ -28,16 +28,19 @@ export async function nrsCall(k: Pick<NrsKeys, 'base'> & Partial<NrsKeys>, path:
 
 const short = (v: unknown, n = 300) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 // NRS's own words for a refusal, wherever in the answer they are.
-// The sandbox puts its general words in message ("error has occurred") and the reason in error.public_message.
+// The sandbox puts its general words in message ("error has occurred") and error.public_message ("validation failed: we
+// are unable to process your request ..."), and the actual reason, when it gives one, in error.details (for example
+// "invoicerequest.invoice.accountingsupplierparty.postaladdress.postalzone is a required field ..."). The reason comes first.
 export function nrsWhy(r: NrsAnswer): string {
   const b = r.body;
   const words = (x: unknown) => (typeof x === 'string' && x.trim() ? x : '');
   const e = b && typeof b === 'object' ? b.error : null;
+  const list = (x: unknown) => (Array.isArray(x) ? x.map((y: any) => (typeof y === 'string' ? y : y?.message || y?.field || '')).filter(Boolean).join('; ') : '');
   const pick = b && typeof b === 'object'
-    ? words(e?.public_message) || words(e?.message) || words(e?.details) || words(e) || words(b.detail) || words(b.data?.message)
-      || (Array.isArray(b.errors) ? b.errors.map((x: any) => x?.message || x).join('; ') : '') || words(b.message)
+    ? words(e?.details) || list(e?.details) || words(e?.public_message) || words(e?.message) || words(e) || words(b.detail) || words(b.data?.message)
+      || list(b.errors) || words(b.message)
     : b;
-  return short(pick || (r.status ? `HTTP ${r.status}` : 'no answer'));
+  return short(pick || (r.status ? `HTTP ${r.status}` : 'no answer'), 600);
 }
 
 // Numbers of five or more digits keep their last four; email addresses go. Used on everything kept from an answer.
