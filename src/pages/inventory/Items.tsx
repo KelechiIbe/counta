@@ -23,6 +23,8 @@ import { edge } from '../../lib/api';
 import { useQuery } from '@tanstack/react-query';
 import { NrsLabelSelect } from '../../components/Places';
 import { vatPct } from '../../lib/vat';
+import { useEinvoice, useItemHs, useNrsLabel } from '../../lib/einvoice';
+import { NrsCodePicker } from '../../components/NrsCodePicker';
 
 const COLS = 'minmax(240px,2fr) 120px minmax(160px,1.2fr) 100px 100px 90px 110px 110px 24px';
 
@@ -99,20 +101,22 @@ export default function Items() {
           {!shown.length && <div style={{ padding: 40, textAlign: 'center', color: '#6B7280', fontSize: 14 }}>No items match this filter.</div>}
         </div>
       </div>
-      {selected && <ItemDrawer item={selected} onClose={() => setSel(null)} />}
+      {selected && <ItemDrawer item={selected} onClose={() => setSel(null)} startTab={(location.state as any)?.item === selected.id ? (location.state as any)?.tab : undefined} />}
       {add && <ItemForm draft={itemDraft} onClose={() => { setAdd(false); setItemDraft(null); }} onSaved={(id) => setSel(id)} />}
       {upload && <ImportPanel onClose={() => setUpload(false)} />}
     </div>
   );
 }
 
-function ItemDrawer({ item: it, onClose }: { item: ItemView; onClose: () => void }) {
+type DrawerTab = 'stock' | 'details' | 'units' | 'batches' | 'moves';
+function ItemDrawer({ item: it, onClose, startTab }: { item: ItemView; onClose: () => void; startTab?: DrawerTab }) {
   const { data: inv } = useInventory();
   const { orgId } = useSession();
   const nav = useNavigate();
   const toast = useToast();
   const { run } = useAction();
-  const [tab, setTab] = useState<'stock' | 'details' | 'units' | 'batches' | 'moves'>('stock');
+  // Settings opens an item on its details (e-invoicing's HS code).
+  const [tab, setTab] = useState<DrawerTab>(startTab || 'stock');
   const [edit, setEdit] = useState(false);
   const [transfer, setTransfer] = useState(false);
   const [qr, setQr] = useState<string>('');
@@ -365,6 +369,61 @@ function VatCard({ it }: { it: ItemView }) {
   );
 }
 
+// The HS code NRS wants on this item's invoice lines. Gemini chooses it from NRS's list once the business starts on
+// e-invoicing; below the business's confidence threshold it waits for a person, who can also choose another.
+function HsCard({ it }: { it: ItemView }) {
+  const { data: inv } = useInventory();
+  const { orgId } = useSession();
+  const einv = useEinvoice(orgId);
+  const hs = useItemHs(it.id);
+  const label = useNrsLabel('hs-codes', hs.data?.hs_code);
+  const { run, busy } = useAction();
+  const [pick, setPick] = useState(false);
+  const h = hs.data;
+  if (!inv || !h) return null;
+  const started = !!einv.data?.started;
+  if (!started && !h.hs_code && !h.hs_basis) return null;
+  const b = h.hs_basis || {};
+  const may = can(inv, 'edit_prices') || can(inv, 'keep_books');
+  const manual = b.source === 'manual';
+  const choosing = started && !h.hs_checked_at && !manual;
+  const conf = !manual && b.confidence != null ? Math.round(Number(b.confidence) * 100) : null;
+  const done = { invalidate: ['item-hs', 'einvoice'] };
+  const set = (code: string, why: string) => run(() => rpc('set_item_hs_code', { p_item: it.id, p_code: code, p_reason: why }), { ok: `HS code set to ${code}`, ...done });
+  return (
+    <div className="card" style={{ padding: 14, borderRadius: 12 }} data-testid="hs-card">
+      <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
+        <div className="mini-label">HS code for e-invoices</div>
+        {choosing ? <span className="chip t-blue">Gemini is choosing</span> : h.hs_review ? <span className="chip t-yellow">Needs your answer</span>
+          : manual ? <span className="chip t-grey">Set by hand</span> : conf != null ? <span className="chip t-green">{conf}% sure</span> : null}
+      </div>
+      <div style={{ marginTop: 6 }}>
+        {h.hs_code ? <><span style={{ fontSize: 16, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{h.hs_code}</span>
+          {label.data && <span className="muted" style={{ fontSize: 13, marginLeft: 8 }}>{label.data}</span>}</>
+          : <span style={{ fontSize: 14, color: '#B45309' }}>{choosing ? 'Not chosen yet' : 'No HS code yet: invoices with this item wait for one'}</span>}
+      </div>
+      {b.reason && <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>{manual ? `${b.by ? `${b.by}: ` : ''}${b.reason}` : `Gemini: ${b.reason}`}</div>}
+      {h.hs_review && (
+        <Alert kind="yellow" icon="alert" style={{ marginTop: 8 }}>
+          {h.hs_code ? `Gemini chose this code but is only ${conf ?? 0}% sure. Confirm it, or choose the right one.`
+            : 'Gemini could not find this item on NRS\'s list of HS codes. Choose its code below.'}
+        </Alert>
+      )}
+      {may && (pick ? (
+        <div style={{ marginTop: 10 }}><NrsCodePicker list="hs-codes" busy={busy} onCancel={() => setPick(false)}
+          onPick={async (c) => { const r = await set(c, 'Chosen on the item'); if (r !== undefined) setPick(false); }} /></div>
+      ) : (
+        <div className="row wrap" style={{ gap: 6, marginTop: 10 }}>
+          {h.hs_review && h.hs_code && <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => set(h.hs_code!, 'Confirmed Gemini\'s code')}>Confirm {h.hs_code}</button>}
+          <button className="btn btn-secondary btn-sm" onClick={() => setPick(true)}>{h.hs_code ? 'Change' : 'Choose the code'}</button>
+          {started && !choosing && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(() => rpc('recheck_item_hs_code', { p_item: it.id }),
+            { ok: 'Gemini will look again in a few minutes', ...done })}>Ask Gemini again</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ItemDetails({ it }: { it: ItemView }) {
   const { data: inv } = useInventory();
   if (!inv) return null;
@@ -389,6 +448,7 @@ function ItemDetails({ it }: { it: ItemView }) {
   return (
     <div className="stack" style={{ gap: 12 }}>
       <VatCard it={it} />
+      <HsCard it={it} />
       {block('Item', rows)}
       {block(`${ind.label} details`, own)}
       {block('Other details', other)}

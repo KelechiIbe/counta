@@ -10,6 +10,7 @@ import { FEATURES, featureLabel, tidyError } from '../api';
 import { Card, grid, PageHead } from '../ui';
 import { OrgPlan } from './OrgPlan';
 import { DeleteBusiness, UnfinishedDeletions } from './DeleteBusiness';
+import { EInvoiceBusiness } from './EInvoiceBusiness';
 
 type Row = {
   id: string; name: string; rc_number: string | null; created_at: string; is_sample: boolean; identity_status: string; offering: string | null; industry: string | null;
@@ -171,6 +172,7 @@ export function Business() {
         ))}
       </Card>
       <OrgPlan orgId={id} />
+      <EInvoiceBusiness orgId={id} />
       <Card title="Switches for this business" sub="As everyone follows the setting under Limits and switches. On or Off holds for this business whatever everyone else has." pad={false}>
         {d.switches.map((s) => <SwitchRow key={s.feature} orgId={id} s={s} />)}
       </Card>

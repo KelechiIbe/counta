@@ -84,7 +84,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   const qc = useQueryClient();
   const [tab, setTab] = useState<'details' | 'statement' | 'documents'>(customer ? 'statement' : 'details');
   const [f, setF] = useState({ name: '', phone: '', email: '', address: '', tin: '', kind: 'business', credit_limit: '', terms_days: '', price_list_id: '', whatsapp_opt_in: true, wvat_agent: false,
-    city: '', state: '', lga: '', country: 'NG', contact_person: '', cc_emails: '' });
+    city: '', state: '', lga: '', postcode: '', country: 'NG', contact_person: '', cc_emails: '' });
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState<'pay' | 'refund' | null>(null);
   const [doc, setDoc] = useState<string | null>(null);
@@ -93,7 +93,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   useEffect(() => {
     if (customer) setF({ name: customer.name, phone: customer.phone || '', email: customer.email || '', address: customer.address || '', tin: customer.tin || '', kind: customer.kind || 'business',
       credit_limit: String(Number(customer.credit_limit) || ''), terms_days: String(customer.terms_days || ''), price_list_id: customer.price_list_id || '', whatsapp_opt_in: customer.whatsapp_opt_in, wvat_agent: !!(customer as any).wvat_agent,
-      city: customer.city || '', state: customer.state || '', lga: (customer as any).lga || '', country: customer.country || 'NG', contact_person: customer.contact_person || '', cc_emails: (customer.cc_emails || []).join(', ') });
+      city: customer.city || '', state: customer.state || '', lga: (customer as any).lga || '', postcode: (customer as any).postcode || '', country: customer.country || 'NG', contact_person: customer.contact_person || '', cc_emails: (customer.cc_emails || []).join(', ') });
   }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const statement = useQuery({ queryKey: ['statement', customer?.id, range.from, range.to], enabled: !!customer && tab === 'statement', placeholderData: (prev, q) => (q?.queryKey[1] === customer?.id ? prev : undefined),
     queryFn: () => rpc<any>('customer_statement', { p_customer: customer!.id, p_from: range.from || null, p_to: range.to || null }) });
@@ -109,7 +109,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
     try {
       await rpc('save_customer', { p_org: orgId, p_customer: { id: customer?.id || null, name: f.name, phone: f.phone || null, email: f.email || null, address: f.address || null, tin: f.tin || null,
         kind: f.kind, price_list_id: f.price_list_id || null, whatsapp_opt_in: f.whatsapp_opt_in, city: f.city || null, state: f.state || null, country: f.country || 'NG',
-        lga: abroad ? null : f.lga || null,
+        lga: abroad ? null : f.lga || null, postcode: f.postcode.trim() || null,
         contact_person: f.contact_person || null, cc_emails: f.cc_emails.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean),
         ...(canCredit ? { credit_limit: money(f.credit_limit) ?? 0, terms_days: Number(f.terms_days) || 0, wvat_agent: f.wvat_agent } : {}) } });
       toast('Customer saved'); await qc.invalidateQueries({ queryKey: ['customers'] }); if (!customer) onClose();
@@ -131,7 +131,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
           <div className="stack" style={{ gap: 12 }}>
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="Name" req><input className="input" value={f.name} onChange={(e) => set('name', e.target.value)} /></Field>
-              <Field label="Kind"><select className="input" value={f.kind} onChange={(e) => set('kind', e.target.value)}><option value="business">Business</option><option value="individual">Individual</option></select></Field>
+              <Field label="Kind"><select className="input" value={f.kind} onChange={(e) => set('kind', e.target.value)}><option value="business">Business</option><option value="individual">Individual</option><option value="government">Government body</option></select></Field>
               <Field label="Phone (WhatsApp)"><input className="input" value={f.phone} onChange={(e) => set('phone', e.target.value)} inputMode="tel" /></Field>
               <Field label="Email" hint="Invoices and statements go here."><input className="input" value={f.email} onChange={(e) => set('email', e.target.value)} inputMode="email" placeholder="accounts@customer.com" /></Field>
               <Field label={abroad ? 'Tax number in their country' : 'Tax ID'} error={tinErr}
@@ -144,6 +144,8 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
             <Field label="Street address"><textarea className="input" value={f.address} onChange={(e) => set('address', e.target.value)} style={{ minHeight: 56 }} placeholder="12 Adeola Odeku Street, Victoria Island" /></Field>
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="City or town"><input className="input" value={f.city} onChange={(e) => set('city', e.target.value)} /></Field>
+              <Field label="Postcode"><input className="input" value={f.postcode} onChange={(e) => set('postcode', e.target.value)} inputMode={abroad ? undefined : 'numeric'}
+                maxLength={abroad ? 12 : 7} placeholder={abroad ? undefined : '6 digits'} /></Field>
               <Field label="Country"><select className="input" value={f.country} onChange={(e) => set('country', e.target.value)}>{COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</select></Field>
             </div>
             {abroad ? <Field label="State or region"><input className="input" value={f.state} onChange={(e) => set('state', e.target.value)} /></Field>
@@ -154,7 +156,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
               <Field label="Payment terms (days)"><input className="input" inputMode="numeric" disabled={!canCredit} value={f.terms_days} onChange={(e) => set('terms_days', e.target.value)} /></Field>
             </div>
             <label className="check"><input type="checkbox" checked={f.whatsapp_opt_in} onChange={(e) => set('whatsapp_opt_in', e.target.checked)} />Send receipts and reminders by WhatsApp</label>
-            {f.kind === 'business' && <label className="check" title={canCredit ? undefined : 'Set by a manager or the bookkeeper.'}><input type="checkbox" disabled={!canCredit} checked={f.wvat_agent} onChange={(e) => set('wvat_agent', e.target.checked)} />
+            {(f.kind === 'business' || f.kind === 'government') && <label className="check" title={canCredit ? undefined : 'Set by a manager or the bookkeeper.'}><input type="checkbox" disabled={!canCredit} checked={f.wvat_agent} onChange={(e) => set('wvat_agent', e.target.checked)} />
               A withholding VAT agent (a bank, telecom, oil company or government body): it keeps the VAT on our invoices and pays it to the NRS for us</label>}
             <div><button className="btn btn-primary" disabled={busy || !f.name.trim()} onClick={save}>Save customer</button></div>
           </div>
