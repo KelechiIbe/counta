@@ -67,7 +67,7 @@ What the sandbox serves (31 October 2026): 249 countries, 118 currencies, 27 tax
 
 | Table | Who reads it | What it holds |
 | --- | --- | --- |
-| `nrs_codes` | Anyone signed in | NRS's code lists: `list`, `code`, `label`, and everything NRS sent with the code in `extra` |
+| `nrs_codes` | Anyone signed in | NRS's code lists: `list`, `code`, `label`, and everything NRS sent with the code in `extra`. The quantity codes for price units are kept too. |
 | `einvoice_checks` | TaxStreem's admins (`admin_einvoice_checks`) | Each test: when, who, whether it passed, the note and what it found. Kept a year. |
 
 ## Getting each business ready (part 2a)
@@ -118,6 +118,8 @@ Each sale has one row in `einvoice_docs`, readable only through the app's functi
 **After signing.** A signed sale cannot be voided; a credit note cancels it. A credit note goes to NRS as type 380 with the original's IRN in `billing_reference`, once the original is signed. When a sale sent as unpaid is paid later, the function tells NRS (`PATCH /api/v1/invoice/update/{irn}`, `PAID`).
 
 **The function.** Issuing a sale asks the `einvoice` function at once (`private.call_function`, with the hook secret in `x-counta-hook`). For a reported sale that call only makes the QR code; for a cleared one it validates and signs. The cron job behind `einvoice_tick` sends whatever else is due every five minutes, with a short pause between calls (`NRS_GAP_MS`). The database gives the facts of each sale (`svc_einvoice_claim`), and `supabase/functions/einvoice/invoice.ts` writes them as NRS's invoice, so a change NRS asks for in the mapping needs no database update. Goods lines carry the item's HS code; service and delivery lines carry the business's service code. When NRS does not answer, the sale is tried again after 1, 5, 15 and 30 minutes, then hourly. A sale tried before is first looked up with `confirm`, so one NRS signed without Counta hearing back is not signed twice. Keys NRS refuses are tried again, with a note to check them. A sale missing something only a person can add (the Tax ID, any part of the main branch's address, postcode included) is not sent: it is marked refused at once with what to add, and an invoice goes back to draft. A sale waiting for a code Gemini is still choosing (an HS code, the service code) is tried four times first.
+
+**Price units.** Each line's `price_unit` is a code from NRS's quantity code list (UN/ECE Recommendation 20, with Recommendation 21's packaging codes). The sandbox refused "NGN per 1", the documentation's example, and then "NGN". The admin portal's NRS test copies the list into `nrs_codes` (`invoice-quantity-codes`, or `quantity-codes` if NRS serves it by that name). Once it is there, each line goes with its own unit's code where NRS's list has it: a bottle as XBO, a pack as XPK, a carton as XCT, a piece as H87, a kilogram as KGM. Anything else, and every line until the list is copied, goes as C62 ("one"), since the price is always for one unit (`base_quantity` 1).
 
 **NRS's reasons.** NRS puts general words in its answer ("validation failed: we are unable to process your request ...") and the actual reason, when it gives one, in `error.details`, such as "invoicerequest.invoice.accountingsupplierparty.postaladdress.postalzone is a required field". Counta shows the actual reason. A missing field of the seller or the buyer is also said in plain words with where to add it ("NRS needs the postcode of the business's main branch: add it under Locations."). The answer kept with the sale has NRS's reason in full.
 

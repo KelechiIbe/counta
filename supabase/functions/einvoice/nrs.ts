@@ -94,8 +94,11 @@ export function codeRow(x: unknown): { code: string; label: string | null; extra
 }
 
 export const RESOURCE_LISTS = ['countries', 'currencies', 'tax-categories', 'payment-means', 'invoice-types', 'services-codes', 'vat-exemptions', 'hs-codes'] as const;
+// The units NRS takes for each line's price_unit ("check the invoice quantity code list", 31 October 2026): UN/ECE
+// Recommendation 20 with Recommendation 21's packaging codes. Asked for under both names providers use for it.
+export const QUANTITY_LISTS = ['invoice-quantity-codes', 'quantity-codes'] as const;
 // Not in the Postman collection, but the invoice schema asks for state and LGA codes; asked for in case NRS serves them.
-export const MAYBE_LISTS = ['states', 'lgas'] as const;
+export const MAYBE_LISTS = ['states', 'lgas', ...QUANTITY_LISTS] as const;
 
 // crypto_keys.txt from the dashboard: { public_key: <PEM, base64-encoded>, certificate }.
 export function readCryptoKeys(raw: string): { pem: string; certificate: string } | { problem: string } {
