@@ -47,7 +47,8 @@ async function svc<T = any>(fn: string, args: Record<string, unknown>): Promise<
 async function hookSecret(): Promise<string> {
   const env = (Deno.env.get('PUSH_HOOK_SECRET') || '').trim();
   if (env) return env;
-  const { data } = await admin.rpc('svc_secret', { p_name: 'PUSH_HOOK_SECRET' });
+  // app_secret, as in the other functions: svc_secret only hands out the providers' keys, so it answers nothing for this one.
+  const { data } = await admin.rpc('app_secret', { p_name: 'PUSH_HOOK_SECRET' });
   return typeof data === 'string' ? data.trim() : '';
 }
 const hookUrl = (provider: string, tok: string) => `${SUPABASE_URL}/functions/v1/integrations/hook/${provider}/${tok}`;
