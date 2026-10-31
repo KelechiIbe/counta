@@ -11,6 +11,7 @@ import { type Location, type Member } from '../../lib/types';
 import { Icon } from '../../components/Icon';
 import { Alert, Chip, Field, Label, Modal, ModalHead, SkeletonRows } from '../../components/ui';
 import { StateLga } from '../../components/Places';
+import { useEinvoice } from '../../lib/einvoice';
 import TransferModal from '../../components/TransferModal';
 import { ReminderCallModal } from '../../components/Calls';
 import { PeopleCard } from '../settings/Team';
@@ -31,6 +32,8 @@ export default function Locations() {
     queryKey: ['voiceQueue', inv?.org.id], enabled: !!inv && can(inv, 'approve_adjustments') && inv.can_see_costs,
     queryFn: () => must<any[]>(supabase.from('movements').select('id, item_id, qty, unit_price, location_id, author_id, recorded_at, note').eq('org_id', inv!.org.id).eq('review_status', 'pending').order('recorded_at', { ascending: false }).limit(30)),
   });
+  // Only a business on e-invoicing is told its main branch needs a postcode (NRS refuses invoices without one).
+  const einv = useEinvoice(inv && can(inv, 'manage_settings') ? inv.org.id : null);
   if (!inv) return null;
   const owner = inv.me.role === 'owner';
   const costs = inv.can_see_costs;
@@ -52,7 +55,7 @@ export default function Locations() {
                 <div className="row"><Icon name="pin" size={18} color="#0072F5" /><div style={{ fontSize: 16, fontWeight: 600 }}>{l.name}</div>{l.is_main && <span className="chip t-blue">Main</span>}</div>
                 {owner && <button className="x-btn" onClick={() => setBranch(l)} aria-label={'Edit ' + l.name}><Icon name="pencil" size={15} color="#9CA3AF" /></button>}
               </div>
-              <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{[l.address || l.code, [l.city, l.lga, l.state].filter(Boolean).join(', '), l.postcode].filter(Boolean).join(' · ')}{!l.state && <span style={{ color: '#B45309' }}> · add its state</span>}</div>
+              <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{[l.address || l.code, [l.city, l.lga, l.state].filter(Boolean).join(', '), l.postcode].filter(Boolean).join(' · ')}{!l.state && <span style={{ color: '#B45309' }}> · add its state</span>}{l.is_main && l.state && !l.postcode && einv.data?.started && <span style={{ color: '#B45309' }} data-testid="branch-needs-postcode"> · add its postcode: NRS needs it on e-invoices</span>}</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginTop: 16 }}>
                 <div><div className="mini-label">Stock value</div><div style={{ fontSize: 20, fontWeight: 600, marginTop: 4, letterSpacing: '-.01em' }}>{costs ? K(value) : '—'}</div></div>
                 <div><div className="mini-label">Items</div><div style={{ fontSize: 20, fontWeight: 600, marginTop: 4 }}>{n}</div></div>
@@ -180,7 +183,7 @@ function BranchModal({ branch, onClose }: { branch: Location | null; onClose: ()
         <Field label="Address"><input className="input" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street, area" /></Field>
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="City or town"><input className="input" value={city} onChange={(e) => setCity(e.target.value)} placeholder="e.g. Lagos" /></Field>
-          <Field label="Postcode" hint={branch?.is_main ? 'Printed on e-invoices with the address.' : undefined}>
+          <Field label="Postcode" hint={branch?.is_main ? 'NRS needs it on every e-invoice, with the address.' : undefined}>
             <input className="input" value={postcode} onChange={(e) => setPostcode(e.target.value)} inputMode="numeric" maxLength={7} placeholder="6 digits" /></Field>
         </div>
         <StateLga state={place.state} lga={place.lga} onChange={(state, lga) => setPlace({ state, lga })} />

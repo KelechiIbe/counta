@@ -133,15 +133,46 @@ export function buildInvoice(c: Claim): Record<string, unknown> {
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined));
 }
 
+const and = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+
 // What a sale still lacks before NRS will take it, found without asking NRS: said in words a shop owner can act on.
-export function missing(c: Claim): string[] {
-  const f = c.facts, out: string[] = [];
-  if (!c.creds.business_id) out.push('the Business ID');
-  if (!f.org.tin) out.push('the business\'s Tax ID');
-  if (!f.org.place?.state || !f.org.place?.lga) out.push('the state and LGA of the main branch');
+// `wait` marks what Gemini may still be choosing (HS and service codes): those get a few tries' grace. Everything else
+// needs a person, so the sale is not sent at all until it is added.
+function lacks(c: Claim): { what: string; wait: boolean }[] {
+  const f = c.facts, out: { what: string; wait: boolean }[] = [];
+  if (!c.creds.business_id) out.push({ what: 'the Business ID', wait: false });
+  if (!f.org.tin) out.push({ what: 'the business\'s Tax ID', wait: false });
+  // NRS wants the full address of the business on every invoice, postcode included.
+  const place = [!text(f.org.street, 255) && 'street address', !text(f.org.city, 100) && 'city', (!f.org.place?.state || !f.org.place?.lga) && 'state and LGA',
+    !text(f.org.postcode, 20) && 'postcode'].filter(Boolean) as string[];
+  if (place.length) out.push({ what: `the ${and(place)} of the main branch, under Locations`, wait: false });
   const goodsNoCode = (f.lines || []).filter((l) => l.kind === 'goods' && !l.hs_code && l.item_type !== 'service');
   const serviceNoCode = (f.lines || []).some((l) => (l.kind === 'service' || l.kind === 'delivery') && !f.org.service_code);
-  if (goodsNoCode.length) out.push(`an HS code for ${goodsNoCode.slice(0, 3).map((l) => l.description).join(', ')}${goodsNoCode.length > 3 ? ' and others' : ''}`);
-  if (serviceNoCode) out.push('the business\'s service code');
+  if (goodsNoCode.length) out.push({ what: `an HS code for ${goodsNoCode.slice(0, 3).map((l) => l.description).join(', ')}${goodsNoCode.length > 3 ? ' and others' : ''}`, wait: true });
+  if (serviceNoCode) out.push({ what: 'the business\'s service code', wait: true });
   return out;
+}
+export const missing = (c: Claim): string[] => lacks(c).map((x) => x.what);
+// The part of it only a person can add: the sale is not sent until they do.
+export const missingNow = (c: Claim): string[] => lacks(c).filter((x) => !x.wait).map((x) => x.what);
+
+// NRS names a missing field by its path in the invoice ("invoicerequest.invoice.accountingsupplierparty.postaladdress.
+// postalzone is a required field ..."). Said in words a shop owner can act on, with where to add it; null for anything
+// else, when NRS's own words are shown as they are.
+const FIELD_WORDS: Record<string, string> = {
+  postalzone: 'postcode', streetname: 'street address', cityname: 'city', lga: 'LGA', state: 'state', country: 'country',
+  telephone: 'phone number', email: 'email address', tin: 'Tax ID', partyname: 'name', businessdescription: 'description of the business',
+};
+export function refusalInWords(why: string): string | null {
+  const m = /invoicerequest\.invoice\.(accountingsupplierparty|accountingcustomerparty)\.([a-z_.]+?)\s+is a required field/i.exec(String(why || ''));
+  if (!m) return null;
+  const path = m[2].toLowerCase().replace(/_/g, '').split('.');
+  const field = FIELD_WORDS[path[path.length - 1]];
+  if (!field) return null;
+  const inAddress = path.includes('postaladdress');
+  if (m[1].toLowerCase() === 'accountingsupplierparty') {
+    return inAddress ? `NRS needs the ${field} of the business's main branch: add it under Locations.`
+      : `NRS needs the business's ${field}: add it in Settings.`;
+  }
+  return `NRS needs the customer's ${field}: add it to the customer.`;
 }
