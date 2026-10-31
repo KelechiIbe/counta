@@ -5,9 +5,11 @@
 //   platform_check { what: 'nrs' }  -> asks the NRS sandbox (or production) what its answers look like: the health check,
 //                                      every code list (copied into nrs_codes), the dashboard's key on TaxStreem's
 //                                      business (its entity record where NRS allows it, its invoices, and a test IRN made
-//                                      with the Service ID), and whether crypto_keys.txt can make a QR code. What it
-//                                      found goes to einvoice_checks, with numbers cut to their last four and no key or
-//                                      secret.
+//                                      with the Service ID), and whether crypto_keys.txt can make a QR code. It also looks
+//                                      up the newest signed invoice between access points (by its IRN and the buyer's
+//                                      and seller's Tax IDs) and downloads it, with the keys that signed it, read only.
+//                                      What it found goes to einvoice_checks, with numbers cut to their last four and no
+//                                      key or secret.
 //   platform_check { what: 'kms' }  -> checks the Google Cloud HSM keys with only the roles Counta is given: a value
 //                                      encrypts and decrypts with nrs-credentials in the HSM, and a signature from
 //                                      invoice-signing (EC P-256, SHA-256, in the HSM) verifies with its public key.
@@ -233,9 +235,48 @@ async function nrsCheck(userId: string) {
     }
   } else { ok = false; said.push('Add crypto_keys.txt for the QR code.'); }
 
+  // The exchange between access points (part 3), read only: what NRS answers about the newest signed invoice when it is
+  // looked up by its IRN and by the buyer's and the seller's Tax IDs, and what downloading it gives. Nothing is sent and
+  // nothing changes. The answers are kept (masked) to work out the mapping; they never decide whether the test passed.
+  if (host) {
+    try { said.push(await exchangeProbe(base, results)); }
+    catch (e) { results.exchange = { error: String((e as Error).message).slice(0, 200) }; said.push('The exchange lookups could not run.'); }
+  }
+
   const note = said.join(' ');
   await saveCheck('nrs', userId, ok, note, results);
   return { ok, note };
+}
+
+async function exchangeProbe(base: string, results: Record<string, any>): Promise<string> {
+  const { data: d } = await admin.from('einvoice_docs').select('sale_id, org_id, irn, platform_keys')
+    .eq('state', 'signed').not('irn', 'is', null).order('signed_at', { ascending: false }).limit(1).maybeSingle();
+  if (!d) { results.exchange = { signed: 0 }; return 'No signed invoice yet to look up between access points.'; }
+  const [{ data: s }, { data: o }, { data: creds }] = await Promise.all([
+    admin.from('sales').select('customer_tin').eq('id', d.sale_id).maybeSingle(),
+    admin.from('orgs').select('tin').eq('id', d.org_id).maybeSingle(),
+    admin.from('einvoice_settings').select('platform_keys, business_id, api_key_ct, api_secret_ct, crypto_ct').eq('org_id', d.org_id).maybeSingle(),
+  ]);
+  const keys = await keysFor(d.org_id, { ...(creds || {}), platform_keys: d.platform_keys }, new Map());
+  if (keys.problem) { results.exchange = { keys: 'unreadable' }; return `The exchange lookups could not run: ${keys.problem}`; }
+  const auth = { base, key: keys.key, secret: keys.secret };
+  const tin = (v: unknown) => String(v ?? '').trim();
+  const asks: [string, string][] = [
+    ['lookup_irn', `/api/v1/invoice/transmit/lookup/${encodeURIComponent(d.irn)}`],
+    ...(tin(s?.customer_tin) ? [['lookup_buyer_tin', `/api/v1/invoice/transmit/lookup/${encodeURIComponent(tin(s?.customer_tin))}`] as [string, string]] : []),
+    ...(tin(o?.tin) ? [['lookup_seller_tin', `/api/v1/invoice/transmit/lookup/${encodeURIComponent(tin(o?.tin))}`] as [string, string]] : []),
+    ['download', `/api/v1/invoice/download/${encodeURIComponent(d.irn)}`],
+  ];
+  const out: Record<string, unknown> = { own_keys: !d.platform_keys, buyer_tin: Boolean(tin(s?.customer_tin)), seller_tin: Boolean(tin(o?.tin)) };
+  const words: string[] = [];
+  for (const [name, path] of asks) {
+    if (GAP_MS) await sleep(GAP_MS);
+    const r = await nrsCall(auth, path);
+    out[name] = answer(r);
+    words.push(`${name.replace(/_/g, ' ')} ${r.status || 'no answer'}`);
+  }
+  results.exchange = out;
+  return `Exchange lookups on the newest signed invoice: ${words.join(', ')}.`;
 }
 
 // ------------------------------------------------------------------ the Google Cloud HSM keys
