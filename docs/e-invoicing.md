@@ -7,6 +7,7 @@ The work comes in four parts:
 1. The keys and the first checks against the sandbox.
    Part 2a: each business's own keys, the HS and service codes, NRS's place codes and what each invoice needs (below).
 2. The SI side: invoices to business and government buyers validated and signed before anyone sees them, till receipts reported within 24 hours, corrections by credit note only, and the IRN and QR code on every copy.
+   Part 2b: sending each sale to NRS (below).
 3. The APP side: sending to buyers, receiving invoices as bills and checking their stamps, payment status, compliance reports and the copy of the data kept in Nigeria.
 4. A full run in the sandbox on the QA business, which is also the working product shown to NITDA and the software testing firm.
 
@@ -93,6 +94,34 @@ While NRS is in test mode, TaxStreem's admins can run a business on TaxStreem's 
 **Readiness.** Before e-invoicing can be switched on: the business's Tax ID, its email and phone, the main branch's street, city, state and LGA, the five keys (or TaxStreem's test keys), a passed test, and the service code when the business sells services. Items without a confirmed HS code and business customers without a Tax ID are counted but do not hold the business back.
 
 **The IRN.** `private.nrs_irn(number, service_id, day)` makes it: the invoice number in letters and digits, the Service ID and the date.
+
+## Sending sales to NRS (part 2b)
+
+The owner switches sending on in Settings, E-invoicing, once everything above is in place (`einvoice_settings.enabled`). From then on each new invoice, till receipt and credit note goes to NRS as it is issued. Sales issued before the switch stay as they are. Imported sales, scheduled ones, those recorded from the bank feed and invoices that came from Bujeti are left out, because they were invoiced elsewhere.
+
+**Clear or report.** The buyer decides. A sale to a business or government customer (not the walk-in customer) is cleared: NRS validates and signs it before the buyer can see it, including a receipt at the till. A sale to anyone else is reported: its IRN and QR code are made at once, so the receipt prints straight away, and it goes to NRS with the next batch, within five minutes (NRS expects it within 24 hours). NRS's API has no call that takes several invoices at once, and neither DigiTax's API nor Qorpy's Postman collection has one (checked 31 October 2026), so a batch is a queue the function sends one invoice at a time.
+
+| State | Meaning |
+| --- | --- |
+| `waiting` | In line for NRS, with `next_try_at` |
+| `sending` | The function has it; one left in this state more than five minutes is picked up again |
+| `signed` | NRS signed it. A walk-in sale keeps the QR code made when it was issued |
+| `refused` | NRS refused it, or something it needs is missing. The note says why, in words the owner can act on |
+| `stopped` | Taken back, voided before sending, or a credit note whose sale was never signed |
+
+Each sale has one row in `einvoice_docs`, readable only through the app's functions. `sales.irn` and `sales.irn_status` follow it, and the list of sales shows a chip for it.
+
+**Invoices to a business or government.** Issuing one needs the buyer's Tax ID first. The invoice then goes to NRS as a draft that is held (`held`): nothing is in the books and nothing reaches the buyer. Once NRS signs it, it is issued and posted on its own date, or today if that month is closed. While NRS has it, the invoice cannot be edited or issued again; "Take it back to change" stops it if NRS has not started. If NRS refuses it, it is a draft again with NRS's reason, and the people who record sales get a notice. A refused till receipt to a business (already paid and in the books) can be sent again once the customer's details are put right; its amounts change only by voiding it.
+
+**What the buyer sees.** A cleared sale cannot be printed, sent or opened by its link until NRS has signed it; the link says it is waiting for NRS. Once signed, the receipt, the till slip, the A4 copy and its PDF, and the customer's link carry the QR code and the IRN.
+
+**After signing.** A signed sale cannot be voided; a credit note cancels it. A credit note goes to NRS as type 380 with the original's IRN in `billing_reference`, once the original is signed. When a sale sent as unpaid is paid later, the function tells NRS (`PATCH /api/v1/invoice/update/{irn}`, `PAID`).
+
+**The function.** Issuing a sale asks the `einvoice` function at once (`private.call_function`, with the hook secret in `x-counta-hook`). For a reported sale that call only makes the QR code; for a cleared one it validates and signs. The cron job behind `einvoice_tick` sends whatever else is due every five minutes, with a short pause between calls (`NRS_GAP_MS`). The database gives the facts of each sale (`svc_einvoice_claim`), and `supabase/functions/einvoice/invoice.ts` writes them as NRS's invoice, so a change NRS asks for in the mapping needs no database update. Goods lines carry the item's HS code; service and delivery lines carry the business's service code. When NRS does not answer, the sale is tried again after 1, 5, 15 and 30 minutes, then hourly. A sale tried before is first looked up with `confirm`, so one NRS signed without Counta hearing back is not signed twice. Keys NRS refuses are tried again, with a note to check them. A sale missing something NRS needs (an HS code, the state and LGA of the branch) is tried four times, then marked refused with what to add.
+
+**On TaxStreem's keys.** Businesses share TaxStreem's Service ID, so the number part of the IRN starts with four characters of the business's id (`848BRCT000015-94ND90NR-20261031`), and two businesses with the same invoice number never clash.
+
+**Keeping an eye on it.** Settings, E-invoicing, shows how many sales NRS has signed, how many wait and how many it refused, and lists the sales that need a person: refused ones, and those waiting more than an hour or tried three times. A sale waiting 12 hours, and again at 20, sends an alert by push and email to whoever changes the settings. A service code Gemini was less sure of than the business's threshold (at least 80%) waits for the owner to confirm it before sending can start.
 
 ## The NITDA guideline
 

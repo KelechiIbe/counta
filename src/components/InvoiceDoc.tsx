@@ -7,6 +7,7 @@ import { photoUrl } from '../lib/supabase';
 import { amountInWords, fmtDay } from '../lib/format';
 import { addressLines, countryName } from '../lib/countries';
 import { useVatRate, vatPct } from '../lib/vat';
+import { EinvoiceStamp, showStamp } from './Einvoice';
 
 export type Template = 'classic' | 'modern' | 'minimal';
 export const TEMPLATES: { id: Template; name: string; blurb: string }[] = [
@@ -55,6 +56,8 @@ export interface DocData {
   lines: { description: string; qty: number; unit_label?: string; unit_price: number; discount?: number; vat_treatment?: string; vat?: number; net?: number; gross: number; kind?: string }[];
   subtotal: number; vat_total: number; total: number; amount_paid?: number; credited?: number; balance?: number; notes?: string | null; terms?: string | null;
   org: Record<string, any>;
+  // The NRS e-invoice: its IRN and QR code, once the document may reach the buyer.
+  einvoice?: { irn?: string | null; qr?: string | null; state?: string; kind?: string; signed?: boolean } | null;
 }
 
 export function InvoiceDoc({ d, template, style, fixed }: { d: DocData; template?: Template; style?: CSSProperties; fixed?: boolean }) {
@@ -169,6 +172,11 @@ export function InvoiceDoc({ d, template, style, fixed }: { d: DocData; template
         <div className="inv-sign">
           <div className="inv-sigline" />
           <div>Authorised signatory, for {o.name}</div>
+        </div>
+      )}
+      {d.einvoice && showStamp(d.einvoice) && (
+        <div className="inv-einv" style={{ margin: '14px 0 4px' }}>
+          <EinvoiceStamp irn={String(d.einvoice.irn)} qr={d.einvoice.qr} signed={d.einvoice.signed === true || d.einvoice.state === 'signed'} size={88} />
         </div>
       )}
       <div className="inv-foot">

@@ -23,6 +23,12 @@
 //                                      encrypts a QR code. While NRS is in test mode, a business TaxStreem has put on its
 //                                      own provider keys is tested with those.
 //
+// The database (x-counta-hook: <PUSH_HOOK_SECRET>) POSTs:
+//   send { sale_id }                -> a sale just issued: one to a business or government is validated and signed by
+//                                      NRS at once; one to anyone else gets its IRN and QR code and waits for the batch.
+//   send {}                         -> every five minutes: the sales due (oldest first, paced), and payments to tell NRS.
+// See invoice.ts for how a sale is written for NRS, and docs/e-invoicing.md.
+//
 // Keys are read from Supabase Vault (set in the admin portal) first, then from the Edge Function secrets. NRS_BASE_URL is
 // the address on the NRS dashboard; KMS_BASE_URL is for tests.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
@@ -31,6 +37,7 @@ import { Buffer } from 'node:buffer';
 import { CredentialError, geminiConfig, type GeminiConfig } from './google.ts';
 import * as K from './kms.ts';
 import { codeRow, entityName, firstList, holds, MAYBE_LISTS, nrsBase, nrsCall, nrsWhy, readCryptoKeys, RESOURCE_LISTS, shape, valuesUnder, type NrsAnswer } from './nrs.ts';
+import { buildInvoice, type Claim, missing } from './invoice.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -424,6 +431,177 @@ async function businessCheck(orgId: string, userId: string): Promise<{ ok: boole
   return done(ok);
 }
 
+// ------------------------------------------------------------------ sales to NRS (part 2b)
+// The database asks (x-counta-hook) when a sale is issued, { action: 'send', sale_id }, and every five minutes, { action:
+// 'send' }. A sale to a business or government is validated and signed at once (cleared); a sale to anyone else gets its
+// QR code at once and is sent with the next batch (reported). Each try's outcome goes back to the database
+// (svc_einvoice_done): signed, refused (a person puts it right), or tried again later (NRS down or busy). Payments in
+// full are told to NRS for signed sales (PATCH update/{irn}).
+type Keys = { key: string; secret: string; business: string; crypto: { pem: string; certificate: string } | null; problem?: string };
+
+// The keys a sale goes with: TaxStreem's while the business is on TaxStreem's test keys, else its own, unwrapped in the HSM.
+async function keysFor(orgId: string, creds: any, cache: Map<string, Keys>): Promise<Keys> {
+  const id = `${orgId}:${creds.platform_keys ? 'platform' : 'own'}`;
+  const hit = cache.get(id);
+  if (hit) return hit;
+  let k: Keys;
+  if (creds.platform_keys) {
+    const raw = await secret('NRS_CRYPTO_KEYS');
+    const ck = raw ? readCryptoKeys(raw) : null;
+    k = { key: await secret('NRS_API_KEY'), secret: await secret('NRS_API_SECRET'), business: (await secret('NRS_BUSINESS_ID')).toLowerCase(),
+      crypto: ck && !('problem' in ck) ? ck : null };
+    if (!k.key || !k.secret || !k.business) k.problem = 'TaxStreem\'s own NRS keys are not all set yet.';
+  } else {
+    try {
+      const { cfg, ring } = await kmsSetup();
+      const raw = creds.crypto_ct ? dec.decode(await K.decrypt(cfg, ring, creds.crypto_ct, aad(orgId, 'crypto_keys'))) : '';
+      const ck = raw ? readCryptoKeys(raw) : null;
+      k = { key: creds.api_key_ct ? dec.decode(await K.decrypt(cfg, ring, creds.api_key_ct, aad(orgId, 'api_key'))) : '',
+        secret: creds.api_secret_ct ? dec.decode(await K.decrypt(cfg, ring, creds.api_secret_ct, aad(orgId, 'api_secret'))) : '',
+        business: String(creds.business_id || ''), crypto: ck && !('problem' in ck) ? ck : null };
+      if (!k.key || !k.secret || !k.business) k.problem = 'The business\'s NRS keys are not all saved. Add them in Settings, E-invoicing.';
+    } catch (e) {
+      k = { key: '', secret: '', business: '', crypto: null, problem: e instanceof Refusal ? e.message : `The saved keys could not be read back from the HSM: ${(e as Error).message.slice(0, 160)}` };
+    }
+  }
+  cache.set(id, k);
+  return k;
+}
+
+// The QR code NRS asks for: the IRN with the Unix time after a full stop, and the certificate, encrypted with NRS's public
+// key from crypto_keys.txt (RSA, PKCS #1 v1.5), base64-encoded.
+function makeQr(irn: string, crypto: { pem: string; certificate: string }): string {
+  const data = JSON.stringify({ irn: `${irn}.${Math.floor(Date.now() / 1000)}`, certificate: crypto.certificate });
+  return publicEncrypt({ key: crypto.pem, padding: constants.RSA_PKCS1_PADDING }, Buffer.from(data)).toString('base64');
+}
+
+const nrsOk = (r: NrsAnswer) => r.ok && !(Number(r.body?.code) >= 400);
+// What kind of no it was: NRS refusing the invoice as written (a person puts it right), refusing the keys, or not
+// answering (tried again later).
+function verdict(r: NrsAnswer): 'refused' | 'keys' | 'retry' {
+  if (r.status === 401 || r.status === 403) return 'keys';
+  if (r.status === 0 || r.status === 408 || r.status === 429 || r.status >= 500) return 'retry';
+  if (r.status >= 400 || Number(r.body?.code) >= 400) return 'refused';
+  return 'retry';
+}
+const dupe = (r: NrsAnswer) => /already|duplicate|exist/i.test(nrsWhy(r));
+
+async function done(saleId: string, p: Record<string, unknown>) {
+  const { data, error } = await admin.rpc('svc_einvoice_done', { p_sale: saleId, p });
+  if (error) console.error('einvoice: could not record the answer', saleId, error.message);
+  return data;
+}
+
+async function sendOne(saleId: string, what: 'kick' | 'send', platformSvc: string, cache: Map<string, Keys>, base: string): Promise<string> {
+  const { data: c, error } = await admin.rpc('svc_einvoice_claim', { p_sale: saleId, p_what: what, p: { service_id: platformSvc } });
+  if (error) { console.error('einvoice: claim', saleId, error.message); return 'error'; }
+  if (c?.skip) return `skip:${c.skip}`;
+  const keys = await keysFor(c.org_id, c.creds, cache);
+  let qr: string | undefined;
+  if (!c.has_qr && keys.crypto) {
+    try { qr = makeQr(c.irn, keys.crypto); } catch (e) { console.warn('einvoice: QR', (e as Error).message); }
+  }
+  if (c.what === 'qr') { await done(saleId, { outcome: 'qr', qr }); return 'qr'; }
+  if (keys.problem || !base) {
+    await done(saleId, { outcome: 'retry', qr, note: keys.problem || 'TaxStreem has not connected Counta to NRS yet.' });
+    return 'retry';
+  }
+  if (!keys.crypto) { await done(saleId, { outcome: 'retry', qr, note: 'crypto_keys.txt is missing, so the QR code cannot be made.' }); return 'retry'; }
+  const claim = { ...c, creds: { ...c.creds, business_id: keys.business } } as Claim;
+  // What NRS would refuse anyway is not sent. Codes Gemini is still choosing get a few tries' grace; then a person is asked.
+  const lacking = missing(claim);
+  if (lacking.length) {
+    const last = Number(c.tries) >= 4;
+    await done(saleId, { outcome: last ? 'refused' : 'retry', qr,
+      note: last ? `Not sent to NRS: add ${lacking.join('; ')}, then send it again.` : `Waiting for ${lacking.join('; ')} before it goes to NRS.` });
+    return last ? 'refused' : 'retry';
+  }
+  const auth = { base, key: keys.key, secret: keys.secret };
+  const irn = String(c.irn);
+  // Tried before: NRS may have signed it then without Counta hearing the answer.
+  if (Number(c.tries) > 1) {
+    const seen = await nrsCall(auth, `/api/v1/invoice/confirm/${encodeURIComponent(irn)}`);
+    if (nrsOk(seen) && seen.body && holds(seen.body, irn)) {
+      await done(saleId, { outcome: 'signed', qr, note: 'NRS had signed it on an earlier try.', answer: shape(seen.body), pay_status: c.facts.sale.paid ? 'PAID' : 'PENDING' });
+      return 'signed';
+    }
+    if (GAP_MS) await sleep(GAP_MS);
+  }
+  const payload = buildInvoice(claim);
+  const tell = async (r: NrsAnswer, step: string): Promise<string> => {
+    const v = verdict(r), why = nrsWhy(r);
+    // The owner reads the note; the HTTP status stays in the answer kept for support.
+    if (v === 'refused') { await done(saleId, { outcome: 'refused', qr, note: `NRS refused it at ${step}: ${why}`, answer: answer(r) }); return 'refused'; }
+    await done(saleId, { outcome: 'retry', qr, answer: answer(r),
+      note: v === 'keys' ? `NRS refused the keys (${r.status}): ${why}. Check them in Settings, E-invoicing.` : `NRS did not answer (${r.status || 'no answer'}: ${why}). Counta tries again shortly.` });
+    return 'retry';
+  };
+  const val = await nrsCall(auth, '/api/v1/invoice/validate', { method: 'POST', body: payload, timeoutMs: 30_000 });
+  if (!nrsOk(val) && !(dupe(val) && Number(c.tries) > 1)) return await tell(val, 'validation');
+  if (GAP_MS) await sleep(GAP_MS);
+  const sig = await nrsCall(auth, '/api/v1/invoice/sign', { method: 'POST', body: payload, timeoutMs: 30_000 });
+  if (!nrsOk(sig)) {
+    if (dupe(sig)) {
+      const seen = await nrsCall(auth, `/api/v1/invoice/confirm/${encodeURIComponent(irn)}`);
+      if (nrsOk(seen)) {
+        await done(saleId, { outcome: 'signed', qr, note: 'NRS had signed it already.', answer: shape(seen.body), pay_status: payload.payment_status });
+        return 'signed';
+      }
+    }
+    return await tell(sig, 'signing');
+  }
+  await done(saleId, { outcome: 'signed', qr, note: 'Signed by NRS.', answer: shape(sig.body), pay_status: payload.payment_status });
+  return 'signed';
+}
+
+async function payOne(saleId: string, cache: Map<string, Keys>, base: string): Promise<string> {
+  const { data: c, error } = await admin.rpc('svc_einvoice_claim', { p_sale: saleId, p_what: 'pay', p: {} });
+  if (error) { console.error('einvoice: claim pay', saleId, error.message); return 'error'; }
+  if (c?.skip) return `skip:${c.skip}`;
+  const keys = await keysFor(c.org_id, c.creds, cache);
+  if (keys.problem || !base) {
+    await admin.rpc('svc_einvoice_pay_done', { p_sale: saleId, p_ok: false, p_note: keys.problem || 'NRS is not connected.' });
+    return 'retry';
+  }
+  const r = await nrsCall({ base, key: keys.key, secret: keys.secret }, `/api/v1/invoice/update/${encodeURIComponent(c.irn)}`,
+    { method: 'PATCH', body: { payment_status: c.pay, reference: String(c.reference || '').slice(0, 100) } });
+  await admin.rpc('svc_einvoice_pay_done', { p_sale: saleId, p_ok: nrsOk(r), p_note: nrsOk(r) ? null : `NRS said ${r.status || 'nothing'}: ${nrsWhy(r)}` });
+  return nrsOk(r) ? 'paid' : 'retry';
+}
+
+// One sale (as it is issued) or the due batch, oldest first, paced and stopped after about two minutes; whatever is left
+// waits for the next tick.
+async function sendDue(saleId: string | null) {
+  const base = nrsBase(await secret('NRS_BASE_URL'));
+  const platformSvc = (await secret('NRS_SERVICE_ID')).toUpperCase();
+  const cache = new Map<string, Keys>();
+  const out: Record<string, number> = {};
+  const count = (k: string) => { const key = k.split(':')[0]; out[key] = (out[key] || 0) + 1; };
+  if (saleId) { count(await sendOne(saleId, 'kick', platformSvc, cache, base)); return out; }
+  const stop = Date.now() + 110_000;
+  const { data: due } = await admin.rpc('svc_einvoice_due', { p_limit: 300 });
+  for (const d of (due as any[]) || []) {
+    if (Date.now() > stop) { count('later'); continue; }
+    try { count(d.what === 'pay' ? await payOne(d.sale_id, cache, base) : await sendOne(d.sale_id, 'send', platformSvc, cache, base)); }
+    catch (e) { console.error('einvoice: send', d.sale_id, (e as Error).message); count('error'); }
+    if (GAP_MS) await sleep(GAP_MS);
+  }
+  return out;
+}
+
+// The database's own calls carry the shared hook secret (Vault, or the Edge Function secret), never a user.
+async function hookAllowed(hook: string): Promise<boolean> {
+  let expected = (Deno.env.get('PUSH_HOOK_SECRET') || '').trim();
+  if (!expected) {
+    const { data } = await admin.rpc('app_secret', { p_name: 'PUSH_HOOK_SECRET' });
+    expected = typeof data === 'string' ? data.trim() : '';
+  }
+  if (!expected || expected.length !== hook.length) return false;
+  let d = 0;
+  for (let i = 0; i < hook.length; i++) d |= hook.charCodeAt(i) ^ expected.charCodeAt(i);
+  return d === 0;
+}
+
 // ------------------------------------------------------------------ requests
 async function staffOnly(sb: SupabaseClient): Promise<Response | null> {
   const { error } = await sb.rpc('admin_einvoice_allowed');
@@ -438,6 +616,17 @@ Deno.serve(async (req) => {
   const sb = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: auth } }, auth: { persistSession: false } });
   let body: any;
   try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
+  const hook = req.headers.get('x-counta-hook') || '';
+  if (hook) {
+    if (!(await hookAllowed(hook))) return json({ ok: false, error: 'Not allowed.' }, 401);
+    if (body?.action !== 'send') return json({ ok: false, error: 'Unknown action.' }, 400);
+    const saleId = /^[0-9a-f-]{36}$/i.test(String(body.sale_id || '')) ? String(body.sale_id) : null;
+    // The database gives up waiting after 15 seconds, so on Supabase the work carries on after the answer.
+    const work = sendDue(saleId).catch((e) => { console.error('einvoice: send', (e as Error).message); return { error: 1 }; });
+    const rt = (globalThis as any).EdgeRuntime;
+    if (rt?.waitUntil) { rt.waitUntil(work); return json({ ok: true, started: true }); }
+    return json({ ok: true, ...(await work) });
+  }
   const { data: u } = await sb.auth.getUser();
   if (!u?.user) return json({ ok: false, error: 'Sign in first.' }, 401);
   try {

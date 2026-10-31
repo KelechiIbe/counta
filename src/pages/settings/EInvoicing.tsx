@@ -9,7 +9,7 @@ import { useAction } from '../../lib/queries';
 import { rpc, supabase } from '../../lib/supabase';
 import { edge } from '../../lib/api';
 import { when } from '../../lib/format';
-import { useEinvoice, type EinvReady, type EinvSettings } from '../../lib/einvoice';
+import { useEinvoice, type EinvQueue, type EinvReady, type EinvSettings } from '../../lib/einvoice';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, SkeletonRows } from '../../components/ui';
 import { NrsCodePicker } from '../../components/NrsCodePicker';
@@ -159,14 +159,77 @@ function ServiceCode({ s, orgId }: { s: EinvSettings; orgId: string }) {
         <div style={{ fontSize: 14 }}><b style={{ fontVariantNumeric: 'tabular-nums' }}>{sv.code}</b> <span className="muted">{sv.label}</span>
           <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>{sv.source === 'manual' ? 'Chosen by you.'
             : `Chosen by Gemini${sv.confidence != null ? `, ${Math.round(Number(sv.confidence) * 100)}% sure` : ''}${sv.reason ? `: ${sv.reason}` : '.'}`}</div>
+          {sv.review && <div style={{ marginTop: 4 }}><span className="chip t-yellow" data-testid="einv-service-review">Needs your answer</span>
+            <span className="faint" style={{ fontSize: 12, marginLeft: 6 }}>Gemini was not sure. Confirm it, or choose another.</span></div>}
         </div>
       ) : <div className="muted" style={{ fontSize: 14 }}>{s.service_waiting ? 'Gemini is choosing it.' : 'Not chosen yet.'}</div>}
       {s.can.edit && (pick ? <NrsCodePicker list="services-codes" busy={busy} onCancel={() => setPick(false)} onPick={async (c) => { if (await set(c) !== undefined) setPick(false); }} /> : (
         <div className="row wrap" style={{ gap: 6 }}>
+          {sv?.review && <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => run(() => rpc('einvoice_settings_set', { p_org: orgId, p: { service_confirm: true } }),
+            { ok: `Service code ${sv.code} confirmed`, invalidate: INVALIDATE })}>Confirm {sv.code}</button>}
           <button className="btn btn-secondary btn-sm" onClick={() => setPick(true)}>{sv ? 'Change' : 'Choose it'}</button>
           {sv?.source === 'manual' && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => set('')}>Let Gemini choose</button>}
         </div>
       ))}
+    </div>
+  );
+}
+
+// The switch: once everything NRS needs is in place, sales start going to NRS. Sales issued before stay as they are.
+function SendSwitch({ s, orgId }: { s: EinvSettings; orgId: string }) {
+  const { run, busy } = useAction();
+  const [sure, setSure] = useState(false);
+  const set = (on: boolean) => run(() => rpc('einvoice_settings_set', { p_org: orgId, p: { enabled: on } }),
+    { ok: on ? 'Sales now go to NRS' : 'Sales no longer go to NRS', invalidate: INVALIDATE });
+  return (
+    <div className="stack" style={{ gap: 6 }} data-testid="einv-switch" data-on={s.enabled ? 'yes' : 'no'}>
+      <div className="mini-label">Sending to NRS</div>
+      {s.enabled ? (
+        <>
+          <div style={{ fontSize: 14 }}><span className="chip t-green">On</span> <span className="muted">since {when(s.enabled_at)}. Invoices, receipts and credit notes go to NRS as they are issued.</span></div>
+          {s.can.edit && (sure
+            ? <div className="row wrap" style={{ gap: 6 }}><button className="btn btn-danger btn-sm" disabled={busy} onClick={async () => { await set(false); setSure(false); }}>Stop sending to NRS</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setSure(false)}>Keep it on</button>
+                <span className="faint" style={{ fontSize: 12 }}>Sales already waiting still go.</span></div>
+            : <div><button className="btn btn-ghost btn-sm" onClick={() => setSure(true)}>Stop sending</button></div>)}
+        </>
+      ) : (
+        <>
+          <div className="muted" style={{ fontSize: 13 }}>{s.ready
+            ? 'Everything NRS needs is in place. Once it is on, each sale goes to NRS as it is issued: to a business or government, NRS signs it before it reaches them; to anyone else, it is reported within the day. Sales issued before stay as they are.'
+            : 'Switch it on once everything above is in place.'}</div>
+          {s.can.edit && <div><button className="btn btn-primary btn-sm" disabled={busy || !s.ready} onClick={() => set(true)}>Start sending to NRS</button></div>}
+        </>
+      )}
+    </div>
+  );
+}
+
+// How the sending is going, and the sales that need a person: refused by NRS, or waiting longer than they should.
+function SendQueue({ q }: { q: EinvQueue }) {
+  const nav = useNavigate();
+  return (
+    <div className="stack" style={{ gap: 6 }} data-testid="einv-queue">
+      <div className="mini-label">Sales and NRS</div>
+      <div className="row wrap" style={{ gap: 6, fontSize: 13 }}>
+        <span className="chip t-green">{q.signed} signed{q.signed_today ? `, ${q.signed_today} today` : ''}</span>
+        <span className={'chip ' + (q.waiting ? 't-amber' : 't-grey')}>{q.waiting} waiting{q.oldest_at && q.waiting ? `, oldest ${when(q.oldest_at)}` : ''}</span>
+        <span className={'chip ' + (q.refused ? 't-red' : 't-grey')}>{q.refused} refused</span>
+      </div>
+      {q.attention.length > 0 && (
+        <div className="stack" style={{ gap: 0 }}>
+          {q.attention.map((a) => (
+            <div key={a.sale_id} className="row" style={{ gap: 8, padding: '7px 0', borderTop: '1px solid var(--line, #EEE)', alignItems: 'flex-start' }} data-testid="einv-attention">
+              <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
+                <div><b>{a.number}</b> <span className="muted">{a.customer_name || ''}</span>{' '}
+                  <span className={'chip ' + (a.state === 'refused' ? 't-red' : 't-amber')} style={{ fontSize: 11 }}>{a.state === 'refused' ? 'Refused' : 'Waiting'}</span></div>
+                {a.note && <div className="faint" style={{ fontSize: 12, wordBreak: 'break-word' }}>{a.note}</div>}
+              </div>
+              <button className="btn btn-ghost btn-xs" style={{ flex: 'none' }} onClick={() => nav(`/sell/sales?open=${a.sale_id}`)}>Open</button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -229,11 +292,14 @@ export function EInvoicingPanel() {
   return (
     <div className="stack" style={{ gap: 16 }}>
       <div className="row wrap" style={{ gap: 8, alignItems: 'center' }} data-testid="einv-status">
-        <span className={'chip ' + (s.ready ? 't-green' : 't-amber')}>{s.ready ? 'Ready for NRS' : 'Getting ready'}</span>
-        <span className="muted" style={{ fontSize: 13 }}>{s.ready ? 'Everything NRS needs is in place.' : `${blocking} ${blocking === 1 ? 'thing' : 'things'} still to do.`}</span>
+        <span className={'chip ' + (s.enabled ? 't-green' : s.ready ? 't-blue' : 't-amber')}>{s.enabled ? 'Sending to NRS' : s.ready ? 'Ready for NRS' : 'Getting ready'}</span>
+        <span className="muted" style={{ fontSize: 13 }}>{s.enabled && !s.ready ? `On, but ${blocking} ${blocking === 1 ? 'thing needs' : 'things need'} putting right.`
+          : s.ready ? 'Everything NRS needs is in place.' : `${blocking} ${blocking === 1 ? 'thing' : 'things'} still to do.`}</span>
       </div>
       {s.platform_keys && <Alert kind="blue" icon="info">You are on TaxStreem's keys while NRS is in test mode. Add your own keys below before you go live.</Alert>}
       <Readiness list={s.readiness} />
+      <SendSwitch s={s} orgId={orgId} />
+      {s.queue && (s.enabled || s.queue.signed + s.queue.waiting + s.queue.refused > 0) && <SendQueue q={s.queue} />}
       {s.can.edit ? <KeysForm s={s} orgId={orgId} /> : <CheckResult s={s} fresh={null} />}
       <ServiceCode s={s} orgId={orgId} />
       <HsToConfirm orgId={orgId} r={s.readiness.find((r) => r.id === 'items')} />

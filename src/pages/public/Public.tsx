@@ -61,6 +61,10 @@ export function PublicDoc() {
     setBusy(null);
   }
   if (doc.isLoading) return <Frame><div style={{ padding: 60, display: 'grid', placeItems: 'center' }}><Spinner /></div></Frame>;
+  // An invoice to a business reaches its buyer once NRS has signed it.
+  if (doc.error && /waiting for NRS/i.test(String((doc.error as Error).message || ''))) {
+    return <Frame><Alert kind="blue" icon="clock">This document is waiting for NRS to sign it. Open the link again in a few minutes.</Alert></Frame>;
+  }
   if (doc.error || !d) return <Frame><Alert kind="yellow" icon="alert">This link does not open a document. Ask the business to send it again.</Alert></Frame>;
   const owe = !paid && balance > 0.004 && !['void', 'cancelled', 'credited', 'converted', 'expired'].includes(d.status) && d.doc_type !== 'quote' && d.doc_type !== 'credit_note';
   const tracking = d.tracking;

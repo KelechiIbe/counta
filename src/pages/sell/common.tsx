@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { DOC_LABEL, edge, edgeOk, METHOD_LABEL, STATUS_TONE, VAT_STATUS, statusLabel, useCustomers, vatStatusOf, type Customer, type PayRequest, type Sale, moneyAccounts } from '../../lib/api';
+import { DOC_LABEL, edge, edgeOk, METHOD_LABEL, STATUS_TONE, VAT_STATUS, statusLabel, useCustomers, useSale, vatStatusOf, type Customer, type PayRequest, type Sale, moneyAccounts } from '../../lib/api';
+import { EinvoiceStatus, heldFromBuyer } from '../../components/Einvoice';
 import { N2, fmtDay, when } from '../../lib/format';
 import { qrSvg } from '../../lib/labels';
 import { bluetoothSupported, connectPrinter, printBluetooth, printBrowser, printerName } from '../../lib/printer';
@@ -256,7 +257,7 @@ export function PrintButtons({ sale }: { sale: Sale }) {
           catch (e) { if ((e as Error).name !== 'NotFoundError') toast((e as Error).message, 'err'); }
         }}><Icon name="printer" size={14} />{name ? `Print on ${name}` : 'Bluetooth printer'}</button>
       )}
-      <button className="btn btn-secondary btn-sm" onClick={() => { try { printBrowser(sale); } catch (e) { toast((e as Error).message, 'err'); } }}><Icon name="printer" size={14} />Till slip</button>
+      <button className="btn btn-secondary btn-sm" onClick={() => { printBrowser(sale).catch((e) => toast((e as Error).message, 'err')); }}><Icon name="printer" size={14} />Till slip</button>
       <a className="btn btn-ghost btn-sm" href={docUrl(sale.public_token)} target="_blank" rel="noreferrer"><Icon name="external" size={14} />Open the customer's copy</a>
     </div>
   );
@@ -274,7 +275,11 @@ export function DocPreview({ sale, onClose }: { sale: Sale; onClose: () => void 
   );
 }
 
-export function ReceiptModal({ sale, change, onClose, onNew }: { sale: Sale; change?: number; onClose: () => void; onNew?: () => void }) {
+export function ReceiptModal({ sale: first, change, onClose, onNew }: { sale: Sale; change?: number; onClose: () => void; onNew?: () => void }) {
+  // A sale that goes to NRS is followed until NRS has answered: a cleared one reaches the customer only once signed.
+  const live = useSale(first.einvoice ? first.id : null);
+  const sale: Sale = live.data ? { ...live.data, change: first.change } : first;
+  const held = heldFromBuyer(sale.einvoice);
   return (
     <Modal onClose={onClose} width={520}>
       <ModalHead title={`${DOC_LABEL[sale.doc_type]} ${sale.number}`} sub={`${sale.customer_name || ''} · ${N2(sale.total)}`} onClose={onClose} extra={<StatusChip s={sale.status} />} />
@@ -283,9 +288,10 @@ export function ReceiptModal({ sale, change, onClose, onNew }: { sale: Sale; cha
           <div className="muted" style={{ fontSize: 13 }}>Change to give</div><div style={{ fontSize: 30, fontWeight: 700, color: '#15803D' }}>{N2(change)}</div></div>}
         {sale.status === 'pending' && <Alert kind="yellow" icon="clock">Waiting for the transfer. The sale posts and the stock moves as soon as the money lands.</Alert>}
         {(sale.payments || []).some((p: any) => p.status === 'pending') && <Alert kind="blue" icon="info">A manager or the bookkeeper confirms bank transfers and POS payments once they show in the bank.</Alert>}
+        <EinvoiceStatus sale={sale} />
         <SaleLines sale={sale} compact />
-        <PrintButtons sale={sale} />
-        <SendBox sale={sale} />
+        {!held && <PrintButtons sale={sale} />}
+        {!held && <SendBox sale={sale} />}
       </div>
       <div className="modal-ft">
         {onNew && <button className="btn btn-primary" onClick={onNew}><Icon name="plus" size={14} color="#fff" />New sale</button>}

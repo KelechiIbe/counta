@@ -17,6 +17,7 @@ import { ExportMenu, useMeta } from '../../components/Books';
 import type { RCol } from '../../lib/reports';
 import { useDraft, type Drafts } from '../../lib/drafts';
 import { CustomerPicker, PaymentsList, PrintButtons, RecordPayment, RequestPayment, SaleLines, SendBox, StatusChip, docUrl, dueText } from './common';
+import { EinvoiceStatus, heldFromBuyer, nrsChip } from '../../components/Einvoice';
 import { useVatRate, vatInside, vatPct, vatRateOn } from '../../lib/vat';
 
 type Tab = 'all' | 'invoice' | 'receipt' | 'quote' | 'credit_note' | 'unpaid' | 'confirm' | 'settle';
@@ -92,7 +93,7 @@ export default function Sales() {
                 <span className="muted">{fmtDay(r.issue_date)}</span>
                 <span className="ellipsis">{r.customer_name}{r.export && <span className="faint" style={{ display: 'block', fontSize: 11 }}>Export · {countryName(r.customer_country)}</span>}</span>
                 <span><VatStatusChips codes={r.vat_statuses} /></span>
-                <span><StatusChip s={r.status} />{Number(r.pending) > 0 && <span className="chip t-amber" style={{ marginLeft: 4 }}>to confirm</span>}</span>
+                <span><StatusChip s={r.status} />{Number(r.pending) > 0 && <span className="chip t-amber" style={{ marginLeft: 4 }}>to confirm</span>}{nrsChip(r.irn_status)}</span>
                 <span className="right num">{N2(r.total)}</span>
                 <span className="right num" style={{ color: Number(r.balance) > 0 ? '#C2410C' : undefined }}>{Number(r.balance) ? N2(r.balance) : '—'}</span>
                 <span className="muted" style={{ fontSize: 12, color: r.overdue_days ? '#DC2626' : undefined }}>{dueText(r)}</span>
@@ -106,6 +107,9 @@ export default function Sales() {
     </div>
   );
 }
+
+// An invoice to a business or government goes to NRS first, with e-invoicing on: it is issued once NRS signs it.
+const issuedNote = (r: any) => (r?.einvoice?.held && r?.status === 'draft' ? `${r.number} sent to NRS. It is issued once NRS signs it.` : `${r?.number || 'The invoice'} issued`);
 
 export function VatStatusChips({ codes }: { codes?: number[] }) {
   const list = (codes || []).slice().sort();
@@ -128,12 +132,15 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
   const [busy, setBusy] = useState(false);
   const s = sale.data;
   const refresh = () => Promise.all(['sale', 'sales', 'customers', 'till', 'inv'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
-  async function act(fn: () => Promise<any>, ok: string) {
+  async function act(fn: () => Promise<any>, ok: string | ((r: any) => string)) {
     setBusy(true);
-    try { await fn(); toast(ok); await refresh(); setModal(null); setReason(''); } catch (e) { toast((e as Error).message, 'err'); }
+    try { const r = await fn(); toast(typeof ok === 'function' ? ok(r) : ok); await refresh(); setModal(null); setReason(''); } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
   }
   const owed = s ? Number(s.balance) > 0.004 && ['open', 'partially_paid', 'pending'].includes(s.status) : false;
+  // NRS is checking a held invoice: it cannot be changed or issued meanwhile.
+  const nrsBusy = !!s?.einvoice?.held && ['waiting', 'sending'].includes(s.einvoice.state);
+  const signed = s?.einvoice?.state === 'signed';
   return (
     <Drawer onClose={onClose} width={640}>
       <div className="drawer-hd">
@@ -147,7 +154,8 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
         {!s ? <Spinner /> : (
           <>
             {s.status === 'pending' && s.doc_type === 'receipt' && <Alert kind="yellow" icon="clock">Waiting for the customer's transfer. It posts the moment the money lands.</Alert>}
-            {s.status === 'draft' && <Alert kind="grey" icon="pencil">Draft. Nothing is in the books until it is issued.</Alert>}
+            {s.status === 'draft' && !nrsBusy && <Alert kind="grey" icon="pencil">Draft. Nothing is in the books until it is issued.</Alert>}
+            <EinvoiceStatus sale={s} />
             {s.export ? (
               <Alert kind="blue" icon="truck">Export{isExport(s.customer_country) ? ` to ${countryName(s.customer_country)}` : ''}: every line is zero-rated (VAT status 2), whatever the item's usual treatment.{s.export_note ? ` Note: ${s.export_note}` : ''}</Alert>
             ) : isExport(s.customer_country) && s.export_note ? (
@@ -164,8 +172,8 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
             {(s.deliveries || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Delivery</div>{s.deliveries.map((d: any) => <div key={d.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{d.number} · {d.address || ''}</span><StatusChip s={d.status} /></div>)}</div>}
             {s.notes && <div className="muted" style={{ fontSize: 13 }}>{s.notes}</div>}
             <div className="row wrap">
-              {s.status === 'draft' && onEdit && <button className="btn btn-secondary btn-sm" onClick={() => onEdit(s)}><Icon name="pencil" size={14} />Edit</button>}
-              {s.status === 'draft' && s.doc_type === 'invoice' && <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => act(() => rpc('issue_invoice', { p_sale: s.id }), `${s.number} issued`)}>Issue invoice</button>}
+              {s.status === 'draft' && !nrsBusy && onEdit && <button className="btn btn-secondary btn-sm" onClick={() => onEdit(s)}><Icon name="pencil" size={14} />Edit</button>}
+              {s.status === 'draft' && !nrsBusy && s.doc_type === 'invoice' && <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => act(() => rpc('issue_invoice', { p_sale: s.id }), (r) => issuedNote(r))}>Issue invoice</button>}
               {s.doc_type === 'quote' && s.status === 'open' && <>
                 {onEdit && <button className="btn btn-secondary btn-sm" onClick={() => onEdit(s)}><Icon name="pencil" size={14} />Edit</button>}
                 <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => act(() => rpc('convert_quote', { p_sale: s.id }), 'Invoice drafted from the quote')}>Turn into an invoice</button>
@@ -177,10 +185,10 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
               {owed && Number(s.customer_credit || 0) > 0 && <button className="btn btn-secondary btn-sm" onClick={() => setModal('credit')}>Use {N2(s.customer_credit)} credit</button>}
               {owed && s.doc_type !== 'receipt' && <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => act(() => rpc('send_reminder', { p_sale: s.id, p_channel: s.customer_phone ? 'whatsapp' : 'email' }), 'Reminder sent')}><Icon name="bell" size={14} />Remind</button>}
               {s.journal_id && ['open', 'partially_paid', 'paid'].includes(s.status) && can(inv, 'approve_adjustments') && <button className="btn btn-secondary btn-sm" onClick={() => setModal('return')}><Icon name="undo" size={14} />Return or credit</button>}
-              {['open', 'partially_paid', 'paid', 'pending'].includes(s.status) && s.doc_type !== 'quote' && <button className="btn btn-ghost btn-sm" onClick={() => setModal('void')}>Void</button>}
+              {['open', 'partially_paid', 'paid', 'pending'].includes(s.status) && s.doc_type !== 'quote' && !signed && <button className="btn btn-ghost btn-sm" onClick={() => setModal('void')}>Void</button>}
             </div>
-            {s.status !== 'draft' && <><PrintButtons sale={s} /><SendBox sale={s} onSent={() => qc.invalidateQueries({ queryKey: ['sale'] })} /></>}
-            {s.status !== 'draft' && <div className="faint" style={{ fontSize: 12 }}>Customer's copy: <a href={docUrl(s.public_token)} target="_blank" rel="noreferrer">{docUrl(s.public_token).replace(/^https?:\/\//, '')}</a></div>}
+            {s.status !== 'draft' && !heldFromBuyer(s.einvoice) && <><PrintButtons sale={s} /><SendBox sale={s} onSent={() => qc.invalidateQueries({ queryKey: ['sale'] })} /></>}
+            {s.status !== 'draft' && !heldFromBuyer(s.einvoice) && <div className="faint" style={{ fontSize: 12 }}>Customer's copy: <a href={docUrl(s.public_token)} target="_blank" rel="noreferrer">{docUrl(s.public_token).replace(/^https?:\/\//, '')}</a></div>}
           </>
         )}
       </div>
@@ -527,7 +535,7 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
           ? { item_id: l.item_id, qty: Number(l.qty), unit: l.unit, unit_price: money(l.unit_price), discount: money(l.discount) || 0 }
           : { description: l.description, qty: Number(l.qty), unit_price: money(l.unit_price), discount: money(l.discount) || 0, vat_treatment: l.vat_treatment, revenue_account: l.revenue_account || null }),
       } });
-      toast(issue && type === 'invoice' ? `${r.number} issued` : `${r.number} saved`);
+      toast(issue && type === 'invoice' ? issuedNote(r) : `${r.number} saved`);
       await Promise.all(['sales', 'sale', 'customers'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
       onSaved(r.id);
     } catch (e) { toast((e as Error).message, 'err'); }

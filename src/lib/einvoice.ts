@@ -11,10 +11,16 @@ export type EinvSettings = {
   started: boolean; enabled: boolean; enabled_at: string | null; platform_keys: boolean;
   business_id: string | null; service_id: string | null;
   keys: { api_key: string | null; api_secret: string | null; crypto_keys: string | null };
-  service: { code: string; label: string | null; source: 'gemini' | 'manual' | null; reason: string | null; confidence: number | null } | null;
+  service: { code: string; label: string | null; source: 'gemini' | 'manual' | null; reason: string | null; confidence: number | null; review: boolean } | null;
   service_waiting: boolean;
   check: { at: string; ok: boolean; note: string; current: boolean } | null;
   readiness: EinvReady[]; ready: boolean; can: { edit: boolean };
+  queue: EinvQueue | null;
+};
+// How the sending is going: sales waiting for NRS, signed, refused, and the ones that need a person.
+export type EinvQueue = {
+  waiting: number; oldest_at: string | null; signed_today: number; signed: number; refused: number; pay_waiting: number;
+  attention: { sale_id: string; number: string; doc_type: string; customer_name: string | null; total: number; state: string; held: boolean; note: string | null; tries: number; at: string }[];
 };
 export type NrsCode = { code: string; label: string | null };
 export type HsBasis = { source?: 'gemini' | 'manual'; code?: string | null; reason?: string | null; confidence?: number; by?: string; at?: string };
