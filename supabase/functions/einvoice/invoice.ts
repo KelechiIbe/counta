@@ -83,7 +83,8 @@ export function buildInvoice(c: Claim): Record<string, unknown> {
       invoiced_quantity: qty,
       line_extension_amount: net,
       item,
-      price: { price_amount: r2(qty ? net / qty : net), base_quantity: 1, price_unit: `${cur} per 1` },
+      // price_unit takes at most three characters (the sandbox refused "NGN per 1", 31 October 2026): the currency.
+      price: { price_amount: r2(qty ? net / qty : net), base_quantity: 1, price_unit: cur.slice(0, 3) },
     };
   });
 
