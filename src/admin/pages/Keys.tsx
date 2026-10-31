@@ -1,7 +1,8 @@
 // Keys and services: every key Counta uses, by service. A key pasted here goes to Supabase Vault and is never shown again
 // (only its last four characters); Counta reads it before any Edge Function secret of the same name.
 import { useEffect, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { rpc, SUPABASE_URL } from '../../lib/supabase';
 import { edge } from '../../lib/api';
 import { when } from '../../lib/format';
 import { useToast } from '../../state/session';
@@ -87,6 +88,23 @@ function Hook({ label, url, last }: { label: string; url: string; last?: string 
         <button className="btn btn-secondary btn-sm" onClick={() => navigator.clipboard?.writeText(url).then(() => toast('Copied'))}><Icon name="copy" size={14} />Copy</button>
       </div>
     </div>
+  );
+}
+
+// NRS's webhook address for the exchange between access points: pasted into the APP portal's Developer section. The secret
+// part comes from the database, so only admins with their authenticator code see it.
+function NrsHook() {
+  const q = useQuery({ queryKey: ['admin-nrs-hook'], retry: false, staleTime: 30_000,
+    queryFn: () => rpc<{ path: string; last: { at: string; message: string | null } | null; today: number; to_buyers: number; received: number }>('admin_einvoice_webhook', {}) });
+  if (!q.data?.path) return null;
+  return (
+    <>
+      <Hook label="Webhook address for NRS's APP portal" url={SUPABASE_URL + q.data.path} last={q.data.last?.at ?? null} />
+      <div className="faint" style={{ fontSize: 12, padding: '0 16px 12px', lineHeight: 1.5 }} data-testid="nrs-hook-note">
+        Paste it in the APP portal's Developer section, as the Webhook URL. Leave the IP access list empty: Supabase does not send from fixed addresses.
+        {` ${q.data.today} notification${q.data.today === 1 ? '' : 's'} in the last day; ${q.data.to_buyers} sent to buyers; ${q.data.received} received for businesses.`}
+      </div>
+    </>
   );
 }
 
@@ -181,6 +199,7 @@ function Group({ g, data }: { g: (typeof GROUPS)[number]; data: KeysStatus }) {
       {g.id === 'whatsapp' && <Hook label="Webhook address" url={wh.whatsapp.url} last={wh.whatsapp.last} />}
       {g.id === 'openwa' && <OpenWaPanel data={data} />}
       {g.id === 'taxstreem' && <Hook label="Flux reports back to" url={wh.flux.url} />}
+      {g.id === 'nrs' && <NrsHook />}
     </Card>
   );
 }

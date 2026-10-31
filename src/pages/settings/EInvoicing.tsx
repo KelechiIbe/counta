@@ -216,13 +216,28 @@ function SendQueue({ q }: { q: EinvQueue }) {
         <span className={'chip ' + (q.waiting ? 't-amber' : 't-grey')}>{q.waiting} waiting{q.oldest_at && q.waiting ? `, oldest ${when(q.oldest_at)}` : ''}</span>
         <span className={'chip ' + (q.refused ? 't-red' : 't-grey')}>{q.refused} refused</span>
       </div>
+      {q.to_buyers && q.to_buyers.sending + q.to_buyers.delivered + q.to_buyers.failed > 0 && (
+        <div className="row wrap" style={{ gap: 6, fontSize: 13 }} data-testid="einv-to-buyers">
+          <span className="faint" style={{ fontSize: 12 }}>To buyers through NRS:</span>
+          <span className="chip t-green">{q.to_buyers.delivered} delivered{q.to_buyers.acknowledged ? `, ${q.to_buyers.acknowledged} received` : ''}</span>
+          {q.to_buyers.sending > 0 && <span className="chip t-amber">{q.to_buyers.sending} on the way</span>}
+          {q.to_buyers.failed > 0 && <span className="chip t-red">{q.to_buyers.failed} not delivered</span>}
+        </div>
+      )}
+      {q.received && q.received.total + q.received.failed > 0 && (
+        <div className="row wrap" style={{ gap: 6, fontSize: 13 }} data-testid="einv-received">
+          <span className="faint" style={{ fontSize: 12 }}>From suppliers through NRS:</span>
+          <span className="chip t-blue">{q.received.total} received</span>
+          {q.received.to_review > 0 && <button className="btn btn-ghost btn-xs" onClick={() => nav('/purchases/bills?tab=invoices')}>{q.received.to_review} to review</button>}
+        </div>
+      )}
       {q.attention.length > 0 && (
         <div className="stack" style={{ gap: 0 }}>
           {q.attention.map((a) => (
             <div key={a.sale_id} className="row" style={{ gap: 8, padding: '7px 0', borderTop: '1px solid var(--line, #EEE)', alignItems: 'flex-start' }} data-testid="einv-attention">
               <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
                 <div><b>{a.number}</b> <span className="muted">{a.customer_name || ''}</span>{' '}
-                  <span className={'chip ' + (a.state === 'refused' ? 't-red' : 't-amber')} style={{ fontSize: 11 }}>{a.state === 'refused' ? 'Refused' : 'Waiting'}</span></div>
+                  <span className={'chip ' + (a.state === 'refused' ? 't-red' : 't-amber')} style={{ fontSize: 11 }}>{a.state === 'refused' ? 'Refused' : a.state === 'not_delivered' ? 'Not delivered to the buyer' : 'Waiting'}</span></div>
                 {a.note && <div className="faint" style={{ fontSize: 12, wordBreak: 'break-word' }}>{a.note}</div>}
               </div>
               <button className="btn btn-ghost btn-xs" style={{ flex: 'none' }} onClick={() => nav(`/sell/sales?open=${a.sale_id}`)}>Open</button>

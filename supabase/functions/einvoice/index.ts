@@ -28,8 +28,14 @@
 // The database (x-counta-hook: <PUSH_HOOK_SECRET>) POSTs:
 //   send { sale_id }                -> a sale just issued: one to a business or government is validated and signed by
 //                                      NRS at once; one to anyone else gets its IRN and QR code and waits for the batch.
-//   send {}                         -> every five minutes: the sales due (oldest first, paced), and payments to tell NRS.
-// See invoice.ts for how a sale is written for NRS, and docs/e-invoicing.md.
+//   send {}                         -> every five minutes: the sales due (oldest first, paced), payments to tell NRS, signed
+//                                      sales to send to the buyer, and invoices NRS brought to bring in.
+//
+// NRS (no sign-in; the address carries NRS_WEBHOOK_TOKEN from Vault, shown in the admin portal) POSTs to
+//   /einvoice/nrs-hook/<token>     { irn, message: TRANSMITTING | TRANSMITTED | ACKNOWLEDGED | FAILED } about an invoice
+//                                      sent between access points. Each is kept; it moves the sale Counta sent, and an
+//                                      invoice to a Counta business is downloaded, opened and written as a draft bill.
+// See invoice.ts for how a sale is written for NRS, exchange.ts for how a received one is read, and docs/e-invoicing.md.
 //
 // Keys are read from Supabase Vault (set in the admin portal) first, then from the Edge Function secrets. NRS_BASE_URL is
 // the address on the NRS dashboard; KMS_BASE_URL is for tests.
@@ -38,8 +44,9 @@ import { publicEncrypt, constants } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { CredentialError, geminiConfig, type GeminiConfig } from './google.ts';
 import * as K from './kms.ts';
-import { codeRow, entityName, firstList, holds, mask, MAYBE_LISTS, nrsBase, nrsCall, nrsWhy, QUANTITY_LISTS, readCryptoKeys, RESOURCE_LISTS, shape, valuesUnder, type NrsAnswer } from './nrs.ts';
+import { codeRow, entityName, firstList, holds, mask, MAYBE_LISTS, nrsBase, nrsCall, nrsWhy, QUANTITY_LISTS, readCryptoKeys, RESOURCE_LISTS, shape, valuesUnder, type NrsAnswer, type NrsKeys } from './nrs.ts';
 import { buildInvoice, type Claim, missing, missingNow, refusalInWords } from './invoice.ts';
+import { decryptDownload, inboundExtract, suggestAccounts } from './exchange.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -248,35 +255,56 @@ async function nrsCheck(userId: string) {
   return { ok, note };
 }
 
+// With TaxStreem's access point keys: the self check (NRS posts a test notification to the webhook address), the newest
+// signed invoice looked up by its IRN and by the buyer's and seller's Tax IDs, and downloaded and opened. Then downloaded
+// with the keys that signed it, as before. Read only: nothing is sent to a buyer and no sale changes.
 async function exchangeProbe(base: string, results: Record<string, any>): Promise<string> {
+  const app = await appKeys();
+  const out: Record<string, unknown> = { app_keys: app ? (app.own ? 'app' : 'dashboard') : null };
+  const words: string[] = [];
+  const ask = async (name: string, auth: NrsKeys, path: string) => {
+    if (GAP_MS) await sleep(GAP_MS);
+    const r = await nrsCall(auth, path);
+    out[name] = answer(r);
+    words.push(`${name.replace(/_/g, ' ')} ${r.status || 'no answer'}`);
+    return r;
+  };
+  const opened = (r: NrsAnswer, key: string, irn: string) => {
+    if (!nrsOk(r)) return null;
+    try { const inv = decryptDownload(r.body, key); return { ok: true, irn_matches: holds(inv, irn), lines: Array.isArray(inv.invoice_line) ? inv.invoice_line.length : null }; }
+    catch (e) { return { ok: false, error: mask((e as Error).message).slice(0, 200) }; }
+  };
+  const appAuth = app ? { base, key: app.key, secret: app.secret } : null;
+  if (appAuth) await ask('self_check', appAuth, '/api/v1/invoice/transmit/self-health-check');
   const { data: d } = await admin.from('einvoice_docs').select('sale_id, org_id, irn, platform_keys')
     .eq('state', 'signed').not('irn', 'is', null).order('signed_at', { ascending: false }).limit(1).maybeSingle();
-  if (!d) { results.exchange = { signed: 0 }; return 'No signed invoice yet to look up between access points.'; }
+  if (!d) {
+    results.exchange = { ...out, signed: 0 };
+    return `${app ? `Exchange: ${words.join(', ')}. ` : 'Add TaxStreem\'s APP key and secret for the exchange. '}No signed invoice yet to look up between access points.`;
+  }
   const [{ data: s }, { data: o }, { data: creds }] = await Promise.all([
     admin.from('sales').select('customer_tin').eq('id', d.sale_id).maybeSingle(),
     admin.from('orgs').select('tin').eq('id', d.org_id).maybeSingle(),
     admin.from('einvoice_settings').select('platform_keys, business_id, api_key_ct, api_secret_ct, crypto_ct').eq('org_id', d.org_id).maybeSingle(),
   ]);
-  const keys = await keysFor(d.org_id, { ...(creds || {}), platform_keys: d.platform_keys }, new Map());
-  if (keys.problem) { results.exchange = { keys: 'unreadable' }; return `The exchange lookups could not run: ${keys.problem}`; }
-  const auth = { base, key: keys.key, secret: keys.secret };
   const tin = (v: unknown) => String(v ?? '').trim();
-  const asks: [string, string][] = [
-    ['lookup_irn', `/api/v1/invoice/transmit/lookup/${encodeURIComponent(d.irn)}`],
-    ...(tin(s?.customer_tin) ? [['lookup_buyer_tin', `/api/v1/invoice/transmit/lookup/${encodeURIComponent(tin(s?.customer_tin))}`] as [string, string]] : []),
-    ...(tin(o?.tin) ? [['lookup_seller_tin', `/api/v1/invoice/transmit/lookup/${encodeURIComponent(tin(o?.tin))}`] as [string, string]] : []),
-    ['download', `/api/v1/invoice/download/${encodeURIComponent(d.irn)}`],
-  ];
-  const out: Record<string, unknown> = { own_keys: !d.platform_keys, buyer_tin: Boolean(tin(s?.customer_tin)), seller_tin: Boolean(tin(o?.tin)) };
-  const words: string[] = [];
-  for (const [name, path] of asks) {
-    if (GAP_MS) await sleep(GAP_MS);
-    const r = await nrsCall(auth, path);
-    out[name] = answer(r);
-    words.push(`${name.replace(/_/g, ' ')} ${r.status || 'no answer'}`);
+  out.own_keys = !d.platform_keys; out.buyer_tin = Boolean(tin(s?.customer_tin)); out.seller_tin = Boolean(tin(o?.tin));
+  const irn = encodeURIComponent(d.irn);
+  if (appAuth) {
+    await ask('lookup_irn', appAuth, `/api/v1/invoice/transmit/lookup/${irn}`);
+    if (tin(s?.customer_tin)) await ask('lookup_buyer_tin', appAuth, `/api/v1/invoice/transmit/lookup/tin/${encodeURIComponent(tin(s?.customer_tin))}`);
+    if (tin(o?.tin)) await ask('lookup_seller_tin', appAuth, `/api/v1/invoice/transmit/lookup/tin/${encodeURIComponent(tin(o?.tin))}`);
+    out.download_app_opened = opened(await ask('download_app', appAuth, `/api/v1/invoice/download/${irn}`), app!.key, d.irn);
   }
+  const keys = await keysFor(d.org_id, { ...(creds || {}), platform_keys: d.platform_keys }, new Map());
+  if (keys.problem) out.download = { keys: 'unreadable' };
+  else out.download_opened = opened(await ask('download', { base, key: keys.key, secret: keys.secret }, `/api/v1/invoice/download/${irn}`), keys.key, d.irn);
   results.exchange = out;
-  return `Exchange lookups on the newest signed invoice: ${words.join(', ')}.`;
+  const read = (x: any) => (x ? (x.ok ? 'opened' : 'could not be opened') : null);
+  const tail = [read(out.download_app_opened) && `with the APP key the invoice ${read(out.download_app_opened)}`,
+    read(out.download_opened) && `with the signing keys it ${read(out.download_opened)}`].filter(Boolean).join('; ');
+  const lead = !app ? 'Add TaxStreem\'s APP key and secret for the exchange. ' : !app.own ? 'The APP key is not set, so the exchange was tried with TaxStreem\'s dashboard keys. ' : '';
+  return `${lead}Exchange on the newest signed invoice: ${words.join(', ')}${tail ? ` (${tail})` : ''}.`;
 }
 
 // ------------------------------------------------------------------ the Google Cloud HSM keys
@@ -624,8 +652,119 @@ async function payOne(saleId: string, cache: Map<string, Keys>, base: string): P
   return nrsOk(r) ? 'paid' : 'retry';
 }
 
+// ------------------------------------------------------------------ the exchange between access points (part 3)
+// TaxStreem's access point keys, from the APP portal's Developer section. Until those are set, TaxStreem's dashboard keys are
+// tried (NRS refuses a business's own keys for the exchange: 403, 31 October 2026).
+type AppKeys = { key: string; secret: string; own: boolean };
+async function appKeys(): Promise<AppKeys | null> {
+  const k = await secret('NRS_APP_API_KEY'), s = await secret('NRS_APP_API_SECRET');
+  if (k && s) return { key: k, secret: s, own: true };
+  const k2 = await secret('NRS_API_KEY'), s2 = await secret('NRS_API_SECRET');
+  return k2 && s2 ? { key: k2, secret: s2, own: false } : null;
+}
+const NO_APP = 'TaxStreem\'s access point keys are not set yet. Add the APP key and secret from NRS\'s APP portal in the admin portal.';
+
+// A signed sale to a business or government, sent to the buyer: NRS takes it (POST transmit/{irn}) and tells both access
+// points by webhook how it went. Every notification is recorded by the database; this only starts it.
+async function transmitOne(saleId: string, base: string, app: AppKeys | null): Promise<string> {
+  const { data: c, error } = await admin.rpc('svc_einvoice_xm_claim', { p_sale: saleId });
+  if (error) { console.error('einvoice: claim transmit', saleId, error.message); return 'error'; }
+  if (c?.skip) return `skip:${c.skip}`;
+  const xmDone = async (p: Record<string, unknown>) => {
+    const { error: e } = await admin.rpc('svc_einvoice_xm_done', { p_sale: saleId, p });
+    if (e) console.error('einvoice: transmit done', saleId, e.message);
+  };
+  if (!base || !app) { await xmDone({ outcome: 'wait', note: NO_APP }); return 'wait'; }
+  const r = await nrsCall({ base, key: app.key, secret: app.secret }, `/api/v1/invoice/transmit/${encodeURIComponent(c.irn)}`, { method: 'POST', timeoutMs: 30_000 });
+  const why = nrsWhy(r);
+  if (nrsOk(r)) { await xmDone({ outcome: 'sent' }); return 'transmitted'; }
+  if (r.status === 401 || r.status === 403) {
+    await xmDone({ outcome: 'retry', note: `NRS refused TaxStreem's access point keys (${r.status}: ${why}). The business may need to choose TaxStreem as its access point provider on the NRS dashboard, under Profile, Access Points.` });
+    return 'retry';
+  }
+  if (verdict(r) === 'retry') { await xmDone({ outcome: 'retry', note: `NRS did not answer (${r.status || 'no answer'}: ${why}). Counta tries again shortly.` }); return 'retry'; }
+  await xmDone({ outcome: 'failed', note: `NRS did not send it to the buyer: ${why}` });
+  return 'failed';
+}
+
+// An invoice NRS brings for a Counta business: downloaded and opened with TaxStreem's access point key, matched to the
+// business by the buyer's Tax ID, kept in its documents and written as a supplier invoice with a draft bill (accounts
+// suggested by Gemini), then NRS is told it arrived (PATCH transmit/{irn}). Once the bill is written, only the receipt is
+// tried again.
+let aiCfg: GeminiConfig | null = null;
+async function inboundOne(id: string, base: string, app: AppKeys | null): Promise<string> {
+  const { data: c, error } = await admin.rpc('svc_einvoice_inbound_claim', { p_id: id });
+  if (error) { console.error('einvoice: claim inbound', id, error.message); return 'error'; }
+  if (c?.skip) return `skip:${c.skip}`;
+  const inDone = async (p: Record<string, unknown>) => {
+    const { error: e } = await admin.rpc('svc_einvoice_inbound_done', { p_id: id, p });
+    if (e) console.error('einvoice: inbound done', id, e.message);
+  };
+  if (!base || !app) { await inDone({ outcome: 'retry', note: NO_APP }); return 'retry'; }
+  const auth = { base, key: app.key, secret: app.secret };
+  const irn = String(c.irn);
+  if (c.step === 'fetch') {
+    const r = await nrsCall(auth, `/api/v1/invoice/download/${encodeURIComponent(irn)}`, { timeoutMs: 30_000 });
+    if (!nrsOk(r)) {
+      const hard = verdict(r) === 'refused' && r.status !== 404;
+      await inDone({ outcome: hard ? 'failed' : 'retry', note: `NRS did not give the invoice (${r.status || 'no answer'}: ${nrsWhy(r)}).` });
+      return hard ? 'failed' : 'retry';
+    }
+    let inv: Record<string, any>;
+    try { inv = decryptDownload(r.body, app.key); } catch (e) { await inDone({ outcome: 'failed', note: (e as Error).message }); return 'failed'; }
+    const { data: m, error: me } = await admin.rpc('svc_einvoice_inbound_match', { p_id: id, p_invoice: inv });
+    if (me) { await inDone({ outcome: 'retry', note: me.message.slice(0, 300) }); return 'error'; }
+    if (m?.skip) return `skip:${m.skip}`;
+    const x = inboundExtract(inv, irn, { states: m.states || {}, creditNote: m.credit_note });
+    try {
+      aiCfg ||= await geminiConfig(secret);
+      const s = await suggestAccounts(aiCfg, (await secret('GEMINI_MODEL')) || 'gemini-3.8-flash', x, String(m.business || 'the business'), m.accounts || [], m.wht || []);
+      if (s) { x.lines.forEach((l, i) => { l.account_code = s.codes[i] ?? null; }); x.wht_category = s.wht; }
+    } catch (e) { console.warn('einvoice: account suggestions', (e as Error).message); }
+    const path = `${m.org_id}/bills/nrs-${irn.replace(/[^A-Za-z0-9-]/g, '')}.json`;
+    const up = await admin.storage.from('documents').upload(path, enc.encode(JSON.stringify(inv, null, 2)), { contentType: 'application/json', upsert: true });
+    if (up.error) { await inDone({ outcome: 'retry', note: `NRS's invoice could not be kept just now (${up.error.message}).` }); return 'retry'; }
+    const { error: be } = await admin.rpc('svc_einvoice_inbound_bill', { p_id: id, p_extract: x, p_path: path });
+    if (be) { await inDone({ outcome: 'retry', note: be.message.slice(0, 300) }); return 'error'; }
+    if (GAP_MS) await sleep(GAP_MS);
+  }
+  const ack = await nrsCall(auth, `/api/v1/invoice/transmit/${encodeURIComponent(irn)}`, { method: 'PATCH', timeoutMs: 20_000 });
+  if (nrsOk(ack)) { await inDone({ outcome: 'confirmed' }); return c.step === 'fetch' ? 'received' : 'confirmed'; }
+  await inDone({ outcome: 'retry', note: `NRS did not take the receipt (${ack.status || 'no answer'}: ${nrsWhy(ack)}). Counta tries again.` });
+  return c.step === 'fetch' ? 'received' : 'retry';
+}
+
+// NRS's notifications, at /einvoice/nrs-hook/<NRS_WEBHOOK_TOKEN>. NRS signs nothing, so the address carries the secret and
+// every notification only starts work that asks NRS itself. NRS wants a 200 at once; anything to fetch is fetched after.
+const same = (a: string, b: string) => {
+  if (!a || a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+};
+async function nrsWebhook(req: Request, token: string): Promise<Response> {
+  if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
+  const { data: expected } = await admin.rpc('svc_einvoice_hook_token');
+  if (!same(token, String(expected || ''))) return json({ ok: false }, 404);
+  const raw = (await req.text()).slice(0, 20_000);
+  let b: any = null;
+  try { b = JSON.parse(raw); } catch { /* kept as text */ }
+  const pick = (k: string) => String((b && typeof b === 'object' ? b[k] ?? b.data?.[k] : '') ?? '').trim();
+  const { data, error } = await admin.rpc('svc_einvoice_webhook', { p_irn: pick('irn'), p_message: pick('message') || pick('status'),
+    p_body: b && typeof b === 'object' ? b : { text: raw.slice(0, 2000) } });
+  // An error asks NRS to send it again.
+  if (error) { console.error('einvoice: webhook', error.message); return json({ ok: false }, 500); }
+  if (data?.inbound_id && data?.fetch) {
+    const work = (async () => inboundOne(String(data.inbound_id), nrsBase(await secret('NRS_BASE_URL')), await appKeys()))()
+      .catch((e) => { console.error('einvoice: inbound', (e as Error).message); return 'error'; });
+    const rt = (globalThis as any).EdgeRuntime;
+    if (rt?.waitUntil) rt.waitUntil(work); else await work;
+  }
+  return json({ ok: true });
+}
+
 // One sale (as it is issued) or the due batch, oldest first, paced and stopped after about two minutes; whatever is left
-// waits for the next tick.
+// waits for the next tick. A sale to a business that NRS signs as it is issued goes to the buyer straight away.
 async function sendDue(saleId: string | null) {
   const base = nrsBase(await secret('NRS_BASE_URL'));
   const platformSvc = (await secret('NRS_SERVICE_ID')).toUpperCase();
@@ -633,13 +772,24 @@ async function sendDue(saleId: string | null) {
   const units = await quantityCodes();
   const out: Record<string, number> = {};
   const count = (k: string) => { const key = k.split(':')[0]; out[key] = (out[key] || 0) + 1; };
-  if (saleId) { count(await sendOne(saleId, 'kick', platformSvc, cache, base, units)); return out; }
+  let app: AppKeys | null | undefined;
+  const appOnce = async () => (app === undefined ? (app = await appKeys()) : app);
+  if (saleId) {
+    const r = await sendOne(saleId, 'kick', platformSvc, cache, base, units);
+    count(r);
+    if (r === 'signed') { if (GAP_MS) await sleep(GAP_MS); count(await transmitOne(saleId, base, await appOnce())); }
+    return out;
+  }
   const stop = Date.now() + 110_000;
   const { data: due } = await admin.rpc('svc_einvoice_due', { p_limit: 300 });
   for (const d of (due as any[]) || []) {
     if (Date.now() > stop) { count('later'); continue; }
-    try { count(d.what === 'pay' ? await payOne(d.sale_id, cache, base) : await sendOne(d.sale_id, 'send', platformSvc, cache, base, units)); }
-    catch (e) { console.error('einvoice: send', d.sale_id, (e as Error).message); count('error'); }
+    try {
+      count(d.what === 'pay' ? await payOne(d.sale_id, cache, base)
+        : d.what === 'transmit' ? await transmitOne(d.sale_id, base, await appOnce())
+        : d.what === 'inbound' ? await inboundOne(d.id, base, await appOnce())
+        : await sendOne(d.sale_id, 'send', platformSvc, cache, base, units));
+    } catch (e) { console.error('einvoice: send', d.sale_id || d.id, (e as Error).message); count('error'); }
     if (GAP_MS) await sleep(GAP_MS);
   }
   return out;
@@ -667,6 +817,10 @@ async function staffOnly(sb: SupabaseClient): Promise<Response | null> {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  const path = new URL(req.url).pathname;
+  const wh = path.match(/\/nrs-hook\/([0-9a-f]{48})\/?$/);
+  if (wh) return await nrsWebhook(req, wh[1]);
+  if (/\/nrs-hook(\/|$)/.test(path)) return json({ ok: false }, 404);
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
   const auth = req.headers.get('Authorization') || '';
   const sb = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: auth } }, auth: { persistSession: false } });

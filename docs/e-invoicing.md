@@ -24,7 +24,9 @@ The API is version 1.1 of the MBS API, documented at einvoice.nrs.gov.ng (API Do
 | Sign it | `POST /api/v1/invoice/sign` |
 | Confirm, download | `GET /api/v1/invoice/confirm/{irn}`, `GET /api/v1/invoice/download/{irn}` |
 | Payment status | `PATCH /api/v1/invoice/update/{irn}` with `payment_status` PENDING, PAID or REJECTED |
-| Send to the buyer, look up | `POST /api/v1/invoice/transmit/{irn}`, `GET /api/v1/invoice/transmit/lookup/{irn or tin}` |
+| Send to the buyer | `POST /api/v1/invoice/transmit/{irn}` (APP keys) |
+| Look up, check the set-up | `GET /api/v1/invoice/transmit/lookup/{irn}`, `GET /api/v1/invoice/transmit/lookup/tin/{tin}`, `GET /api/v1/invoice/transmit/self-health-check` (APP keys) |
+| Confirm an invoice arrived | `PATCH /api/v1/invoice/transmit/{irn}` (APP keys) |
 
 The documentation has no sample answers, so the first test (below) records the shape of each answer before anything is mapped.
 
@@ -41,7 +43,7 @@ All of these are set as Supabase Edge Function secrets, or in TaxStreem's admin 
 | `NRS_BUSINESS_ID` | TaxStreem's Business ID on the MBS |
 | `NRS_SERVICE_ID` | TaxStreem's 8-character Service ID, kept in capitals |
 | `NRS_CRYPTO_KEYS` | The whole of `crypto_keys.txt` (My Account, Manage Cryptographic Keys): `{ "public_key": …, "certificate": … }`. Shown by the end of its certificate. |
-| `NRS_APP_API_KEY`, `NRS_APP_API_SECRET` | Optional: only if the dashboard gives the APP role its own key pair |
+| `NRS_APP_API_KEY`, `NRS_APP_API_SECRET` | TaxStreem's access point keys, from NRS's APP portal (einvoice.nrs.gov.ng/access-point), Developer section. The exchange between access points needs them (part 3); until they are set, the dashboard's keys are tried. |
 | `GOOGLE_KMS_KEY_RING` | Optional: the Cloud KMS key ring, by default `projects/<project>/locations/us-central1/keyRings/counta-einvoice` |
 
 ## The HSM keys
@@ -126,6 +128,26 @@ Each sale has one row in `einvoice_docs`, readable only through the app's functi
 **On TaxStreem's keys.** Businesses share TaxStreem's Service ID, so the number part of the IRN starts with four characters of the business's id (`848BRCT000015-94ND90NR-20261031`), and two businesses with the same invoice number never clash.
 
 **Keeping an eye on it.** Settings, E-invoicing, shows how many sales NRS has signed, how many wait and how many it refused, and lists the sales that need a person: refused ones, and those waiting more than an hour or tried three times. A sale waiting 12 hours, and again at 20, sends an alert by push and email to whoever changes the settings. A service code Gemini was less sure of than the business's threshold (at least 80%) waits for the owner to confirm it before sending can start.
+
+## Between access points (part 3)
+
+As the access point provider, TaxStreem sends each signed sale to a business or government to the buyer through NRS, and brings in the invoices NRS delivers to Counta businesses. The API is NRS's exchange (`/docs/access-point-providers/exchange`). It works only with an access point's keys: NRS refused Kelandellen's own keys with 403 on every exchange call (31 October 2026). The download worked with them.
+
+**Setting it up.** TaxStreem signs in to NRS's APP portal (einvoice.nrs.gov.ng/access-point). In the Developer section it copies the APP key and secret into the admin portal (Keys and services, NRS e-invoicing) and pastes Counta's webhook address as the Webhook URL. The admin portal shows that address under NRS e-invoicing: `<Supabase>/functions/v1/einvoice/nrs-hook/<token>`, the token kept in Vault as `NRS_WEBHOOK_TOKEN`. NRS sends a test notification when the address is saved, so the function must be live first. The IP access list stays empty, because Supabase does not send from fixed addresses. Each business chooses TaxStreem as its access point provider on its own NRS dashboard (Profile, Access Points), with the permissions to view, submit and reject invoices.
+
+**Notifications.** NRS posts `{ irn, message }` to the webhook address of every access point an invoice involves, with message `TRANSMITTING`, `TRANSMITTED`, `ACKNOWLEDGED` or `FAILED`. NRS signs nothing, so the address carries the secret, and nothing in a notification is believed until NRS answers for it: a notification only moves a sale Counta sent, or starts the download of an invoice. Every one is kept in `einvoice_webhooks`, the access point's record of transmissions, and answered 200 at once. An error answers 500 so that NRS sends it again.
+
+**Sending to the buyer.** A cleared sale is due to go to the buyer as soon as NRS signs it (a trigger on `einvoice_docs`). As it is issued, the function signs it and sends it in the same call. Otherwise the five-minute tick picks it up. `POST transmit/{irn}` with the APP keys moves it to `transmitting`; the notifications then take it to `transmitted` (delivered to the buyer's access point) and `acknowledged` (the buyer's access point confirmed it). A late notification never moves it back. NRS down or busy, or refusing the keys, is tried again (1, 5, 15 and 30 minutes, then hourly, six tries). A refusal of the keys says the business may need to choose TaxStreem as its provider. NRS refusing to send it (a buyer with no access point, say) or a `FAILED` notification marks it not delivered, with NRS's words. Whoever records sales is told, Settings lists it, and the sale has a button to send it again (`einvoice_send_to_buyer`). Receipts to people are never sent. Sales NRS signed before part 3 ran stay as they were: only those signed after go to the buyer on their own.
+
+**Receiving.** A `TRANSMITTING` or `TRANSMITTED` notification about an invoice that is not Counta's own sale (or is a sale to another Counta business) adds it to `einvoice_inbound`. The function downloads it with the APP keys and opens it. The answer is `{ iv_hex, pub, data }`, encrypted with AES-256-CFB: the key is `pub` followed by the APP key up to its first hyphen (32 characters), the IV is `iv_hex` and `data` is base64url. Deno's `node:crypto` has no CFB mode, so `@noble/ciphers` does the decrypting (checked against OpenSSL). The business is found by the buyer's Tax ID among the businesses taking e-invoices, never a sample. A buyer no Counta business is stays `unmatched`. Counta's own sale between two of its businesses is skipped on the seller's side. NRS's invoice is kept in the business's documents (`<org>/bills/nrs-<irn>.json`) and written as a supplier invoice with `source` `nrs` and its IRN. It goes through the same steps as one a supplier uploads: the supplier found or added by its Tax ID, a draft bill, the same checks, and the bookkeepers told. It never reaches the books until someone approves it. The lines and totals come from the invoice itself. Gemini only suggests the account for each line and the withholding tax type, from the business's own accounts; an account it makes up is not used, and with no answer the supplier's usual account applies. A credit note comes in to review with no bill. Then the function confirms receipt with `PATCH transmit/{irn}`; the bill is written either way, and the receipt is tried again for up to a day. An invoice that will not open is marked failed with the reason; NRS notifying about it again tries again at once.
+
+**The admin test** now also tries the exchange with the APP keys: the self check (NRS posts a test notification to the webhook address), the newest signed invoice looked up by its IRN and by the buyer's and seller's Tax IDs (`/lookup/tin/`), and the invoice downloaded and opened, with the APP key and with the keys that signed it. Only whether it opened and is the right invoice is kept, never what it holds.
+
+| Table | Who reads it | What it holds |
+| --- | --- | --- |
+| `einvoice_webhooks` | The functions only | Every notification from NRS: when, the IRN, the message, the body, and the sale or invoice it was matched to. |
+| `einvoice_inbound` | The functions only | Each invoice NRS delivered for a Counta business: where it stands (due, fetching, billed, confirmed, unmatched, skipped, failed), the business, supplier, totals, NRS's invoice itself, and its supplier invoice. |
+| `einvoice_docs` (added) | As before | `xm_state`, `xm_tries`, `xm_next_at`, `xm_note`, `xm_at`, `xm_sent_at`: the sale on its way to the buyer. The sale's `einvoice.buyer` shows it. |
 
 ## The NITDA guideline
 
