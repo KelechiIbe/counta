@@ -187,6 +187,25 @@ export async function salePdf(d: DocData & { status?: string; original_number?: 
     y += 6; doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(107, 114, 128); doc.text(T(k.toUpperCase()), 40, y); y += 11;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(31, 41, 55); doc.text(lines, 40, y); y += lines.length * 10.5;
   }
+  // The NRS e-invoice: the QR code NRS's MBS 360 app reads, and the IRN.
+  const e = d.einvoice;
+  if (e?.irn && (e.signed === true || e.state === 'signed' || (e.kind === 'report' && ['waiting', 'sending'].includes(String(e.state))))) {
+    if (y + 90 > doc.internal.pageSize.getHeight() - 50) { doc.addPage(); y = 50; }
+    y += 8;
+    let x = 40;
+    if (e.qr) {
+      try {
+        const QR = (await import('qrcode')).default;
+        doc.addImage(await QR.toDataURL(e.qr, { margin: 0, width: 240, errorCorrectionLevel: 'M' }), 'PNG', 40, y, 72, 72);
+        x = 122;
+      } catch { /* the IRN alone */ }
+    }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(17, 24, 39);
+    doc.text(T(`NRS e-invoice${e.signed === true || e.state === 'signed' ? ', signed by NRS' : ''}`), x, y + 12);
+    doc.setFont('courier', 'normal'); doc.setFontSize(8); doc.text(T(`IRN ${e.irn}`), x, y + 25);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(107, 114, 128); doc.text(T('Scan with NRS\'s MBS 360 app to check it.'), x, y + 37);
+    y += e.qr ? 80 : 44;
+  }
   if (o.invoice_footer) {
     const lines = doc.splitTextToSize(T(o.invoice_footer), W - 80);
     if (y + lines.length * 10 + 10 > doc.internal.pageSize.getHeight() - 40) { doc.addPage(); y = 50; }

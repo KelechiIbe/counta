@@ -2,6 +2,7 @@
 // browser's print dialog on an 80 mm or A4 page.
 import type { Sale } from './api';
 import { vatPct } from './vat';
+import { qrSvg } from './labels';
 
 // Services that common 58 mm and 80 mm Bluetooth receipt printers expose.
 const SERVICES = [
@@ -71,6 +72,13 @@ export function receiptText(s: Sale, width = 32): string[] {
   if (Number(s.change)) out.push(pad('Change', amt(Number(s.change))));
   if (Number(s.balance) > 0.004) out.push(pad('Balance due', amt(s.balance)));
   out.push(rule);
+  // The NRS e-invoice reference, once the receipt may reach the buyer.
+  if (stamped(s)) {
+    out.push(center('NRS e-invoice' + (s.einvoice!.state === 'signed' ? ', signed' : '')));
+    const irn = 'IRN ' + s.einvoice!.irn;
+    for (let i = 0; i < irn.length; i += width) out.push(center(irn.slice(i, i + width)));
+    out.push(rule);
+  }
   if (s.org?.receipt_footer) out.push(center(s.org.receipt_footer));
   out.push(center('Powered by Counta'));
   return out;
@@ -89,13 +97,19 @@ export async function printBluetooth(s: Sale, width = 32) {
   await write(new Uint8Array(parts));
 }
 
-// The browser's own print dialog, laid out for an 80 mm roll.
-export function printBrowser(s: Sale) {
+// A sale to an individual shows its IRN and QR code at once; one to a business once NRS has signed it.
+const stamped = (s: Sale) => !!s.einvoice?.irn && (s.einvoice.state === 'signed' || (s.einvoice.kind === 'report' && ['waiting', 'sending'].includes(s.einvoice.state)));
+
+// The browser's own print dialog, laid out for an 80 mm roll, with the NRS QR code under the receipt when it has one.
+export async function printBrowser(s: Sale) {
   const w = window.open('', '_blank', 'width=420,height=640');
   if (!w) throw new Error('Allow pop-ups to print receipts.');
   const esc = (t: string) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
+  let qr = '';
+  if (stamped(s) && s.einvoice?.qr) { try { qr = await qrSvg(s.einvoice.qr, 150); } catch { qr = ''; } }
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(s.number)}</title><style>
     @page { size: 80mm auto; margin: 4mm } body { font: 12px/1.35 ui-monospace, Menlo, monospace; margin: 0; } pre { margin: 0; white-space: pre-wrap; }
-  </style></head><body><pre>${esc(receiptText(s, 42).join('\n'))}</pre><script>window.onload = () => { window.print(); setTimeout(() => window.close(), 400); }<\/script></body></html>`);
+    .qr { text-align: center; margin-top: 6px } .qr svg { width: 38mm; height: 38mm }
+  </style></head><body><pre>${esc(receiptText(s, 42).join('\n'))}</pre>${qr ? `<div class="qr">${qr}</div>` : ''}<script>window.onload = () => { window.print(); setTimeout(() => window.close(), 400); }<\/script></body></html>`);
   w.document.close();
 }

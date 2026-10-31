@@ -30,6 +30,8 @@ export interface SaleRow {
   overdue_days: number; pending: number; confirmed: boolean; public_token: string; sent_at: string | null; viewed_at: string | null; location_id: string | null;
   cost_total?: number; created_by_name?: string; shift_id?: string | null; reference?: string | null;
   export?: boolean; customer_country?: string | null; pay_later?: boolean; vat_statuses?: number[];
+  // Where the sale stands with NRS (e-invoicing): waiting, sending, signed, refused or stopped; null when it does not go.
+  irn?: string | null; irn_status?: string | null;
 }
 export interface SaleLine {
   id: string; item_id: string | null; description: string; kind: 'goods' | 'service' | 'delivery'; qty: number; unit_label: string; unit_price: number; list_price: number | null;
@@ -46,6 +48,13 @@ export interface Sale extends SaleRow {
   org: Record<string, any>; customer: Record<string, any> | null; customer_phone: string | null; customer_email: string | null; customer_credit?: number;
   prices_include_vat: boolean; vat_registered: boolean; notes: string | null; terms: string | null; delivery_method: string | null; delivery_address: string | null;
   delivery_fee?: number; discount_total?: number; export_note?: string | null; journal_ref?: string | null; journal_id?: string | null; location_name?: string | null; original_sale_id?: string | null; converted_to?: string | null; change?: number;
+  einvoice?: SaleEinvoice | null;
+}
+// A sale's e-invoice: cleared (signed by NRS before the buyer gets it) or reported (sent after, within the day). A held
+// invoice stays a draft until NRS signs it.
+export interface SaleEinvoice {
+  irn: string | null; kind: 'clear' | 'report'; state: 'waiting' | 'sending' | 'signed' | 'refused' | 'stopped'; held: boolean; qr: string | null; note: string | null;
+  signed_at: string | null; tries: number; next_try_at: string | null; pay_status: string | null; platform_keys: boolean | null;
 }
 export interface PayRequest {
   id: string; tx_ref?: string; method: 'account' | 'link' | 'qr'; rail?: string; amount: number; status: string; account_number: string | null; bank_name: string | null;
