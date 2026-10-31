@@ -51,7 +51,7 @@ export function SupplierInvoices({ openId, onOpen, onClose, onOpenBill }: { open
             : !rows.length ? <div style={{ padding: 20 }}><Empty>{filter === 'open' ? 'Nothing waiting. Invoices suppliers send on your link, and ones you upload, appear here once Counta has read them.' : 'No invoices here.'}</Empty></div>
             : rows.map((r) => (
               <div key={r.id} className="tr click" onClick={() => onOpen(r.id)} style={{ gridTemplateColumns: '110px minmax(170px,1.5fr) 150px 120px minmax(150px,1fr) 120px', minWidth: 860 }}>
-                <span><b>{r.number}</b><span className="faint" style={{ display: 'block', fontSize: 11 }}>{r.source === 'portal' ? 'sent by the supplier' : 'uploaded'} · {when(r.created_at)}</span></span>
+                <span><b>{r.number}</b><span className="faint" style={{ display: 'block', fontSize: 11 }}>{r.source === 'portal' ? 'sent by the supplier' : r.source === 'nrs' ? 'received through NRS' : 'uploaded'} · {when(r.created_at)}</span></span>
                 <span className="ellipsis">{r.vendor_name || '—'}{r.vendor_created && <span className="chip t-blue" style={{ marginLeft: 6 }}>new supplier</span>}</span>
                 <span className="muted ellipsis">{r.invoice_no || '—'}{r.invoice_date ? ` · ${fmtDay(r.invoice_date)}` : ''}</span>
                 <span className="right num">{r.total != null ? N2(r.total) : '—'}</span>
@@ -203,7 +203,8 @@ function SupplierInvoiceDrawer({ id, onClose, onOpenBill }: { id: string; onClos
     <Drawer onClose={onClose} width={680}>
       <div className="drawer-hd"><div className="grow">
         <div className="row" style={{ gap: 8 }}><div className="drawer-title">{si ? `${si.number} · ${si.vendor?.name || x.supplier?.name || 'Supplier invoice'}` : 'Loading…'}</div>{si && <StatusChip s={si.status} />}</div>
-        {si && <div className="muted" style={{ fontSize: 13 }}>{si.source === 'portal' ? `Sent by ${si.submitter?.name || 'the supplier'}${si.submitter?.email ? ` (${si.submitter.email})` : si.submitter?.phone ? ` (${si.submitter.phone})` : ''}` : `Uploaded by ${si.submitted_by_name || 'someone in the business'}`} · {when(si.created_at)}</div>}
+        {si && <div className="muted" style={{ fontSize: 13 }} data-testid="si-source">{si.source === 'portal' ? `Sent by ${si.submitter?.name || 'the supplier'}${si.submitter?.email ? ` (${si.submitter.email})` : si.submitter?.phone ? ` (${si.submitter.phone})` : ''}`
+          : si.source === 'nrs' ? `Received through NRS e-invoicing, signed by NRS · IRN ${si.nrs_irn}` : `Uploaded by ${si.submitted_by_name || 'someone in the business'}`} · {when(si.created_at)}</div>}
       </div><button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button></div>
       <div className="drawer-body stack" style={{ gap: 14 }}>
         {!si ? <Spinner /> : si.status === 'reading' ? <Alert kind="blue" icon="clock"><span className="row" style={{ gap: 8 }}><Spinner small />Counta is reading the invoice.</span></Alert> : (
@@ -212,7 +213,7 @@ function SupplierInvoiceDrawer({ id, onClose, onOpenBill }: { id: string; onClos
             {si.status === 'rejected' && <Alert kind="grey" icon="undo">Rejected {when(si.decided_at)}{si.decided_by_name ? ` by ${si.decided_by_name}` : ''}{si.rejected_reason ? `: ${si.rejected_reason}` : '.'}</Alert>}
             {si.status === 'approved' && <Alert kind="green" icon="check">Approved for payment {when(si.decided_at)}{si.decided_by_name ? ` by ${si.decided_by_name}` : ''}. Pay it from the bill.</Alert>}
             <div className="row wrap" style={{ gap: 8 }}>
-              {si.document_path && <button className="btn btn-secondary btn-sm" onClick={openFile}><Icon name="file" size={14} />Open the invoice</button>}
+              {si.document_path && <button className="btn btn-secondary btn-sm" onClick={openFile}><Icon name="file" size={14} />{si.source === 'nrs' ? 'Open NRS\'s copy' : 'Open the invoice'}</button>}
               {si.bill && <button className="btn btn-secondary btn-sm" onClick={() => onOpenBill(si.bill.id)}><Icon name="receipt" size={14} />{si.bill.number} · {si.bill.status}</button>}
             </div>
             {checks.length > 0 && (

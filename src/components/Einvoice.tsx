@@ -51,6 +51,41 @@ export function nrsChip(status?: string | null) {
   return <span className={'chip ' + tone} style={{ marginLeft: 4 }} data-testid="nrs-chip">{label}</span>;
 }
 
+// A signed sale to a business or government, sent to the buyer's access point through NRS (part 3).
+const BUYER_WORDS: Record<string, string> = {
+  due: 'Going to the buyer through NRS.', sending: 'Going to the buyer through NRS.', transmitting: 'NRS is sending it to the buyer.',
+  transmitted: 'Delivered to the buyer through NRS.', acknowledged: 'The buyer\'s access point has it.', failed: 'NRS could not deliver it to the buyer.',
+};
+function BuyerDelivery({ sale, b, canAct }: { sale: Sale; b: NonNullable<SaleEinvoice['buyer']>; canAct: boolean }) {
+  const qc = useQueryClient();
+  const { run, busy } = useAction();
+  const moving = ['due', 'sending', 'transmitting'].includes(b.state);
+  // While it is on its way, ask again every three seconds, for a minute.
+  useEffect(() => {
+    if (!moving) return;
+    let n = 0;
+    const t = window.setInterval(() => { n += 1; qc.invalidateQueries({ queryKey: ['sale', sale.id] }); if (n >= 20) window.clearInterval(t); }, 3000);
+    return () => window.clearInterval(t);
+  }, [b.state, sale.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const words = BUYER_WORDS[b.state] || b.state;
+  if (b.state === 'failed') {
+    return (
+      <Alert kind="amber" icon="alert">
+        <div data-testid="einv-buyer" data-state={b.state} style={{ wordBreak: 'break-word' }}>{words}{b.note && !/^NRS could not deliver/.test(b.note) ? ` ${b.note}` : ''}</div>
+        {canAct && <div style={{ marginTop: 8 }}><button className="btn btn-secondary btn-sm" disabled={busy}
+          onClick={() => run(() => rpc('einvoice_send_to_buyer', { p_sale: sale.id }), { ok: `${sale.number} is going to the buyer again`, invalidate: ['sale', 'sales', 'einvoice'] })}>Send to the buyer again</button></div>}
+      </Alert>
+    );
+  }
+  return (
+    <div className="row" style={{ gap: 8, fontSize: 13 }} data-testid="einv-buyer" data-state={b.state}>
+      <span className={'chip ' + (b.state === 'acknowledged' || b.state === 'transmitted' ? 't-green' : 't-amber')}>{b.state === 'acknowledged' ? 'Received' : b.state === 'transmitted' ? 'Delivered' : 'On its way'}</span>
+      {/* NRS's reason for a retry, unless it is TaxStreem's own set-up (the APP keys), which the business cannot change. */}
+      <span className="muted" style={{ wordBreak: 'break-word' }}>{words}{moving && b.note && !/^TaxStreem's access point keys/.test(b.note) ? ` ${b.note}` : ''}{!moving && b.at ? ` ${when(b.at)}` : ''}</span>
+    </div>
+  );
+}
+
 // Where the sale stands with NRS, kept fresh while NRS is still answering.
 export function EinvoiceStatus({ sale, canAct = true }: { sale: Sale; canAct?: boolean }) {
   const e = sale.einvoice;
@@ -98,6 +133,7 @@ export function EinvoiceStatus({ sale, canAct = true }: { sale: Sale; canAct?: b
       {e.state === 'signed' && (
         <Alert kind="green" icon="check">Signed by NRS{e.signed_at ? ` ${when(e.signed_at)}` : ''}.{e.pay_status === 'PAID' ? ' NRS knows it is paid.' : ''}</Alert>
       )}
+      {e.state === 'signed' && e.buyer && <BuyerDelivery sale={sale} b={e.buyer} canAct={canAct} />}
       {e.state === 'refused' && (
         <Alert kind="red" icon="alert">
           <div style={{ wordBreak: 'break-word' }}>{/^(NRS refused|Not sent)/.test(e.note || '') ? e.note : `NRS refused it. ${e.note || ''}`}</div>

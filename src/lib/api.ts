@@ -55,6 +55,9 @@ export interface Sale extends SaleRow {
 export interface SaleEinvoice {
   irn: string | null; kind: 'clear' | 'report'; state: 'waiting' | 'sending' | 'signed' | 'refused' | 'stopped'; held: boolean; qr: string | null; note: string | null;
   signed_at: string | null; tries: number; next_try_at: string | null; pay_status: string | null; platform_keys: boolean | null;
+  // Sent to the buyer through NRS (a cleared sale, once signed): on its way, delivered, received, or not delivered.
+  buyer?: { state: 'due' | 'sending' | 'transmitting' | 'transmitted' | 'acknowledged' | 'failed'; note: string | null; at: string | null; sent_at: string | null;
+    tries: number; next_at: string | null } | null;
 }
 export interface PayRequest {
   id: string; tx_ref?: string; method: 'account' | 'link' | 'qr'; rail?: string; amount: number; status: string; account_number: string | null; bank_name: string | null;

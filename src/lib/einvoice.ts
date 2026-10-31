@@ -20,6 +20,9 @@ export type EinvSettings = {
 // How the sending is going: sales waiting for NRS, signed, refused, and the ones that need a person.
 export type EinvQueue = {
   waiting: number; oldest_at: string | null; signed_today: number; signed: number; refused: number; pay_waiting: number;
+  // Signed sales sent to buyers through NRS, and invoices NRS brought in from suppliers.
+  to_buyers?: { sending: number; delivered: number; acknowledged: number; failed: number };
+  received?: { total: number; to_review: number; failed: number };
   attention: { sale_id: string; number: string; doc_type: string; customer_name: string | null; total: number; state: string; held: boolean; note: string | null; tries: number; at: string }[];
 };
 export type NrsCode = { code: string; label: string | null };
