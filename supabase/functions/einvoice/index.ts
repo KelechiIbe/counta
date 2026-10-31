@@ -35,10 +35,22 @@
 //   /einvoice/nrs-hook/<token>     { irn, message: TRANSMITTING | TRANSMITTED | ACKNOWLEDGED | FAILED } about an invoice
 //                                      sent between access points. Each is kept; it moves the sale Counta sent, and an
 //                                      invoice to a Counta business is downloaded, opened and written as a draft bill.
+//
+// Prism, TaxStreem's product for partners (x-taxstreem-signature, signed with TAXSTREEM_SSO_SECRET; docs/prism-einvoicing.md),
+// POSTs to /einvoice/prism/...:
+//   merchant        { org_id, merchant, nrs }        -> the merchant's business, made on the first call; its NRS keys
+//                                                       wrapped in the HSM and tested with NRS; e-invoicing switched on
+//                                                       once NRS has everything.
+//   einvoices       { org_id, partner, invoice, merchant?, nrs? } -> an invoice in the merchant's books (partner.books) or
+//                                                       e-invoicing only, sent to NRS at once; answered with where it stands.
+//   einvoice-status { org_id, partner_id, ref }       -> where an invoice stands.
+//   einvoice-paid   { org_id, partner_id, ref, paid } -> a payment the partner reports; NRS is told once it is paid in full.
+// Prism hears each change (signed, refused, delivered to the buyer, paid) at PRISM_CALLBACK_URL, signed the same way
+// (x-counta-signature), and again until it answers 2xx.
 // See invoice.ts for how a sale is written for NRS, exchange.ts for how a received one is read, and docs/e-invoicing.md.
 //
 // Keys are read from Supabase Vault (set in the admin portal) first, then from the Edge Function secrets. NRS_BASE_URL is
-// the address on the NRS dashboard; KMS_BASE_URL is for tests.
+// the address on the NRS dashboard; KMS_BASE_URL and PRISM_TEST_HOSTS are for tests.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { publicEncrypt, constants } from 'node:crypto';
 import { Buffer } from 'node:buffer';
@@ -47,6 +59,7 @@ import * as K from './kms.ts';
 import { codeRow, entityName, firstList, holds, mask, MAYBE_LISTS, nrsBase, nrsCall, nrsWhy, QUANTITY_LISTS, readCryptoKeys, RESOURCE_LISTS, shape, valuesUnder, type NrsAnswer, type NrsKeys } from './nrs.ts';
 import { buildInvoice, type Claim, missing, missingNow, refusalInWords } from './invoice.ts';
 import { decryptDownload, inboundExtract, suggestAccounts } from './exchange.ts';
+import { Answer, dbAnswer, signBody, verifySigned } from './prism.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -759,10 +772,173 @@ async function nrsWebhook(req: Request, token: string): Promise<Response> {
   if (data?.inbound_id && data?.fetch) {
     const work = (async () => inboundOne(String(data.inbound_id), nrsBase(await secret('NRS_BASE_URL')), await appKeys()))()
       .catch((e) => { console.error('einvoice: inbound', (e as Error).message); return 'error'; });
-    const rt = (globalThis as any).EdgeRuntime;
-    if (rt?.waitUntil) rt.waitUntil(work); else await work;
+    await afterAnswer(work);
   }
+  // A partner's invoice that moved on: Prism hears now rather than at the next tick.
+  if (data?.sale_id) await afterAnswer(callbacksForDoc(String(data.sale_id)));
   return json({ ok: true });
+}
+
+// Work that carries on after the answer on Supabase; run before it elsewhere (the tests).
+async function afterAnswer(work: Promise<unknown>) {
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt?.waitUntil) rt.waitUntil(work.catch((e) => console.error('einvoice: after', (e as Error).message))); else await work.catch(() => null);
+}
+
+// ------------------------------------------------------------------ Prism's channel for partners (part 3)
+// Prism holds the partners' keys and credits; Counta keeps each merchant's business, sends the invoices to NRS and tells
+// Prism how they went. docs/prism-einvoicing.md has the contract.
+const PRISM_ROUTE = /\/prism\/(merchant|einvoices|einvoice-status|einvoice-paid)\/?$/;
+const NRS_FIELDS = ['api_key', 'api_secret', 'crypto_keys'] as const;
+
+async function orgFor(tsid: string): Promise<string | null> {
+  const { data } = await admin.from('orgs').select('id').eq('taxstreem_org_id', tsid).maybeSingle();
+  return data?.id ? String(data.id) : null;
+}
+const noMerchant = () => new Answer(404, { ok: false, error: 'Counta has no merchant with this org_id yet. Send it first: /prism/merchant, or merchant and nrs with its first invoice.' });
+
+// The merchant's business and NRS details: made or kept up to date, the keys wrapped in the HSM (bound to the business and
+// the field, as in Settings), tested with NRS when they are new, and e-invoicing switched on once NRS has everything.
+async function prismMerchant(tsid: string, body: any) {
+  const nrs = body.nrs && typeof body.nrs === 'object' && !Array.isArray(body.nrs) ? body.nrs : {};
+  const { data: mm, error } = await admin.rpc('svc_prism_merchant', { p_tsid: tsid,
+    p: { merchant: body.merchant ?? {}, nrs: { business_id: nrs.business_id ?? null, service_id: nrs.service_id ?? null } } });
+  if (error) throw dbAnswer(error);
+  const orgId = String(mm.org_id);
+  const given = NRS_FIELDS.filter((f) => typeof nrs[f] === 'string' && nrs[f].trim());
+  if (given.length) {
+    const p: Record<string, { ct: string; hint: string }> = {};
+    let cfg: GeminiConfig | null = null, ring = '';
+    try {
+      const inputs = given.map((f) => {
+        try { return [f, keyInput(f, nrs[f])] as const; }
+        catch (e) { throw e instanceof Refusal ? new Refusal(`nrs.${f}: ${e.message}`, 422) : e; }
+      });
+      ({ cfg, ring } = await kmsSetup());
+      for (const [f, x] of inputs) p[f] = { ct: await K.encrypt(cfg, ring, enc.encode(x.plain!), aad(orgId, f)), hint: x.hint! };
+    } catch (e) {
+      const merchant = { counta_org_id: orgId, created: mm.created };
+      if (e instanceof Refusal) throw new Answer(e.status === 503 ? 503 : 422, { ok: false, error: e.message, merchant });
+      throw new Answer(502, { ok: false, error: cfg ? kmsProblem(e, cfg, 'wrap the keys', ring, K.CREDENTIALS_KEY, 'Cloud KMS CryptoKey Encrypter/Decrypter') : (e as Error).message, merchant });
+    }
+    const { error: ke } = await admin.rpc('svc_einvoice_keys_save', { p_org: orgId, p_user: null, p });
+    if (ke) throw dbAnswer(ke);
+  }
+  // NRS tests the keys when they, or the Business ID or Service ID, are new to the last test.
+  let check: { ok: boolean; note: string; saved: boolean } | null = null;
+  const { data: st } = await admin.from('einvoice_settings').select('platform_keys, keys_version, check_version, business_id, service_id, api_key_ct, api_secret_ct, crypto_ct')
+    .eq('org_id', orgId).maybeSingle();
+  if (st && !st.platform_keys && st.check_version !== st.keys_version && st.business_id && st.service_id && st.api_key_ct && st.api_secret_ct && st.crypto_ct) {
+    check = await businessCheck(orgId, null as unknown as string);
+  }
+  const { data: en, error: ee } = await admin.rpc('svc_prism_enable', { p_org: orgId });
+  if (ee) throw dbAnswer(ee);
+  return { counta_org_id: orgId, created: Boolean(mm.created), name: mm.name,
+    einvoicing: { enabled: Boolean(en.enabled), platform_keys: Boolean(en.platform_keys), keys: en.keys,
+      check: check ? { ok: check.ok, note: check.note } : en.check, missing: en.missing || [] } };
+}
+
+// An invoice: recorded (in the books or e-invoicing only), sent to NRS now, and answered with where it stands. Prism hears
+// the rest by callback.
+async function prismInvoice(tsid: string, body: any) {
+  if (!body.partner || typeof body.partner !== 'object') throw new Answer(400, { ok: false, error: 'partner is required: { id, name, books }.' });
+  if (!body.invoice || typeof body.invoice !== 'object' || Array.isArray(body.invoice)) throw new Answer(400, { ok: false, error: 'invoice is required.' });
+  let merchant: Awaited<ReturnType<typeof prismMerchant>> | null = null;
+  let orgId = await orgFor(tsid);
+  if (body.merchant || body.nrs) { merchant = await prismMerchant(tsid, body); orgId = merchant.counta_org_id; }
+  if (!orgId) throw noMerchant();
+  const { data, error } = await admin.rpc('svc_prism_einvoice', { p_org: orgId, p_partner: body.partner, p_inv: body.invoice });
+  if (error) throw dbAnswer(error, merchant ? { merchant } : {});
+  let invoice = data.invoice;
+  if (data.kick) {
+    await sendDue(String(data.kick));
+    const { data: now } = await admin.rpc('svc_prism_einvoice_status', { p_org: orgId, p_partner: String(body.partner.id), p_ref: String(body.invoice.ref) });
+    if (now) invoice = now;
+  }
+  await afterAnswer(callbacksFor(String(invoice.id)));
+  return { ok: true, duplicate: Boolean(data.duplicate), resubmitted: Boolean(data.resubmitted), invoice, ...(merchant ? { merchant } : {}) };
+}
+
+async function prismRoute(route: string, req: Request): Promise<Response> {
+  if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
+  const raw = await req.text();
+  if (raw.length > 1_000_000) return json({ ok: false, error: 'The body is larger than 1 MB.' }, 413);
+  if (!(await verifySigned(raw, req.headers.get('x-taxstreem-signature'), await secret('TAXSTREEM_SSO_SECRET')))) return json({ ok: false, error: 'Bad signature.' }, 401);
+  let body: any;
+  try { body = JSON.parse(raw); } catch { return json({ ok: false, error: 'Invalid JSON.' }, 400); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ ok: false, error: 'The body must be a JSON object.' }, 400);
+  const tsid = String(body.org_id ?? '').trim();
+  if (!tsid) return json({ ok: false, error: 'org_id is required: the merchant\'s TaxStreem business id.' }, 400);
+  try {
+    if (route === 'merchant') return json({ ok: true, merchant: await prismMerchant(tsid, body) });
+    if (route === 'einvoices') return json(await prismInvoice(tsid, body));
+    const orgId = await orgFor(tsid);
+    if (!orgId) throw noMerchant();
+    const partner = String(body.partner_id ?? '').trim(), ref = String(body.ref ?? '').trim();
+    if (!partner || !ref) throw new Answer(400, { ok: false, error: 'partner_id and ref are required.' });
+    if (route === 'einvoice-status') {
+      const { data, error } = await admin.rpc('svc_prism_einvoice_status', { p_org: orgId, p_partner: partner, p_ref: ref });
+      if (error) throw dbAnswer(error);
+      if (!data) throw new Answer(404, { ok: false, error: `No invoice ${ref} from this partner for the merchant.` });
+      return json({ ok: true, invoice: data });
+    }
+    const { data, error } = await admin.rpc('svc_prism_einvoice_paid', { p_org: orgId, p_partner: partner, p_ref: ref, p: body.paid && typeof body.paid === 'object' ? body.paid : {} });
+    if (error) throw dbAnswer(error);
+    let invoice = data.invoice;
+    if (data.pay) {
+      await payOne(String(data.pay), new Map(), nrsBase(await secret('NRS_BASE_URL')));
+      const { data: now } = await admin.rpc('svc_prism_einvoice_status', { p_org: orgId, p_partner: partner, p_ref: ref });
+      if (now) invoice = now;
+    }
+    await afterAnswer(callbacksFor(String(invoice.id)));
+    return json({ ok: true, invoice });
+  } catch (e) {
+    if (e instanceof Answer) return json(e.body, e.status);
+    console.error('einvoice: prism', route, (e as Error).message);
+    return json({ ok: false, error: 'Counta could not finish this just now. Try again.' }, 500);
+  }
+}
+
+// Hosts other than https ones a callback may go to: only for tests.
+const prismTestHosts = () => new Set((Deno.env.get('PRISM_TEST_HOSTS') || '').split(',').map((h) => h.trim()).filter(Boolean));
+
+// One callback to Prism: the change and the invoice as it is now, signed. A 2xx answer ends it; anything else is tried
+// again (a minute, then longer, for about a day). Without an address it waits, uncounted.
+async function deliverCallback(id: string): Promise<string> {
+  const { data: c, error } = await admin.rpc('svc_prism_callback_claim', { p_id: id });
+  if (error) { console.error('einvoice: callback claim', id, error.message); return 'error'; }
+  if (c?.skip) return `skip:${c.skip}`;
+  const done = async (p: Record<string, unknown>) => {
+    const { error: e } = await admin.rpc('svc_prism_callback_done', { p_id: id, p });
+    if (e) console.error('einvoice: callback done', id, e.message);
+  };
+  const url = (await secret('PRISM_CALLBACK_URL')).trim(), key = await secret('TAXSTREEM_SSO_SECRET');
+  let u: URL | null = null;
+  try { u = url ? new URL(url) : null; } catch { u = null; }
+  const why = !url ? 'PRISM_CALLBACK_URL is not set.' : !u ? 'PRISM_CALLBACK_URL is not a web address.'
+    : u.protocol !== 'https:' && !prismTestHosts().has(u.origin) ? 'PRISM_CALLBACK_URL must be an https address.' : !key ? 'TAXSTREEM_SSO_SECRET is not set.' : '';
+  if (why) { await done({ outcome: 'wait', note: why }); return 'callback-wait'; }
+  const raw = JSON.stringify(c.body);
+  try {
+    const r = await fetch(u!, { method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(15_000), body: raw,
+      headers: { 'Content-Type': 'application/json', 'x-counta-signature': await signBody(raw, key), 'x-counta-event': 'einvoice.updated', 'x-counta-delivery': id } });
+    await r.body?.cancel();
+    if (r.status >= 200 && r.status < 300) { await done({ outcome: 'sent', status: r.status }); return 'callback'; }
+    await done({ outcome: 'retry', status: r.status, note: `Prism answered ${r.status}.` });
+  } catch (e) {
+    await done({ outcome: 'retry', note: `Prism did not answer: ${(e as Error).message}`.slice(0, 300) });
+  }
+  return 'callback-retry';
+}
+// The callbacks due for one of Prism's invoices, oldest first.
+async function callbacksFor(prismId: string) {
+  const { data } = await admin.from('prism_callbacks').select('id').eq('prism_id', prismId).eq('state', 'due').lte('next_at', new Date().toISOString())
+    .order('created_at').limit(10);
+  for (const c of (data as any[]) || []) await deliverCallback(String(c.id));
+}
+async function callbacksForDoc(docId: string) {
+  const { data } = await admin.from('prism_einvoices').select('id').eq('doc_id', docId).maybeSingle();
+  if (data?.id) await callbacksFor(String(data.id));
 }
 
 // One sale (as it is issued) or the due batch, oldest first, paced and stopped after about two minutes; whatever is left
@@ -787,10 +963,14 @@ async function sendDue(saleId: string | null) {
   for (const d of (due as any[]) || []) {
     if (Date.now() > stop) { count('later'); continue; }
     try {
-      count(d.what === 'pay' ? await payOne(d.sale_id, cache, base)
+      const r = d.what === 'pay' ? await payOne(d.sale_id, cache, base)
         : d.what === 'transmit' ? await transmitOne(d.sale_id, base, await appOnce())
         : d.what === 'inbound' ? await inboundOne(d.id, base, await appOnce())
-        : await sendOne(d.sale_id, 'send', platformSvc, cache, base, units));
+        : d.what === 'callback' ? await deliverCallback(d.id)
+        : await sendOne(d.sale_id, 'send', platformSvc, cache, base, units);
+      count(r);
+      // A partner's invoice that moved on in this batch: Prism hears now rather than at the next tick.
+      if (d.sale_id && ['signed', 'refused', 'paid', 'transmitted', 'failed'].includes(r)) await callbacksForDoc(d.sale_id);
     } catch (e) { console.error('einvoice: send', d.sale_id || d.id, (e as Error).message); count('error'); }
     if (GAP_MS) await sleep(GAP_MS);
   }
@@ -823,6 +1003,9 @@ Deno.serve(async (req) => {
   const wh = path.match(/\/nrs-hook\/([0-9a-f]{48})\/?$/);
   if (wh) return await nrsWebhook(req, wh[1]);
   if (/\/nrs-hook(\/|$)/.test(path)) return json({ ok: false }, 404);
+  const pr = path.match(PRISM_ROUTE);
+  if (pr) return await prismRoute(pr[1], req);
+  if (/\/prism(\/|$)/.test(path)) return json({ ok: false, error: 'Unknown path.' }, 404);
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
   const auth = req.headers.get('Authorization') || '';
   const sb = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: auth } }, auth: { persistSession: false } });
@@ -834,7 +1017,9 @@ Deno.serve(async (req) => {
     if (body?.action !== 'send') return json({ ok: false, error: 'Unknown action.' }, 400);
     const saleId = /^[0-9a-f-]{36}$/i.test(String(body.sale_id || '')) ? String(body.sale_id) : null;
     // The database gives up waiting after 15 seconds, so on Supabase the work carries on after the answer.
-    const work = sendDue(saleId).catch((e) => { console.error('einvoice: send', (e as Error).message); return { error: 1 }; });
+    // A partner's invoice the merchant sent again from Counta: Prism hears how it went straight after.
+    const work = sendDue(saleId).then(async (out) => { if (saleId) await callbacksForDoc(saleId); return out; })
+      .catch((e) => { console.error('einvoice: send', (e as Error).message); return { error: 1 }; });
     const rt = (globalThis as any).EdgeRuntime;
     if (rt?.waitUntil) { rt.waitUntil(work); return json({ ok: true, started: true }); }
     return json({ ok: true, ...(await work) });

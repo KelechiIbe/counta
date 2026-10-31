@@ -94,6 +94,10 @@ POST …/taxstreem/prism/bill-status   { "org_id": "biz_900", "prism_id": "PRM-2
 → { ok, bill: { id, number, status, total, amount_paid, wht_withheld, due_date } }
 ```
 
+## Prism's partners: e-invoicing
+
+Invoices Prism passes on for its partners, to be signed by NRS, go to the einvoice function, signed the same way: see [prism-einvoicing.md](prism-einvoicing.md).
+
 ## Secrets
 
 | Name | Where |

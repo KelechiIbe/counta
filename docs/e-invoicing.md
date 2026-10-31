@@ -45,6 +45,7 @@ All of these are set as Supabase Edge Function secrets, or in TaxStreem's admin 
 | `NRS_CRYPTO_KEYS` | The whole of `crypto_keys.txt` (My Account, Manage Cryptographic Keys): `{ "public_key": …, "certificate": … }`. Shown by the end of its certificate. |
 | `NRS_APP_API_KEY`, `NRS_APP_API_SECRET` | TaxStreem's access point keys, from NRS's APP portal (einvoice.nrs.gov.ng/access-point), Developer section. The exchange between access points needs them (part 3): without them no sale is sent to a buyer (it waits), and only the admin test tries the dashboard's keys. |
 | `GOOGLE_KMS_KEY_RING` | Optional: the Cloud KMS key ring, by default `projects/<project>/locations/us-central1/keyRings/counta-einvoice` |
+| `PRISM_CALLBACK_URL` | Under TaxStreem: the https address on Prism where Counta says how each partner invoice went. Callbacks wait until it is set. |
 
 ## The HSM keys
 
@@ -148,6 +149,23 @@ As the access point provider, TaxStreem sends each signed sale to a business or 
 | `einvoice_webhooks` | The functions only | Every notification from NRS: when, the IRN, the message, the body, and the sale or invoice it was matched to. |
 | `einvoice_inbound` | The functions only | Each invoice NRS delivered for a Counta business: where it stands (due, fetching, billed, confirmed, unmatched, skipped, failed), the business, supplier, totals, NRS's invoice itself, and its supplier invoice. |
 | `einvoice_docs` (added) | As before | `xm_state`, `xm_tries`, `xm_next_at`, `xm_note`, `xm_at`, `xm_sent_at`: the sale on its way to the buyer. The sale's `einvoice.buyer` shows it. |
+
+## Partners through Prism (part 3)
+
+Prism, TaxStreem's product for partners, passes their invoices to Counta at `/functions/v1/einvoice/prism/...`, signed with the single sign-on secret. [prism-einvoicing.md](prism-einvoicing.md) has the whole contract. In short:
+
+- **A merchant** is made on Prism's first call that names it (by its TaxStreem business id), owned by the contact Prism gives until that person opens Counta from TaxStreem. Its NRS keys come through the channel, wrapped in the HSM as Settings wraps them, and are tested with NRS at once. E-invoicing switches itself on once nothing NRS needs is missing.
+- **An invoice** goes in the merchant's books (a sale through channel `api`) or is kept outside them for e-invoicing only, as the partner's key says. Either way the function sends it to NRS straight away and answers with where it stands, usually signed. In the books, an invoice to a business waits as a draft until NRS signs it, as in Counta, and payments go to a holding account named after the partner. Outside the books it is an `einvoice_only` document that the merchant sees under Settings, E-invoicing. It is not in the books, the reports or the tax returns. An invoice NRS refused is sent again, corrected, under the same ref.
+- **Prism hears** each change (signed, refused, delivered to the buyer, NRS told it is paid) at `PRISM_CALLBACK_URL`, signed the same way, and again until it answers 2xx.
+- Invoices through Prism are not counted against the merchant's plan.
+
+`einvoice_docs` now holds documents outside the books too (`source` `only`), so its `sale_id` no longer references `sales`; a trigger deletes the row with its sale or document. The sending reads both the same way (`private.einvoice_doc_sale`).
+
+| Table | Who reads it | What it holds |
+| --- | --- | --- |
+| `prism_einvoices` | The functions only | Each partner invoice: partner, ref, books or not, the sale or document it became, a payment waiting for NRS's signature, and what Prism sent. |
+| `einvoice_only` | The functions; the merchant through `einvoice_only_list` and `einvoice_only_get` | Invoices kept outside the books, with the facts NRS gets. |
+| `prism_callbacks` | The functions only | Each change to tell Prism, and its tries. |
 
 ## The NITDA guideline
 
