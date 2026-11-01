@@ -72,6 +72,7 @@ We keep invoices, credit notes, their NRS records and other accounting records f
 - Encryption of data in transit and at rest, with NRS credentials held under keys in a hardware security module.
 - Each business's records are open only to its own members, under rules the database enforces.
 - TaxStreem staff reach administrative tools only with a code from an authenticator app.
+- Owners, and anyone who can change a business's settings or NRS keys, sign in to Counta with a code from an authenticator app as well as a password.
 - We watch the service continuously and report personal data breaches to the Nigeria Data Protection Commission within 72 hours where the Act requires, and tell the people affected without undue delay.
 
 ## Your rights

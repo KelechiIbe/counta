@@ -110,11 +110,67 @@ function NrsHook() {
       <Hook label="Prism sends partners' invoices to" url={`${SUPABASE_URL}/functions/v1/einvoice/prism/einvoices`}
         note={pr?.last_sent ? `Last callback to Prism ${when(pr.last_sent)}` : 'Give this address to Prism.'} />
       <div className="faint" style={{ fontSize: 12, padding: '0 16px 12px', lineHeight: 1.5, wordBreak: 'break-word' }} data-testid="prism-note">
-        Signed with the single sign-on secret. Set Prism's callback address under TaxStreem below.
+        Signed with the single sign-on secret, or with an OAuth 2.0 token from an API client below. Set Prism's callback address under TaxStreem below.
         {pr ? ` ${pr.merchants} merchant${pr.merchants === 1 ? '' : 's'}; ${pr.invoices_today} invoice${pr.invoices_today === 1 ? '' : 's'} in the last day; ${pr.callbacks_waiting} callback${pr.callbacks_waiting === 1 ? '' : 's'} waiting${pr.callbacks_failed ? `, ${pr.callbacks_failed} given up` : ''}.` : ''}
         {pr?.last_error ? ` Last problem: ${pr.last_error}` : ''}
       </div>
     </>
+  );
+}
+
+// OAuth 2.0 clients for the partner e-invoicing API: each trades its id and secret at /einvoice/oauth/token for a token that
+// lasts an hour. The secret is shown once, when the client is made.
+type ApiClient = { id: string; client_id: string; name: string; secret_hint: string; created_at: string; last_used_at: string | null; revoked_at: string | null;
+  live_tokens: number; client_secret?: string };
+function ApiClients() {
+  const qc = useQueryClient();
+  const list = useQuery({ queryKey: ['admin-api-clients'], queryFn: () => rpc<ApiClient[]>('admin_api_clients') });
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [made, setMade] = useState<ApiClient | null>(null);
+  const [sure, setSure] = useState<string | null>(null);
+  async function make() {
+    setBusy(true); setErr(null);
+    try { setMade(await rpc<ApiClient>('admin_api_client_create', { p_name: name })); setName(''); await qc.invalidateQueries({ queryKey: ['admin-api-clients'] }); }
+    catch (e) { setErr((e as Error).message); }
+    setBusy(false);
+  }
+  async function revoke(c: ApiClient) {
+    if (sure !== c.id) { setSure(c.id); return; }
+    setSure(null);
+    try { await rpc('admin_api_client_revoke', { p_id: c.id }); await qc.invalidateQueries({ queryKey: ['admin-api-clients'] }); }
+    catch (e) { setErr((e as Error).message); }
+  }
+  return (
+    <div style={{ padding: '4px 16px 14px' }} data-testid="api-clients">
+      <div style={{ fontWeight: 600, fontSize: 14, margin: '8px 0 4px' }}>API clients (OAuth 2.0)</div>
+      <div className="faint" style={{ fontSize: 12, lineHeight: 1.5, marginBottom: 8, wordBreak: 'break-word' }}>
+        A client trades its id and secret at {SUPABASE_URL}/functions/v1/einvoice/oauth/token for a token that lasts an hour, then calls the partner API with it.
+      </div>
+      {made?.client_secret && (
+        <Alert kind="green" icon="check">
+          <div data-testid="api-client-made">Made {made.name}. Copy the secret now: it is not shown again.</div>
+          <div className="mono" style={{ fontSize: 12, marginTop: 6, wordBreak: 'break-all' }}>client_id <b data-testid="api-client-id">{made.client_id}</b></div>
+          <div className="mono" style={{ fontSize: 12, wordBreak: 'break-all' }}>client_secret <b data-testid="api-client-secret">{made.client_secret}</b></div>
+        </Alert>
+      )}
+      {list.data?.map((c) => (
+        <div key={c.id} className="row wrap" style={{ gap: 8, padding: '8px 0', borderTop: '1px solid var(--line)', alignItems: 'center' }} data-testid="api-client" data-revoked={c.revoked_at ? 'yes' : 'no'}>
+          <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+            <b>{c.name}</b> <span className="mono faint" style={{ fontSize: 12 }}>{c.client_id}</span>
+            <div className="faint" style={{ fontSize: 12 }}>Secret {c.secret_hint} · made {when(c.created_at)} · {c.last_used_at ? `last used ${when(c.last_used_at)}` : 'not used yet'}{c.live_tokens ? ` · ${c.live_tokens} live token${c.live_tokens === 1 ? '' : 's'}` : ''}</div>
+          </div>
+          {c.revoked_at ? <span className="chip t-grey">Revoked {when(c.revoked_at)}</span>
+            : <button className="btn btn-ghost btn-sm" onClick={() => revoke(c)}>{sure === c.id ? 'Tap again to revoke' : 'Revoke'}</button>}
+        </div>
+      ))}
+      <form className="row wrap" style={{ gap: 8, marginTop: 8 }} onSubmit={(e) => { e.preventDefault(); void make(); }}>
+        <input className="input" style={{ flex: '1 1 200px', minWidth: 0 }} placeholder="Name, such as Prism" aria-label="API client name" value={name} onChange={(e) => setName(e.target.value)} />
+        <button className="btn btn-secondary" disabled={busy || name.trim().length < 2} type="submit">{busy ? <Spinner small /> : <Icon name="plus" size={14} />}Make a client</button>
+      </form>
+      {err && <div style={{ marginTop: 8 }}><Alert kind="red" icon="alert">{err}</Alert></div>}
+    </div>
   );
 }
 
@@ -210,6 +266,7 @@ function Group({ g, data }: { g: (typeof GROUPS)[number]; data: KeysStatus }) {
       {g.id === 'openwa' && <OpenWaPanel data={data} />}
       {g.id === 'taxstreem' && <Hook label="Flux reports back to" url={wh.flux.url} />}
       {g.id === 'nrs' && <NrsHook />}
+      {g.id === 'nrs' && <ApiClients />}
     </Card>
   );
 }

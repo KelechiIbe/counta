@@ -13,7 +13,7 @@ import { useEinvoice, useEinvOnly, useEinvOnlyList, type EinvOnlyFilter, type Ei
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Empty, Field, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import { NrsCodePicker } from '../../components/NrsCodePicker';
-import { BuyerDelivery, EinvoiceStamp, nrsChip } from '../../components/Einvoice';
+import { BuyerDelivery, EinvoiceCopies, EinvoiceStamp, nrsChip } from '../../components/Einvoice';
 
 type Check = { ok: boolean; note: string; saved: boolean } | null;
 const INVALIDATE = ['einvoice'];
@@ -362,6 +362,7 @@ function OnlyDrawer({ id, onClose }: { id: string; onClose: () => void }) {
               <div style={{ marginTop: 4, fontSize: 13 }}>{x.partner_name || 'The partner'} sends it again, corrected, through Prism.</div></Alert>}
             {e?.state === 'signed' && e.buyer && <BuyerDelivery id={x.id} number={x.number} b={e.buyer} canAct={x.can.send_to_buyer} refresh={['einvoice', 'only-doc', x.id]} />}
             {e?.irn && (e.state === 'signed' || e.kind === 'report') && <EinvoiceStamp irn={e.irn} qr={e.qr} signed={e.state === 'signed'} />}
+            {e && <EinvoiceCopies docId={x.id} kind={e.kind} signed={e.state === 'signed'} />}
             <div className="row wrap" style={{ gap: 16, fontSize: 13 }}>
               <div className="stack" style={{ gap: 2, minWidth: 180, flex: '1 1 200px' }}>
                 <div className="mini-label">Customer</div>

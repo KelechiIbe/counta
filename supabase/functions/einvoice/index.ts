@@ -46,7 +46,16 @@
 //   einvoice-status { org_id, partner_id, ref }       -> where an invoice stands.
 //   einvoice-paid   { org_id, partner_id, ref, paid } -> a payment the partner reports; NRS is told once it is paid in full.
 // Prism hears each change (signed, refused, delivered to the buyer, paid) at PRISM_CALLBACK_URL, signed the same way
-// (x-counta-signature), and again until it answers 2xx.
+// (x-counta-signature), and again until it answers 2xx. Instead of signing, a caller may use OAuth 2.0: an API client made
+// in the admin portal POSTs to /einvoice/oauth/token (grant_type=client_credentials, HTTP Basic or client_id and
+// client_secret in the body) for a bearer token that lasts an hour, and sends Authorization: Bearer <token>. Two more routes:
+//   einvoice-ubl          { org_id, partner_id, ref } -> the invoice as UBL 2.1 XML in PINT NG (ubl.ts).
+//   einvoice-signed-copy  { org_id, partner_id, ref } -> TaxStreem's JAdES seal on the invoice as sent to NRS (jades.ts).
+//
+// When NRS signs an invoice, the text Counta sent is sealed with TaxStreem's HSM key (JAdES, ES256) and kept with it; a
+// seal that could not be made is tried again by the five-minute run. GET /einvoice/certificate gives the key's certificate.
+// Signed-in people with e-invoicing in their role POST { action: 'doc_file', doc_id, what: 'ubl' | 'seal' } for the same
+// two copies of an invoice. Saving a business's NRS keys needs two-step sign-in when the person must use it.
 // See invoice.ts for how a sale is written for NRS, exchange.ts for how a received one is read, and docs/e-invoicing.md.
 //
 // Keys are read from Supabase Vault (set in the admin portal) first, then from the Edge Function secrets. NRS_BASE_URL is
@@ -60,6 +69,9 @@ import { codeRow, entityName, firstList, holds, mask, MAYBE_LISTS, nrsBase, nrsC
 import { buildInvoice, type Claim, missing, missingNow, refusalInWords } from './invoice.ts';
 import { decryptDownload, inboundExtract, suggestAccounts } from './exchange.ts';
 import { Answer, dbAnswer, signBody, verifySigned } from './prism.ts';
+import { pintNg } from './ubl.ts';
+import { seal as jadesSeal } from './jades.ts';
+import { pemBody, selfSignedCert } from './x509.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -426,9 +438,17 @@ function keyInput(field: string, raw: unknown): { plain: string | null; hint: st
   return { plain: v, hint: `•••• ${v.slice(-4)}` };
 }
 
+// Whether this session may change e-invoicing settings: two-step sign-in, for those who must use it.
+async function mfaOk(sb: SupabaseClient): Promise<boolean> {
+  const { data } = await sb.rpc('mfa_status');
+  return !data?.required || data?.aal === 'aal2';
+}
+const NEEDS_CODE = 'Enter the code from your authenticator app first. Changes to e-invoicing need two-step sign-in.';
+
 async function settingsKeys(sb: SupabaseClient, orgId: string, userId: string, body: any) {
   const no = await settingsEditor(sb, orgId);
   if (no) return no;
+  if (!(await mfaOk(sb))) return json({ ok: false, reason: 'mfa', error: NEEDS_CODE }, 403);
   const given = Object.keys(FIELD_WORDS).filter((f) => body[f] !== undefined && body[f] !== null);
   if (!given.length) return json({ ok: false, error: 'Paste the key, the secret or crypto_keys.txt to save.' }, 400);
   const p: Record<string, { ct: string; hint: string } | null> = {};
@@ -610,16 +630,19 @@ async function sendOne(saleId: string, what: 'kick' | 'send', platformSvc: strin
   }
   const auth = { base, key: keys.key, secret: keys.secret };
   const irn = String(c.irn);
+  // The invoice as it goes to NRS; once NRS signs it, this exact text is sealed with TaxStreem's HSM key.
+  const payload = buildInvoice(claim, { units });
+  const sent = JSON.stringify(payload);
   // Tried before: NRS may have signed it then without Counta hearing the answer.
   if (Number(c.tries) > 1) {
     const seen = await nrsCall(auth, `/api/v1/invoice/confirm/${encodeURIComponent(irn)}`);
     if (nrsOk(seen) && seen.body && holds(seen.body, irn)) {
       await done(saleId, { outcome: 'signed', qr, note: 'NRS had signed it on an earlier try.', answer: shape(seen.body), pay_status: c.facts.sale.paid ? 'PAID' : 'PENDING' });
+      await sealDoc(saleId, sent);
       return 'signed';
     }
     if (GAP_MS) await sleep(GAP_MS);
   }
-  const payload = buildInvoice(claim, { units });
   const tell = async (r: NrsAnswer, step: string): Promise<string> => {
     const v = verdict(r), why = nrsWhy(r);
     // The owner reads the note; the HTTP status stays in the answer kept for support.
@@ -641,13 +664,55 @@ async function sendOne(saleId: string, what: 'kick' | 'send', platformSvc: strin
       const seen = await nrsCall(auth, `/api/v1/invoice/confirm/${encodeURIComponent(irn)}`);
       if (nrsOk(seen)) {
         await done(saleId, { outcome: 'signed', qr, note: 'NRS had signed it already.', answer: shape(seen.body), pay_status: payload.payment_status });
+        await sealDoc(saleId, sent);
         return 'signed';
       }
     }
     return await tell(sig, 'signing');
   }
   await done(saleId, { outcome: 'signed', qr, note: 'Signed by NRS.', answer: shape(sig.body), pay_status: payload.payment_status });
+  await sealDoc(saleId, sent);
   return 'signed';
+}
+
+// ------------------------------------------------------------------ TaxStreem's seal (JAdES) and its certificate
+// The seal is made with invoice-signing in the HSM. Its certificate is made once per key version, self-signed by the same
+// key, and kept in signing_certs; the version and certificate are remembered for an hour.
+const SEAL_SUBJECT = { CN: 'TaxStreem e-invoice seal', O: 'TaxStreem Technologies Limited', C: 'NG' };
+let sealer: { version: string; certDer: Uint8Array; at: number } | null = null;
+async function sealKey(): Promise<{ cfg: GeminiConfig; version: string; certDer: Uint8Array }> {
+  const cfg = await geminiConfig(secret);
+  if (cfg.mode !== 'vertex') throw new Error('The Google Cloud HSM is not connected, so the seal could not be made.');
+  if (sealer && Date.now() - sealer.at < 3600_000) return { cfg, version: sealer.version, certDer: sealer.certDer };
+  const ring = K.keyRing(cfg, await secret('GOOGLE_KMS_KEY_RING'));
+  const v = await K.signingVersion(cfg, ring);
+  const { data: have } = await admin.rpc('svc_signing_cert', { p_version: v.name });
+  let pem = typeof have?.pem === 'string' ? have.pem : '';
+  if (!pem) {
+    const pk = await K.publicKey(cfg, v.name);
+    const cert = await selfSignedCert({ spkiPem: pk.pem, subject: SEAL_SUBJECT, days: 3 * 365, sign: (tbs) => K.sign(cfg, v.name, tbs) });
+    const { data: saved, error } = await admin.rpc('svc_signing_cert_save', { p_version: v.name,
+      p: { pem: cert.pem, sha256: cert.sha256, subject: cert.subject, not_before: cert.notBefore.toISOString(), not_after: cert.notAfter.toISOString() } });
+    if (error) throw new Error(`The seal's certificate could not be kept: ${error.message}`);
+    pem = typeof saved?.pem === 'string' ? saved.pem : cert.pem;
+  }
+  sealer = { version: v.name, certDer: pemBody(pem), at: Date.now() };
+  return { cfg, version: v.name, certDer: sealer.certDer };
+}
+
+// Seals what was sent and keeps both; when the HSM cannot be reached, keeps what was sent and why, for the next run.
+async function sealDoc(docId: string, payload: string): Promise<boolean> {
+  let p: Record<string, unknown>;
+  try {
+    const k = await sealKey();
+    p = { payload, jades: await jadesSeal(payload, { certDer: k.certDer, signRaw: async (d) => K.derToRaw(await K.sign(k.cfg, k.version, d)) }) };
+  } catch (e) {
+    sealer = null;
+    p = { payload, error: (e instanceof K.KmsError || e instanceof CredentialError ? 'The HSM: ' : '') + (e as Error).message.slice(0, 240) };
+  }
+  const { data, error } = await admin.rpc('svc_einvoice_seal', { p_doc: docId, p });
+  if (error) console.error('einvoice: seal', docId, error.message);
+  return Boolean(data?.sealed);
 }
 
 async function payOne(saleId: string, cache: Map<string, Keys>, base: string): Promise<string> {
@@ -788,7 +853,7 @@ async function afterAnswer(work: Promise<unknown>) {
 // ------------------------------------------------------------------ Prism's channel for partners (part 3)
 // Prism holds the partners' keys and credits; Counta keeps each merchant's business, sends the invoices to NRS and tells
 // Prism how they went. docs/prism-einvoicing.md has the contract.
-const PRISM_ROUTE = /\/prism\/(merchant|einvoices|einvoice-status|einvoice-paid)\/?$/;
+const PRISM_ROUTE = /\/prism\/(merchant|einvoices|einvoice-status|einvoice-paid|einvoice-ubl|einvoice-signed-copy)\/?$/;
 const NRS_FIELDS = ['api_key', 'api_secret', 'crypto_keys'] as const;
 
 async function orgFor(tsid: string): Promise<string | null> {
@@ -859,11 +924,80 @@ async function prismInvoice(tsid: string, body: any) {
   return { ok: true, duplicate: Boolean(data.duplicate), resubmitted: Boolean(data.resubmitted), invoice, ...(merchant ? { merchant } : {}) };
 }
 
+// ------------------------------------------------------------------ an invoice's copies: UBL (PINT NG) and the seal
+const listed = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+const fileName = (v: unknown) => String(v || 'invoice').replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80) || 'invoice';
+
+async function ublFor(docId: string): Promise<{ xml: string | null; missing: string[]; name: string }> {
+  const { data: x, error } = await admin.rpc('svc_einvoice_facts', { p_doc: docId });
+  if (error || !x?.facts) return { xml: null, missing: ['an invoice Counta has sent to NRS'], name: 'invoice' };
+  const r = pintNg({ docId, kind: x.kind, doc: x.doc, irn: x.irn, facts: x.facts, units: await quantityCodes() });
+  return { xml: r.xml, missing: r.missing, name: fileName(x.number) };
+}
+
+// The seal as kept, with the certificate that checks it.
+async function sealCopy(docId: string): Promise<{ ok: true; seal: Record<string, unknown> } | { ok: false; error: string }> {
+  const { data: d } = await admin.from('einvoice_docs').select('state, irn, jades, jades_at, sent_payload').eq('sale_id', docId).maybeSingle();
+  if (!d) return { ok: false, error: 'This invoice has not gone to NRS.' };
+  if (!d.jades) {
+    return { ok: false, error: d.state !== 'signed' ? 'NRS has not signed this invoice yet, so there is no seal.'
+      : !d.sent_payload ? 'NRS signed this invoice before TaxStreem began sealing invoices, so it has no seal.'
+      : 'The seal is still being made. Try again in a few minutes.' };
+  }
+  return { ok: true, seal: { format: 'JAdES baseline B-B (JWS compact, ES256)', irn: d.irn, sealed_at: d.jades_at, jws: d.jades } };
+}
+
+// ------------------------------------------------------------------ OAuth 2.0 for the partner API (RFC 6749, client credentials)
+async function oauthToken(req: Request): Promise<Response> {
+  const head = { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Pragma: 'no-cache' };
+  const fail = (status: number, error: string, error_description: string, extra: Record<string, string> = {}) =>
+    new Response(JSON.stringify({ error, error_description }), { status, headers: { ...head, ...extra } });
+  if (req.method !== 'POST') return fail(405, 'invalid_request', 'POST only.');
+  const raw = (await req.text()).slice(0, 10_000);
+  let p: Record<string, unknown> = {};
+  if (/json/i.test(req.headers.get('content-type') || '')) {
+    try { p = JSON.parse(raw) ?? {}; } catch { return fail(400, 'invalid_request', 'The body is not JSON.'); }
+  } else p = Object.fromEntries(new URLSearchParams(raw));
+  if (p.grant_type !== 'client_credentials') return fail(400, 'unsupported_grant_type', 'grant_type must be client_credentials.');
+  const basic = (req.headers.get('authorization') || '').match(/^Basic\s+([A-Za-z0-9+/=]+)$/i);
+  let id = '', sec = '';
+  if (basic) {
+    if (p.client_id || p.client_secret) return fail(400, 'invalid_request', 'Send the client credentials once: in the Authorization header or in the body.');
+    try {
+      const both = atob(basic[1]), i = both.indexOf(':');
+      id = decodeURIComponent(both.slice(0, Math.max(i, 0))); sec = decodeURIComponent(both.slice(i + 1));
+    } catch { return fail(400, 'invalid_request', 'The Authorization header is not Basic credentials.'); }
+  } else { id = String(p.client_id ?? ''); sec = String(p.client_secret ?? ''); }
+  const challenge: Record<string, string> = basic ? { 'WWW-Authenticate': 'Basic realm="counta"' } : {};
+  if (!id || !sec) return fail(401, 'invalid_client', 'Send client_id and client_secret.', { 'WWW-Authenticate': 'Basic realm="counta"' });
+  const { data, error } = await admin.rpc('svc_api_token_issue', { p_client_id: id, p_secret: sec, p_scope: typeof p.scope === 'string' ? p.scope : null });
+  if (error) { console.error('einvoice: token', error.message); return fail(500, 'server_error', 'Try again.'); }
+  if (data?.error === 'invalid_client') return fail(401, 'invalid_client', 'The client id or secret is wrong, or the client was revoked.', challenge);
+  if (data?.error === 'invalid_scope') return fail(400, 'invalid_scope', 'The only scope is einvoice.');
+  return new Response(JSON.stringify(data), { headers: head });
+}
+
+// The seal's certificate, for anyone checking a seal (public).
+async function certificate(): Promise<Response> {
+  const { data } = await admin.from('signing_certs').select('pem, sha256, subject, not_before, not_after').order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (!data) return json({ ok: false, error: 'No seal has been made yet.' }, 404);
+  return new Response(data.pem, { headers: { ...cors, 'Content-Type': 'application/x-pem-file', 'Content-Disposition': 'inline; filename="taxstreem-einvoice-seal.pem"',
+    'x-certificate-sha256': data.sha256, 'Access-Control-Expose-Headers': 'x-certificate-sha256' } });
+}
+
 async function prismRoute(route: string, req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
   const raw = await req.text();
   if (raw.length > 1_000_000) return json({ ok: false, error: 'The body is larger than 1 MB.' }, 413);
-  if (!(await verifySigned(raw, req.headers.get('x-taxstreem-signature'), await secret('TAXSTREEM_SSO_SECRET')))) return json({ ok: false, error: 'Bad signature.' }, 401);
+  // OAuth 2.0 bearer token, or the request signed with the shared secret.
+  const bearer = (req.headers.get('authorization') || '').match(/^Bearer\s+(\S+)$/i)?.[1];
+  if (bearer) {
+    const { data: client } = await admin.rpc('svc_api_token_check', { p_token: bearer });
+    if (!client) {
+      return new Response(JSON.stringify({ ok: false, error: 'The access token is wrong or has expired. Get a new one from /oauth/token.' }),
+        { status: 401, headers: { ...cors, 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer error="invalid_token"' } });
+    }
+  } else if (!(await verifySigned(raw, req.headers.get('x-taxstreem-signature'), await secret('TAXSTREEM_SSO_SECRET')))) return json({ ok: false, error: 'Bad signature.' }, 401);
   let body: any;
   try { body = JSON.parse(raw); } catch { return json({ ok: false, error: 'Invalid JSON.' }, 400); }
   if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ ok: false, error: 'The body must be a JSON object.' }, 400);
@@ -881,6 +1015,19 @@ async function prismRoute(route: string, req: Request): Promise<Response> {
       if (error) throw dbAnswer(error);
       if (!data) throw new Answer(404, { ok: false, error: `No invoice ${ref} from this partner for the merchant.` });
       return json({ ok: true, invoice: data });
+    }
+    if (route === 'einvoice-ubl' || route === 'einvoice-signed-copy') {
+      const { data: docId, error } = await admin.rpc('svc_prism_doc', { p_org: orgId, p_partner: partner, p_ref: ref });
+      if (error) throw dbAnswer(error);
+      if (!docId) throw new Answer(404, { ok: false, error: `No invoice ${ref} from this partner for the merchant.` });
+      if (route === 'einvoice-ubl') {
+        const u = await ublFor(String(docId));
+        if (!u.xml) throw new Answer(422, { ok: false, error: `PINT NG needs ${listed(u.missing)}.`, missing: u.missing });
+        return new Response(u.xml, { headers: { ...cors, 'Content-Type': 'application/xml; charset=utf-8', 'Content-Disposition': `attachment; filename="${u.name}.xml"` } });
+      }
+      const c = await sealCopy(String(docId));
+      if (!c.ok) throw new Answer(409, { ok: false, error: c.error });
+      return json({ ok: true, seal: c.seal });
     }
     const { data, error } = await admin.rpc('svc_prism_einvoice_paid', { p_org: orgId, p_partner: partner, p_ref: ref, p: body.paid && typeof body.paid === 'object' ? body.paid : {} });
     if (error) throw dbAnswer(error);
@@ -974,6 +1121,14 @@ async function sendDue(saleId: string | null) {
     } catch (e) { console.error('einvoice: send', d.sale_id || d.id, (e as Error).message); count('error'); }
     if (GAP_MS) await sleep(GAP_MS);
   }
+  // Seals the HSM could not make when NRS signed: tried again while there is time, when the HSM is connected.
+  if (Date.now() < stop && (await geminiConfig(secret)).mode === 'vertex') {
+    const { data: seals } = await admin.rpc('svc_einvoice_seal_due', { p_limit: 20 });
+    for (const x of (seals as any[]) || []) {
+      if (Date.now() > stop) break;
+      if (!(await sealDoc(String(x.doc_id), String(x.payload)))) break;
+    }
+  }
   return out;
 }
 
@@ -1003,6 +1158,8 @@ Deno.serve(async (req) => {
   const wh = path.match(/\/nrs-hook\/([0-9a-f]{48})\/?$/);
   if (wh) return await nrsWebhook(req, wh[1]);
   if (/\/nrs-hook(\/|$)/.test(path)) return json({ ok: false }, 404);
+  if (/\/oauth\/token\/?$/.test(path)) return await oauthToken(req);
+  if (/\/certificate\/?$/.test(path) && (req.method === 'GET' || req.method === 'HEAD')) return await certificate();
   const pr = path.match(PRISM_ROUTE);
   if (pr) return await prismRoute(pr[1], req);
   if (/\/prism(\/|$)/.test(path)) return json({ ok: false, error: 'Unknown path.' }, 404);
@@ -1036,6 +1193,23 @@ Deno.serve(async (req) => {
         return json({ ok: false, error: 'Check nrs or kms.' }, 400);
       }
       case 'settings_keys': return await settingsKeys(sb, String(body.org_id || ''), u.user.id, body);
+      case 'doc_file': {
+        const docId = String(body.doc_id || '');
+        if (!/^[0-9a-f-]{36}$/i.test(docId)) return json({ ok: false, error: 'Choose the invoice.' }, 400);
+        const { data: d, error } = await sb.rpc('einvoice_doc_copy', { p_doc: docId });
+        if (error) return json({ ok: false, error: error.message }, error.code === 'PX404' ? 404 : 403);
+        if (body.what === 'ubl') {
+          const x = await ublFor(docId);
+          if (!x.xml) return json({ ok: false, error: `PINT NG needs ${listed(x.missing)}.`, missing: x.missing }, 422);
+          return json({ ok: true, file: { name: `${x.name}.xml`, type: 'application/xml', text: x.xml } });
+        }
+        if (body.what === 'seal') {
+          const c = await sealCopy(docId);
+          if (!c.ok) return json({ ok: false, error: c.error }, 409);
+          return json({ ok: true, file: { name: `${fileName(d.number)}-seal.jws`, type: 'application/jose', text: String(c.seal.jws) } });
+        }
+        return json({ ok: false, error: 'Ask for ubl or seal.' }, 400);
+      }
       case 'settings_check': {
         const orgId = String(body.org_id || '');
         const no = await settingsEditor(sb, orgId);

@@ -432,6 +432,24 @@ Deno.serve(async (req) => {
         const mail = await staffMail('invite', data.invite_id);
         return json({ ok: mail.ok, sent: mail.ok, email: data.email, error: mail.error });
       }
+      // A person who lost the phone with their authenticator: every factor removed through Supabase Auth, so they set up a
+      // new one at their next sign-in. The database checks the admin and records it first.
+      case 'mfa_reset': {
+        const uid = String(body.user_id || '');
+        const { data, error } = await sb.rpc('admin_mfa_reset_check', { p_user: uid });
+        if (error) return json({ ok: false, error: error.message });
+        const { data: f, error: le } = await admin.auth.admin.mfa.listFactors({ userId: uid });
+        if (le) return json({ ok: false, error: `Supabase Auth: ${short(le.message, 160)}` });
+        let removed = 0;
+        for (const x of f?.factors || []) {
+          const { error: de } = await admin.auth.admin.mfa.deleteFactor({ id: x.id, userId: uid });
+          if (de) return json({ ok: false, removed, error: `Supabase Auth: ${short(de.message, 160)}` });
+          removed++;
+        }
+        const alerted = await alert(actor, `${data.email}'s authenticator app was removed; they set up a new one the next time they sign in`, 'reset an authenticator',
+          'If this was not you or someone you expected, sign in to the admin portal and check the record of changes on the Admin team page.', [data.email]);
+        return json({ ok: true, removed, email: data.email, alerted });
+      }
       case 'resend_staff_welcome': {
         const { data, error } = await sb.rpc('admin_staff_resend_welcome', { p_user: String(body.user_id || ''), p_role: String(body.role || '') });
         if (error) return json({ ok: false, error: error.message });

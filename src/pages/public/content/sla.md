@@ -52,6 +52,9 @@ We protect your data with strong encryption.
 
 - **Data encryption** during transmission and at rest. Your NRS API key, API secret and crypto keys are encrypted with keys held in a hardware security module, and no screen shows them again once they are saved.
 - **Regular security audits** to keep us in line with NRS requirements.
+- **Two-step sign-in.** Anyone who can change your business's settings or its NRS keys signs in to Counta with a password and a code from an authenticator app, and Counta refuses changes to e-invoicing from a session without that code. Everyone else in your business may turn it on.
+- **Sealed invoices.** Once NRS signs an invoice, TaxStreem seals the invoice exactly as it was sent with a JAdES signature made in a hardware security module, so either side can later show what was sent and when.
+- **Partner access by OAuth 2.0.** Partners that send invoices for you use short-lived access tokens, and TaxStreem keeps only a hash of each secret and token.
 
 We comply with the Nigeria Data Protection Act 2023 and follow NRS guidelines on cryptographic stamps for invoice validation. Our [Privacy Notice](/privacy) explains how we handle personal data.
 

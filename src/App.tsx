@@ -9,6 +9,7 @@ import AppShell from './shell/AppShell';
 import { AuthPage, UpdatePasswordPage } from './pages/auth/Auth';
 import { GuideProvider } from './guide/GuideProvider';
 import { GuideDock } from './guide/GuideDock';
+import { TwoStepGate } from './components/TwoStep';
 import Overview from './pages/inventory/Overview';
 
 const Items = lazy(() => import('./pages/inventory/Items'));
@@ -73,7 +74,8 @@ function RequireAuth({ children, needOrg = true }: { children: ReactNode; needOr
   if (!ready || (loadingMemberships && !memberships.length)) return <Loading />;
   if (!session) return <Navigate to={'/login?next=' + encodeURIComponent(loc.pathname + loc.search)} replace />;
   if (needOrg && (!memberships.length || !orgId)) return <Navigate to="/onboarding" replace />;
-  return <>{children}</>;
+  // In a business, the code from the authenticator app first (the admin portal and the practice app ask in their own way).
+  return needOrg ? <TwoStepGate>{children}</TwoStepGate> : <>{children}</>;
 }
 
 // A page someone's role does not cover says so plainly instead of asking the server and showing its refusal.

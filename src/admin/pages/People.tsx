@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { rpc } from '../../lib/supabase';
+import { edge } from '../../lib/api';
 import { fmtDay, num, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
-import { Alert, SkeletonRows } from '../../components/ui';
+import { Alert, SkeletonRows, Spinner } from '../../components/ui';
 import { tidyError } from '../api';
 import { PageHead } from '../ui';
 
@@ -38,6 +39,8 @@ export default function People() {
                   <b className="ellipsis" style={{ display: 'block' }}>{p.name || p.email}</b>
                   <span className="faint ellipsis" style={{ fontSize: 12, display: 'block' }}>{p.name ? p.email : ''}{!p.confirmed ? ' · email not confirmed' : ''}</span>
                   {p.staff && <span className="chip t-purple" style={{ marginTop: 4 }}>{p.staff}{p.authenticator ? ' · authenticator set' : ' · no authenticator yet'}</span>}
+                  {!p.staff && p.authenticator && <span className="chip t-grey" style={{ marginTop: 4 }}>two-step sign-in on</span>}
+                  <ResetAuthenticator person={p} />
                 </span>
                 <span style={{ minWidth: 0 }}>
                   {p.businesses.length ? p.businesses.map((b) => (
@@ -60,5 +63,29 @@ export default function People() {
         </div>
       )}
     </>
+  );
+}
+
+// For someone who lost the phone with their authenticator app: removes it, and they set up a new one at their next sign-in.
+function ResetAuthenticator({ person }: { person: Person }) {
+  const qc = useQueryClient();
+  const [sure, setSure] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  async function go() {
+    if (!sure) { setSure(true); return; }
+    setBusy(true); setNote(null);
+    const r = await edge<{ removed?: number }>('admin', { action: 'mfa_reset', user_id: person.id });
+    setBusy(false); setSure(false);
+    setNote(r.ok === false ? { ok: false, text: r.error || 'It could not be removed.' } : { ok: true, text: 'Removed. They set up a new one at their next sign-in.' });
+    if (r.ok !== false) qc.invalidateQueries({ queryKey: ['admin-people'] });
+  }
+  // Kept on the row after the list reloads without the authenticator, so the note that it was removed stays in view.
+  if (!person.authenticator && !note) return null;
+  return (
+    <span className="row wrap" style={{ gap: 6, marginTop: 6, alignItems: 'center' }} data-testid="mfa-reset">
+      {person.authenticator && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={go}>{busy ? <Spinner small /> : <Icon name="lock" size={13} />}{sure ? `Tap again to remove ${person.email}'s authenticator` : 'Reset authenticator'}</button>}
+      {note && <span className={note.ok ? 'faint' : 't-red'} style={{ fontSize: 12 }}>{note.text}</span>}
+    </span>
   );
 }
