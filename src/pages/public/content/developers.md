@@ -11,7 +11,7 @@ Partners on TaxStreem's developer portal reach this API through Prism, TaxStreem
 Base address:
 
 ```
-https://einvoice.taxstreem.com/prism/
+https://krtqqhndmncarwusukrw.supabase.co/functions/v1/einvoice/prism/
 ```
 
 Every call is a `POST` with a JSON body over HTTPS (TLS 1.2 or later).
@@ -23,7 +23,7 @@ TaxStreem gives each approved integrator a client ID and a client secret for OAu
 ### OAuth 2.0 client credentials
 
 ```
-POST https://einvoice.taxstreem.com/oauth/token
+POST https://krtqqhndmncarwusukrw.supabase.co/functions/v1/einvoice/oauth/token
 Authorization: Basic <base64 of "client_id:client_secret">
 Content-Type: application/x-www-form-urlencoded
 
@@ -256,7 +256,7 @@ Until the seal exists the call answers 409: NRS has not signed the invoice yet, 
 TaxStreem's certificate is public:
 
 ```
-GET https://einvoice.taxstreem.com/certificate
+GET https://krtqqhndmncarwusukrw.supabase.co/functions/v1/einvoice/certificate
 → the certificate (PEM), with its SHA-256 in x-certificate-sha256
 ```
 
