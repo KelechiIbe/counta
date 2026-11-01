@@ -46,9 +46,8 @@ Counta uses AI models to suggest HS codes, accounts and the contents of document
 | Recipient | Why |
 | --- | --- |
 | Nigeria Revenue Service (NRS) | To validate, sign and record your e-invoices, and to deliver them to your buyers' access points |
-| Supabase | Database, file storage and sign-in (European Union, Ireland) |
-| Google Cloud | Hardware security module keys and AI models (United States) |
-| Netlify | Hosting of the Counta web application |
+| Google Cloud | Hosting of Counta, its database, file storage and sign-in, hardware security module keys and AI models (United States) |
+| Amazon Web Services | A live standby copy of our database (Lagos, Nigeria) |
 | Resend | Email delivery |
 | Meta (WhatsApp Business) | WhatsApp messages you choose to exchange with Counta |
 | Mono | Bank account linking and statements, when you connect a bank |
@@ -61,7 +60,7 @@ These providers process data for us under contract. We also share data where a c
 
 ## Transfers outside Nigeria
 
-Our database is in the European Union and some of our providers work from the United States. We transfer personal data abroad only where the Act allows it, relying on the protections in our providers' contracts and on their security certifications.
+Counta and its main database run in Google Cloud in the United States, and a live copy of the database is kept on servers in Lagos. Some of our other providers also work from outside Nigeria. We transfer personal data abroad only where the Act allows it, relying on the protections in our providers' contracts and on their security certifications.
 
 ## How long we keep it
 
