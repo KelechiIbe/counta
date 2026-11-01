@@ -6,8 +6,10 @@ import { rpc } from '../lib/supabase';
 import { useAction } from '../lib/queries';
 import { when } from '../lib/format';
 import { qrSvg } from '../lib/labels';
-import type { Sale, SaleEinvoice } from '../lib/api';
-import { Alert } from './ui';
+import { edge, type Sale, type SaleEinvoice } from '../lib/api';
+import { downloadBlob } from '../lib/exporters';
+import { Icon } from './Icon';
+import { Alert, Spinner } from './ui';
 
 // The QR code as an SVG, drawn once it is known.
 export function useQr(text: string | null | undefined, size = 120) {
@@ -88,6 +90,37 @@ export function BuyerDelivery({ id, number, b, canAct, refresh }: { id: string; 
 }
 
 // Where the sale stands with NRS, kept fresh while NRS is still answering.
+// An invoice's copies for the records, once NRS has signed it: its UBL XML in Peppol's format for Nigeria (PINT NG, for
+// invoices to businesses and government) and TaxStreem's seal (JAdES) on the invoice exactly as it went to NRS.
+export function EinvoiceCopies({ docId, kind, signed }: { docId: string; kind: 'clear' | 'report'; signed: boolean }) {
+  const [busy, setBusy] = useState<'ubl' | 'seal' | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  if (!signed) return null;
+  async function get(what: 'ubl' | 'seal') {
+    setBusy(what); setErr(null);
+    const r = await edge<{ file?: { name: string; type: string; text: string } }>('einvoice', { action: 'doc_file', doc_id: docId, what });
+    setBusy(null);
+    if (r.ok === false || !r.file) { setErr(r.error || 'That could not be made just now. Try again.'); return; }
+    downloadBlob(new Blob([r.file.text], { type: r.file.type }), r.file.name);
+  }
+  return (
+    <div className="stack" style={{ gap: 6 }} data-testid="einv-copies">
+      <div className="row wrap" style={{ gap: 6, alignItems: 'center' }}>
+        <span className="faint" style={{ fontSize: 12 }}>Copies for your records:</span>
+        {kind === 'clear' && (
+          <button className="btn btn-ghost btn-sm" data-testid="einv-ubl" disabled={!!busy} onClick={() => get('ubl')} title="UBL 2.1 XML in Peppol's format for Nigeria (PINT NG)">
+            {busy === 'ubl' ? <Spinner small /> : <Icon name="download" size={14} />}UBL (PINT NG)
+          </button>
+        )}
+        <button className="btn btn-ghost btn-sm" data-testid="einv-seal" disabled={!!busy} onClick={() => get('seal')} title="TaxStreem's JAdES seal on the invoice as it went to NRS">
+          {busy === 'seal' ? <Spinner small /> : <Icon name="download" size={14} />}TaxStreem seal (JAdES)
+        </button>
+      </div>
+      {err && <Alert kind="yellow" icon="info">{err}</Alert>}
+    </div>
+  );
+}
+
 export function EinvoiceStatus({ sale, canAct = true }: { sale: Sale; canAct?: boolean }) {
   const e = sale.einvoice;
   const qc = useQueryClient();
@@ -147,6 +180,7 @@ export function EinvoiceStatus({ sale, canAct = true }: { sale: Sale; canAct?: b
       )}
       {e.state === 'stopped' && <div className="faint" style={{ fontSize: 12 }}>Not sent to NRS. {e.note}</div>}
       {e.irn && showStamp(e) && <EinvoiceStamp irn={e.irn} qr={e.qr} signed={e.state === 'signed'} />}
+      <EinvoiceCopies docId={sale.id} kind={e.kind} signed={e.state === 'signed'} />
     </div>
   );
 }

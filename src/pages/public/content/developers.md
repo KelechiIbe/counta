@@ -18,7 +18,44 @@ Every call is a `POST` with a JSON body over HTTPS (TLS 1.2 or later).
 
 ## Authentication
 
-Each request carries a signature made with the signing secret TaxStreem gives you:
+TaxStreem gives each approved integrator a client ID and a client secret for OAuth 2.0 (RFC 6749, the client credentials grant). Exchange them for an access token, then send the token as a bearer token on every call. Prism, and integrators set up before OAuth was available, may instead sign each request with a shared secret, as described below; either way is accepted on every call.
+
+### OAuth 2.0 client credentials
+
+```
+POST https://krtqqhndmncarwusukrw.supabase.co/functions/v1/einvoice/oauth/token
+Authorization: Basic <base64 of "client_id:client_secret">
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&scope=einvoice
+```
+
+`client_id` and `client_secret` may go in the form body instead of the `Authorization` header (one or the other, never both). The body may also be JSON. The answer, which must not be cached:
+
+```json
+{ "access_token": "cat_…", "token_type": "Bearer", "expires_in": 3600, "scope": "einvoice" }
+```
+
+Send the token with each call:
+
+```
+Authorization: Bearer cat_…
+```
+
+A token lasts one hour. Ask for a new one when it expires or when a call answers 401 with `WWW-Authenticate: Bearer error="invalid_token"`. A client holds at most 20 live tokens; asking for a 21st retires the oldest. When TaxStreem revokes a client, its tokens stop working at once.
+
+| Token error | Status | Meaning |
+| --- | --- | --- |
+| `invalid_client` | 401 | The client ID or secret is wrong, or the client was revoked. |
+| `unsupported_grant_type` | 400 | `grant_type` is not `client_credentials`. |
+| `invalid_scope` | 400 | The only scope is `einvoice`. |
+| `invalid_request` | 400, 405 | The credentials were sent twice, the body could not be read, or the method was not `POST`. |
+
+TaxStreem keeps only a SHA-256 hash of each client secret and each token. Keep the client secret on your servers; never put it in an app or a web page.
+
+### Signing with a shared secret
+
+A request may instead carry a signature made with the signing secret TaxStreem gives you:
 
 ```
 x-taxstreem-signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">
@@ -42,10 +79,10 @@ await fetch(base + 'einvoices', { method: 'POST', headers: { 'Content-Type': 'ap
 | --- | --- |
 | 200 | Done. The body has `ok: true` and what was asked for. |
 | 400 | The body is not JSON, or something required is missing (`org_id`, `partner`, `invoice`). |
-| 401 | The signature is missing, wrong or too old. |
+| 401 | The access token is missing, wrong or expired, or the signature is missing, wrong or too old. |
 | 404 | No merchant with that `org_id`, or no invoice with that `ref`. |
-| 409 | TaxStreem cannot take it yet: e-invoicing is not on for the merchant (the answer says what is missing), or the merchant has already used the invoice number that day. |
-| 422 | Something in the request needs correcting. `error` names the field: `Line 2 (Panadol): goods need hs_code, the HS code from NRS's list.` |
+| 409 | TaxStreem cannot take it yet: e-invoicing is not on for the merchant (the answer says what is missing), the merchant has already used the invoice number that day, or an invoice's seal is not ready. |
+| 422 | Something in the request needs correcting. `error` names the field: `Line 2 (Panadol): goods need hs_code, the HS code from NRS's list.` For a UBL copy, `missing` lists what the invoice lacks. |
 | 502, 503 | The hardware security module that protects merchants' keys could not be reached. Send the call again later. |
 | 500 | TaxStreem could not finish. Sending the same call again is safe. |
 
@@ -189,6 +226,55 @@ POST /einvoice-paid
 ```
 
 `amount` defaults to what is still owed. Once a signed invoice is paid in full, TaxStreem tells NRS at once.
+
+## Copies of an invoice
+
+### UBL 2.1 (Peppol PINT NG)
+
+```
+POST /einvoice-ubl   { "org_id": "biz_900", "partner_id": "ptn_42", "ref": "SW-2026-000981" }
+→ 200, Content-Type: application/xml, the invoice as a file
+```
+
+The copy is UBL 2.1 in OpenPeppol's PINT NG Billing 1.0.0 (`urn:peppol:pint:billing-1@ng-1`), the Nigerian form of the Peppol International invoice: an `Invoice`, or a `CreditNote` for a credit note. Its `UUID` is TaxStreem's id for the invoice and its IRN is an `AdditionalDocumentReference`. Seller and buyer are identified by Tax ID (`EndpointID` scheme `0244`), with state and local government area codes, and each line carries its HS or service code. Copies are checked against the UBL 2.1 schema and OpenPeppol's PINT NG rules.
+
+PINT NG covers invoices to businesses and government. A receipt or invoice to a consumer, or an invoice missing something PINT NG requires, answers 422 with the list in `missing`, for example `["the buyer's postcode", "Line 1 (Rice): an HS code"]`.
+
+### TaxStreem's seal
+
+```
+POST /einvoice-signed-copy   { "org_id": "biz_900", "partner_id": "ptn_42", "ref": "SW-2026-000981" }
+→ { "ok": true, "seal": { "format": "JAdES baseline B-B (JWS compact, ES256)", "irn": "…", "sealed_at": "…", "jws": "eyJ…" } }
+```
+
+Once NRS signs an invoice, TaxStreem seals the invoice exactly as it was sent to NRS: a JAdES baseline B-B signature (ETSI TS 119 182-1), a JWS in compact form with the invoice attached as its payload. The key that makes the seal is held in a hardware security module and never leaves it. The protected header carries `alg` (`ES256`), `iat` (when it was sealed), `x5c` (TaxStreem's certificate) and `x5t#S256` (that certificate's SHA-256 thumbprint).
+
+Until the seal exists the call answers 409: NRS has not signed the invoice yet, or the seal is still being made (when the security module cannot be reached, TaxStreem keeps the invoice and seals it within five minutes of the module returning).
+
+### Checking a seal
+
+TaxStreem's certificate is public:
+
+```
+GET https://krtqqhndmncarwusukrw.supabase.co/functions/v1/einvoice/certificate
+→ the certificate (PEM), with its SHA-256 in x-certificate-sha256
+```
+
+To check a seal: confirm `x5t#S256` is the thumbprint of the certificate in `x5c`, that the certificate is TaxStreem's (the same as the one above), and that the ES256 signature verifies with its key. In Node.js:
+
+```js
+import { X509Certificate, createHash, createPublicKey, verify } from 'node:crypto';
+const [h, p, s] = jws.split('.');
+const header = JSON.parse(Buffer.from(h, 'base64url'));
+const der = Buffer.from(header.x5c[0], 'base64');
+const thumb = createHash('sha256').update(der).digest('base64url');
+const cert = new X509Certificate(der);
+const ok = thumb === header['x5t#S256'] && cert.fingerprint256 === published.fingerprint256 &&
+  verify('sha256', Buffer.from(`${h}.${p}`), { key: cert.publicKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(s, 'base64url'));
+const invoiceAsSent = JSON.parse(Buffer.from(p, 'base64url'));
+```
+
+`published` is the certificate fetched from the address above, as an `X509Certificate`.
 
 ## Callbacks
 

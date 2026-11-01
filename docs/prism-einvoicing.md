@@ -4,9 +4,20 @@ Prism is TaxStreem's product for partners: point-of-sale systems, ERPs, banks' m
 
 This page is the contract between Prism and Counta. The part partners see (keys, credits, the public API reference and the Postman collection) is Prism's.
 
-## Signing
+## Signing, or an OAuth 2.0 token
 
-Every call from Prism is a `POST` with a JSON body, signed with the secret Prism's bills already use (`TAXSTREEM_SSO_SECRET`, set on both sides):
+Every call is a `POST` with a JSON body, authenticated one of two ways. Prism signs with the shared secret below. Other integrators get an OAuth 2.0 client (client credentials grant, RFC 6749), made by an admin on the admin portal's Keys page (API clients); the secret is shown once and only its SHA-256 is kept. The client asks for a token and sends it as `Authorization: Bearer cat_…`:
+
+```
+POST https://krtqqhndmncarwusukrw.supabase.co/functions/v1/einvoice/oauth/token
+Authorization: Basic <base64 of "client_id:client_secret">     (or client_id and client_secret in the body)
+grant_type=client_credentials&scope=einvoice
+→ { "access_token": "cat_…", "token_type": "Bearer", "expires_in": 3600, "scope": "einvoice" }   (Cache-Control: no-store)
+```
+
+A token lasts an hour; a client keeps at most 20 live ones (the oldest give way); revoking a client on the Keys page ends its tokens at once. Errors follow RFC 6749: `invalid_client` (401, with a Basic challenge), `unsupported_grant_type`, `invalid_scope` and `invalid_request` (400), and 405 for anything but `POST`. A wrong or expired bearer token on a partner call answers 401 with `WWW-Authenticate: Bearer error="invalid_token"`. A request with a bearer token is not also checked for a signature.
+
+The signature uses the secret Prism's bills already use (`TAXSTREEM_SSO_SECRET`, set on both sides):
 
 ```
 x-taxstreem-signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>" with TAXSTREEM_SSO_SECRET>
@@ -34,9 +45,9 @@ await fetch(base + 'einvoices', { method: 'POST', headers: { 'Content-Type': 'ap
 | --- | --- |
 | 200 | Done. The body has `ok: true` and what was asked for. |
 | 400 | The body is not JSON, or something required is missing (`org_id`, `partner`, `invoice`). |
-| 401 | The signature is missing, wrong or too old. |
+| 401 | The bearer token is wrong or expired, or the signature is missing, wrong or too old. |
 | 404 | Counta has no merchant with that `org_id`, or no invoice with that `ref`. |
-| 409 | Counta cannot take it yet: e-invoicing is not on for the merchant (the answer says what is missing), or the invoice number is already used by the merchant that day. |
+| 409 | Counta cannot take it yet: e-invoicing is not on for the merchant (the answer says what is missing), the invoice number is already used by the merchant that day, or an invoice has no seal yet. |
 | 422 | Something in what was sent needs putting right. `error` says what, by field: `Line 2 (Panadol): goods need hs_code, the HS code from NRS's list.` |
 | 502, 503 | The HSM could not be reached to wrap the merchant's keys. Send them again later. |
 | 500 | Counta could not finish. Send the same call again; it is safe. |
@@ -228,6 +239,10 @@ Prism answers with any 2xx. Anything else, or no answer within 15 seconds, is tr
 
 The admin portal's Keys page shows the address Prism sends invoices to, how many merchants and invoices there are, and how the callbacks are going, with the last problem.
 
+## Copies: UBL (PINT NG) and the seal
+
+`POST /prism/einvoice-ubl` with `{ org_id, partner_id, ref }` answers the invoice as a file: UBL 2.1 in OpenPeppol's PINT NG Billing 1.0.0 (`ubl.ts`), or 422 with `missing` when the invoice is to a consumer or lacks something PINT NG needs. `POST /prism/einvoice-signed-copy` answers TaxStreem's JAdES seal (`jades.ts`): `{ ok, seal: { format, irn, sealed_at, jws } }`, or 409 until it exists. `GET /einvoice/certificate` (no authentication) answers the seal's certificate as PEM with `x-certificate-sha256`. The public reference for partners, with a Node.js check of a seal, is at counta-taxstreem.netlify.app/developers. [e-invoicing.md](e-invoicing.md) has how the seal and the UBL copy are made.
+
 ## What the merchant sees
 
 The merchant's owner sees e-invoices outside the books in Counta, under Settings, E-invoicing: the list (filtered by what needs a person, waiting or signed, and searched by number, customer or ref), each one with its stamp (QR code and IRN), lines, totals and where it stands with NRS and the buyer. One NRS could not deliver can be sent to the buyer again from there. Notifications of a refusal or a failed delivery open it. Invoices in the books are sales: they show in Sales with "Shopwise POS through Prism · ref" in their notes.
@@ -244,6 +259,8 @@ The merchant's owner sees e-invoices outside the books in Counta, under Settings
 | `svc_prism_einvoice`, `svc_prism_einvoice_status`, `svc_prism_einvoice_paid` | Invoices, their status and payments. |
 | `svc_prism_callback_claim`, `svc_prism_callback_done` | The callbacks. |
 | `einvoice_only_list`, `einvoice_only_get` | What the merchant sees. |
+| `svc_prism_doc` | The document behind a partner's `ref`, for its copies. |
+| `api_clients`, `api_tokens` | OAuth 2.0 clients (SHA-256 of the secret) and their tokens (SHA-256, an hour each). `svc_api_token_issue`, `svc_api_token_check`; `admin_api_clients`, `admin_api_client_create`, `admin_api_client_revoke` for the Keys page. Migration `20261115000100_security_signing.sql`. |
 
 The `svc_` functions are for the einvoice function alone (service role). The migration is `20261114000100_prism_einvoice.sql`.
 

@@ -24,6 +24,7 @@ import { MartinaAnywhere } from './settings/MartinaAnywhere';
 import { AccountantSection } from './settings/Accountant';
 import { EInvoicingPanel } from './settings/EInvoicing';
 import { useAttention } from '../lib/api';
+import { TwoStepSettings } from '../components/TwoStep';
 
 function Section({ id, title, sub, children }: { id?: string; title: string; sub?: string; children: ReactNode }) {
   return (
@@ -355,6 +356,7 @@ export default function Settings() {
           <div className="row"><input className="input" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} style={{ maxWidth: 320 }} />
             <button className="btn btn-secondary" disabled={pw.length < 8 || busy} onClick={async () => { const r = await run(async () => { const { error } = await supabase.auth.updateUser({ password: pw }); if (error) throw error; return true; }, { ok: 'Password changed', invalidate: [] }); if (r) setPw(''); }}>Change password</button></div>
         </Field>
+        <TwoStepSettings />
         <div><button className="btn btn-secondary" onClick={signOut}><Icon name="logout" size={16} />Sign out</button></div>
       </Section>
       {chart && <ChartDrawer onClose={() => setChart(false)} />}

@@ -167,6 +167,24 @@ Prism, TaxStreem's product for partners, passes their invoices to Counta at `/fu
 | `einvoice_only` | The functions; the merchant through `einvoice_only_list` and `einvoice_only_get` | Invoices kept outside the books, with the facts NRS gets. |
 | `prism_callbacks` | The functions only | Each change to tell Prism, and its tries. |
 
+## Two-step sign-in, OAuth 2.0, the seal and UBL (November 2026)
+
+Built for the SI and APP requirements on NITDA's MBS portal (Appendix 1 of the guideline: OAuth 2.0, digital signatures with keys in an HSM, multi-factor sign-in). Migration `20261115000100_security_signing.sql`.
+
+**Two-step sign-in (TOTP, Supabase Auth MFA).** Anyone who must use it (an active owner, or a member who can change settings: `private.mfa_required`) is asked by Counta to set up an authenticator app before the business opens (`TwoStepGate` in `src/components/TwoStep.tsx`), and for the code at each sign-in. Everyone else may turn it on under Settings, Your account. The database is the guard: `einvoice_settings_set` and the `settings_keys` action refuse a session whose token is not `aal2` (`private.require_mfa`, PX403; the function answers 403 with `reason: 'mfa'`). `mfa_status()` tells the app whether the person must use it. Someone who loses their phone writes to support@taxstreem.com; an admin removes their authenticator from People (the admin function's `mfa_reset`, checked by `admin_mfa_reset_check`, recorded as `mfa.reset` and alerted to the admins). Supabase Auth must have TOTP enabled (it is on by default).
+
+**OAuth 2.0 for partners.** The client credentials grant at `/functions/v1/einvoice/oauth/token`; bearer tokens are accepted on every `/prism/...` route as well as the signature. Clients are made and revoked on Keys and services (API clients). [prism-einvoicing.md](prism-einvoicing.md) has the details.
+
+**The seal (JAdES B-B).** After NRS signs an invoice, the function seals the exact JSON it sent to NRS (`einvoice_docs.sent_payload`) with the HSM key `invoice-signing`: a compact JWS with `alg` ES256, `iat`, `x5c` and `x5t#S256` (ETSI TS 119 182-1 v1.2.1, which uses `iat`, not `sigT`), kept in `einvoice_docs.jades`. The certificate in `x5c` is self-signed by the same HSM key the first time a seal is made (`x509.ts`: v3, P-256, ECDSA SHA-256, key usage digital signature and non-repudiation, three years, "CN=TaxStreem e-invoice seal, O=TaxStreem Technologies Limited, C=NG") and kept per key version in `signing_certs`; `GET /einvoice/certificate` publishes it. When the HSM cannot be reached the invoice still goes to NRS; `seal_note` says why and the five-minute run seals it later (up to 5 tries). Invoices signed before this change have no `sent_payload` and so no seal. Tests check the seal and the certificate with pyca/cryptography as well as Counta's own code, and a changed payload fails.
+
+**UBL 2.1 in PINT NG.** `ubl.ts` writes an invoice NRS has (`svc_einvoice_facts`) as OpenPeppol's PINT NG Billing 1.0.0 (`urn:peppol:pint:billing-1@ng-1`, PDK 1.4.4 of 12 August 2026), the Nigerian Peppol format; Peppol BIS Billing 3.0 has no Nigerian identifier scheme. Tax ID as `EndpointID` scheme 0244 and as `PartyTaxScheme` (tax scheme GST, as PINT NG's example), state and LGA codes from NRS, HS or service codes on each line, tax categories S, Z, E (with the NRS exemption code) and AA. Consumers' receipts are not PINT NG documents. Copies validate against the UBL 2.1 XSD and PINT NG's Schematron, except `aligned-ibrp-cl-02-ng` for codes missing from the sample code lists in OpenPeppol's test bundle (it lists 15 product and 11 service codes). Signed-in people with e-invoicing in their role download both copies from the invoice (`doc_file`, checked by `einvoice_doc_copy`); partners use `/prism/einvoice-ubl` and `/prism/einvoice-signed-copy`.
+
+| Table | Who reads it | What it holds |
+| --- | --- | --- |
+| `api_clients`, `api_tokens` | The functions; admins through `admin_api_clients` | OAuth clients (SHA-256 of the secret, its last four) and tokens (SHA-256, an hour each). |
+| `signing_certs` | The functions | The seal's certificate for each HSM key version. |
+| `einvoice_docs` (added) | As before | `sent_payload`, `jades`, `jades_at`, `seal_tries`, `seal_note`. |
+
 ## The NITDA guideline
 
 The National Regulatory Guideline for Electronic Invoicing in Nigeria 2025 (updated March 2026) sets the eligibility rules. An SI pays a ₦2 million application fee and needs ₦10 million paid-up capital (s.11). An APP pays ₦5 million, needs ₦100 million paid up and must present a minimum viable product for e-invoicing (s.18). Both need at least a third of their shares held by Nigerians and software tested by a licensed software quality assurance firm (s.10, s.17). An APP must store or back up invoice data on servers in Nigeria (s.23(vii)) and keep 99.9% uptime each month (s.25(i)). ISO 27001 is encouraged, not required (s.10(vi), s.17(v)).
