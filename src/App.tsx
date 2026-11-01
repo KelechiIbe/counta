@@ -58,6 +58,7 @@ const Tax = lazy(() => import('./pages/accounting/Tax'));
 const PublicDoc = lazy(() => import('./pages/public/Public').then((m) => ({ default: m.PublicDoc })));
 const ShopPage = lazy(() => import('./pages/public/Public').then((m) => ({ default: m.ShopPage })));
 const Sso = lazy(() => import('./pages/public/Sso'));
+const LegalPage = lazy(() => import('./pages/public/Legal'));
 const Referral = lazy(() => import('./pages/public/Referral'));
 const InvoicePortal = lazy(() => import('./pages/public/InvoicePortal'));
 
@@ -158,6 +159,9 @@ export default function App() {
       <Route path="/shop/:slug" element={<Suspense fallback={<Loading />}><ShopPage /></Suspense>} />
       <Route path="/v/:token" element={<Suspense fallback={<Loading />}><InvoicePortal /></Suspense>} />
       <Route path="/sso" element={<Suspense fallback={<Loading />}><Sso /></Suspense>} />
+      <Route path="/sla" element={<Suspense fallback={<Loading />}><LegalPage page="/sla" /></Suspense>} />
+      <Route path="/developers" element={<Suspense fallback={<Loading />}><LegalPage page="/developers" /></Suspense>} />
+      <Route path="/privacy" element={<Suspense fallback={<Loading />}><LegalPage page="/privacy" /></Suspense>} />
       <Route path="/m/*" element={<RequireAuth><Suspense fallback={<Loading />}><MobileApp /></Suspense></RequireAuth>} />
       <Route element={<RequireAuth><AppShell /></RequireAuth>}>
         <Route element={<Gate><Outlet /></Gate>}>
