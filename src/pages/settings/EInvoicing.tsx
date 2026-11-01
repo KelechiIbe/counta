@@ -2,17 +2,18 @@
 // own NRS keys (wrapped in TaxStreem's HSM; only their last four characters come back), the service code and the items
 // whose HS codes need a person. See docs/e-invoicing.md.
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useSession, useToast } from '../../state/session';
 import { useAction } from '../../lib/queries';
 import { rpc, supabase } from '../../lib/supabase';
 import { edge } from '../../lib/api';
-import { when } from '../../lib/format';
-import { useEinvoice, type EinvQueue, type EinvReady, type EinvSettings } from '../../lib/einvoice';
+import { fmtDay, N2, num, when } from '../../lib/format';
+import { useEinvoice, useEinvOnly, useEinvOnlyList, type EinvOnlyFilter, type EinvOnlyRow, type EinvQueue, type EinvReady, type EinvSettings } from '../../lib/einvoice';
 import { Icon } from '../../components/Icon';
-import { Alert, Field, SkeletonRows } from '../../components/ui';
+import { Alert, Drawer, Empty, Field, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import { NrsCodePicker } from '../../components/NrsCodePicker';
+import { BuyerDelivery, EinvoiceStamp, nrsChip } from '../../components/Einvoice';
 
 type Check = { ok: boolean; note: string; saved: boolean } | null;
 const INVALIDATE = ['einvoice'];
@@ -205,8 +206,9 @@ function SendSwitch({ s, orgId }: { s: EinvSettings; orgId: string }) {
   );
 }
 
-// How the sending is going, and the sales that need a person: refused by NRS, or waiting longer than they should.
-function SendQueue({ q }: { q: EinvQueue }) {
+// How the sending is going, and the sales that need a person: refused by NRS, or waiting longer than they should. One
+// kept outside the books opens here, under E-invoicing.
+function SendQueue({ q, openOnly }: { q: EinvQueue; openOnly: (id: string) => void }) {
   const nav = useNavigate();
   return (
     <div className="stack" style={{ gap: 6 }} data-testid="einv-queue">
@@ -240,7 +242,7 @@ function SendQueue({ q }: { q: EinvQueue }) {
                   <span className={'chip ' + (a.state === 'refused' ? 't-red' : 't-amber')} style={{ fontSize: 11 }}>{a.state === 'refused' ? 'Refused' : a.state === 'not_delivered' ? 'Not delivered to the buyer' : 'Waiting'}</span></div>
                 {a.note && <div className="faint" style={{ fontSize: 12, wordBreak: 'break-word' }}>{a.note}</div>}
               </div>
-              <button className="btn btn-ghost btn-xs" style={{ flex: 'none' }} onClick={() => nav(`/sell/sales?open=${a.sale_id}`)}>Open</button>
+              <button className="btn btn-ghost btn-xs" style={{ flex: 'none' }} onClick={() => (a.source === 'only' ? openOnly(a.sale_id) : nav(`/sell/sales?open=${a.sale_id}`))}>Open</button>
             </div>
           ))}
         </div>
@@ -282,10 +284,166 @@ function HsToConfirm({ orgId, r }: { orgId: string; r: EinvReady | undefined }) 
   );
 }
 
+// ------------------------------------------------------------------ e-invoices kept outside the books (Prism's partners)
+const BUYER_CHIP: Record<string, [string, string]> = { due: ['t-amber', 'To the buyer'], sending: ['t-amber', 'To the buyer'], transmitting: ['t-amber', 'On its way'],
+  transmitted: ['t-green', 'Delivered'], acknowledged: ['t-green', 'Received'], failed: ['t-red', 'Not delivered'] };
+const DOC_WORDS: Record<string, string> = { invoice: 'Invoice', receipt: 'Receipt', credit_note: 'Credit note' };
+
+function OutsideBooks({ orgId, count, open }: { orgId: string; count: number; open: (id: string) => void }) {
+  const [state, setState] = useState<'all' | NonNullable<EinvOnlyFilter['state']>>('all');
+  const [q, setQ] = useState('');
+  const [term, setTerm] = useState('');
+  useEffect(() => { const t = window.setTimeout(() => setTerm(q.trim()), 250); return () => window.clearTimeout(t); }, [q]);
+  const list = useEinvOnlyList(orgId, { ...(state === 'all' ? {} : { state }), ...(term ? { q: term } : {}), limit: 50 });
+  const rows = list.data?.rows || [];
+  return (
+    <div className="stack" style={{ gap: 8 }} data-testid="einv-only">
+      <div className="mini-label">From partners, outside the books</div>
+      <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
+        Invoices your partners' systems sent through TaxStreem Prism for e-invoicing only. NRS signs them for the business; they are not in your books, reports or tax returns.
+      </div>
+      <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+        <Pills value={state} onChange={setState} options={[{ id: 'all', label: 'All', count }, { id: 'attention', label: 'Needs a person' }, { id: 'waiting', label: 'Waiting' }, { id: 'signed', label: 'Signed' }]} />
+        <input className="input" style={{ flex: '1 1 160px', minWidth: 0, maxWidth: 260 }} placeholder="Number, customer or ref" value={q} onChange={(e) => setQ(e.target.value)}
+          aria-label="Search e-invoices from partners" data-testid="einv-only-search" />
+      </div>
+      {list.isLoading ? <SkeletonRows n={3} /> : !rows.length ? <Empty>{term || state !== 'all' ? 'None match.' : 'None yet.'}</Empty> : (
+        <div className="stack" style={{ gap: 0 }}>
+          {rows.map((r) => <OnlyRow key={r.id} r={r} onOpen={() => open(r.id)} />)}
+          {(list.data?.total || 0) > rows.length && <div className="faint" style={{ fontSize: 12, paddingTop: 6 }}>Showing {rows.length} of {num(list.data?.total)}. Search to find others.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OnlyRow({ r, onOpen }: { r: EinvOnlyRow; onOpen: () => void }) {
+  const bc = r.buyer_state ? BUYER_CHIP[r.buyer_state] : null;
+  return (
+    <button className="row click" onClick={onOpen} data-testid="einv-only-row" data-state={r.state}
+      style={{ gap: 8, padding: '8px 0', alignItems: 'flex-start', width: '100%', textAlign: 'left', background: 'none', border: 'none',
+        borderTop: '1px solid var(--line, #EEE)', cursor: 'pointer', font: 'inherit', color: 'inherit' }}>
+      <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
+        <div className="row wrap" style={{ gap: 6, alignItems: 'center' }}>
+          <b>{r.number}</b>{r.doc !== 'invoice' && <span className="faint" style={{ fontSize: 12 }}>{DOC_WORDS[r.doc]}</span>}
+          <span className="muted ellipsis" style={{ minWidth: 0 }}>{r.customer_name || 'Walk-in customer'}</span>
+        </div>
+        <div className="faint" style={{ fontSize: 12, wordBreak: 'break-word' }}>{fmtDay(r.issue_date)}{r.partner_name ? ` · ${r.partner_name}` : ''}{r.ref ? ` · ${r.ref}` : ''}</div>
+        {r.state === 'refused' && r.note && <div style={{ fontSize: 12, color: 'var(--red, #B42318)', wordBreak: 'break-word' }}>{r.note}</div>}
+      </div>
+      <div className="stack" style={{ gap: 4, alignItems: 'flex-end', flex: 'none' }}>
+        <span className="num" style={{ fontSize: 13 }}>{N2(r.total)}</span>
+        <div className="row" style={{ gap: 4 }}>{nrsChip(r.state)}{bc && <span className={'chip ' + bc[0]} style={{ marginLeft: 4 }}>{bc[1]}</span>}</div>
+      </div>
+    </button>
+  );
+}
+
+// One of them: the invoice as the partner sent it, its stamp, and where it stands with NRS and the buyer.
+function OnlyDrawer({ id, onClose }: { id: string; onClose: () => void }) {
+  const d = useEinvOnly(id);
+  const x = d.data;
+  const e = x?.einvoice;
+  return (
+    <Drawer onClose={onClose} width={640}>
+      <div className="drawer-hd"><div className="grow" style={{ minWidth: 0 }}>
+        <div className="row wrap" style={{ gap: 8 }}><div className="drawer-title">{x ? `${DOC_WORDS[x.doc]} ${x.number}` : 'Loading…'}</div>{e && nrsChip(e.state)}</div>
+        {x && <div className="muted" style={{ fontSize: 13, wordBreak: 'break-word' }} data-testid="einv-only-source">
+          From {x.partner_name || 'a partner'} through TaxStreem Prism{x.ref ? ` · ref ${x.ref}` : ''} · {when(x.created_at)}</div>}
+      </div><button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button></div>
+      <div className="drawer-body stack" style={{ gap: 14 }} data-testid="einv-only-drawer">
+        {d.isError ? <Alert kind="red" icon="alert">{(d.error as Error)?.message || 'This e-invoice could not be opened.'}</Alert> : !x ? <Spinner /> : (
+          <>
+            <Alert kind="grey" icon="info">E-invoicing only: NRS signs it for the business, and it stays out of your books, reports and tax returns.</Alert>
+            {e && (e.state === 'waiting' || e.state === 'sending') && <Alert kind="yellow" icon="clock">Waiting for NRS{e.kind === 'report' ? ', with the next batch' : ' to sign it'}.
+              {e.tries > 0 && e.note ? <div style={{ marginTop: 4, fontSize: 13 }}>{e.note}{e.next_try_at ? ` Next try ${when(e.next_try_at)}.` : ''}</div> : null}</Alert>}
+            {e?.state === 'signed' && <Alert kind="green" icon="check">Signed by NRS{e.signed_at ? ` ${when(e.signed_at)}` : ''}.{e.pay_status === 'PAID' ? ' NRS knows it is paid.' : ''}</Alert>}
+            {e?.state === 'refused' && <Alert kind="red" icon="alert"><div style={{ wordBreak: 'break-word' }}>{e.note || 'NRS refused it.'}</div>
+              <div style={{ marginTop: 4, fontSize: 13 }}>{x.partner_name || 'The partner'} sends it again, corrected, through Prism.</div></Alert>}
+            {e?.state === 'signed' && e.buyer && <BuyerDelivery id={x.id} number={x.number} b={e.buyer} canAct={x.can.send_to_buyer} refresh={['einvoice', 'only-doc', x.id]} />}
+            {e?.irn && (e.state === 'signed' || e.kind === 'report') && <EinvoiceStamp irn={e.irn} qr={e.qr} signed={e.state === 'signed'} />}
+            <div className="row wrap" style={{ gap: 16, fontSize: 13 }}>
+              <div className="stack" style={{ gap: 2, minWidth: 180, flex: '1 1 200px' }}>
+                <div className="mini-label">Customer</div>
+                {x.customer && !x.customer.walk_in ? <>
+                  <b>{x.customer.name}</b>
+                  {x.customer.tin && <span className="muted">Tax ID {x.customer.tin}</span>}
+                  {(x.customer.street || x.customer.city) && <span className="muted" style={{ wordBreak: 'break-word' }}>{[x.customer.street, x.customer.city, x.customer.lga, x.customer.state].filter(Boolean).join(', ')}{x.customer.postcode ? ` ${x.customer.postcode}` : ''}</span>}
+                  {(x.customer.email || x.customer.phone) && <span className="muted" style={{ wordBreak: 'break-word' }}>{[x.customer.email, x.customer.phone].filter(Boolean).join(' · ')}</span>}
+                </> : <span className="muted">Walk-in customer</span>}
+              </div>
+              <div className="stack" style={{ gap: 2, minWidth: 140 }}>
+                <div className="mini-label">Dates</div>
+                <span>Issued {fmtDay(x.issue_date)}</span>
+                {x.due_date && <span className="muted">Due {fmtDay(x.due_date)}</span>}
+                <span className="muted">{x.paid ? `Paid${x.paid_at ? ` ${when(x.paid_at)}` : ''}${x.pay_reference ? ` · ${x.pay_reference}` : ''}` : 'Not paid yet'}</span>
+              </div>
+            </div>
+            {x.original && <div className="muted" style={{ fontSize: 13 }}>Corrects invoice {x.original.number}.</div>}
+            {x.credit_notes.length > 0 && <div className="muted" style={{ fontSize: 13 }}>Credit notes: {x.credit_notes.map((c) => `${c.number} (${N2(c.total)})`).join(', ')}.</div>}
+            {/* On a phone each line is two rows: what it is, then the quantity, price and VAT beside the amount. */}
+            <div className="card show-sm" data-testid="einv-only-lines-sm">
+              <div style={{ display: 'block' }}>
+                {x.lines.map((l) => (
+                  <div key={l.line_no} style={{ padding: '8px 12px', borderBottom: '1px solid var(--line, #EEE)', fontSize: 13 }}>
+                    <div style={{ wordBreak: 'break-word' }}>{l.description}</div>
+                    <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+                      <span className="faint" style={{ fontSize: 12, flex: 1, minWidth: 0, wordBreak: 'break-word' }}>
+                        {num(l.qty, 3)}{l.unit_label && l.unit_label !== 'unit' ? ` ${l.unit_label}` : ''} × {N2(l.unit_price)} · VAT {N2(l.vat)}
+                        {' · '}{l.kind === 'goods' ? `HS ${l.hs_code || '—'}` : 'Service'}</span>
+                      <span className="num" style={{ flex: 'none' }}>{N2(l.gross)}</span>
+                    </div>
+                  </div>
+                ))}
+                <div style={{ padding: '8px 12px', fontSize: 13 }} className="stack">
+                  <div className="row"><span className="muted" style={{ flex: 1 }}>Before VAT</span><span className="num">{N2(x.subtotal)}</span></div>
+                  <div className="row"><span className="muted" style={{ flex: 1 }}>VAT</span><span className="num">{N2(x.vat_total)}</span></div>
+                  <div className="row"><b style={{ flex: 1 }}>Total</b><b className="num">{N2(x.total)}</b></div>
+                </div>
+              </div>
+            </div>
+            <div className="card hide-sm" style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 420 }} data-testid="einv-only-lines">
+                <thead><tr className="faint" style={{ fontSize: 12, textAlign: 'left' }}>
+                  <th style={{ padding: '8px 10px' }}>Item</th><th style={{ padding: '8px 6px', textAlign: 'right' }}>Qty</th>
+                  <th style={{ padding: '8px 6px', textAlign: 'right' }}>Price</th><th style={{ padding: '8px 6px', textAlign: 'right' }}>VAT</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'right' }}>Amount</th></tr></thead>
+                <tbody>
+                  {x.lines.map((l) => (
+                    <tr key={l.line_no} style={{ borderTop: '1px solid var(--line, #EEE)' }}>
+                      <td style={{ padding: '8px 10px', wordBreak: 'break-word' }}>{l.description}
+                        <div className="faint" style={{ fontSize: 11 }}>{l.kind === 'goods' ? `HS ${l.hs_code || '—'}${l.hs_label ? ` · ${l.hs_label}` : ''}` : 'Service'}{l.vat_treatment !== 'standard' ? ` · ${l.vat_treatment === 'zero' ? 'zero-rated' : 'VAT exempt'}` : ''}</div></td>
+                      <td className="num" style={{ padding: '8px 6px', textAlign: 'right', whiteSpace: 'nowrap' }}>{num(l.qty, 3)}{l.unit_label && l.unit_label !== 'unit' ? ` ${l.unit_label}` : ''}</td>
+                      <td className="num" style={{ padding: '8px 6px', textAlign: 'right' }}>{N2(l.unit_price)}</td>
+                      <td className="num" style={{ padding: '8px 6px', textAlign: 'right' }}>{N2(l.vat)}</td>
+                      <td className="num" style={{ padding: '8px 10px', textAlign: 'right' }}>{N2(l.gross)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: '1px solid var(--line, #EEE)' }}><td colSpan={4} style={{ padding: '6px 10px' }} className="muted">Before VAT</td><td className="num" style={{ padding: '6px 10px', textAlign: 'right' }}>{N2(x.subtotal)}</td></tr>
+                  <tr><td colSpan={4} style={{ padding: '6px 10px' }} className="muted">VAT</td><td className="num" style={{ padding: '6px 10px', textAlign: 'right' }}>{N2(x.vat_total)}</td></tr>
+                  <tr><td colSpan={4} style={{ padding: '6px 10px' }}><b>Total</b></td><td className="num" style={{ padding: '6px 10px', textAlign: 'right' }}><b data-testid="einv-only-total">{N2(x.total)}</b></td></tr>
+                </tfoot>
+              </table>
+            </div>
+            {x.notes && <div className="muted" style={{ fontSize: 13, wordBreak: 'break-word' }}>{x.notes}</div>}
+          </>
+        )}
+      </div>
+    </Drawer>
+  );
+}
+
 export function EInvoicingPanel() {
   const { orgId } = useSession();
   const q = useEinvoice(orgId);
   const { run, busy } = useAction();
+  const [params, setParams] = useSearchParams();
+  const onlyId = params.get('einvoice');
+  // An e-invoice outside the books opens from the list, from what needs a person, or from a link (/settings?einvoice=…).
+  const openOnly = (id: string) => { const n = new URLSearchParams(params); n.set('einvoice', id); setParams(n, { replace: true }); };
+  const closeOnly = () => { const n = new URLSearchParams(params); n.delete('einvoice'); setParams(n, { replace: true }); };
   const s = q.data;
   if (q.isError) return <div className="muted" style={{ fontSize: 13 }}>Only people who change settings, keep the books or file tax see e-invoicing.</div>;
   if (!s || !orgId) return <SkeletonRows n={3} />;
@@ -314,7 +472,9 @@ export function EInvoicingPanel() {
       {s.platform_keys && <Alert kind="blue" icon="info">You are on TaxStreem's keys while NRS is in test mode. Add your own keys below before you go live.</Alert>}
       <Readiness list={s.readiness} />
       <SendSwitch s={s} orgId={orgId} />
-      {s.queue && (s.enabled || s.queue.signed + s.queue.waiting + s.queue.refused > 0) && <SendQueue q={s.queue} />}
+      {s.queue && (s.enabled || s.queue.signed + s.queue.waiting + s.queue.refused > 0) && <SendQueue q={s.queue} openOnly={openOnly} />}
+      {(s.queue?.outside_books || 0) > 0 && <OutsideBooks orgId={orgId} count={s.queue!.outside_books!} open={openOnly} />}
+      {onlyId && <OnlyDrawer id={onlyId} onClose={closeOnly} />}
       {s.can.edit ? <KeysForm s={s} orgId={orgId} /> : <CheckResult s={s} fresh={null} />}
       <ServiceCode s={s} orgId={orgId} />
       <HsToConfirm orgId={orgId} r={s.readiness.find((r) => r.id === 'items')} />

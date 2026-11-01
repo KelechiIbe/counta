@@ -56,7 +56,8 @@ const BUYER_WORDS: Record<string, string> = {
   due: 'Going to the buyer through NRS.', sending: 'Going to the buyer through NRS.', transmitting: 'NRS is sending it to the buyer.',
   transmitted: 'Delivered to the buyer through NRS.', acknowledged: 'The buyer\'s access point has it.', failed: 'NRS could not deliver it to the buyer.',
 };
-function BuyerDelivery({ sale, b, canAct }: { sale: Sale; b: NonNullable<SaleEinvoice['buyer']>; canAct: boolean }) {
+// A sale, or an e-invoice kept outside the books (refresh is the query that shows it).
+export function BuyerDelivery({ id, number, b, canAct, refresh }: { id: string; number: string; b: NonNullable<SaleEinvoice['buyer']>; canAct: boolean; refresh: unknown[] }) {
   const qc = useQueryClient();
   const { run, busy } = useAction();
   const moving = ['due', 'sending', 'transmitting'].includes(b.state);
@@ -64,16 +65,16 @@ function BuyerDelivery({ sale, b, canAct }: { sale: Sale; b: NonNullable<SaleEin
   useEffect(() => {
     if (!moving) return;
     let n = 0;
-    const t = window.setInterval(() => { n += 1; qc.invalidateQueries({ queryKey: ['sale', sale.id] }); if (n >= 20) window.clearInterval(t); }, 3000);
+    const t = window.setInterval(() => { n += 1; qc.invalidateQueries({ queryKey: refresh }); if (n >= 20) window.clearInterval(t); }, 3000);
     return () => window.clearInterval(t);
-  }, [b.state, sale.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [b.state, id]); // eslint-disable-line react-hooks/exhaustive-deps
   const words = BUYER_WORDS[b.state] || b.state;
   if (b.state === 'failed') {
     return (
       <Alert kind="amber" icon="alert">
         <div data-testid="einv-buyer" data-state={b.state} style={{ wordBreak: 'break-word' }}>{words}{b.note && !/^NRS could not deliver/.test(b.note) ? ` ${b.note}` : ''}</div>
         {canAct && <div style={{ marginTop: 8 }}><button className="btn btn-secondary btn-sm" disabled={busy}
-          onClick={() => run(() => rpc('einvoice_send_to_buyer', { p_sale: sale.id }), { ok: `${sale.number} is going to the buyer again`, invalidate: ['sale', 'sales', 'einvoice'] })}>Send to the buyer again</button></div>}
+          onClick={() => run(() => rpc('einvoice_send_to_buyer', { p_sale: id }), { ok: `${number} is going to the buyer again`, invalidate: ['sale', 'sales', 'einvoice'] })}>Send to the buyer again</button></div>}
       </Alert>
     );
   }
@@ -133,7 +134,7 @@ export function EinvoiceStatus({ sale, canAct = true }: { sale: Sale; canAct?: b
       {e.state === 'signed' && (
         <Alert kind="green" icon="check">Signed by NRS{e.signed_at ? ` ${when(e.signed_at)}` : ''}.{e.pay_status === 'PAID' ? ' NRS knows it is paid.' : ''}</Alert>
       )}
-      {e.state === 'signed' && e.buyer && <BuyerDelivery sale={sale} b={e.buyer} canAct={canAct} />}
+      {e.state === 'signed' && e.buyer && <BuyerDelivery id={sale.id} number={sale.number} b={e.buyer} canAct={canAct} refresh={['sale', sale.id]} />}
       {e.state === 'refused' && (
         <Alert kind="red" icon="alert">
           <div style={{ wordBreak: 'break-word' }}>{/^(NRS refused|Not sent)/.test(e.note || '') ? e.note : `NRS refused it. ${e.note || ''}`}</div>

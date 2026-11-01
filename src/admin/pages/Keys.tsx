@@ -78,11 +78,11 @@ function KeyLine({ k }: { k: KeyRow }) {
   );
 }
 
-function Hook({ label, url, last }: { label: string; url: string; last?: string | null }) {
+function Hook({ label, url, last, note }: { label: string; url: string; last?: string | null; note?: string }) {
   const toast = useToast();
   return (
     <div className="adm-row" style={{ gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,2fr)' }}>
-      <div><b>{label}</b><div className="faint" style={{ fontSize: 12 }}>{last === undefined ? 'Enter this address in the provider\'s dashboard.' : last ? `Last heard ${when(last)}` : 'Nothing received yet'}</div></div>
+      <div><b>{label}</b><div className="faint" style={{ fontSize: 12 }}>{note ?? (last === undefined ? 'Enter this address in the provider\'s dashboard.' : last ? `Last heard ${when(last)}` : 'Nothing received yet')}</div></div>
       <div className="row" style={{ gap: 6, minWidth: 0 }}>
         <code className="ellipsis" style={{ fontSize: 12, minWidth: 0, flex: 1 }}>{url}</code>
         <button className="btn btn-secondary btn-sm" onClick={() => navigator.clipboard?.writeText(url).then(() => toast('Copied'))}><Icon name="copy" size={14} />Copy</button>
@@ -95,14 +95,24 @@ function Hook({ label, url, last }: { label: string; url: string; last?: string 
 // part comes from the database, so only admins with their authenticator code see it.
 function NrsHook() {
   const q = useQuery({ queryKey: ['admin-nrs-hook'], retry: false, staleTime: 30_000,
-    queryFn: () => rpc<{ path: string; last: { at: string; message: string | null } | null; today: number; to_buyers: number; received: number }>('admin_einvoice_webhook', {}) });
+    queryFn: () => rpc<{ path: string; last: { at: string; message: string | null } | null; today: number; to_buyers: number; received: number;
+      prism?: { merchants: number; invoices_today: number; callbacks_waiting: number; callbacks_failed: number; last_sent: string | null; last_error: string | null } }>('admin_einvoice_webhook', {}) });
   if (!q.data?.path) return null;
+  const pr = q.data.prism;
   return (
     <>
       <Hook label="Webhook address for NRS's APP portal" url={SUPABASE_URL + q.data.path} last={q.data.last?.at ?? null} />
       <div className="faint" style={{ fontSize: 12, padding: '0 16px 12px', lineHeight: 1.5 }} data-testid="nrs-hook-note">
         Paste it in the APP portal's Developer section, as the Webhook URL. Leave the IP access list empty: Supabase does not send from fixed addresses.
         {` ${q.data.today} notification${q.data.today === 1 ? '' : 's'} in the last day; ${q.data.to_buyers} sent to buyers; ${q.data.received} received for businesses.`}
+      </div>
+      {/* Prism's partners: their invoices come in at /einvoice/prism/..., and Prism hears how each went at its callback address. */}
+      <Hook label="Prism sends partners' invoices to" url={`${SUPABASE_URL}/functions/v1/einvoice/prism/einvoices`}
+        note={pr?.last_sent ? `Last callback to Prism ${when(pr.last_sent)}` : 'Give this address to Prism.'} />
+      <div className="faint" style={{ fontSize: 12, padding: '0 16px 12px', lineHeight: 1.5, wordBreak: 'break-word' }} data-testid="prism-note">
+        Signed with the single sign-on secret. Set Prism's callback address under TaxStreem below.
+        {pr ? ` ${pr.merchants} merchant${pr.merchants === 1 ? '' : 's'}; ${pr.invoices_today} invoice${pr.invoices_today === 1 ? '' : 's'} in the last day; ${pr.callbacks_waiting} callback${pr.callbacks_waiting === 1 ? '' : 's'} waiting${pr.callbacks_failed ? `, ${pr.callbacks_failed} given up` : ''}.` : ''}
+        {pr?.last_error ? ` Last problem: ${pr.last_error}` : ''}
       </div>
     </>
   );

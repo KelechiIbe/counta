@@ -81,6 +81,9 @@ export function unitCode(label: unknown, known?: Set<string> | null): string {
   let k = String(label ?? '').toLowerCase().replace(/[^a-z]/g, '');
   if (!UNIT_CODES[k] && k.endsWith('es') && UNIT_CODES[k.slice(0, -2)]) k = k.slice(0, -2);
   else if (!UNIT_CODES[k] && k.endsWith('s') && UNIT_CODES[k.slice(0, -1)]) k = k.slice(0, -1);
+  // A unit that is already one of NRS's codes (a partner may send KGM or XBX through Prism) goes as it is.
+  const raw = String(label ?? '').trim().toUpperCase();
+  if (!UNIT_CODES[k] && /^[A-Z0-9]{2,3}$/.test(raw) && known.has(raw)) return raw;
   const prefs = [...(UNIT_CODES[k] || []), 'C62', 'EA', 'H87'];
   return prefs.find((c) => known.has(c)) || 'C62';
 }
