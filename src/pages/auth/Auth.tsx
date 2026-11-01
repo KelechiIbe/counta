@@ -152,6 +152,9 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
           {mode === 'signup' && !joining && (
             <div className="hint">Joining a team? Open the link in your invitation email. It brings you back here and then into the business.</div>
           )}
+          <div className="hint" data-testid="auth-legal" style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            <Link to="/privacy">Privacy notice</Link><Link to="/sla">Service levels</Link><Link to="/developers">E-invoicing API</Link>
+          </div>
         </form>
       </div>
     </div>
