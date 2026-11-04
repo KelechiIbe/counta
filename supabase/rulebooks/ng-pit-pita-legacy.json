@@ -1,0 +1,261 @@
+{
+  "$schema": "https://taxstreem.dev/schemas/pit-business-config-v1.json",
+  "meta": {
+    "config_id": "ng-pit-pita-legacy",
+    "version": "1.0.0",
+    "regime": "PITA",
+    "governing_law": "Personal Income Tax Act (as amended to the Finance Act 2023)",
+    "applies_to": "Accounts for years ending in 2025 (year of assessment 2026)",
+    "sources": [
+      "TaxStreem PIT rule book, s.1, s.2, s.4, s.5, s.9",
+      "How personal tax reliefs are calculated in our engine (YOA 2025)",
+      "TaxStreem answers of 4 November 2026"
+    ]
+  },
+  "entity_kinds": {
+    "sole_proprietor": "A business name with one proprietor, or a business that is not registered: taxed on the whole profit (PIT rule book s.1).",
+    "partnership": "A business name with two or more proprietors, a limited partnership, or an unregistered partnership: the profit is shared and each partner is taxed on his share (s.15).",
+    "exempt": "Incorporated trustees and companies limited by guarantee: exempt except on profits from a trade or business (s.162(1)(a)(iii))."
+  },
+  "tax_bands": [
+    {
+      "label": "First ₦300,000",
+      "width": 300000,
+      "rate": 0.07
+    },
+    {
+      "label": "Next ₦300,000",
+      "width": 300000,
+      "rate": 0.11
+    },
+    {
+      "label": "Next ₦500,000",
+      "width": 500000,
+      "rate": 0.15
+    },
+    {
+      "label": "Next ₦500,000",
+      "width": 500000,
+      "rate": 0.19
+    },
+    {
+      "label": "Next ₦1,600,000",
+      "width": 1600000,
+      "rate": 0.21
+    },
+    {
+      "label": "Above ₦3,200,000",
+      "width": null,
+      "rate": 0.24
+    }
+  ],
+  "reliefs": {
+    "method": "cra",
+    "exempt_items": [
+      "pension",
+      "nhf",
+      "nhis",
+      "life_insurance",
+      "gratuity"
+    ],
+    "after_cra": [
+      "home_loan_interest"
+    ],
+    "cra": {
+      "fixed_ngn": 200000,
+      "fixed_pct": 0.01,
+      "variable_pct": 0.2,
+      "base": "Total income less the tax-exempt contributions (pension, NHF, NHIS, life insurance, gratuity)"
+    }
+  },
+  "minimum_tax": {
+    "applies": true,
+    "rate": 0.01,
+    "base": "the same figure the CRA is worked on"
+  },
+  "chargeable_gains": {
+    "in_total_income": false,
+    "separate_rate": 0.1,
+    "law": "Capital Gains Tax Act"
+  },
+  "losses": {
+    "carry_forward_years": 4
+  },
+  "capital_allowances": {
+    "law": "legacy",
+    "restriction_two_thirds": false
+  },
+  "business": {
+    "rd_cap_pct_of_turnover": 0.05,
+    "donations_deductible": false,
+    "mixed_use": {
+      "business_pct": 50,
+      "lines": [
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C25",
+          "group": "vehicle",
+          "label": "Fuel and vehicle running costs"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C64",
+          "group": "vehicle",
+          "label": "Petrol (PMS)"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C28",
+          "group": "internet",
+          "label": "Internet and data"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C43",
+          "group": "internet",
+          "label": "Telephone"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C63",
+          "group": "power",
+          "label": "Electricity and power"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C47",
+          "group": "power",
+          "label": "Water and other utilities"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C26",
+          "group": "power",
+          "label": "Generator running"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C68",
+          "group": "power",
+          "label": "Diesel (AGO)"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C34",
+          "group": "home",
+          "label": "Rent of a home also used as the office"
+        }
+      ]
+    }
+  },
+  "other_income": {
+    "kinds": [
+      "employment",
+      "rent",
+      "dividend",
+      "interest",
+      "royalty",
+      "foreign_earned",
+      "foreign_investment",
+      "gov_bond_interest",
+      "pension_gratuity",
+      "other"
+    ],
+    "final_tax_kinds": [
+      "dividend",
+      "interest"
+    ],
+    "exempt_kinds": [
+      "gov_bond_interest",
+      "foreign_investment",
+      "pension_gratuity"
+    ],
+    "minimum_wage_monthly_ngn": 70000
+  },
+  "filing": {
+    "due_month": 3,
+    "due_day": 31,
+    "flux_authorities": [
+      "SIRS:LA"
+    ]
+  },
+  "configurable_flags": {
+    "flags": {
+      "P-1": {
+        "title": "Old law for 2025",
+        "reading": "Accounts for 2025 (filed in 2026) use the old rates and reliefs, with chargeable gains left out of taxable profit.",
+        "source": "PIT rule book s.1, s.9",
+        "status": "agreed"
+      },
+      "P-2": {
+        "title": "CRA and minimum tax",
+        "reading": "CRA is the higher of ₦200,000 or 1%, plus 20%, of total income less pension, NHF, NHIS, life insurance and gratuity (the Finance Act 2020 meaning of gross income). Home loan interest comes off after the CRA. Minimum tax is 1% of the same figure the CRA is worked on, payable when the tax at the rates is lower.",
+        "source": "Reliefs note (YOA 2025); TaxStreem answer, 4 November 2026",
+        "status": "agreed"
+      },
+      "P-7": {
+        "title": "Gains under the old law",
+        "reading": "Gains on disposals are left out of income and shown separately, with capital gains tax at 10% on each person's share, for the capital gains tax return.",
+        "source": "PIT rule book s.1; Capital Gains Tax Act s.2",
+        "status": "agreed"
+      },
+      "P-3": {
+        "title": "Due date",
+        "reading": "The return is due on 31 March of the year after the accounting year ends, whatever month the year ends in.",
+        "source": "TaxStreem answer, 4 November 2026",
+        "status": "agreed"
+      },
+      "P-4": {
+        "title": "Whole return",
+        "reading": "Each person's return covers their share of the business and any other income they declare (employment, rent, dividends, interest, royalties, foreign income), with their reliefs.",
+        "source": "TaxStreem answer, 4 November 2026",
+        "status": "agreed"
+      },
+      "P-8": {
+        "title": "Capital allowances",
+        "reading": "Allowances are worked out for the business as one enterprise and shared in the profit-sharing ratio at the year end (First Schedule para 19(3)). An asset used partly for private life gets the business share of its allowance (para 16). 2025 accounts use the old initial and annual allowances with ₦10 kept on each asset, with no two-thirds restriction and no investment allowance for individuals; 2026 accounts onwards the First Schedule rates on cost with 1% kept.",
+        "source": "NTA 2025 First Schedule paras 16, 19, 22, 23; PITA (as amended)",
+        "status": "counta_reading"
+      },
+      "P-9": {
+        "title": "Losses",
+        "reading": "A business loss is carried forward against the person's later business income only, never set against other income. Under the NTA there is no time limit (s.28(3)). Losses brought into 2025 accounts are taken as entered; the four-year limit of the old law is for the person to observe.",
+        "source": "NTA 2025 s.15(2), s.28(3); PITA s.35",
+        "status": "counta_reading"
+      },
+      "P-10": {
+        "title": "Partners' pay",
+        "reading": "Salary, interest on capital and benefits charged in the accounts for a partner go to that partner before the profit is shared (s.15(1)(a)). A sole proprietor's own pay charged as an expense is his drawing and is added back to him. Private or domestic expenses of a partner are never deducted.",
+        "source": "NTA 2025 s.15(1), s.21(c)",
+        "status": "counta_reading"
+      },
+      "P-11": {
+        "title": "Which state",
+        "reading": "A partner engaged in the business pays the state of the office he works from; a dormant partner pays the state he usually lives in; a dormant partner who does not live in Nigeria pays the NRS. A sole proprietor pays the state he lived in on 1 January of the year of assessment.",
+        "source": "NTA 2025 Twelfth Schedule paras 4 and 6; NTAA 2025 s.3",
+        "status": "counta_reading"
+      },
+      "P-12": {
+        "title": "WHT credit notes",
+        "reading": "WHT credit notes the business holds at the year end (account 1401), less those already used in earlier returns, are shared in the profit-sharing ratio and set against each person's tax. What a person cannot use stays for later years.",
+        "source": "Counta reading",
+        "status": "counta_reading"
+      },
+      "P-13": {
+        "title": "Tax deducted at source",
+        "reading": "Dividends and interest on which tax was deducted at source are taken as taxed in full (final tax) and left out of total income. Interest on government bonds, foreign dividends, interest, rent and royalties brought in through a domiciliary account, and pensions and gratuities are exempt. Employment income of the national minimum wage or less is exempt.",
+        "source": "NTA 2025 s.28(2)(b)(iii) and (iv), s.162(1)(i), (n), (s) and (t); PIT rule book s.6",
+        "status": "counta_reading"
+      },
+      "P-14": {
+        "title": "Research and development",
+        "reading": "Research and development costs above 5% of turnover are added back, as the PIT rule book says. (The 5% limit in s.164 is written for companies; s.20(1)(i) gives no limit.)",
+        "source": "PIT rule book s.2",
+        "status": "counta_reading"
+      },
+      "P-15": {
+        "title": "Donations",
+        "reading": "Donations are not deductible for a business name or partnership: the deduction in s.163 is for companies, and a gift is not an expense incurred in producing the income.",
+        "source": "NTA 2025 s.20, s.163",
+        "status": "counta_reading"
+      },
+      "P-16": {
+        "title": "Mixed use",
+        "reading": "For each expense the business marks as used partly for private life (car, internet, power, a home that is also the office) only the business share is deducted, 50% unless the business sets another share. The business must confirm which apply before approving.",
+        "source": "PIT rule book s.4",
+        "status": "agreed"
+      }
+    }
+  }
+}

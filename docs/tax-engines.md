@@ -1,6 +1,6 @@
-# Tax engines: companies income tax, VAT and withholding
+# Tax engines: income tax, VAT and withholding
 
-Accounting, Tax returns has three tabs. Each reads the same books the statements are drawn from, so a figure on a return can always be traced to journals.
+Accounting, Tax returns has three tabs. Each reads the same books the statements are drawn from, so a figure on a return can always be traced to journals. The income tax tab is companies income tax for a company, and personal income tax for a business name or partnership, whose people pay it to their states (docs/personal-income-tax.md); an NGO is told it is exempt unless it trades.
 
 ## Companies income tax
 
@@ -12,7 +12,7 @@ Accounting, Tax returns has three tabs. Each reads the same books the statements
 
 **Capital allowances.** Every asset in the fixed asset register, and assets kept for tax only (`tax_assets`, for things bought before the books), has a Rev360 category that decides its class and rate. An asset's tax value is rolled forward from the year it was first used, under the law of each year, unless an opening tax value from the last return filed is given.
 
-**Checks.** A year cannot be approved while anything blocks: the audited accounts are not attached, the balance sheet does not balance, the template's profit or revenue differs from the audited accounts read in, the year has not ended, the business is not a company or is under a regime Counta does not compute. Warnings (lines on "Others", categories missing, rules awaiting sign-off) do not block.
+**Checks.** A year cannot be approved while anything blocks: the audited accounts are not attached, the balance sheet does not balance, the template's profit or revenue differs from the audited accounts read in, the year has not ended, the business is not a company (an NGO that does not trade is exempt; a business name files personal income tax) or is under a regime Counta does not compute. Warnings (lines on "Others", categories missing, rules awaiting sign-off) do not block.
 
 **Approval and filing.** Approving (owner, or someone who approves adjustments) freezes the computation, the template cells, the fixed asset declaration and the company details. The `tax-files` function fills the Rev360 template (`public/tax-templates/rev360-cit-v2.xlsx`, pinned by SHA-256) keeping its formulas and recalculating their cached values, checks five ties against the computation, and stores the approved file once. Sending to Flux is described in `flux-cit-handoff.md`. The financial statements' tax computation and `post_tax_charge` read the same engine.
 

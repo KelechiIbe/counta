@@ -1,0 +1,253 @@
+{
+  "$schema": "https://taxstreem.dev/schemas/pit-business-config-v1.json",
+  "meta": {
+    "config_id": "ng-pit-nta-2025",
+    "version": "1.0.0",
+    "regime": "NTA_2025_PIT",
+    "governing_law": "Nigeria Tax Act 2025 and Nigeria Tax Administration Act 2025",
+    "applies_to": "Accounts for years ending in 2026 and later (year of assessment 2027 onwards)",
+    "sources": [
+      "TaxStreem PIT rule book, s.1 to s.10, s.12",
+      "How personal tax reliefs are calculated in our engine (YOA 2026)",
+      "NTA 2025 s.15, s.20, s.21, s.28, s.30, s.58, Fourth and Twelfth Schedules",
+      "TaxStreem answers of 4 November 2026"
+    ]
+  },
+  "entity_kinds": {
+    "sole_proprietor": "A business name with one proprietor, or a business that is not registered: taxed on the whole profit (PIT rule book s.1).",
+    "partnership": "A business name with two or more proprietors, a limited partnership, or an unregistered partnership: the profit is shared and each partner is taxed on his share (s.15).",
+    "exempt": "Incorporated trustees and companies limited by guarantee: exempt except on profits from a trade or business (s.162(1)(a)(iii))."
+  },
+  "tax_bands": [
+    {
+      "label": "First ₦800,000",
+      "width": 800000,
+      "rate": 0.0
+    },
+    {
+      "label": "Next ₦2,200,000",
+      "width": 2200000,
+      "rate": 0.15
+    },
+    {
+      "label": "Next ₦9,000,000",
+      "width": 9000000,
+      "rate": 0.18
+    },
+    {
+      "label": "Next ₦13,000,000",
+      "width": 13000000,
+      "rate": 0.21
+    },
+    {
+      "label": "Next ₦25,000,000",
+      "width": 25000000,
+      "rate": 0.23
+    },
+    {
+      "label": "Above ₦50,000,000",
+      "width": null,
+      "rate": 0.25
+    }
+  ],
+  "reliefs": {
+    "method": "s30",
+    "items": [
+      "nhf",
+      "nhis",
+      "pension",
+      "home_loan_interest",
+      "life_insurance"
+    ],
+    "rent_relief": {
+      "pct": 0.2,
+      "cap_ngn": 500000
+    }
+  },
+  "minimum_tax": {
+    "applies": false
+  },
+  "chargeable_gains": {
+    "in_total_income": true
+  },
+  "losses": {
+    "carry_forward_years": null
+  },
+  "capital_allowances": {
+    "law": "nta",
+    "restriction_two_thirds": false
+  },
+  "business": {
+    "rd_cap_pct_of_turnover": 0.05,
+    "donations_deductible": false,
+    "mixed_use": {
+      "business_pct": 50,
+      "lines": [
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C25",
+          "group": "vehicle",
+          "label": "Fuel and vehicle running costs"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C64",
+          "group": "vehicle",
+          "label": "Petrol (PMS)"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C28",
+          "group": "internet",
+          "label": "Internet and data"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C43",
+          "group": "internet",
+          "label": "Telephone"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C63",
+          "group": "power",
+          "label": "Electricity and power"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C47",
+          "group": "power",
+          "label": "Water and other utilities"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C26",
+          "group": "power",
+          "label": "Generator running"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C68",
+          "group": "power",
+          "label": "Diesel (AGO)"
+        },
+        {
+          "cell": "ADMINISTRATIVE_EXPENSES!C34",
+          "group": "home",
+          "label": "Rent of a home also used as the office"
+        }
+      ]
+    }
+  },
+  "other_income": {
+    "kinds": [
+      "employment",
+      "rent",
+      "dividend",
+      "interest",
+      "royalty",
+      "foreign_earned",
+      "foreign_investment",
+      "gov_bond_interest",
+      "pension_gratuity",
+      "other"
+    ],
+    "final_tax_kinds": [
+      "dividend",
+      "interest"
+    ],
+    "exempt_kinds": [
+      "gov_bond_interest",
+      "foreign_investment",
+      "pension_gratuity"
+    ],
+    "minimum_wage_monthly_ngn": 70000
+  },
+  "filing": {
+    "due_month": 3,
+    "due_day": 31,
+    "flux_authorities": [
+      "SIRS:LA"
+    ]
+  },
+  "configurable_flags": {
+    "flags": {
+      "P-1": {
+        "title": "New law from 2026",
+        "reading": "Accounts for 2026 and later use the Fourth Schedule rates and the s.30 deductions, with chargeable gains in total income.",
+        "source": "PIT rule book s.1, s.10",
+        "status": "agreed"
+      },
+      "P-5": {
+        "title": "No minimum tax",
+        "reading": "The NTA has no minimum tax for individuals, and the exemption for those earning the national minimum wage (s.162(1)(t)) covers employment income only, so neither applies to business profit. (The Numen contract applies both.)",
+        "source": "NTA 2025 s.58, s.162(1)(t)",
+        "status": "counta_reading"
+      },
+      "P-6": {
+        "title": "Gains in income",
+        "reading": "Gains on the business's disposals are shared in the profit-sharing ratio and taxed with each person's income at the Fourth Schedule rates. A net loss on disposals is carried forward with the business loss (s.28(3)(b)).",
+        "source": "NTA 2025 s.28(2)(a)(v), s.28(3)",
+        "status": "counta_reading"
+      },
+      "P-3": {
+        "title": "Due date",
+        "reading": "The return is due on 31 March of the year after the accounting year ends, whatever month the year ends in.",
+        "source": "TaxStreem answer, 4 November 2026",
+        "status": "agreed"
+      },
+      "P-4": {
+        "title": "Whole return",
+        "reading": "Each person's return covers their share of the business and any other income they declare (employment, rent, dividends, interest, royalties, foreign income), with their reliefs.",
+        "source": "TaxStreem answer, 4 November 2026",
+        "status": "agreed"
+      },
+      "P-8": {
+        "title": "Capital allowances",
+        "reading": "Allowances are worked out for the business as one enterprise and shared in the profit-sharing ratio at the year end (First Schedule para 19(3)). An asset used partly for private life gets the business share of its allowance (para 16). 2025 accounts use the old initial and annual allowances with ₦10 kept on each asset, with no two-thirds restriction and no investment allowance for individuals; 2026 accounts onwards the First Schedule rates on cost with 1% kept.",
+        "source": "NTA 2025 First Schedule paras 16, 19, 22, 23; PITA (as amended)",
+        "status": "counta_reading"
+      },
+      "P-9": {
+        "title": "Losses",
+        "reading": "A business loss is carried forward against the person's later business income only, never set against other income. Under the NTA there is no time limit (s.28(3)). Losses brought into 2025 accounts are taken as entered; the four-year limit of the old law is for the person to observe.",
+        "source": "NTA 2025 s.15(2), s.28(3); PITA s.35",
+        "status": "counta_reading"
+      },
+      "P-10": {
+        "title": "Partners' pay",
+        "reading": "Salary, interest on capital and benefits charged in the accounts for a partner go to that partner before the profit is shared (s.15(1)(a)). A sole proprietor's own pay charged as an expense is his drawing and is added back to him. Private or domestic expenses of a partner are never deducted.",
+        "source": "NTA 2025 s.15(1), s.21(c)",
+        "status": "counta_reading"
+      },
+      "P-11": {
+        "title": "Which state",
+        "reading": "A partner engaged in the business pays the state of the office he works from; a dormant partner pays the state he usually lives in; a dormant partner who does not live in Nigeria pays the NRS. A sole proprietor pays the state he lived in on 1 January of the year of assessment.",
+        "source": "NTA 2025 Twelfth Schedule paras 4 and 6; NTAA 2025 s.3",
+        "status": "counta_reading"
+      },
+      "P-12": {
+        "title": "WHT credit notes",
+        "reading": "WHT credit notes the business holds at the year end (account 1401), less those already used in earlier returns, are shared in the profit-sharing ratio and set against each person's tax. What a person cannot use stays for later years.",
+        "source": "Counta reading",
+        "status": "counta_reading"
+      },
+      "P-13": {
+        "title": "Tax deducted at source",
+        "reading": "Dividends and interest on which tax was deducted at source are taken as taxed in full (final tax) and left out of total income. Interest on government bonds, foreign dividends, interest, rent and royalties brought in through a domiciliary account, and pensions and gratuities are exempt. Employment income of the national minimum wage or less is exempt.",
+        "source": "NTA 2025 s.28(2)(b)(iii) and (iv), s.162(1)(i), (n), (s) and (t); PIT rule book s.6",
+        "status": "counta_reading"
+      },
+      "P-14": {
+        "title": "Research and development",
+        "reading": "Research and development costs above 5% of turnover are added back, as the PIT rule book says. (The 5% limit in s.164 is written for companies; s.20(1)(i) gives no limit.)",
+        "source": "PIT rule book s.2",
+        "status": "counta_reading"
+      },
+      "P-15": {
+        "title": "Donations",
+        "reading": "Donations are not deductible for a business name or partnership: the deduction in s.163 is for companies, and a gift is not an expense incurred in producing the income.",
+        "source": "NTA 2025 s.20, s.163",
+        "status": "counta_reading"
+      },
+      "P-16": {
+        "title": "Mixed use",
+        "reading": "For each expense the business marks as used partly for private life (car, internet, power, a home that is also the office) only the business share is deducted, 50% unless the business sets another share. The business must confirm which apply before approving.",
+        "source": "PIT rule book s.4",
+        "status": "agreed"
+      }
+    }
+  }
+}

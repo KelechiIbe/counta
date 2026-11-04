@@ -15,6 +15,8 @@ export interface PSection { key: string; title: string; subtitle: string; blocks
 export interface PackModel {
   orgName: string; legal: string[]; reportTitle: string; periodText: string; endText: string; framework: string; sections: PSection[];
   warnings: { level: string; text: string; key?: string }[]; generated: string; approvedOn: string | null; signers: { name: string; role: string; frc_number?: string }[];
+  // The line under the title on the cover; the financial statements' reporting framework when left out.
+  frameworkText?: string;
 }
 
 const DATE = (d?: string | null) => (d ? new Date(d + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '');

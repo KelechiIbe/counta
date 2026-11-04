@@ -12,6 +12,7 @@ import { useAdminMe } from '../admin/api';
 import { usePracticesMine } from '../practice/api';
 import { cap, useWords } from '../lib/wording';
 import { useVatRate } from '../lib/vat';
+import { INCOME_TAX_LABEL, incomeTaxKind } from '../lib/tax';
 
 // ---------- location picker state shared by Overview, Items and Insights ----------
 const LocCtx = createContext<{ loc: string; setLoc: (l: string) => void }>({ loc: 'ALL', setLoc: () => {} });
@@ -26,7 +27,7 @@ const TITLES: Record<string, string> = {
   '/payments': 'Payments', '/purchases/bills': 'Bills', '/purchases/vendors': 'Vendors',
   '/accounting/inbox': 'Books inbox', '/accounting/banking': 'Banking & reconciliation', '/accounting/statements': 'Financial statements',
   '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close',
-  '/tax': 'Tax returns', '/tax/vat': 'VAT returns', '/tax/wht': 'Withholding tax', '/tax/cit': 'Companies income tax',
+  '/tax': 'Tax returns', '/tax/vat': 'VAT returns', '/tax/wht': 'Withholding tax', '/tax/cit': 'Companies income tax', '/tax/pit': 'Income tax',
   '/accounting/journals': 'Journals', '/accounting/migrate': 'Move your books', '/assistant': 'AI Assistant', '/settings': 'Settings', '/settings/subscription': 'Subscription', '/integrations': 'Integrations', '/documents': 'Documents',
 };
 export const titleFor = (path: string) => TITLES[path] || TITLES[Object.keys(TITLES).filter((k) => path.startsWith(k + '/')).sort((x, y) => y.length - x.length)[0]] || 'Counta';
@@ -143,6 +144,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
   const ib = inbox.data;
   const at = useAttention().data;
   const n = (k: keyof NonNullable<typeof at>) => Number(at?.[k] || 0);
+  const itKind = incomeTaxKind(inv?.org as any);
   const external = (label: string, icon: string) => (
     <a className={'nav-item' + (rail ? ' rail-item' : '')} href={MAIN_APP} target="_blank" rel="noreferrer" title={label + ' opens in the main TaxStreem app'} aria-label={rail ? label : undefined}>
       <Icon name={icon} size={20} color="#6B7280" />{!rail && <><span style={{ flex: 1 }}>{label}</span><Icon name="external" size={14} color="#9CA3AF" /></>}
@@ -190,7 +192,8 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
             ['/accounting/ledgers', 'Ledgers & reports'], ['/accounting/cfo', 'CFO pack'], ['/accounting/journals', 'Journals'], ['/accounting/assets', 'Fixed assets', Number(ib?.assets_to_confirm || 0)],
             ['/accounting/close', 'Period close'], ['/accounting/migrate', 'Move your books']]} />
         <Group to="/tax/vat" label="Tax returns" icon="percent" active={p.startsWith('/tax/') || p === '/tax'} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'file_tax')}
-          subs={[['/tax/vat', 'VAT', n('vat') + n('schedules_draft') + n('receipts_vat')], ['/tax/wht', 'Withholding tax', n('wht')], ['/tax/cit', 'Companies income tax', n('cit')]]} />
+          subs={[['/tax/vat', 'VAT', n('vat') + n('schedules_draft') + n('receipts_vat')], ['/tax/wht', 'Withholding tax', n('wht')],
+            [itKind === 'cit' ? '/tax/cit' : '/tax/pit', INCOME_TAX_LABEL[itKind], n('cit')]]} />
         {link('/documents', 'Documents', 'folder')}
         {external('Taxes', 'landmark')}
         {link('/assistant', 'AI Assistant', 'martina')}

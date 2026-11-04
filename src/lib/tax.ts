@@ -11,6 +11,9 @@ function useOrgQ<T>(key: unknown[], fn: (org: string) => Promise<T>, enabled = t
 
 export const useCitYears = (enabled = true) => useOrgQ<any>(['cit-years'], (o) => rpc('cit_years', { p_org: o }), enabled);
 export const useCitYear = (year: number | null) => useOrgQ<any>(['cit-year', year], (o) => rpc('cit_year', { p_org: o, p_year: year }), !!year);
+// Personal income tax for business names and partnerships, by accounting year (2025 accounts onwards).
+export const usePitYears = (enabled = true) => useOrgQ<any>(['pit-years'], (o) => rpc('pit_years', { p_org: o }), enabled);
+export const usePitYear = (year: number | null) => useOrgQ<any>(['pit-year', year], (o) => rpc('pit_year', { p_org: o, p_year: year }), !!year);
 export const useTaxProfile = (enabled = true) => useOrgQ<any>(['tax-profile'], (o) => rpc('tax_profile', { p_org: o }), enabled);
 export const useVatPosition = (from: string, to: string, enabled = true) =>
   useOrgQ<any>(['vat-position', from, to], (o) => rpc('vat_position', { p_org: o, p: { from, to } }), enabled);
@@ -36,13 +39,50 @@ export const useNrsLabels = () => useQuery({ queryKey: ['nrs-labels'], staleTime
 } });
 
 // Everything a tax action can change.
-export const TAX_KEYS = ['cit-years', 'cit-year', 'tax-profile', 'vat-position', 'withholding', 'wht-receipts', 'vendor-tax', 'bills', 'bill', 'fs-pack', 'report', 'ledger', 'inbox',
+export const TAX_KEYS = ['cit-years', 'cit-year', 'pit-years', 'pit-year', 'tax-profile', 'vat-position', 'withholding', 'wht-receipts', 'vendor-tax', 'bills', 'bill', 'fs-pack', 'report', 'ledger', 'inbox',
   'vat-schedule', 'customs', 'customers', 'inv', 'item-nrs'];
 
 export const CIT_STATUS: Record<string, { label: string; tone: string }> = {
   draft: { label: 'Draft', tone: 't-grey' }, approved: { label: 'Approved', tone: 't-blue' }, sent: { label: 'With Flux', tone: 't-amber' },
   filed: { label: 'Filed', tone: 't-green' }, rejected: { label: 'Sent back', tone: 't-red' },
 };
+// How the business pays income tax, from what CAC says it is (through Mono) and what the owner has told Counta: a company
+// files companies income tax; an NGO (incorporated trustees, or a company limited by guarantee) is exempt unless it trades;
+// a business name, partnership or unregistered business pays personal income tax through its people.
+export type IncomeTaxKind = 'cit' | 'pit' | 'exempt';
+export function incomeTaxKind(org: { legal_form?: string | null; cit_profile?: Record<string, unknown> | null } | null | undefined): IncomeTaxKind {
+  const cp = (org?.cit_profile || {}) as Record<string, unknown>;
+  if (org?.legal_form === 'ngo' || cp.limited_by_guarantee) return cp.ngo_trades ? 'cit' : 'exempt';
+  if (!org?.legal_form || org.legal_form === 'company') return 'cit';
+  return 'pit';
+}
+export const INCOME_TAX_LABEL: Record<IncomeTaxKind, string> = { cit: 'Companies income tax', pit: 'Personal income tax', exempt: 'Income tax' };
+export const PIT_STATE: Record<string, { label: string; tone: string }> = {
+  draft: { label: 'Draft', tone: 't-grey' }, approved: { label: 'Approved', tone: 't-blue' }, sent: { label: 'With Flux', tone: 't-amber' },
+  filed: { label: 'Filed', tone: 't-green' }, rejected: { label: 'Sent back', tone: 't-red' }, filed_outside: { label: 'Filed outside Counta', tone: 't-green' },
+};
+export const pitLaw = (regime?: string | null) => (regime === 'PITA' ? 'Personal Income Tax Act (old law)' : 'Nigeria Tax Act 2025');
+export const RELIEFS: { id: string; label: string; law: 'both' | 'nta' | 'pita'; hint?: string }[] = [
+  { id: 'pension', label: 'Pension contributions', law: 'both', hint: 'Under the Pension Reform Act, paid by the person' },
+  { id: 'nhf', label: 'National Housing Fund', law: 'both' },
+  { id: 'nhis', label: 'Health insurance (NHIS or an HMO)', law: 'both' },
+  { id: 'life_insurance', label: 'Life insurance or deferred annuity premiums', law: 'both', hint: 'For the person or their spouse' },
+  { id: 'home_loan_interest', label: 'Interest on a loan for a home they live in', law: 'both' },
+  { id: 'gratuity', label: 'Gratuity', law: 'pita' },
+  { id: 'rent_paid', label: 'Rent paid for their home this year', law: 'nta', hint: '20% of it comes off, at most ₦500,000. Leave out any part claimed as business rent.' },
+];
+export const OTHER_INCOME: { id: string; label: string; hint?: string }[] = [
+  { id: 'employment', label: 'Salary from a job', hint: 'With the PAYE taken off' },
+  { id: 'rent', label: 'Rent received', hint: 'After the costs of letting, with any WHT taken off' },
+  { id: 'dividend', label: 'Dividends', hint: 'Taxed in full where WHT was taken off' },
+  { id: 'interest', label: 'Interest', hint: 'Taxed in full where WHT was taken off' },
+  { id: 'royalty', label: 'Royalties' },
+  { id: 'foreign_earned', label: 'Fees or pay earned abroad', hint: 'Enter the foreign tax paid as tax deducted' },
+  { id: 'foreign_investment', label: 'Foreign dividends, interest, rent or royalties through a domiciliary account', hint: 'Exempt' },
+  { id: 'gov_bond_interest', label: 'Interest on government bonds', hint: 'Exempt' },
+  { id: 'pension_gratuity', label: 'Pension or gratuity received', hint: 'Exempt' },
+  { id: 'other', label: 'Other income' },
+];
 export const lawShort = (regime?: string | null) => (regime === 'LEGACY_CITA' ? 'CITA' : 'NTA 2025');
 export const lawLong = (regime?: string | null) => (regime === 'LEGACY_CITA' ? 'Companies Income Tax Act (as amended to 2023)' : 'Nigeria Tax Act 2025');
 

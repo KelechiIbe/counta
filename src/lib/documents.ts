@@ -124,7 +124,7 @@ export async function viewUrl(f: DocFile): Promise<string | null> {
 export const FOLDERS: Record<DocCat, string[]> = {
   sales: ['Invoices', 'Receipts', 'Credit notes', 'Delivery proofs', 'Contracts', 'Other'],
   purchases: ['Supplier invoices', 'Supplier credit notes', 'Import entries', 'Contracts', 'Other'],
-  tax: ['VAT', 'WHT', 'Withholding VAT', 'CIT', 'Other'],
+  tax: ['VAT', 'WHT', 'Withholding VAT', 'CIT', 'PIT', 'Other'],
   bank: ['Statements', 'Loan papers', 'Other'],
   accountant: ['Working papers', 'Letters', 'Other'],
   company: ['Registration', 'Licences and permits', 'Contracts', 'Insurance', 'Other'],
