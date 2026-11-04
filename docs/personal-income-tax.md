@@ -58,10 +58,11 @@ A change to a rule book is a new version: insert it approved (with `approved_by`
 | Table | What it holds | Read by |
 | --- | --- | --- |
 | `pit_people` | The proprietor or partners: name, Tax ID, an optional link to a team member, active or not. Filled from the names on the CAC record (or the owner) by `pit_setup` the first time someone opens Income tax | functions only |
-| `pit_person_years` | What a person brings to a year: share, role (proprietor, active, dormant), office worked from, state lived in, living in Nigeria or not, pay charged in the accounts, amounts brought forward for the first year, reliefs, other income; and, once approved, where their return stands (Flux reference and status, acknowledgement, assessment, payment link) | functions only |
-| `pit_years` | The year: status (`draft`, `approved`, `filed_outside`), mixed use, the statement of accounts, the approval and its snapshot | functions only |
+| `pit_person_years` | What a person brings to a year: share, role (proprietor, active, dormant), office worked from, state lived in, living in Nigeria or not, pay charged in the accounts, amounts brought forward for the first year, reliefs, other income (each line with the portal line it goes on), the accommodation disclosure, the pension details (RSA number, administrator) and the documents for each relief; and, once approved, the computation made for the portal and where their return stands (Flux reference and status, acknowledgement, assessment, the pay bill, the payment, the tax clearance certificate) | functions only |
+| `pit_years` | The year: status (`draft`, `approved`, `filed_outside`), mixed use, the statement of accounts, the business's employees for the year, the approval and its snapshot | functions only |
+| `portal_logins` | The business's logins to the tax portals, one per tax authority: which portal, a hint of the username, the tax office, Flux's reference to the login, whether it worked. Never the password: Flux keeps that | functions only |
 
-A person with no row for a year takes the latest earlier row's share, role, office and state, or an equal share and the head office. Pay, reliefs and other income are entered for each year. RLS is on and no signed-in role reads the tables directly: reliefs and other income are personal data.
+A person with no row for a year takes the latest earlier row's share, role, office and state, or an equal share and the head office. The accommodation (without the rent, unless they moved out) and the pension details also carry on from the year before. Pay, reliefs, other income, the rent and the documents are entered for each year. RLS is on and no signed-in role reads the tables directly: reliefs and other income are personal data.
 
 The business's figures and adjustments are the companies income tax ones (`cit_years`: figures from the books or from accounts read in, line overrides, adjustment rows), so the Figures and Adjustments tabs are the same screens. `save_cit_year` and `cit_import` refuse changes while the PIT year is approved.
 
@@ -113,17 +114,26 @@ Twelfth Schedule to the NTA 2025: a partner engaged in the business, the state o
 
 Years run from 2025 accounts (or the first year of the books) to the year running now. Each passes forward, person by person, losses and unused allowances, and the total of WHT credit notes used. An approved year passes what it was approved with; a year filed outside Counta is still computed so its amounts pass on. A person new to the business starts from the amounts entered for them.
 
+### No document, no relief (`private.pit_relief_check`)
+
+The LIRS portal refuses a relief claim without its documents, so a relief entered without them is left out of the computation until they are attached, and the year says so. `private.pit_relief_needs()` lists what each relief needs: the RSA statement, the RSA number and the pension fund administrator for pension; the policy and evidence of payment for health and life insurance; the mortgage agreement and a statement of the interest for mortgage interest; the contribution statement for the NHF and for gratuity (Counta's reading: TaxStreem's list names the first four). Rent relief (2026 accounts onwards) needs the accommodation disclosure of a tenant, and comes from it: the year's rent less what an employer paid. Documents are kept under `<business>/tax/pit/<year>/people/<person>/<relief>/`, which only the person (when linked to their own login) and those who file tax can open.
+
+### The portal's statement of income (`private.pit_portal_income`)
+
+Each person's figures also come as the lines of the portal's statement of income (salary, commission, trade income, allowance, pension, annuity, foreign income, dividend, interest, rent, other income), from Counta's taxable figures, so the tax the portal works out is the tax Counta worked out. Trade income is the income from the business after losses and capital allowances; other income goes on the line its kind (and, for a job or a pension, the line the person chose) says; income that is exempt or taxed in full at source is left off. The lines add up to total income.
+
 ### Checks
 
-Blocks: no people; the partners' shares do not add up to 100%; a limited partnership with one partner; a person whose state Counta cannot tell; no statement of accounts; mixed use not confirmed; the year has not ended; and the figure checks shared with CIT (books that start inside the year, a balance sheet that does not balance, accounts read in that do not tie). Warnings: partners' pay above the salaries in the accounts; a partner joined or left (the year is not split at that date, para 19(2)); the rule book awaits sign-off (none do since 4 November 2026). Notes: a non-resident partner files with the NRS; old-law gains go on a CGT return; keep the evidence for every relief (s.32).
+Blocks: no people; the partners' shares do not add up to 100%; a limited partnership with one partner; a person whose state Counta cannot tell; no statement of accounts; mixed use not confirmed; the year has not ended; and the figure checks shared with CIT (books that start inside the year, a balance sheet that does not balance, accounts read in that do not tie). For a return Flux files (Lagos to begin with), also: the person's accommodation disclosure is not complete, and the business's staff for the year are not confirmed. Warnings: partners' pay above the salaries in the accounts; a partner joined or left (the year is not split at that date, para 19(2)); a relief left out for want of its documents (seen only by that person and those who file tax); no login saved for the portal of a state Flux files; the rule book awaits sign-off (none do since 4 November 2026). Notes: a non-resident partner files with the NRS; old-law gains go on a CGT return; the pay listed for the staff and the partners differs from the salaries in the accounts; keep the evidence for the deductions in the accounts (s.32).
 
 ## Who may do what
 
 | Who | Sees | Changes |
 | --- | --- | --- |
-| Owner, or File tax | Every person's return | People, shares, roles, offices, pay, reliefs, other income; approves, reopens, sends to Flux, marks returns filed |
-| Keep the books, See margins or Make payments | The business's side and each person's share of it, not their reliefs, other income or tax | Figures, adjustments, mixed use, capital allowances, the statement of accounts |
-| A partner linked to their own login | Their own return in full, and the others' shares | Their own state, reliefs, other income and amounts brought forward |
+| Owner, or File tax | Every person's return, and which portal logins are saved | People, shares, roles, offices, pay, reliefs, other income, homes, documents; approves, reopens, sends to Flux, asks for the certificate, marks returns filed |
+| Owner only, signed in with two-step | | The business's tax portal logins (Settings), which go straight to Flux |
+| Keep the books, See margins or Make payments | The business's side and each person's share of it, and the staff; not their reliefs, other income, homes, documents or tax | Figures, adjustments, mixed use, capital allowances, the staff, the statement of accounts |
+| A partner linked to their own login | Their own return in full, and the others' shares | Their own state, reliefs, other income, amounts brought forward, home, pension details and documents |
 
 ## Approval and filing
 
@@ -131,7 +141,7 @@ Approving (`approve_pit_year`, File tax) needs no blocks and the attestation of 
 
 Each return then goes its own way:
 
-- For a state Flux files (`filing.flux_authorities` in the rule book, Lagos to begin with), `tax-files` (`pit_send`) sends it to Flux, which files it and reports back on `/taxstreem/flux/pit-status` (docs/flux-pit-handoff.md).
+- For a state Flux files (`filing.flux_authorities` in the rule book, Lagos to begin with), the app makes the person's computation as a PDF from the approved figures (`save_pit_computation_file`) and `tax-files` (`pit_send`) sends it to Flux with what each screen of the state portal asks for: the statement of income, the accommodation, the staff, the fixed assets and each relief with its documents, the statement of accounts and Flux's reference to the business's login for that portal. Flux files it and reports back on `/taxstreem/flux/pit-status`: the filing, then the pay bill (the partner or the business pays through its link), the payment, and the tax clearance certificate, which whoever files tax asks for with a picture of the person, the two earlier returns and the authority to file anything outstanding (`save_pit_tcc`, `pit_tcc_request`). See docs/flux-pit-handoff.md.
 - For other states and the NRS, the business files it and marks it filed with the acknowledgement number (`mark_pit_filed`).
 - A year already filed before Counta, or by an accountant, can be marked filed outside Counta.
 
@@ -145,14 +155,18 @@ The deadline (`private.tax_deadlines`, tax `pit`) is for the year that ended mos
 | `pit_year(org, year)` | One year: the computation (masked for those who may not see it), the CIT figures for the shared tabs, the people, branches and states, and what the caller may do |
 | `pit_setup(org)` | The first people, from the CAC record or the owner |
 | `save_pit_person(org, p)` | Add, rename, link or remove a person |
-| `save_pit_person_year(org, year, person, p)` | A person's share, role, office, state, pay, reliefs, other income and amounts brought forward |
-| `save_pit_year(org, year, p)` | Mixed use, the statement of accounts, notes |
+| `save_pit_person_year(org, year, person, p)` | A person's share, role, office, state, pay, reliefs, other income, amounts brought forward, accommodation, pension details and relief documents |
+| `save_pit_year(org, year, p)` | Mixed use, the statement of accounts, the staff, notes |
+| `save_pit_computation_file(org, year, person, path)` | The person's computation (PDF) made for the portal when the return is sent |
+| `save_pit_tcc`, `pit_tcc_pack` | What a tax clearance certificate needs, and the pack `tax-files` sends to Flux for it |
+| `portal_logins(org)`, `portal_login_begin(org, authority)` | The saved logins (no secrets), and the owner's check before a login goes to Flux |
+| `svc_portal_login_saved`, `svc_portal_login_removed`, `svc_portal_login_status` | What Counta keeps of a login once Flux has it, and whether it worked (service role) |
 | `approve_pit_year`, `reopen_pit_year`, `mark_pit_filed` | Approval, reopening, returns filed by the business or outside Counta |
 | `save_income_tax_setup(org, p)` | The owner says an NGO trades, or that it is not an NGO |
 | `pit_pack(org, year)` | The approved year for `tax-files` |
-| `svc_pit_flux_update(org, year, person, p)` | Flux's status for one return (service role) |
+| `svc_pit_flux_update(org, year, person, p)` | Flux's status for one return, its pay bill, the payment and the certificate (service role) |
 
-The screens are `src/pages/accounting/tax/PitTab.tsx`; the computation file (Word, PDF, Excel) is built by `src/lib/pitPack.ts` on the same model as the financial statements.
+The screens are `src/pages/accounting/tax/PitTab.tsx` and, for the logins, `src/pages/settings/PortalLogins.tsx`; the computation file (Word, PDF, Excel, and the one-person PDF for the portal) is built by `src/lib/pitPack.ts` on the same model as the financial statements.
 
 ## Moving it to the main TaxStreem codebase
 
@@ -186,14 +200,15 @@ The PRD's worked example (Persona B) also gives ₦1,290,400; chargeable income 
 
 ## Tested
 
-`t_pit.sql` (95 checks) on a copy of production: the reliefs note's two examples to the naira; the PRD's sole proprietor corrected; a law firm with partners in Lagos, Port Harcourt and Abuja and a dormant partner abroad, under the old law and the NTA; losses and allowances carried from 2025 to 2026; other income of every kind with PAYE and foreign tax credits; minimum tax under the old law and none under the NTA; who may see and change what; approval, Flux, returns filed by the business, years filed outside Counta, deadlines and documents. The CIT suite gives the same results before and after.
+`t_pit.sql` (179 checks) on a copy of production: the reliefs note's two examples to the naira; the PRD's sole proprietor corrected; a law firm with partners in Lagos, Port Harcourt and Abuja and a dormant partner abroad, under the old law and the NTA; losses and allowances carried from 2025 to 2026; other income of every kind with PAYE and foreign tax credits; minimum tax under the old law and none under the NTA; who may see and change what; approval, Flux, returns filed by the business, years filed outside Counta, deadlines and documents. For the portal: reliefs held until their documents (and the RSA number) are there; documents only for the person's own folder; rent relief from a tenant's accommodation, less what an employer paid; the statement of income adding up to total income; the accommodation and staff blocks for a return Flux files; the storage rules (a partner attaches and opens her own documents, the bookkeeper neither); the pay bill, payment and certificate only after filing; the logins (owner with two-step only, no password anywhere, a failed login flagged); reopening drops the portal's computation. The CIT suite gives the same results before and after.
 
-`pit.py`, in the browser at 1440 and 390 pixels against the local stack: a law firm registered as a business name starts its income tax with the owner, adds three partners in the drawer (one in Port Harcourt, one in Abuja with rent and dividends, one dormant and abroad), confirms mixed use, attaches its statement of accounts, sees each partner's payable (₦5,994,096, ₦4,633,172, ₦2,687,848 and ₦1,128,480), approves with the attestation, downloads the computation in PDF, Word and Excel, sends the Lagos return to a stand-in for Flux (the request is signed and carries the figures and a working link to the statement), gets Flux's "filed" back with a payment link, and marks the Rivers return filed. The bookkeeper sees the business and each share, not the partners' tax. Incorporated trustees see the exemption until the owner says it trades; a company CAC records as limited by guarantee is taxed as a company once the owner says it is not an NGO, and stays so when CAC is read again. Nothing runs off the side of a phone screen.
+`pit.py`, in the browser at 1440 and 390 pixels against the local stack: a law firm registered as a business name starts its income tax with the owner, adds three partners in the drawer (one in Port Harcourt, one in Abuja with rent and dividends, one dormant and abroad), confirms mixed use, attaches its statement of accounts, sees each partner's payable (₦5,994,096, ₦4,633,172, ₦2,687,848 and ₦1,128,480), approves with the attestation, downloads the computation in PDF, Word and Excel, sends the Lagos return to a stand-in for Flux (the request is signed and carries the figures and a working link to the statement), gets Flux's "filed" back with a payment link, and marks the Rivers return filed. On the way, Ada enters her home and attaches her RSA statement, Chi's life insurance waits until her policy is attached, and the staff are confirmed; the owner saves the business's LIRS login under Settings (a refusal from Flux that quotes the password is shown without it, and the password is in no table and on no page); Send makes Ada's computation as a PDF of her return alone, and the request carries her statement of income, home, pension with its statement, the staff and the assets; Flux sends the pay bill and the payment; and the owner asks for her tax clearance certificate with her picture and the 2023 and 2024 returns, which Flux reports issued. The bookkeeper sees the business, each share and the staff, not the partners' tax, and has no tax portal logins in Settings. Incorporated trustees see the exemption until the owner says it trades; a company CAC records as limited by guarantee is taxed as a company once the owner says it is not an NGO, and stays so when CAC is read again. Nothing runs off the side of a phone screen.
 
 ## Not covered yet
 
 - A partner joining or leaving during the year: the year is not split at that date (para 19(2)); the computation warns.
 - The interest restriction for connected persons (Third Schedule) carries nothing forward between PIT years.
 - Business-name presentation of the statements (proprietor's capital and drawings): the statement of accounts is Counta's financial statements as they are.
-- Paying PIT from Counta: a payment link Flux sends back is shown; Counta does not pay it from the business's wallet.
+- Paying PIT from Counta: the pay bill Flux sends back is shown with its link; Counta does not pay it from the business's wallet.
+- Filing with states other than Lagos: the logins can be saved for every state now; Flux files once TaxStreem adds the state to the rule book.
 - Presumptive tax (s.29) for a business without records.

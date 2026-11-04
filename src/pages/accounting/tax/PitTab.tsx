@@ -10,7 +10,7 @@ import { useInventory, useSession, useToast } from '../../../state/session';
 import { ai, rpc, signedDoc, supabase } from '../../../lib/supabase';
 import { edge, money } from '../../../lib/api';
 import { N2, fmtDay, when } from '../../../lib/format';
-import { CA_CATEGORIES, OTHER_INCOME, PIT_STATE, RELIEFS, pitLaw, usePitYear, usePitYears } from '../../../lib/tax';
+import { CA_CATEGORIES, HOME_TYPES, OCCUPANCY, OTHER_INCOME, PIT_STATE, RELIEFS, incomeChoice, incomeOf, pitLaw, usePitYear, usePitYears } from '../../../lib/tax';
 import { buildPitPack } from '../../../lib/pitPack';
 import { downloadBlob, safeName } from '../../../lib/exporters';
 import { TB_FIELDS, tbRows } from '../../../lib/moveBooks';
@@ -19,7 +19,7 @@ import { Alert, Drawer, Empty, Field, MenuButton, Modal, ModalHead, Pills, Skele
 import { SheetRows } from '../../../components/SheetRows';
 import { Adjustments, Figures, TaxAssetModal, amt, openInTab, useTaxRefresh } from './CitTab';
 
-type Sub = 'computation' | 'people' | 'figures' | 'adjustments' | 'mixed' | 'allowances' | 'accounts';
+type Sub = 'computation' | 'people' | 'staff' | 'figures' | 'adjustments' | 'mixed' | 'allowances' | 'accounts';
 const KIND_LABEL: Record<string, string> = { sole: 'Sole proprietor', partnership: 'Partnership' };
 const ROLE_LABEL: Record<string, string> = { proprietor: 'Proprietor', active: 'Partner in the business', dormant: 'Dormant partner' };
 
@@ -112,6 +112,7 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
   const [attest, setAttest] = useState(false);
   const [sendOut, setSendOut] = useState<any>(null);
   const [filing, setFiling] = useState<any>(null);
+  const [tcc, setTcc] = useState<any>(null);
   const d = q.data;
   if (q.isLoading) return <SkeletonRows n={8} />;
   if (q.error) return <Alert kind="yellow" icon="shield">{(q.error as Error).message}</Alert>;
@@ -127,6 +128,9 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
   const draft = d.row?.status === 'draft';
   const can = d.can || {};
   const fluxPeople = people.filter((p) => p.flux && ['approved', 'rejected'].includes(p.status));
+  const logins: any[] = d.logins || [];
+  const noLogin = Array.from(new Set(fluxPeople.filter((p) => !logins.some((l) => l.authority === p.authority)).map((p) => p.authority_short || p.authority_name || p.authority)));
+
 
   async function act(key: string, fn: () => Promise<any>, ok?: string) {
     setBusy(key);
@@ -142,9 +146,22 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
     } catch (e) { toast((e as Error).message || 'Could not make the file.', 'err'); }
     setBusy(null);
   }
+  // Each return Flux files carries the person's own computation as a PDF (the portal's tax calculation), made once from
+  // the approved figures and kept with the return.
+  async function computations() {
+    const mod = await import('../../../lib/fsExport');
+    for (const p of fluxPeople.filter((x) => !x.computation_path)) {
+      const blob = await mod.packPdf(buildPitPack(d, inv?.org.name || '', { personId: p.person_id }));
+      const path = `${orgId}/tax/pit/${year}/computation/${Date.now()}-${String(p.name).replace(/[^\w.-]+/g, '_').slice(-60)}.pdf`;
+      const { error } = await supabase.storage.from('documents').upload(path, blob, { contentType: 'application/pdf', upsert: false });
+      if (error) throw new Error(error.message.includes('row-level') ? 'Only whoever files the business\'s tax sends the returns.' : error.message);
+      await rpc('save_pit_computation_file', { p_org: orgId, p_year: year, p_person: p.person_id, p_path: path });
+    }
+  }
   async function send() {
     setBusy('send'); setSendOut(null);
     try {
+      await computations();
       const r = await edge<any>('tax-files', { action: 'pit_send', org_id: orgId, year });
       setSendOut(r);
       if (r.ok) { toast(`Sent ${r.sent} return${r.sent === 1 ? '' : 's'} to TaxStreem Flux`); if (!r.failed) setModal(null); }
@@ -193,7 +210,7 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
         </div>
         {d.row?.status === 'approved' && <div className="faint" style={{ fontSize: 12 }}>Approved by {d.row.approved_by || 'someone'} ({when(d.row.approved_at)}), who confirmed the statement of accounts. The figures are frozen; reopen the year to change them.</div>}
         {d.row?.status === 'filed_outside' && <Alert kind="green" icon="check">Marked as filed outside Counta{d.row.settings?.filed_outside?.note ? `: ${d.row.settings.filed_outside.note}` : ''}. Losses and allowances still carry on to the next year.</Alert>}
-        {d.row?.status === 'approved' && <FilingList people={people} canMark={!!can.approve} onMark={setFiling} />}
+        {d.row?.status === 'approved' && <FilingList people={people} canMark={!!can.approve} onMark={setFiling} onTcc={setTcc} />}
       </div>
 
       {checks.length > 0 && draft && (
@@ -208,10 +225,11 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
       )}
 
       <Pills value={sub} onChange={setSub} options={[{ id: 'computation', label: 'Computation' }, { id: 'people', label: comp.kind === 'partnership' ? 'Partners' : 'Proprietor' },
-        { id: 'figures', label: 'Figures' }, { id: 'adjustments', label: 'Adjustments' }, { id: 'mixed', label: 'Mixed use' }, { id: 'allowances', label: 'Capital allowances' },
+        { id: 'staff', label: 'Staff' }, { id: 'figures', label: 'Figures' }, { id: 'adjustments', label: 'Adjustments' }, { id: 'mixed', label: 'Mixed use' }, { id: 'allowances', label: 'Capital allowances' },
         { id: 'accounts', label: 'Statement of accounts' }]} />
       {sub === 'computation' && <Computation d={d} />}
       {sub === 'people' && <People d={d} year={year} firstYear={firstYear} />}
+      {sub === 'staff' && <Staff d={d} year={year} />}
       {sub === 'figures' && (d.cit ? <Figures d={d.cit} year={year} /> : <Alert kind="grey" icon="lock">The figures are for those who keep the books or see the money.</Alert>)}
       {sub === 'adjustments' && (d.cit ? <div className="stack" style={{ gap: 10 }}>
         <div className="faint" style={{ fontSize: 13 }}>The same adjustments as for companies income tax. Mixed use, donations and research above 5% of turnover are then added for personal income tax, on the Computation.</div>
@@ -267,45 +285,154 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
         <Modal onClose={() => setModal(null)} width={520}>
           <ModalHead title="Send to TaxStreem Flux" sub={`${year} accounts · year of assessment ${comp.yoa}`} onClose={() => setModal(null)} />
           <div className="modal-body stack" style={{ gap: 10, fontSize: 14 }}>
-            <div>Flux files these returns with the state, each with the computation, the business's figures{comp.kind === 'partnership' ? ', the partners and their shares' : ''} and the statement of accounts:</div>
+            <div>Flux signs in to the state portal as the business and files these returns, each with the person's computation (made now as a PDF), their statement of income,
+              home and reliefs with their documents, the business's figures{comp.kind === 'partnership' ? ', the partners and their shares' : ''}, staff and fixed assets, and the statement of accounts:</div>
             <div className="stack" style={{ gap: 4, fontSize: 13 }}>
               {fluxPeople.map((p) => <span key={p.person_id}><Icon name="check" size={13} color="#15803D" /> {p.name} · {p.authority_name || p.authority} · {N2(p.computation?.figures?.payable)}</span>)}
             </div>
             {people.filter((p) => !p.flux).length > 0 && <div className="faint" style={{ fontSize: 12 }}>Flux does not file in {Array.from(new Set(people.filter((p) => !p.flux).map((p) => p.authority_state || p.authority_short || p.authority))).join(', ')} yet. Download the computation, file those returns with the state and mark them filed here.</div>}
+            {noLogin.length > 0 && <Alert kind="amber" icon="lock"><span data-testid="pit-no-login">Save the business's {noLogin.join(' and ')} login under <a href="/settings#tax-logins">Settings, Tax portal logins</a> first, so Flux can sign in.</span></Alert>}
             {sendOut && !sendOut.ok && <Alert kind={sendOut.reason === 'not_configured' ? 'blue' : 'red'} icon="info">{sendOut.error}</Alert>}
             {sendOut?.failed > 0 && sendOut.ok && <Alert kind="amber" icon="info">{(sendOut.results || []).filter((r: any) => !r.ok).map((r: any) => `${r.name}: ${r.error}`).join(' ')}</Alert>}
           </div>
           <div className="modal-ft"><button className="btn btn-secondary" onClick={() => setModal(null)}>Close</button>
-            <button className="btn btn-primary" disabled={!!busy} onClick={send}>{busy === 'send' ? 'Sending…' : 'Send'}</button></div>
+            <button className="btn btn-primary" disabled={!!busy || noLogin.length > 0} onClick={send}>{busy === 'send' ? 'Sending…' : 'Send'}</button></div>
         </Modal>
       )}
       {filing && <MarkFiled year={year} person={filing} onClose={() => setFiling(null)} />}
+      {tcc && <TccModal d={d} year={year} person={people.find((p) => p.person_id === tcc.person_id) || tcc} onClose={() => setTcc(null)} />}
     </div>
   );
 }
 
-// Each person's return once the year is approved: with Flux, filed, sent back, or to file.
-function FilingList({ people, canMark, onMark }: { people: any[]; canMark: boolean; onMark: (p: any) => void }) {
+// Each person's return once the year is approved: with Flux, filed, sent back, or to file; then the bill Flux generated
+// on the portal, the payment, and the tax clearance certificate.
+const TCC_LABEL: Record<string, { label: string; tone: string }> = {
+  requested: { label: 'Certificate requested', tone: 't-amber' }, processing: { label: 'Certificate in progress', tone: 't-amber' },
+  issued: { label: 'Certificate issued', tone: 't-green' }, rejected: { label: 'Certificate refused', tone: 't-red' },
+};
+function FilingList({ people, canMark, onMark, onTcc }: { people: any[]; canMark: boolean; onMark: (p: any) => void; onTcc: (p: any) => void }) {
   return (
-    <div className="stack" style={{ gap: 6 }} data-testid="pit-filing">
+    <div className="stack" style={{ gap: 8 }} data-testid="pit-filing">
       {people.map((p) => {
         const s = p.status === 'filed' ? { tone: 't-green', text: `Filed${p.filed_at ? ' ' + fmtDay(String(p.filed_at).slice(0, 10)) : ''}${p.acknowledgement_ref ? ` · ${p.acknowledgement_ref}` : ''}${p.filed_by_business ? ' (by the business)' : ''}` }
           : p.status === 'sent' ? { tone: 't-amber', text: `With Flux${p.flux_ref ? ` (${p.flux_ref})` : ''}${p.flux_message ? ` · ${p.flux_message}` : ''}` }
           : p.status === 'rejected' ? { tone: 't-red', text: `Sent back${p.flux_message ? `: ${p.flux_message}` : ''}` }
           : p.flux_status === 'send_failed' ? { tone: 't-red', text: `Not sent: ${p.flux_message || 'Flux did not take it'}` }
           : { tone: 't-grey', text: p.flux ? 'Ready for Flux' : 'To file with the state' };
+        const bill = p.bill;
+        const payUrl = !p.paid_at ? bill?.payment_url || p.payment_url : null;
+        const t = p.tcc || {};
+        const tl = t.status ? TCC_LABEL[t.status] : null;
         return (
-          <div key={p.person_id} className="row wrap" style={{ justifyContent: 'space-between', gap: 8, fontSize: 13 }}>
-            <span style={{ minWidth: 0 }}><b>{p.name}</b> <span className="faint">· {p.authority_name || p.authority}</span></span>
-            <span className="row" style={{ gap: 6 }}>
-              <span className={'chip ' + s.tone}>{s.text}</span>
-              {p.payment_url && <a className="btn btn-ghost btn-xs" href={p.payment_url} target="_blank" rel="noopener noreferrer"><Icon name="card" size={12} />Pay</a>}
-              {canMark && ['approved', 'rejected'].includes(p.status) && <button className="btn btn-ghost btn-xs" onClick={() => onMark(p)}>Mark filed</button>}
-            </span>
+          <div key={p.person_id} className="stack" style={{ gap: 4 }} data-testid="pit-filing-row" data-person={p.name}>
+            <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8, fontSize: 13 }}>
+              <span style={{ minWidth: 0 }}><b>{p.name}</b> <span className="faint">· {p.authority_name || p.authority}</span></span>
+              <span className="row wrap" style={{ gap: 6 }}>
+                <span className={'chip ' + s.tone}>{s.text}</span>
+                {payUrl && <a className="btn btn-ghost btn-xs" href={payUrl} target="_blank" rel="noopener noreferrer"><Icon name="card" size={12} />Pay{bill?.amount != null ? ` ${N2(bill.amount)}` : ''}</a>}
+                {canMark && ['approved', 'rejected'].includes(p.status) && <button className="btn btn-ghost btn-xs" onClick={() => onMark(p)}>Mark filed</button>}
+                {canMark && p.status === 'filed' && !['requested', 'processing', 'issued'].includes(t.status) && <button className="btn btn-ghost btn-xs" onClick={() => onTcc(p)}><Icon name="shield" size={12} />Tax clearance</button>}
+              </span>
+            </div>
+            {(bill || p.paid_at || tl) && (
+              <div className="row wrap faint" style={{ gap: 8, fontSize: 12, justifyContent: 'flex-end' }} data-testid="pit-after-filing">
+                {bill && <span>Bill {bill.reference || ''} for {N2(bill.amount)}{bill.agency ? ` · ${bill.agency}` : ''}{bill.expires_at && !p.paid_at ? ` · pay by ${fmtDay(String(bill.expires_at).slice(0, 10))}` : ''}</span>}
+                {p.paid_at && <span className="chip t-green">Paid {fmtDay(String(p.paid_at).slice(0, 10))}{p.payment_ref ? ` · ${p.payment_ref}` : ''}</span>}
+                {tl && <span className={'chip ' + tl.tone}>{tl.label}{t.number ? ` ${t.number}` : ''}{t.expires_on ? `, valid to ${fmtDay(t.expires_on)}` : ''}{t.status === 'rejected' && t.message ? `: ${t.message}` : ''}</span>}
+              </div>
+            )}
           </div>
         );
       })}
     </div>
+  );
+}
+
+// What a tax clearance certificate needs: a profile picture of the person, the returns for the year and the two before it
+// (filed through Counta, or attached), and the authority to file any return still outstanding.
+function TccModal({ d, year, person, onClose }: { d: any; year: number; person: any; onClose: () => void }) {
+  const { orgId } = useSession();
+  const toast = useToast();
+  const refresh = useTaxRefresh();
+  const t = person.tcc || {};
+  const [photo, setPhoto] = useState<{ path: string; name: string } | null>(t.photo_path ? { path: t.photo_path, name: t.photo_name || 'Profile picture' } : null);
+  const [prior, setPrior] = useState<Record<string, { path: string; name: string } | null>>(() => ({ ...(t.prior_returns || {}) }));
+  const [authorise, setAuthorise] = useState(!!t.authorise_outstanding);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [out, setOut] = useState<any>(null);
+  const photoIn = useRef<HTMLInputElement>(null);
+  const retIn = useRef<HTMLInputElement>(null);
+  const [retYear, setRetYear] = useState<string | null>(null);
+  const prefix = `${orgId}/tax/pit/${year}/people/${person.person_id}/tcc/`;
+  const years: any[] = t.years || [];
+  const payable = Number(person.bill?.amount ?? person.computation?.figures?.payable ?? 0);
+  const unpaid = payable > 0 && !person.paid_at;
+  const login = (d.logins || []).some((l: any) => l.authority === person.authority);
+  const missing = years.filter((y) => !y.filed_in_counta && !prior[String(y.year)]?.path && Number(y.year) !== year);
+  async function upload(f: File, kind: 'photo' | 'return') {
+    setBusy('up');
+    try {
+      if (kind === 'photo' && !/\.(jpe?g|png)$/i.test(f.name) && !/^image\/(jpeg|png)$/.test(f.type)) throw new Error('The picture is a JPEG or PNG.');
+      const r = await putPersonFile(prefix, f);
+      if (kind === 'photo') setPhoto(r); else if (retYear) setPrior((x) => ({ ...x, [retYear]: r }));
+    } catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(null);
+  }
+  const payload = () => ({ photo_path: photo?.path || null, photo_name: photo?.name || null, authorise_outstanding: authorise,
+    prior_returns: Object.fromEntries(years.filter((y) => Number(y.year) !== year).map((y) => [String(y.year), prior[String(y.year)] || null])) });
+  async function save(apply: boolean) {
+    setBusy(apply ? 'apply' : 'save'); setOut(null);
+    try {
+      await rpc('save_pit_tcc', { p_org: orgId, p_year: year, p_person: person.person_id, p: payload() });
+      if (!apply) { toast('Saved'); await refresh(); onClose(); return; }
+      const r = await edge<any>('tax-files', { action: 'pit_tcc_request', org_id: orgId, year, person_id: person.person_id });
+      setOut(r); await refresh();
+      if (r.ok) { toast('Flux is applying for the certificate'); onClose(); }
+    } catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(null);
+  }
+  return (
+    <Modal onClose={onClose} width={560}>
+      <ModalHead title={`${person.name}'s tax clearance certificate`} sub={`${person.authority_name || person.authority} · covers ${year - 2} to ${year} accounts`} onClose={onClose} />
+      <div className="modal-body stack" style={{ gap: 12, fontSize: 14 }} data-testid="pit-tcc">
+        <div className="muted" style={{ fontSize: 13 }}>Flux applies on the state portal once the {year} return is filed and paid. The state asks for a profile picture, the returns for the last three years and the authority to file any return still outstanding.</div>
+        <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+          <b style={{ fontSize: 13, minWidth: 120 }}>Profile picture</b>
+          {photo ? <span className="chip t-grey"><Icon name="check" size={12} color="#15803D" /> {photo.name}</span> : <span style={{ color: '#B45309', fontSize: 13 }}>Not added yet</span>}
+          <button className="btn btn-ghost btn-xs" disabled={!!busy} onClick={() => photoIn.current?.click()}>{photo ? 'Replace' : 'Add a picture'}</button>
+        </div>
+        <div className="stack" style={{ gap: 6 }}>
+          <b style={{ fontSize: 13 }}>Returns</b>
+          {years.map((y) => {
+            const k = String(y.year); const f = prior[k];
+            return (
+              <div key={k} className="row wrap" style={{ gap: 8, fontSize: 13, alignItems: 'center' }} data-tcc-year={k}>
+                <span style={{ minWidth: 120 }}>{k} accounts</span>
+                {y.filed_in_counta ? <span className="chip t-green">Filed through Counta{y.acknowledgement_ref ? ` · ${y.acknowledgement_ref}` : ''}</span>
+                  : f?.path ? <><span className="chip t-grey"><Icon name="check" size={12} color="#15803D" /> {f.name}</span>
+                      <button className="btn btn-ghost btn-xs" disabled={!!busy} onClick={() => setPrior((x) => ({ ...x, [k]: null }))}>Remove</button></>
+                  : <><span style={{ color: '#B45309' }}>Attach the return filed, or the acknowledgement</span>
+                      <button className="btn btn-ghost btn-xs" disabled={!!busy} onClick={() => { setRetYear(k); retIn.current?.click(); }} aria-label={`Attach the ${k} return`}>Attach</button></>}
+              </div>
+            );
+          })}
+        </div>
+        <label className="check" style={{ alignItems: 'flex-start', fontSize: 13, lineHeight: 1.5 }}>
+          <input type="checkbox" checked={authorise} onChange={(e) => setAuthorise(e.target.checked)} />
+          <span>{person.name} authorises TaxStreem to file any return still outstanding for these years, so the certificate can be issued.</span>
+        </label>
+        {unpaid && <Alert kind="amber" icon="card">The bill of {N2(payable)} is not paid yet. Flux applies once the state has the payment.</Alert>}
+        {!login && <Alert kind="amber" icon="lock">Save the business's {person.authority_short || person.authority_name} login under <a href="/settings#tax-logins">Settings, Tax portal logins</a> first.</Alert>}
+        {out && !out.ok && <Alert kind={out.reason === 'not_configured' ? 'blue' : 'red'} icon="info">{out.error}</Alert>}
+        <input ref={photoIn} type="file" accept="image/jpeg,.jpg,.jpeg,image/png,.png" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) upload(f, 'photo'); }} />
+        <input ref={retIn} type="file" accept={FILE_TYPES} hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) upload(f, 'return'); }} />
+      </div>
+      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Close</button>
+        <button className="btn btn-ghost" disabled={!!busy} onClick={() => save(false)}>Save</button>
+        <button className="btn btn-primary" disabled={!!busy || !photo || missing.length > 0 || unpaid || !login} onClick={() => save(true)} data-testid="pit-tcc-apply">
+          {busy === 'apply' ? 'Asking Flux…' : 'Ask Flux to apply'}</button></div>
+    </Modal>
   );
 }
 
@@ -401,6 +528,7 @@ function Computation({ d }: { d: any }) {
             {isOpen && (
               <>
                 <Rows rows={p.computation?.rows || []} />
+                {!p.hidden && <PortalLines p={p} />}
                 {p.hidden ? <div className="faint" style={{ padding: '10px 16px', fontSize: 12 }}>{p.name}'s reliefs, other income and tax are seen only by them and by those who file the business's tax.</div> : (
                   <div className="faint" style={{ padding: '10px 16px', fontSize: 12, lineHeight: 1.6 }}>
                     {(p.computation?.other_income || []).filter((l: any) => l.treatment !== 'taxable').map((l: any) => (
@@ -417,6 +545,22 @@ function Computation({ d }: { d: any }) {
       <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>
         Computed under the {comp.rulebook?.law || pitLaw(comp.regime)}; rules {comp.rulebook?.id}{comp.rulebook?.status !== 'approved' ? ' (awaiting TaxStreem sign-off)' : ''}.
       </div>
+    </div>
+  );
+}
+
+// How the person's figures go on the state portal's statement of income, and any relief left out for want of documents.
+const FIELD_LABEL: Record<string, string> = { salary: 'Salary', commission: 'Commission', trade_income: 'Trade income', allowance: 'Allowance', pension: 'Pension',
+  annuity: 'Annuity', foreign_income: 'Foreign income (in naira)', dividend: 'Dividend', interest: 'Interest', rent: 'Rent', other_income: 'Other income' };
+function PortalLines({ p }: { p: any }) {
+  const fields = p.income_fields?.fields;
+  const held: any[] = p.reliefs_held || [];
+  if (!fields && !held.length) return null;
+  const shown = Object.keys(FIELD_LABEL).filter((k) => Number(fields?.[k] || 0) !== 0);
+  return (
+    <div style={{ padding: '10px 16px', borderTop: '1px solid var(--line)', fontSize: 12 }} data-testid="pit-portal-lines">
+      {fields && <div className="faint" style={{ lineHeight: 1.7 }}>On the state portal's statement of income: {shown.length ? shown.map((k) => `${FIELD_LABEL[k]} ${N2(fields[k])}`).join(' · ') : 'nothing'}.</div>}
+      {held.map((h) => <div key={h.relief} style={{ color: '#B45309', lineHeight: 1.6 }}>{h.label} ({N2(h.amount)}) left out until {(h.missing || []).join(', ')} {h.missing?.length === 1 ? 'is' : 'are'} added under People.</div>)}
     </div>
   );
 }
@@ -463,6 +607,59 @@ function People({ d, year, firstYear }: { d: any; year: number; firstYear: numbe
 }
 
 interface Line { kind: string; label: string; amount: string; tax_deducted: string }
+type Doc = { doc: string; path: string; name: string };
+type Need = { label: string; docs: { id: string; label: string }[]; fields?: string[]; accommodation?: boolean };
+const FILE_TYPES = 'application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png';
+
+// A file for a person's return, stored where only they and those who file tax can open it.
+export async function putPersonFile(prefix: string, f: File) {
+  if (f.size > 15_000_000) throw new Error('The file is larger than 15 MB.');
+  if (!/\.(pdf|jpe?g|png)$/i.test(f.name) && !/^(application\/pdf|image\/(jpeg|png))$/.test(f.type)) throw new Error('Attach a PDF, JPEG or PNG.');
+  const path = `${prefix}${Date.now()}-${f.name.replace(/[^\w.-]+/g, '_').slice(-80)}`;
+  const { error } = await supabase.storage.from('documents').upload(path, f, { contentType: f.type || 'application/pdf', upsert: false });
+  if (error) throw new Error(error.message.includes('row-level') ? 'Only this person and whoever files the business\'s tax attach these documents.' : error.message);
+  return { path, name: f.name.slice(0, 160) };
+}
+
+// The documents one relief needs, each with the files attached for it.
+function ReliefDocs({ id, need, docs, prefix, onChange }: { id: string; need: Need; docs: Doc[]; prefix: string | null; onChange: (d: Doc[]) => void }) {
+  const toast = useToast();
+  const file = useRef<HTMLInputElement>(null);
+  const [which, setWhich] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (!need?.docs?.length) return null;
+  async function add(f: File) {
+    if (!prefix || !which) return;
+    setBusy(true);
+    try { const r = await putPersonFile(`${prefix}${id}/`, f); onChange([...docs, { doc: which, path: r.path, name: r.name }]); }
+    catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(false);
+  }
+  return (
+    <div className="stack" style={{ gap: 4, gridColumn: '1 / -1', marginTop: -4 }} data-relief-docs={id}>
+      {need.docs.map((n) => {
+        const mine = docs.filter((x) => x.doc === n.id);
+        return (
+          <div key={n.id} className="row wrap" style={{ gap: 6, fontSize: 12 }}>
+            <Icon name={mine.length ? 'check' : 'paperclip'} size={12} color={mine.length ? '#15803D' : '#B45309'} />
+            <span className={mine.length ? 'muted' : ''} style={{ color: mine.length ? undefined : '#B45309' }}>{n.label}</span>
+            {mine.map((x) => (
+              <span key={x.path} className="chip t-grey" style={{ gap: 4 }}>
+                <button type="button" className="link" style={{ fontSize: 12, border: 0, background: 'none', padding: 0, cursor: 'pointer', color: 'var(--primary)' }} onClick={() => openInTab(() => signedDoc(x.path))}>{x.name}</button>
+                <button type="button" className="x-btn" aria-label={`Remove ${x.name}`} style={{ width: 16, height: 16 }} onClick={() => onChange(docs.filter((y) => y.path !== x.path))}><Icon name="x" size={10} /></button>
+              </span>
+            ))}
+            {prefix ? <button type="button" className="btn btn-ghost btn-xs" disabled={busy} onClick={() => { setWhich(n.id); file.current?.click(); }} aria-label={`Attach: ${n.label}`}>
+              {busy && which === n.id ? <Spinner small /> : <Icon name="plus" size={11} />}Attach</button>
+              : <span className="faint">Save first, then attach</span>}
+          </div>
+        );
+      })}
+      <input ref={file} type="file" accept={FILE_TYPES} hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) add(f); }} />
+    </div>
+  );
+}
+
 function PersonDrawer({ d, year, firstYear, person, onClose }: { d: any; year: number; firstYear: number; person: any; onClose: () => void }) {
   const { orgId } = useSession();
   const toast = useToast();
@@ -471,8 +668,10 @@ function PersonDrawer({ d, year, firstYear, person, onClose }: { d: any; year: n
   const isNew = !!person.new;
   const all = !!d.can?.edit_people;
   const legacy = comp.regime === 'PITA';
+  const needs: Record<string, Need> = d.relief_needs || {};
   const s = (v: unknown) => (v == null || v === '' || Number(v) === 0 ? '' : String(v));
   const base = (d.people_all || []).find((x: any) => x.id === person.person_id) || {};
+  const a0 = person.accommodation || {};
   const [f, setF] = useState({
     name: person.name || '', tin: person.tin || base.tin || '', member_id: base.member_id || '',
     share_pct: isNew ? '' : String(person.share_pct ?? ''), role: person.role === 'proprietor' ? 'active' : person.role || 'active',
@@ -480,13 +679,24 @@ function PersonDrawer({ d, year, firstYear, person, onClose }: { d: any; year: n
     remuneration: s(person.remuneration), remuneration_note: person.remuneration_note || '',
     losses_bf: s(person.opening?.losses_bf), ca_bf: s(person.opening?.ca_bf),
     reliefs: Object.fromEntries(RELIEFS.map((r) => [r.id, s(person.reliefs?.[r.id])])) as Record<string, string>,
-    other: ((person.other_income || []) as any[]).map((l) => ({ kind: l.kind, label: l.label || '', amount: String(l.amount ?? ''), tax_deducted: s(l.tax_deducted) })) as Line[],
+    other: ((person.other_income || []) as any[]).map((l) => ({ kind: incomeChoice(l), label: l.label || '', amount: String(l.amount ?? ''), tax_deducted: s(l.tax_deducted) })) as Line[],
+    acc: { address: a0.address || '', type: a0.type || '', occupancy: a0.occupancy || '', landlord_name: a0.landlord_name || '', landlord_id: a0.landlord_id || '',
+      landlord_address: a0.landlord_address || '', rent_paid: s(a0.rent_paid), rent_paid_by_employer: s(a0.rent_paid_by_employer), started_on: a0.started_on || '', ended_on: a0.ended_on || '' },
+    rsa_number: person.pension_details?.rsa_number || '', pfa: person.pension_details?.pfa || '',
+    docs: { ...(person.relief_docs || {}) } as Record<string, Doc[]>,
   });
   const [busy, setBusy] = useState(false);
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
+  const setAcc = (k: string, v: string) => setF((x) => ({ ...x, acc: { ...x.acc, [k]: v } }));
   const sole = comp.kind === 'sole' && !isNew;
   const firstForPerson = !person.bf?.from_previous_year;
-  const reliefs = RELIEFS.filter((r) => r.law === 'both' || (legacy ? r.law === 'pita' : r.law === 'nta'));
+  // Rent relief comes from the accommodation (a tenant's rent), not from a box of its own.
+  const reliefs = RELIEFS.filter((r) => r.id !== 'rent_paid' && (r.law === 'both' || (legacy ? r.law === 'pita' : r.law === 'nta')));
+  const held: Record<string, string[]> = Object.fromEntries(((person.reliefs_held || []) as any[]).map((h) => [h.relief, h.missing || []]));
+  const prefix = person.person_id ? `${orgId}/tax/pit/${year}/people/${person.person_id}/` : null;
+  const tenant = f.acc.occupancy === 'tenant';
+  const n = (v: string) => (v.trim() === '' ? 0 : money(v));
+  const netRent = tenant ? Math.max((n(f.acc.rent_paid) || 0) - (n(f.acc.rent_paid_by_employer) || 0), 0) : 0;
   async function save(remove = false) {
     setBusy(true);
     try {
@@ -496,12 +706,16 @@ function PersonDrawer({ d, year, firstYear, person, onClose }: { d: any; year: n
         if (remove) { toast(r.removed ? 'Removed' : 'Kept for earlier years, and left out from now on'); await refresh(); onClose(); setBusy(false); return; }
         id = r.id;
       }
-      const n = (v: string) => (v.trim() === '' ? 0 : money(v));
+      const hasAcc = Object.values(f.acc).some((v) => String(v).trim() !== '');
       const p: Record<string, unknown> = {
         residence: f.residence || null, resident: f.resident,
         reliefs: Object.fromEntries(reliefs.map((r) => [r.id, n(f.reliefs[r.id] || '')])),
-        other_income: f.other.filter((l) => l.amount.trim() || l.label.trim()).map((l) => ({ kind: l.kind, label: l.label, amount: money(l.amount), tax_deducted: n(l.tax_deducted) })),
+        other_income: f.other.filter((l) => l.amount.trim() || l.label.trim()).map((l) => ({ ...incomeOf(l.kind), label: l.label, amount: money(l.amount), tax_deducted: n(l.tax_deducted) })),
+        accommodation: hasAcc ? { ...f.acc, rent_paid: tenant ? n(f.acc.rent_paid) : 0, rent_paid_by_employer: n(f.acc.rent_paid_by_employer),
+          landlord_name: tenant ? f.acc.landlord_name : '', landlord_id: tenant ? f.acc.landlord_id : '', landlord_address: tenant ? f.acc.landlord_address : '' } : {},
+        pension_details: { rsa_number: f.rsa_number, pfa: f.pfa },
       };
+      if (!isNew) p.relief_docs = Object.fromEntries(Object.entries(needs).filter(([, v]) => v.docs?.length).map(([k]) => [k, f.docs[k] || []]));
       if (firstForPerson) p.opening = { losses_bf: n(f.losses_bf), ca_bf: n(f.ca_bf) };
       if (all) Object.assign(p, { remuneration: n(f.remuneration), remuneration_note: f.remuneration_note || null,
         ...(sole ? {} : { share_pct: money(f.share_pct) ?? 0, role: f.role, office_location_id: f.office_location_id || null }) });
@@ -512,7 +726,7 @@ function PersonDrawer({ d, year, firstYear, person, onClose }: { d: any; year: n
   }
   const states = (d.authorities || []).filter((a: any) => a.code !== 'NRS');
   return (
-    <Drawer onClose={onClose} width={640}>
+    <Drawer onClose={onClose} width={680}>
       <div className="drawer-hd"><div className="grow"><div className="drawer-title">{isNew ? 'A partner' : person.name}</div>
         <div className="muted" style={{ fontSize: 13 }}>{year} accounts · year of assessment {comp.yoa}{!isNew && person.authority_name ? ` · ${person.authority_name}` : ''}</div></div>
         <button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button></div>
@@ -521,7 +735,7 @@ function PersonDrawer({ d, year, firstYear, person, onClose }: { d: any; year: n
           <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <Field label="Name" req style={{ gridColumn: '1 / -1' }}><input className="input" value={f.name} onChange={(e) => set('name', e.target.value)} /></Field>
             <Field label="Tax ID"><input className="input" value={f.tin} onChange={(e) => set('tin', e.target.value)} placeholder="From taxid.nrs.gov.ng" /></Field>
-            <Field label="Their Counta login" hint="Linked, they can enter their own reliefs and other income."><select className="input" value={f.member_id} onChange={(e) => set('member_id', e.target.value)}>
+            <Field label="Their Counta login" hint="Linked, they can enter their own reliefs, other income and home."><select className="input" value={f.member_id} onChange={(e) => set('member_id', e.target.value)}>
               <option value="">Not linked</option>{(d.members || []).map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
           </div>
         )}
@@ -561,27 +775,64 @@ function PersonDrawer({ d, year, firstYear, person, onClose }: { d: any; year: n
             <Field label="Unused capital allowances brought forward"><input className="input num" inputMode="decimal" value={f.ca_bf} onChange={(e) => set('ca_bf', e.target.value)} /></Field>
           </div>
         )}
-        <div className="label">Reliefs for {year}</div>
-        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          {reliefs.map((r) => (
-            <Field key={r.id} label={r.label} hint={r.hint}><input className="input num" inputMode="decimal" value={f.reliefs[r.id] || ''} data-relief={r.id}
-              onChange={(e) => set('reliefs', { ...f.reliefs, [r.id]: e.target.value })} /></Field>
-          ))}
+
+        <div className="label">Where they lived in {year}</div>
+        <div className="faint" style={{ fontSize: 12, marginTop: -8 }}>The state portal asks for this before anything else on the return.{person.accommodation_carried ? ' Carried from last year: check it' + (tenant ? ' and enter this year\'s rent.' : '.') : ''}</div>
+        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }} data-testid="pit-home">
+          <Field label="Address" style={{ gridColumn: '1 / -1' }}><input className="input" aria-label="Home address" value={f.acc.address} onChange={(e) => setAcc('address', e.target.value)} /></Field>
+          <Field label="Kind of home"><select className="input" aria-label="Kind of home" value={f.acc.type} onChange={(e) => setAcc('type', e.target.value)}>
+            <option value="">Choose</option>{HOME_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}</select></Field>
+          <Field label="How they live there"><select className="input" aria-label="How they live there" value={f.acc.occupancy} onChange={(e) => setAcc('occupancy', e.target.value)}>
+            <option value="">Choose</option>{OCCUPANCY.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}</select></Field>
+          <Field label="Moved in"><input className="input" type="date" aria-label="Moved in" value={f.acc.started_on} onChange={(e) => setAcc('started_on', e.target.value)} /></Field>
+          <Field label="Moved out (if they did)"><input className="input" type="date" aria-label="Moved out" value={f.acc.ended_on} onChange={(e) => setAcc('ended_on', e.target.value)} /></Field>
+          {tenant && <>
+            <Field label="Landlord"><input className="input" aria-label="Landlord" value={f.acc.landlord_name} onChange={(e) => setAcc('landlord_name', e.target.value)} /></Field>
+            <Field label="Landlord's Tax ID or ID (optional)"><input className="input" aria-label="Landlord's ID" value={f.acc.landlord_id} onChange={(e) => setAcc('landlord_id', e.target.value)} /></Field>
+            <Field label="Landlord's address" style={{ gridColumn: '1 / -1' }}><input className="input" aria-label="Landlord's address" value={f.acc.landlord_address} onChange={(e) => setAcc('landlord_address', e.target.value)} /></Field>
+            <Field label={`Rent for ${year}`}><input className="input num" inputMode="decimal" aria-label="Rent for the year" value={f.acc.rent_paid} onChange={(e) => setAcc('rent_paid', e.target.value)} /></Field>
+            <Field label="Of which an employer paid"><input className="input num" inputMode="decimal" aria-label="Rent an employer paid" value={f.acc.rent_paid_by_employer} onChange={(e) => setAcc('rent_paid_by_employer', e.target.value)} /></Field>
+            {!legacy && <div className="faint" style={{ gridColumn: '1 / -1', fontSize: 12 }}>Rent relief: 20% of the rent they paid themselves ({N2(netRent)}), at most ₦500,000 (NTA 2025 s.30(2)(a)(vi)). Leave out any part claimed as business rent.</div>}
+          </>}
+          {f.acc.occupancy === 'employer' && <Field label="Rent an employer paid (optional)"><input className="input num" inputMode="decimal" aria-label="Rent an employer paid" value={f.acc.rent_paid_by_employer} onChange={(e) => setAcc('rent_paid_by_employer', e.target.value)} /></Field>}
         </div>
-        <div className="faint" style={{ fontSize: 12 }}>{legacy ? 'Old law: pension, NHF, NHIS, life insurance and gratuity come off first, then the consolidated relief allowance, then home loan interest.' : 'These come off total income at full value (NTA 2025 s.30). There is no consolidated relief allowance from 2026.'} Keep the evidence: the state may ask for it.</div>
+
+        <div className="label">Reliefs for {year}</div>
+        <div className="faint" style={{ fontSize: 12, marginTop: -8 }}>The state portal refuses a relief without its documents, so each counts once they are attached.</div>
+        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {reliefs.map((r) => {
+            const amount = Number(n(f.reliefs[r.id] || '') || 0);
+            return (
+              <div key={r.id} className="stack" style={{ gap: 6, gridColumn: amount > 0 ? '1 / -1' : undefined }}>
+                <Field label={r.label} hint={r.hint}><input className="input num" inputMode="decimal" value={f.reliefs[r.id] || ''} data-relief={r.id}
+                  onChange={(e) => set('reliefs', { ...f.reliefs, [r.id]: e.target.value })} /></Field>
+                {amount > 0 && r.id === 'pension' && (
+                  <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <Field label="RSA number"><input className="input" aria-label="RSA number" value={f.rsa_number} onChange={(e) => set('rsa_number', e.target.value)} placeholder="PEN followed by 12 digits" /></Field>
+                    <Field label="Pension fund administrator"><input className="input" aria-label="Pension fund administrator" value={f.pfa} onChange={(e) => set('pfa', e.target.value)} /></Field>
+                  </div>
+                )}
+                {amount > 0 && <ReliefDocs id={r.id} need={needs[r.id]} docs={f.docs[r.id] || []} prefix={prefix} onChange={(x) => set('docs', { ...f.docs, [r.id]: x })} />}
+                {amount > 0 && held[r.id] && <div style={{ fontSize: 12, color: '#B45309' }} data-held={r.id}>Left out of the computation until saved with: {held[r.id].join(', ')}.</div>}
+              </div>
+            );
+          })}
+        </div>
+        <div className="faint" style={{ fontSize: 12 }}>{legacy ? 'Old law: pension, NHF, NHIS, life insurance and gratuity come off first, then the consolidated relief allowance, then home loan interest.' : 'These come off total income at full value (NTA 2025 s.30). There is no consolidated relief allowance from 2026.'}</div>
         <div className="row" style={{ justifyContent: 'space-between' }}><div className="label">Other income in {year}</div>
           <button className="btn btn-secondary btn-xs" onClick={() => set('other', [...f.other, { kind: 'employment', label: '', amount: '', tax_deducted: '' }])}><Icon name="plus" size={12} />Income</button></div>
         {!f.other.length && <div className="faint" style={{ fontSize: 13 }}>None. Add a salary, rent, dividends, interest or income from abroad, so the return covers everything.</div>}
         {f.other.map((l, i) => {
           const k = OTHER_INCOME.find((x) => x.id === l.kind);
+          const kind = incomeOf(l.kind).kind;
           const upd = (patch: Partial<Line>) => set('other', f.other.map((y, j) => (j === i ? { ...y, ...patch } : y)));
           return (
             <div key={i} className="card" style={{ padding: 10, borderRadius: 10, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) 32px', gap: 8 }}>
               <select className="input input-sm" style={{ gridColumn: '1 / 3' }} aria-label="Kind of income" value={l.kind} onChange={(e) => upd({ kind: e.target.value })}>{OTHER_INCOME.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select>
               <button className="x-btn" aria-label="Remove" onClick={() => set('other', f.other.filter((_, j) => j !== i))}><Icon name="x" size={14} /></button>
               <input className="input input-sm num" inputMode="decimal" placeholder="Amount" aria-label="Amount" value={l.amount} onChange={(e) => upd({ amount: e.target.value })} />
-              <input className="input input-sm num" style={{ gridColumn: '2 / -1' }} inputMode="decimal" placeholder={l.kind === 'foreign_earned' ? 'Foreign tax' : l.kind === 'employment' ? 'PAYE' : 'Tax deducted'}
-                aria-label={l.kind === 'foreign_earned' ? 'Foreign tax paid' : l.kind === 'employment' ? 'PAYE deducted' : 'Tax deducted'} value={l.tax_deducted} onChange={(e) => upd({ tax_deducted: e.target.value })} />
+              <input className="input input-sm num" style={{ gridColumn: '2 / -1' }} inputMode="decimal" placeholder={kind === 'foreign_earned' ? 'Foreign tax' : kind === 'employment' ? 'PAYE' : 'Tax deducted'}
+                aria-label={kind === 'foreign_earned' ? 'Foreign tax paid' : kind === 'employment' ? 'PAYE deducted' : 'Tax deducted'} value={l.tax_deducted} onChange={(e) => upd({ tax_deducted: e.target.value })} />
               <input className="input input-sm" style={{ gridColumn: '1 / -1' }} placeholder="Description (employer, property, bank)" aria-label="Description" value={l.label} onChange={(e) => upd({ label: e.target.value })} />
               {k?.hint && <span className="faint" style={{ gridColumn: '1 / -1', fontSize: 11 }}>{k.hint}</span>}
             </div>
@@ -594,6 +845,69 @@ function PersonDrawer({ d, year, firstYear, person, onClose }: { d: any; year: n
         {all && !isNew && <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} disabled={busy} onClick={() => save(true)}><Icon name="trash" size={13} />Remove</button>}
       </div>
     </Drawer>
+  );
+}
+
+// ---------------------------------------------------------------- staff
+// The business's employees for the year, for the state portal's support staff screen. Saving the list (even an empty
+// one) confirms it; a return Flux files cannot be approved until it is confirmed.
+type StaffRow = { name: string; role: string; annual_pay: string; tin: string };
+function Staff({ d, year }: { d: any; year: number }) {
+  const { orgId } = useSession();
+  const toast = useToast();
+  const refresh = useTaxRefresh();
+  const comp = d.computation || {};
+  const review = comp.staff_review || {};
+  const blank: StaffRow = { name: '', role: '', annual_pay: '', tin: '' };
+  const [rows, setRows] = useState<StaffRow[]>(() => ((comp.staff || []) as any[]).map((x) => ({ name: x.name || '', role: x.role || '', annual_pay: String(x.annual_pay ?? ''), tin: x.tin || '' })));
+  const [busy, setBusy] = useState(false);
+  if (comp.staff == null) return <Alert kind="grey" icon="lock">The staff and their pay are for those who keep the books or see the money.</Alert>;
+  const ro = !d.can?.edit_business;
+  const filled = rows.filter((r) => r.name.trim() || r.annual_pay.trim() || r.role.trim());
+  const total = filled.reduce((t, r) => t + (money(r.annual_pay) || 0), 0);
+  const salaries = Number(comp.business?.figures?.salaries || 0);
+  const upd = (i: number, patch: Partial<StaffRow>) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  async function save(none = false) {
+    setBusy(true);
+    try {
+      const staff = none ? [] : filled.map((r) => ({ name: r.name.trim(), role: r.role.trim() || null, annual_pay: r.annual_pay.trim() === '' ? null : money(r.annual_pay), tin: r.tin.trim() || null }));
+      await rpc('save_pit_year', { p_org: orgId, p_year: year, p: { staff } });
+      if (none) setRows([]);
+      toast(none ? 'Confirmed: no employees' : 'Staff saved'); await refresh();
+    } catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(false);
+  }
+  return (
+    <div className="stack" style={{ gap: 12 }} data-testid="pit-staff">
+      <div className="muted" style={{ fontSize: 13, lineHeight: 1.6 }}>The state portal asks for the business's employees with each return: their names, roles and pay for {year}. The fixed assets go from Capital allowances.</div>
+      <div className="card" style={{ overflow: 'auto' }}>
+        <div className="tr head shade th rsp" style={{ gridTemplateColumns: 'minmax(160px,1.4fr) minmax(120px,1fr) 140px 140px 32px', minWidth: 640 }}>
+          <span>Name</span><span>Role</span><span className="right">Pay for the year</span><span>Tax ID</span><span />
+        </div>
+        {rows.length === 0 && <div style={{ padding: 14 }} className="faint">No employees listed.</div>}
+        {rows.map((r, i) => (
+          <div key={i} className="tr rsp" style={{ gridTemplateColumns: 'minmax(160px,1.4fr) minmax(120px,1fr) 140px 140px 32px', minWidth: 640, gap: 8 }} data-testid="pit-staff-row">
+            <input className="input input-sm m-main" aria-label="Employee name" disabled={ro} value={r.name} onChange={(e) => upd(i, { name: e.target.value })} />
+            <input className="input input-sm" aria-label="Role" disabled={ro} value={r.role} onChange={(e) => upd(i, { role: e.target.value })} />
+            <input className="input input-sm num" aria-label="Pay for the year" inputMode="decimal" disabled={ro} value={r.annual_pay} onChange={(e) => upd(i, { annual_pay: e.target.value })} />
+            <input className="input input-sm" aria-label="Tax ID" disabled={ro} value={r.tin} onChange={(e) => upd(i, { tin: e.target.value })} />
+            {!ro ? <button className="x-btn" aria-label="Remove employee" onClick={() => setRows(rows.filter((_, j) => j !== i))}><Icon name="x" size={14} /></button> : <span />}
+          </div>
+        ))}
+        <div className="row wrap" style={{ justifyContent: 'space-between', padding: '10px 16px', fontSize: 13 }}>
+          {!ro ? <button className="btn btn-secondary btn-xs" onClick={() => setRows([...rows, blank])}><Icon name="plus" size={12} />Employee</button> : <span />}
+          <span>Pay listed <b className="num">{N2(total)}</b><span className="faint"> · salaries in the accounts {N2(salaries)}</span></span>
+        </div>
+      </div>
+      {!ro && (
+        <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+          <button className="btn btn-primary" disabled={busy} onClick={() => save()} data-testid="pit-staff-save">{busy ? 'Saving…' : review.reviewed ? 'Save' : 'Confirm the staff'}</button>
+          {filled.length === 0 && <button className="btn btn-ghost" disabled={busy} onClick={() => save(true)} data-testid="pit-staff-none">It had no employees</button>}
+          {!review.reviewed && <span className="faint" style={{ fontSize: 12 }}>A return Flux files is approved once the staff are confirmed.</span>}
+        </div>
+      )}
+      {review.reviewed && <div className="faint" style={{ fontSize: 12 }}>Confirmed{review.by ? ` by ${review.by}` : ''}{review.at ? ` (${when(review.at)})` : ''}.</div>}
+    </div>
   );
 }
 

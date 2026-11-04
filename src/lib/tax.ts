@@ -71,8 +71,11 @@ export const RELIEFS: { id: string; label: string; law: 'both' | 'nta' | 'pita';
   { id: 'gratuity', label: 'Gratuity', law: 'pita' },
   { id: 'rent_paid', label: 'Rent paid for their home this year', law: 'nta', hint: '20% of it comes off, at most ₦500,000. Leave out any part claimed as business rent.' },
 ];
-export const OTHER_INCOME: { id: string; label: string; hint?: string }[] = [
+// Each choice is a kind of income for the rule book and, where the state portal splits it, the line it goes on (field).
+export const OTHER_INCOME: { id: string; label: string; hint?: string; kind?: string; field?: string }[] = [
   { id: 'employment', label: 'Salary from a job', hint: 'With the PAYE taken off' },
+  { id: 'employment:commission', kind: 'employment', field: 'commission', label: 'Commission from a job', hint: 'With the PAYE taken off' },
+  { id: 'employment:allowance', kind: 'employment', field: 'allowance', label: 'Allowances from a job', hint: 'Housing, transport and other allowances, with the PAYE taken off' },
   { id: 'rent', label: 'Rent received', hint: 'After the costs of letting, with any WHT taken off' },
   { id: 'dividend', label: 'Dividends', hint: 'Taxed in full where WHT was taken off' },
   { id: 'interest', label: 'Interest', hint: 'Taxed in full where WHT was taken off' },
@@ -81,7 +84,21 @@ export const OTHER_INCOME: { id: string; label: string; hint?: string }[] = [
   { id: 'foreign_investment', label: 'Foreign dividends, interest, rent or royalties through a domiciliary account', hint: 'Exempt' },
   { id: 'gov_bond_interest', label: 'Interest on government bonds', hint: 'Exempt' },
   { id: 'pension_gratuity', label: 'Pension or gratuity received', hint: 'Exempt' },
+  { id: 'pension_gratuity:annuity', kind: 'pension_gratuity', field: 'annuity', label: 'Annuity received', hint: 'Exempt when paid under the Pension Reform Act' },
   { id: 'other', label: 'Other income' },
+];
+// The choice an income line shows, from its kind and the portal line it goes on, and back.
+export const incomeChoice = (l: { kind: string; field?: string | null }) =>
+  OTHER_INCOME.find((x) => (x.kind || x.id) === l.kind && (x.field || null) === (l.field && !['salary', 'pension'].includes(l.field) ? l.field : null))?.id || l.kind;
+export const incomeOf = (choice: string) => { const x = OTHER_INCOME.find((o) => o.id === choice); return { kind: x?.kind || choice, field: x?.field || null }; };
+// The accommodation the state portal asks about before anything else on the return.
+export const HOME_TYPES: { id: string; label: string }[] = [
+  { id: 'flat', label: 'Flat or apartment' }, { id: 'room', label: 'Room or self-contained' }, { id: 'bungalow', label: 'Bungalow' }, { id: 'duplex', label: 'Duplex' },
+  { id: 'terrace', label: 'Terrace house' }, { id: 'detached', label: 'Detached house' }, { id: 'other', label: 'Other' },
+];
+export const OCCUPANCY: { id: string; label: string }[] = [
+  { id: 'tenant', label: 'Rents it (tenant)' }, { id: 'owner', label: 'Owns it (landlord)' }, { id: 'employer', label: 'Provided by an employer' },
+  { id: 'family', label: 'Lives with family, pays no rent' },
 ];
 export const lawShort = (regime?: string | null) => (regime === 'LEGACY_CITA' ? 'CITA' : 'NTA 2025');
 export const lawLong = (regime?: string | null) => (regime === 'LEGACY_CITA' ? 'Companies Income Tax Act (as amended to 2023)' : 'Nigeria Tax Act 2025');
