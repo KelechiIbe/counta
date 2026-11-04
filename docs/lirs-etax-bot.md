@@ -156,13 +156,19 @@ Counta app ── tax-files (pit_send, pit_pay, pit_bill) ──► lirs_jobs �
 
 - The bot is `bots/lirs` in this repo: Node, TypeScript and Playwright, built into a container for Google Cloud Run
   (`docs/lirs-bot-cloud-run.md` has the set-up). It keeps no data of its own and holds no Supabase key.
-- Jobs wait in `public.lirs_jobs`: `file` (the return, to Confirm), `bill`, `pay_account` (the transfer account) and
-  `status` (has it been paid). The bot asks `POST /functions/v1/taxstreem/lirs/next` for the next job, gets the job, what it
+- Jobs wait in `public.lirs_jobs`: `check` (a login just saved), `file` (the return, to Confirm), `bill`, `pay_account`
+  (the transfer account) and `status` (has it been paid). The bot asks `POST /functions/v1/taxstreem/lirs/next` for the next job, gets the job, what it
   needs (the person's figures, home, staff, reliefs and the password, read from Vault for that job) and links to the files
   for an hour, and reports each step and the result to `/lirs/report`. Both calls are signed with `LIRS_BOT_SECRET`
   (`x-counta-signature: t=<seconds>,v1=<HMAC-SHA256 of "<t>.<body>">`, as with Flux).
-- Counta wakes the bot when it adds a job (`POST <LIRS_BOT_URL>/tick`, signed the same way); Cloud Scheduler also calls
-  `/tick` every five minutes, which is when payment checks and retries run.
+- Counta wakes the bot when it adds a job (`POST <LIRS_BOT_URL>/tick`, signed the same way). Every five minutes while a job
+  is due, the database's `counta-lirs-bot` cron job asks the taxstreem function to wake it too, which is when payment checks
+  and retries run.
+- A login is checked as soon as it is saved. The `check` job belongs to the login, not to a year: the bot signs in, reads
+  whose account it is (the name e-Tax has on it) and the tax station the profile names, and signs out. Nothing on e-Tax is
+  changed. The person's row then shows the login as working, with a warning when e-Tax has another name on the account or
+  Counta cannot place the tax station, or as not working with e-Tax's reason. Every job carries when the login was last
+  saved, so a report about an older password never marks a newer one.
 - One person is worked at a time (e-Tax keeps one session per account), with a pause between calls. A job that fails for a
   reason worth another try (e-Tax's internal error, a page that did not load, a session ended part way) is tried again after
   2, 4 and 8 minutes; one e-Tax refused (bad data, a wrong password) stops and tells whoever files tax, with e-Tax's own
@@ -189,7 +195,8 @@ mortgage deductions; pension needs the RSA number, the administrator and the RSA
 
 - `bots/lirs`: `npm test` runs the bot against a stand-in e-Tax, payments page and checkout (`test/mock.ts`), strict where
   e-Tax was strict, with a stand-in Counta: filing, the bill in the same session, the transfer account, the payment, a second
-  run, a session ended part way, wrong and expired passwords, a station it cannot place, and the signature on `/tick`.
+  run, a session ended part way, wrong and expired passwords, a station it cannot place, checking a login (with nothing
+  but reads on e-Tax), and the signature on `/tick`.
 - The SQL suite covers logins in Vault, the queue, retries, reports, the bill, the account, the payment checks and who may
   call what. The browser test files a partner's return from the app through the real edge functions and the real bot.
 - What only the live portal can confirm, on the first live run: that e-Tax takes the documents and reliefs as the bot sends

@@ -31,7 +31,8 @@ export function PortalLoginsPanel() {
   const toast = useToast();
   const qc = useQueryClient();
   const q = usePortalLogins();
-  const [f, setF] = useState({ authority: 'SIRS:LA', username: '', password: '', tax_office: '' });
+  // The form opens on the NRS: Lagos personal income tax goes through each person's own e-Tax login instead (below).
+  const [f, setF] = useState({ authority: '', username: '', password: '', tax_office: '' });
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -40,14 +41,15 @@ export function PortalLoginsPanel() {
   const d = q.data!;
   const list = d.logins || [];
   const auths = d.authorities || [];
-  const chosen = auths.find((a) => a.code === f.authority);
-  const existing = list.find((l) => l.authority === f.authority);
+  const code = f.authority || (auths.find((a) => a.code === 'NRS') || auths.find((a) => a.code !== 'SIRS:LA') || auths[0])?.code || 'NRS';
+  const chosen = auths.find((a) => a.code === code);
+  const existing = list.find((l) => l.authority === code);
   const refresh = () => Promise.all([qc.invalidateQueries({ queryKey: ['portal-logins'] }), qc.invalidateQueries({ queryKey: ['pit-year'] })]);
 
   async function save() {
     setBusy('save'); setErr(null);
     try {
-      const r = await edge<any>('tax-files', { action: 'portal_login_save', org_id: orgId, authority: f.authority, username: f.username, password: f.password, tax_office: f.tax_office });
+      const r = await edge<any>('tax-files', { action: 'portal_login_save', org_id: orgId, authority: code, username: f.username, password: f.password, tax_office: f.tax_office });
       if (r.ok === false) { setErr(r.error || 'The login was not saved.'); return; }
       setF((x) => ({ ...x, username: '', password: '', tax_office: '' }));
       toast(`The ${chosen?.short_name || chosen?.name || 'portal'} login is with Flux`);
@@ -103,10 +105,15 @@ export function PortalLoginsPanel() {
         <div className="card" style={{ padding: 14, borderRadius: 10 }} data-testid="portal-login-form">
           <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <Field label="Tax authority" style={{ gridColumn: '1 / -1' }}>
-              <select className="input" aria-label="Tax authority" value={f.authority} onChange={(e) => setF({ ...f, authority: e.target.value })}>
+              <select className="input" aria-label="Tax authority" value={code} onChange={(e) => setF({ ...f, authority: e.target.value })}>
                 {auths.map((a) => <option key={a.code} value={a.code}>{authorityLabel(a)}</option>)}
               </select>
             </Field>
+            {code === 'SIRS:LA' && (
+              <div style={{ gridColumn: '1 / -1' }} data-testid="portal-login-lagos-note">
+                <Alert kind="blue" icon="info">Personal income tax in Lagos is filed by Counta's bot with each person's own e-Tax login, saved on the person's row under Tax, Income tax (for business names and partnerships). A Lagos login saved here goes to TaxStreem Flux, for the business's own e-Tax work.</Alert>
+              </div>
+            )}
             <Field label={`Username on ${chosen?.portal || 'the portal'}`}>
               <input className="input" aria-label="Username" autoComplete="off" spellCheck={false} value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} />
             </Field>
@@ -114,7 +121,7 @@ export function PortalLoginsPanel() {
               <input className="input" aria-label="Password" type="password" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
             </Field>
             <Field label="Tax office (optional)" hint="The office the business files with, as the portal names it." style={{ gridColumn: '1 / -1' }}>
-              <input className="input" aria-label="Tax office" value={f.tax_office} onChange={(e) => setF({ ...f, tax_office: e.target.value })} placeholder={f.authority === 'SIRS:LA' ? 'For example, Ikeja' : undefined} />
+              <input className="input" aria-label="Tax office" value={f.tax_office} onChange={(e) => setF({ ...f, tax_office: e.target.value })} placeholder={code === 'SIRS:LA' ? 'For example, Ikeja' : undefined} />
             </Field>
           </div>
           {err && <div style={{ marginTop: 10 }}><Alert kind="red" icon="info">{err}</Alert></div>}

@@ -4,6 +4,7 @@ import { matchAgency, tokens } from '../src/match.js';
 import { accountFromText, findWith, localPhone, toIso } from '../src/lasg.js';
 import { accommodationBody, assetBody, reliefData, statementOfIncome } from '../src/file.js';
 import { scrub } from '../src/errors.js';
+import { nameWords, namesMatch } from '../src/check.js';
 import { kindOf, mergeToPdf } from '../src/pdf.js';
 import { PDFDocument } from 'pdf-lib';
 
@@ -64,4 +65,14 @@ test('files and secrets', async () => {
   const m = await mergeToPdf([p, png, p]);
   assert.equal((await PDFDocument.load(m)).getPageCount(), 3);
   await assert.rejects(mergeToPdf([p, Buffer.from('<html>')]));
+});
+
+test('whose login it is: names on e-Tax and in Counta', () => {
+  assert.deepEqual(nameWords('Mrs. Chigoziem  Ibe-Okafor'), ['chigoziem', 'ibeokafor']);
+  assert.ok(namesMatch('Chigoziem Ibe', 'IBE CHIGOZIEM ADAEZE'), 'surname first, with a middle name');
+  assert.ok(namesMatch('Chigoziem Ibe', 'Chigoziem Okafor'), 'a maiden name still shares the first name');
+  assert.ok(namesMatch('Adébáyọ̀ Ọlá', 'ADEBAYO OLA'), 'accents');
+  assert.ok(!namesMatch('Ngozi Okafor', 'Dan Uzo'));
+  assert.ok(namesMatch('', 'Dan Uzo'), 'nothing to compare');
+  assert.ok(!namesMatch('Dr Ada Obi', 'Mr Bayo Ade'), 'titles do not count');
 });

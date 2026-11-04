@@ -23,7 +23,9 @@
 //   { action: 'pit_etax_login_remove', org_id, person_id }
 //                                        -> the person, or whoever files the business's tax, saves or removes the person's
 //                                           own LIRS e-Tax login. The password goes into Supabase Vault for the bot alone;
-//                                           it is never stored elsewhere, logged or sent back.
+//                                           it is never stored elsewhere, logged or sent back. On saving, the bot is woken
+//                                           to check it at once: it signs in, notes whose account it is and the tax
+//                                           station, and signs out without changing anything on e-Tax.
 //   { action: 'pit_bill', org_id, year, person_id }
 //                                        -> asks the bot to raise the person's bill on e-Tax again (after a bill failed).
 //   { action: 'pit_pay', org_id, year, person_id, pay_with: 'transfer' }
@@ -349,7 +351,9 @@ async function etaxLoginSave(sb: SupabaseClient, orgId: string, body: any) {
   const { data: b, error } = await sb.rpc('pit_etax_login_begin', { p_org: orgId, p_person: person });
   if (error) throw new UserError(error.message);
   const row = await svc('svc_pit_etax_login_save', { p_org: orgId, p_person: person, p: { payer_id: payer, password, member_id: b.member_id } });
-  return { ok: true, login: row };
+  // The database queued a check of it: the bot signs in, notes whose account it is and the tax station, and signs out.
+  const woke = await wakeBot('check');
+  return { ok: true, login: row, woke };
 }
 async function etaxLoginRemove(sb: SupabaseClient, orgId: string, body: any) {
   const person = String(body.person_id || '');
