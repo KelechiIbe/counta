@@ -336,7 +336,7 @@ export default function Settings() {
         </Section>
       )}
       {(owner || can(inv, 'file_tax')) && (
-        <Section id="tax-logins" title="Tax portal logins" sub="TaxStreem Flux signs in to the tax portals as the business to file the returns Counta prepares: NRS Rev360, LIRS e-Tax and the other state revenue services. For personal income tax, Flux files in Lagos for now and adds states as TaxStreem switches them on.">
+        <Section id="tax-logins" title="Tax portal logins" sub="TaxStreem Flux signs in to the tax portals as the business to file the returns Counta prepares: NRS Rev360, LIRS e-Tax and the other state revenue services. Personal income tax in Lagos is different: Counta's own bot files each person's return with their own e-Tax login, saved with that person under Income tax.">
           <PortalLoginsPanel />
         </Section>
       )}

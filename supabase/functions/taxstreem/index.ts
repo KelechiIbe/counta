@@ -32,6 +32,14 @@
 //                                          agrees, paid from the tax wallet
 //   POST /taxstreem/flux/payment-status body { counta_org_id, prn, status: confirmed|not_received|expired, receipt_ref, message }
 //   Header: x-counta-signature, the same scheme signed with FLUX_SECRET.
+// Counta's own bot for LIRS e-Tax (bots/lirs, on Cloud Run), signed with LIRS_BOT_SECRET (the same scheme):
+//   POST /taxstreem/lirs/next    body { worker }  -> { ok, job: null } or { ok, job: { id, kind, attempt, ... }, context,
+//                                                   files: { <storage path>: <signed link, an hour> } }
+//   POST /taxstreem/lirs/report  body { job_id, step?, note?, login?, login_message?, tax_station?, portal?,
+//                                       done?, result?, failed?, error?, retry? } -> { ok, job_id, status }
+//   The job's context carries the person's e-Tax password, read from Vault for that job only.
+// The database (x-counta-hook: <PUSH_HOOK_SECRET>), every five minutes while a bot job is due:
+//   POST /taxstreem  body { action: 'lirs_wake' }  -> wakes the bot (POST <LIRS_BOT_URL>/tick, signed).
 // Each of the four can carry the files Rev360 gave (the filing acknowledgement or evidence, the PRN page, the payment
 // receipt), which Counta keeps in the business's Documents:
 //   documents: [{ kind: acknowledgement|filing_evidence|assessment|prn|payment_receipt|tax_clearance|other, name,
@@ -115,6 +123,61 @@ async function signedJson(raw: string, sig: string | null): Promise<{ body: any 
   try { return { body: JSON.parse(raw) }; } catch { return json({ ok: false, error: 'Invalid JSON.' }, 400); }
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ------------------------------------------------------------------ the LIRS bot
+// The files a job needs, as links the bot can fetch for an hour.
+function pathsIn(ctx: any): string[] {
+  const out = new Set<string>();
+  const f = ctx?.return?.files || {};
+  for (const p of [f.statement_of_accounts, f.computation]) if (typeof p === 'string' && p) out.add(p);
+  for (const r of (ctx?.return?.reliefs || []) as any[]) for (const d of (r.files || []) as any[]) for (const p of (d.paths || []) as any[]) if (typeof p === 'string' && p) out.add(p);
+  return [...out];
+}
+async function lirsWake() {
+  const url = (await secret('LIRS_BOT_URL')).replace(/\/+$/, '');
+  const key = await secret('LIRS_BOT_SECRET');
+  if (!url || !key) return { ok: true, woke: false, reason: 'LIRS_BOT_URL or LIRS_BOT_SECRET is not set.' };
+  const raw = JSON.stringify({ reason: 'schedule', at: new Date().toISOString() });
+  try {
+    const r = await fetch(`${url}/tick`, { method: 'POST', body: raw, signal: AbortSignal.timeout(15_000),
+      headers: { 'Content-Type': 'application/json', 'x-counta-signature': await signBody(raw, key) } });
+    const out = await r.json().catch(() => ({}));
+    return { ok: true, woke: r.ok, status: r.status, busy: out.busy === true };
+  } catch (e) { return { ok: true, woke: false, reason: (e as Error).message.slice(0, 200) }; }
+}
+async function signBody(raw: string, key: string) {
+  const t = Math.floor(Date.now() / 1000);
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(`${t}.${raw}`)));
+  return `t=${t},v1=${Array.from(sig).map((x) => x.toString(16).padStart(2, '0')).join('')}`;
+}
+const REPORT_KEYS = ['step', 'note', 'login', 'login_message', 'tax_station', 'portal', 'done', 'result', 'failed', 'error', 'retry'];
+async function lirsBot(path: string, raw: string, sig: string | null) {
+  if (!(await verifyBody(raw, sig, await secret('LIRS_BOT_SECRET')))) return json({ ok: false, error: 'Bad signature.' }, 401);
+  let body: any;
+  try { body = JSON.parse(raw); } catch { return json({ ok: false, error: 'Invalid JSON.' }, 400); }
+  if (path.endsWith('/next')) {
+    const { data, error } = await admin.rpc('svc_lirs_next', { p_worker: String(body.worker || 'lirs-bot').slice(0, 120) });
+    if (error) { console.error('lirs next', error.message); return json({ ok: false, error: 'Counta could not hand out a job.' }, 500); }
+    if (!data?.job) return json({ ok: true, job: null });
+    const files: Record<string, string> = {};
+    for (const p of pathsIn(data.context)) {
+      const { data: s } = await admin.storage.from('documents').createSignedUrl(p, 3600);
+      if (s?.signedUrl) files[p] = s.signedUrl;
+    }
+    return json({ ok: true, job: data.job, context: data.context, files });
+  }
+  if (path.endsWith('/report')) {
+    const id = String(body.job_id || '');
+    if (!UUID.test(id)) return json({ ok: false, error: 'job_id is required.' }, 400);
+    const p: Record<string, unknown> = {};
+    for (const k of REPORT_KEYS) if (body[k] !== undefined && body[k] !== null) p[k] = body[k];
+    const { data, error } = await admin.rpc('svc_lirs_report', { p_job: id, p });
+    if (error) return json({ ok: false, error: error.message }, 422);
+    return json({ ok: true, ...data });
+  }
+  return json({ ok: false, error: 'Unknown path.' }, 404);
+}
 
 // ------------------------------------------------------------------ files Flux sends back
 const DOC_KINDS = ['acknowledgement', 'filing_evidence', 'assessment', 'prn', 'payment_receipt', 'tax_clearance', 'other'];
@@ -342,6 +405,7 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
   const path = new URL(req.url).pathname.replace(/\/$/, '');
   try {
+    if (/\/lirs\/(next|report)$/.test(path)) return await lirsBot(path, await req.text(), req.headers.get('x-counta-signature'));
     if (/\/prism\/(bills|bill-status)$/.test(path)) return await prism(path, await req.text(), req.headers.get('x-taxstreem-signature'));
     if (/\/flux\/cit-status$/.test(path)) return await flux(await req.text(), req.headers.get('x-counta-signature'));
     if (/\/flux\/pit-status$/.test(path)) return await fluxPit(await req.text(), req.headers.get('x-counta-signature'));
@@ -353,6 +417,11 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
     if (body.action === 'sso') return json(await sso(String(body.token || '')));
     if (body.action === 'status') return json({ ok: true, sso: Boolean(await secret('TAXSTREEM_SSO_SECRET')) });
+    if (body.action === 'lirs_wake') {
+      const hook = await hookSecret();
+      if (!hook || req.headers.get('x-counta-hook') !== hook) return json({ ok: false, error: 'Not allowed.' }, 401);
+      return json(await lirsWake());
+    }
     return json({ ok: false, error: 'Unknown action.' }, 400);
   } catch (e) {
     if (e instanceof SsoError) return json({ ok: false, error: e.message }, 200);

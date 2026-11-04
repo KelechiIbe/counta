@@ -1,0 +1,21 @@
+{
+  "name": "counta-lirs-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Counta's bot for LIRS e-Tax: files a person's personal income tax return with their own login, raises the bill and fetches the transfer account.",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/server.js",
+    "test": "npm run build && node --test --test-concurrency=1 dist/test/*.test.js"
+  },
+  "dependencies": {
+    "pdf-lib": "1.17.1",
+    "playwright": "1.56.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3"
+  }
+}
