@@ -468,7 +468,7 @@ function UploadModal({ org, can, at, pill, onClose, onDone }: { org: string; can
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const yearOnly = cat === 'tax' && folder === 'CIT';
+  const yearOnly = cat === 'tax' && (folder === 'CIT' || folder === 'PIT');
   const big = list.filter((f) => f.size > MAX_UPLOAD);
   async function go() {
     setBusy(true); setErr('');

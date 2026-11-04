@@ -6,6 +6,12 @@
 //                                           snapshot, and kept. Answers { ok, url, file_name, draft, sha256, ties }.
 //   { action: 'cit_send', org_id, year }  -> sends an approved return to Flux: the template and the audited financial
 //                                           statements as signed links, the fixed-asset declaration and the computation.
+//   { action: 'pit_send', org_id, year, person_id? }
+//                                        -> sends the approved personal income tax returns of a business name or partnership
+//                                           to Flux, one per person, for the states Flux files (Lagos first): the person's
+//                                           computation, the business's, the partners and the statement of accounts as a
+//                                           signed link (docs/flux-pit-handoff.md). Other states' returns are filed by the
+//                                           business and marked filed in Counta.
 //   { action: 'wht_files', org_id, period: 'YYYY-MM', authority: 'NRS' | 'SIRS:LA' ... }
 //                                        -> the month's WHT schedule on the NRS template (130 rows a file) or the state template.
 //   { action: 'vat_file', org_id, period: 'YYYY-MM' }
@@ -155,6 +161,58 @@ async function citSend(p: CitPack, acc: any = null) {
   const row = await svc('svc_cit_flux_update', { p_org: p.org_id, p_year: p.year,
     p: { status: 'sent', ref: String(out.ref || out.id || ''), message: out.message ? String(out.message) : 'Received by Flux' } });
   return { ok: true, status: row.status, flux_ref: row.flux_ref };
+}
+
+// Personal income tax: each person's approved return to Flux, for the states it files.
+async function pitSend(sb: SupabaseClient, orgId: string, year: number, personId: string | null) {
+  const { data: pk, error } = await sb.rpc('pit_pack', { p_org: orgId, p_year: year });
+  if (error) throw new UserError(error.message);
+  const cfg = await fluxConfig();
+  if (!cfg) return { ok: false, reason: 'not_configured', error: 'TaxStreem Flux is not connected yet. Download the computation and file each return with the state, or ask TaxStreem to connect Flux.' };
+  const all = (pk.people || []) as any[];
+  const people = all.filter((p) => p.flux && (!personId || p.person_id === personId) && ['approved', 'rejected'].includes(p.status));
+  if (!people.length) {
+    return { ok: false, reason: 'nothing_to_send', error: personId ? 'Flux does not file that return, or it is already with Flux.' : 'None of these returns is for a state Flux files yet, or they are already with Flux.' };
+  }
+  if (!pk.soa_path) throw new UserError('Attach the statement of accounts first.');
+  const week = 7 * 24 * 3600;
+  const soaName = String(pk.soa_path).split('/').pop()!.replace(/^\d+-/, '');
+  const soaUrl = await signed(pk.soa_path, week, soaName);
+  const partners = pk.kind === 'partnership'
+    ? all.map((p) => ({ person_id: p.person_id, name: p.name, tin: p.tin ?? null, share_pct: p.share_pct, role: p.role, authority: p.authority })) : [];
+  const results: { person_id: string; name: string; ok: boolean; flux_ref?: string; error?: string }[] = [];
+  for (const p of people) {
+    const body = {
+      event: 'pit.return.approved',
+      counta_org_id: orgId, taxstreem_org_id: pk.org?.taxstreem_org_id ?? null,
+      business: { name: pk.org?.name, kind: pk.kind === 'sole' ? 'sole_proprietor' : 'partnership', legal_form: pk.org?.legal_form ?? null,
+        tin: pk.org?.tin ?? null, registration_number: pk.org?.rc_number ?? null, address: pk.org?.address ?? null },
+      accounting_year: pk.year, year_of_assessment: pk.yoa, period: { from: pk.from, to: pk.to }, regime: pk.regime, due: pk.due,
+      approved: { by: pk.approved_by ?? null, at: pk.approved_at ?? null }, attested: pk.attested ?? null,
+      taxpayer: { person_id: p.person_id, name: p.name, tin: p.tin ?? null, role: p.role, share_pct: p.share_pct, resident: p.resident !== false,
+        authority: p.authority, authority_name: p.authority_name ?? null, state: p.authority_state ?? null, office: p.office ?? null },
+      computation: { rows: p.computation?.rows, figures: p.computation?.figures, bands: p.computation?.bands, other_income: p.computation?.other_income },
+      reliefs: p.reliefs ?? {},
+      business_computation: { rows: pk.business, figures: pk.business_figures },
+      partners,
+      files: { statement_of_accounts: { name: soaName, url: soaUrl, content_type: 'application/pdf', expires_in: week } },
+      rulebook: pk.rulebook,
+      callback_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/pit-status`,
+    };
+    const r = await postFlux(cfg, '/counta/pit-returns', body);
+    if (!r.ok) {
+      const message = r.reason === 'flux_unreachable' ? 'Flux did not answer. Try again in a few minutes.' : r.error;
+      await svc('svc_pit_flux_update', { p_org: orgId, p_year: year, p_person: p.person_id, p: { status: 'send_failed', message } });
+      results.push({ person_id: p.person_id, name: p.name, ok: false, error: message });
+      continue;
+    }
+    const row = await svc('svc_pit_flux_update', { p_org: orgId, p_year: year, p_person: p.person_id,
+      p: { status: 'sent', ref: String(r.out.ref || r.out.id || ''), message: r.out.message ? String(r.out.message) : 'Received by Flux' } });
+    results.push({ person_id: p.person_id, name: p.name, ok: true, flux_ref: row.flux_ref });
+  }
+  const sent = results.filter((x) => x.ok).length;
+  return { ok: sent > 0, sent, failed: results.length - sent, results,
+    error: sent ? undefined : results.map((x) => `${x.name}: ${x.error}`).join(' ') };
 }
 
 async function whtFiles(sb: SupabaseClient, orgId: string, period: string, authority: string, original = false) {
@@ -425,6 +483,11 @@ Deno.serve(async (req) => {
       case 'cit_send': {
         const p = await pack(sb, orgId, year);
         return json(await citSend(p, await inUse(sb, orgId, 'cit', String(year))));
+      }
+      case 'pit_send': {
+        const person = body.person_id == null || body.person_id === '' ? null : String(body.person_id);
+        if (person && !/^[0-9a-f-]{36}$/i.test(person)) return json({ ok: false, error: 'Choose the person.' }, 400);
+        return json(await pitSend(sb, orgId, year, person));
       }
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }

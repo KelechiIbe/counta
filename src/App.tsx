@@ -192,6 +192,7 @@ export default function App() {
         <Route path="/tax/vat" element={<Tax tab="vat" />} />
         <Route path="/tax/wht" element={<Tax tab="wht" />} />
         <Route path="/tax/cit" element={<Tax tab="cit" />} />
+        <Route path="/tax/pit" element={<Tax tab="pit" />} />
         <Route path="/inventory" element={<Overview />} />
         <Route path="/inventory/items" element={<Items />} />
         <Route path="/inventory/receive" element={<Receive />} />

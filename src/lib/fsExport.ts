@@ -8,7 +8,7 @@ const isAmount = (c: PCol) => c.type === 'money' || c.type === 'pct' || c.type =
 const fileType = { docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
 const STATEMENTS = new Set(['sopl', 'sofp', 'soce', 'cash_flow']);
 const INTEGRAL = 'The accompanying notes form an integral part of these financial statements.';
-const frameworkLine = (m: PackModel) =>
+const frameworkLine = (m: PackModel) => m.frameworkText ??
   `Prepared in accordance with ${m.framework} as issued by the International Accounting Standards Board and adopted by the Financial Reporting Council of Nigeria, and the requirements of the Companies and Allied Matters Act 2020 and the Financial Reporting Council of Nigeria Act 2011 (as amended).`;
 
 // ------------------------------------------------------------------ Word

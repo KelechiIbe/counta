@@ -49,7 +49,7 @@ The schedule shows each class and each asset: tax value brought forward, additio
 
 and takes out gains on disposal (4508), dividends received (4505), non-taxable income and grants (4509), unrealised exchange and fair value gains (4511, 4515) and provisions written back (4507).
 
-Then: losses brought forward, assessable profit, balancing charges, capital allowances (with any unabsorbed allowances brought forward and carried forward), total profit, companies income tax at 30% (0% for a small company), the 4% development levy (not for a small company), an indicative minimum effective tax top-up when turnover reaches the threshold, and withholding tax credit notes held in 1401 set against companies income tax. A business that is not a company gets no companies income tax and is told so.
+Then: losses brought forward, assessable profit, balancing charges, capital allowances (with any unabsorbed allowances brought forward and carried forward), total profit, companies income tax at 30% (0% for a small company), the 4% development levy (not for a small company), an indicative minimum effective tax top-up when turnover reaches the threshold, and withholding tax credit notes held in 1401 set against companies income tax. A business that is not a company gets no companies income tax and is told so; a business name or partnership files personal income tax instead (docs/personal-income-tax.md).
 
 Each line says where its figure comes from. The business adds what only it knows (Adjustments and losses): whether it provides professional services, losses and unabsorbed allowances brought forward, and its own add-backs or deductions, each with a reason that prints on the computation (`save_tax_settings`). They are kept per financial year.
 

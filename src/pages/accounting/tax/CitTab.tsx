@@ -39,7 +39,7 @@ export async function openInTab(get: () => Promise<string | null>) {
   return true;
 }
 
-const amt = (v: unknown) => { const n = Number(v || 0); return n < 0 ? `(${N2(-n)})` : N2(n); };
+export const amt = (v: unknown) => { const n = Number(v || 0); return n < 0 ? `(${N2(-n)})` : N2(n); };
 
 export default function CitTab({ year, setYear }: { year: number | null; setYear: (y: number) => void }) {
   const years = useCitYears();
@@ -276,7 +276,7 @@ function Computation({ d }: { d: any }) {
 }
 
 // ---------------------------------------------------------------- the template lines
-function Figures({ d, year }: { d: any; year: number }) {
+export function Figures({ d, year }: { d: any; year: number }) {
   const [all, setAll] = useState(false);
   const [q, setQ] = useState('');
   const [edit, setEdit] = useState<any>(null);
@@ -376,7 +376,7 @@ function LineModal({ d, year, line, onClose }: { d: any; year: number; line: any
 }
 
 // ---------------------------------------------------------------- profit adjustments
-function Adjustments({ d, year }: { d: any; year: number }) {
+export function Adjustments({ d, year }: { d: any; year: number }) {
   const [edit, setEdit] = useState<any>(null);
   const lines: any[] = (d.lines || []).filter((l: any) => l.sheet === 'PROFIT_ADJUSTMENT');
   const fig = d.computation?.figures || {};
@@ -570,7 +570,7 @@ function AssetTaxModal({ d, year, a, onClose }: { d: any; year: number; a: any; 
   );
 }
 
-function TaxAssetModal({ t, onClose }: { t: any; onClose: () => void }) {
+export function TaxAssetModal({ t, onClose }: { t: any; onClose: () => void }) {
   const { orgId } = useSession();
   const toast = useToast();
   const refresh = useTaxRefresh();

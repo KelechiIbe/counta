@@ -13,6 +13,9 @@
 // Flux (TaxStreem's filing engine) reporting on a companies income tax return Counta sent it (docs/flux-cit-handoff.md):
 //   POST /taxstreem/flux/cit-status     body { counta_org_id, accounting_year, status: processing|sent|filed|rejected, ref,
 //                                              message, acknowledgement_ref, filed_at, rev360_computation }
+// on a personal income tax return of a business name or partnership, one person at a time (docs/flux-pit-handoff.md):
+//   POST /taxstreem/flux/pit-status     body { counta_org_id, accounting_year, person_id, status: processing|sent|filed|rejected, ref,
+//                                              message, acknowledgement_ref, filed_at, assessment, payment_url }
 // and on the VAT, WHT and withholding VAT returns, and the payment Rev360 asks for after each return (docs/flux-tax-returns.md):
 //   POST /taxstreem/flux/return-status  body { counta_org_id, tax: vat|wht|wvat, period: 'YYYY-MM', status, ref, message,
 //                                              acknowledgement_ref, filed_at }
@@ -162,7 +165,7 @@ type Where = { tax: string; period?: string | null; year?: number | null; prn?: 
 async function keepDocuments(org: string, list: unknown, where: Where) {
   const out = { stored: 0, failed: [] as { name: string; why: string }[] };
   if (!Array.isArray(list) || !list.length) return null;
-  if (!['vat', 'wht', 'wvat', 'cit'].includes(where.tax)) return { stored: 0, failed: [{ name: 'documents', why: 'Counta could not tell which return they belong to.' }] };
+  if (!['vat', 'wht', 'wvat', 'cit', 'pit'].includes(where.tax)) return { stored: 0, failed: [{ name: 'documents', why: 'Counta could not tell which return they belong to.' }] };
   if (list.length > 10) out.failed.push({ name: `${list.length - 10} more`, why: 'At most 10 files a call.' });
   const origins = await fileOrigins();
   let used = 0;
@@ -193,11 +196,11 @@ async function keepDocuments(org: string, list: unknown, where: Where) {
       used += bytes.length;
       if (!name) name = `${kind.replace(/_/g, ' ')}.${DOC_TYPES[type]}`;
       if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += `.${DOC_TYPES[type]}`;
-      const folder = where.tax === 'cit' ? String(where.year || 'year') : String(where.period || 'month');
+      const folder = where.tax === 'cit' || where.tax === 'pit' ? String(where.year || 'year') : String(where.period || 'month');
       const path = `${org}/tax/flux/${where.tax}/${folder}/${crypto.randomUUID()}-${storageSafe(name)}`;
       const up = await admin.storage.from('documents').upload(path, bytes, { contentType: type, upsert: false });
       if (up.error) throw new Error(`storage: ${up.error.message}`);
-      const { error } = await admin.rpc('svc_document_add', { p: { org_id: org, tax: where.tax, period: where.tax === 'cit' ? null : where.period, year: where.year ?? null,
+      const { error } = await admin.rpc('svc_document_add', { p: { org_id: org, tax: where.tax, period: where.tax === 'cit' || where.tax === 'pit' ? null : where.period, year: where.year ?? null,
         prn: where.prn ?? null, kind, name, path, mime: type, size: bytes.length } });
       if (error) { await admin.storage.from('documents').remove([path]); throw new Error(error.message); }
       out.stored++;
@@ -289,6 +292,26 @@ async function flux(raw: string, sig: string | null) {
   return json({ ok: true, status: data.status, flux_status: status, ...(documents ? { documents } : {}) });
 }
 
+// Flux reporting on one person's personal income tax return.
+async function fluxPit(raw: string, sig: string | null) {
+  const v = await signedJson(raw, sig);
+  if (v instanceof Response) return v;
+  const b = v.body || {};
+  const org = String(b.counta_org_id || ''), year = Number(b.accounting_year), person = String(b.person_id || '');
+  if (!UUID.test(org) || !Number.isInteger(year) || !UUID.test(person)) {
+    return json({ ok: false, error: 'counta_org_id, accounting_year and person_id are required.' }, 400);
+  }
+  const status = String(b.status || '');
+  if (!['processing', 'sent', 'filed', 'rejected'].includes(status)) return json({ ok: false, error: 'status must be processing, sent, filed or rejected.' }, 400);
+  const p: Record<string, unknown> = { status };
+  for (const k of ['ref', 'message', 'acknowledgement_ref', 'filed_at', 'payment_url']) if (b[k] != null && b[k] !== '') p[k] = String(b[k]);
+  if (b.assessment && typeof b.assessment === 'object' && !Array.isArray(b.assessment)) p.assessment = b.assessment;
+  const { data, error } = await admin.rpc('svc_pit_flux_update', { p_org: org, p_year: year, p_person: person, p });
+  if (error) return json({ ok: false, error: error.message }, 422);
+  const documents = await keepDocuments(org, b.documents, { tax: 'pit', year });
+  return json({ ok: true, status: data.status, year_state: data.year_state, ...(documents ? { documents } : {}) });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
@@ -296,6 +319,7 @@ Deno.serve(async (req) => {
   try {
     if (/\/prism\/(bills|bill-status)$/.test(path)) return await prism(path, await req.text(), req.headers.get('x-taxstreem-signature'));
     if (/\/flux\/cit-status$/.test(path)) return await flux(await req.text(), req.headers.get('x-counta-signature'));
+    if (/\/flux\/pit-status$/.test(path)) return await fluxPit(await req.text(), req.headers.get('x-counta-signature'));
     if (/\/flux\/return-status$/.test(path)) return await fluxReturn(await req.text(), req.headers.get('x-counta-signature'));
     if (/\/flux\/payment$/.test(path)) return await fluxPayment(await req.text(), req.headers.get('x-counta-signature'));
     if (/\/flux\/payment-status$/.test(path)) return await fluxPaymentStatus(await req.text(), req.headers.get('x-counta-signature'));
