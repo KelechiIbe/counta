@@ -21,16 +21,16 @@ The year of assessment is the accounting year plus one (preceding-year basis, NT
 
 | Accounts for | Year of assessment | Rule book | Law |
 | --- | --- | --- | --- |
-| 2025 | 2026 | `ng-pit-pita-legacy@1.0.0` (`PITA`) | Personal Income Tax Act as amended: Sixth Schedule rates, consolidated relief allowance, minimum tax, capital gains tax kept apart |
-| 2026 onwards | 2027 onwards | `ng-pit-nta-2025@1.0.0` (`NTA_2025_PIT`) | NTA 2025: Fourth Schedule rates, s.30 deductions, chargeable gains in total income, no minimum tax |
+| 2025 | 2026 | `ng-pit-pita-legacy@1.1.0` (`PITA`) | Personal Income Tax Act as amended: Sixth Schedule rates, consolidated relief allowance, minimum tax, capital gains tax kept apart |
+| 2026 onwards | 2027 onwards | `ng-pit-nta-2025@1.1.0` (`NTA_2025_PIT`) | NTA 2025: Fourth Schedule rates, s.30 deductions, chargeable gains in total income, no minimum tax |
 
 The rule books are data in `tax_rulebooks` (files in `supabase/rulebooks/`), beside the CIT ones. `private.pit_rulebook(accounting year)` picks the PIT one; `private.rulebook(yoa)` now returns CIT rule books only. Earlier years are not prepared (the PRD leaves them out). Note that companies move to the NTA a year earlier (2025 accounts), as signed off for CIT; the PIT rule book puts 2025 income under the old law.
 
 The return is due on 31 March of the year after the accounting year ends, whatever month the year ends in (agreed 4 November 2026). A June 2026 year end is due on 31 March 2027.
 
-### Points agreed and points awaiting sign-off
+### The points TaxStreem signed off
 
-Both rule books are drafts until TaxStreem signs them off, and every computation lists the open points. Each point is in `configurable_flags.flags` with `status` `agreed` or `counta_reading`.
+TaxStreem (Kelechi Ibe) signed off both rule books on 4 November 2026: every point as Counta drafted it, except P-15, which was changed so that donations are deductible as for a company. The signed-off books are version 1.1.0 and approved (migration `20261116000200_pit_rulebooks_signed_off.sql`); the 1.0.0 drafts are retired. Each point is in `configurable_flags.flags` with `status` `agreed`. Before the sign-off a computation listed the points still open; it no longer does.
 
 | Point | Reading | Status |
 | --- | --- | --- |
@@ -38,20 +38,20 @@ Both rule books are drafts until TaxStreem signs them off, and every computation
 | P-2 | Old law CRA: higher of ₦200,000 or 1%, plus 20%, of total income less pension, NHF, NHIS, life insurance and gratuity; home loan interest after it; minimum tax 1% of the same figure | agreed 4 Nov 2026 |
 | P-3 | Due 31 March after the year ends | agreed 4 Nov 2026 |
 | P-4 | Each return covers the person's share of the business and their other income, with their reliefs | agreed 4 Nov 2026 |
-| P-5 | NTA: no minimum tax for individuals; the minimum wage exemption (s.162(1)(t)) is for employment income only | open |
-| P-6 | NTA: gains on the business's disposals are shared like the profit and taxed with income; a net loss on disposals carries forward with the business loss (s.28) | open |
+| P-5 | NTA: no minimum tax for individuals; the minimum wage exemption (s.162(1)(t)) is for employment income only | agreed 4 Nov 2026 |
+| P-6 | NTA: gains on the business's disposals are shared like the profit and taxed with income; a net loss on disposals carries forward with the business loss (s.28) | agreed 4 Nov 2026 |
 | P-7 | Old law: gains kept out of income, with CGT at 10% shown for each person's share | agreed (rule book s.1) |
-| P-8 | Capital allowances for the business as one enterprise, shared in the profit-sharing ratio (First Schedule para 19(3)), business share of partly private assets (para 16); 2025 under the old initial and annual allowances with ₦10 retained, no two-thirds limit and no investment allowance for individuals | open |
-| P-9 | A business loss carries forward against the person's later business income only; no time limit under the NTA; losses brought into 2025 taken as entered | open |
-| P-10 | Partners' pay, interest on capital and benefits charged in the accounts go to that partner before the split (s.15(1)(a)); a sole proprietor's own pay is added back to him | open |
-| P-11 | State: the office an active partner works from; where a dormant partner lives, or the NRS if abroad; where a sole proprietor lived on 1 January (Twelfth Schedule paras 4 and 6) | open |
-| P-12 | WHT credit notes held at the year end (1401), less those used in earlier returns, shared in the profit-sharing ratio | open |
-| P-13 | Dividends and interest taxed at source are final tax; government bond interest, foreign investment income through a domiciliary account, pensions and gratuities exempt; employment pay of the minimum wage or less exempt | open |
-| P-14 | Research and development above 5% of turnover added back (rule book s.2; the s.164 limit is written for companies) | open |
-| P-15 | Donations not deductible for a business name or partnership (s.163 is for companies) | open |
+| P-8 | Capital allowances for the business as one enterprise, shared in the profit-sharing ratio (First Schedule para 19(3)), business share of partly private assets (para 16); 2025 under the old initial and annual allowances with ₦10 retained, no two-thirds limit and no investment allowance for individuals | agreed 4 Nov 2026 |
+| P-9 | A business loss carries forward against the person's later business income only; no time limit under the NTA; losses brought into 2025 taken as entered | agreed 4 Nov 2026 |
+| P-10 | Partners' pay, interest on capital and benefits charged in the accounts go to that partner before the split (s.15(1)(a)); a sole proprietor's own pay is added back to him | agreed 4 Nov 2026 |
+| P-11 | State: the office an active partner works from; where a dormant partner lives, or the NRS if abroad; where a sole proprietor lived on 1 January (Twelfth Schedule paras 4 and 6) | agreed 4 Nov 2026 |
+| P-12 | WHT credit notes held at the year end (1401), less those used in earlier returns, shared in the profit-sharing ratio | agreed 4 Nov 2026 |
+| P-13 | Dividends and interest taxed at source are final tax; government bond interest, foreign investment income through a domiciliary account, pensions and gratuities exempt; employment pay of the minimum wage or less exempt | agreed 4 Nov 2026 |
+| P-14 | Research and development above 5% of turnover added back (rule book s.2; the s.164 limit is written for companies) | agreed 4 Nov 2026 |
+| P-15 | Donations deductible on the same terms as a company: gifts to the bodies the law lists (NTA 2025 s.163(3); CITA s.25 and the Fifth Schedule for 2025 accounts), at most 10% of the profit before the donations, the rest added back. Changed at sign-off from Counta's draft, which added all donations back | agreed 4 Nov 2026 (changed) |
 | P-16 | Mixed use: the business marks each partly private cost and its business share (50% by default); it must confirm before approving (rule book s.4) | agreed (rule book s.4) |
 
-To approve a rule book once its points are agreed: `update tax_rulebooks set status = 'approved', approved_by = 'TaxStreem', approved_at = now() where id = '...'`, with the flags' statuses set to `agreed` in the same update of `config`.
+A change to a rule book is a new version: insert it approved (with `approved_by` and `approved_at`) and retire the one it replaces, as `20261116000200` does. An approved return keeps the rule book it was computed with (`pit_years.rulebook_id`).
 
 ## The data
 
@@ -70,7 +70,7 @@ The business's figures and adjustments are the companies income tax ones (`cit_y
 ### The business (`private.pit_business`)
 
 1. Profit before tax, add-backs and deductions from the CIT engine (`private.cit_compute`, with nothing brought forward): depreciation, fines, general provisions, unrealised exchange differences, disposals and the business's own items, each with its reason.
-2. The PIT rule book's own adjustments: the private share of each cost marked as mixed use (`pit_years.settings.mixed_use`, template cell to business share %), donations, research above 5% of turnover.
+2. The PIT rule book's own adjustments: the private share of each cost marked as mixed use (`pit_years.settings.mixed_use`, template cell to business share %) and research above 5% of turnover. Donations follow the CIT engine's limit (`business.donations_deductible` is true, P-15): gifts to listed bodies up to 10% of the profit before the donations, with gifts to bodies not listed entered under Adjustments (`cit_years.settings.donations_unlisted`).
 3. Adjusted profit, plus balancing charges under the old law: the **assessable profit** of the business.
 4. Capital allowances for the year (`private.cit_ca` with `legacy_upto: 2025` and `use_pct_always`): old-law initial and annual allowances to 2025 accounts, First Schedule rates from 2026, the business share of a partly private asset. Not deducted here: shared below.
 5. Net chargeable gains: gains less losses on fixed assets from the schedule, gains on investments, and others entered.
@@ -115,7 +115,7 @@ Years run from 2025 accounts (or the first year of the books) to the year runnin
 
 ### Checks
 
-Blocks: no people; the partners' shares do not add up to 100%; a limited partnership with one partner; a person whose state Counta cannot tell; no statement of accounts; mixed use not confirmed; the year has not ended; and the figure checks shared with CIT (books that start inside the year, a balance sheet that does not balance, accounts read in that do not tie). Warnings: partners' pay above the salaries in the accounts; a partner joined or left (the year is not split at that date, para 19(2)); the rule book awaits sign-off. Notes: a non-resident partner files with the NRS; old-law gains go on a CGT return; keep the evidence for every relief (s.32).
+Blocks: no people; the partners' shares do not add up to 100%; a limited partnership with one partner; a person whose state Counta cannot tell; no statement of accounts; mixed use not confirmed; the year has not ended; and the figure checks shared with CIT (books that start inside the year, a balance sheet that does not balance, accounts read in that do not tie). Warnings: partners' pay above the salaries in the accounts; a partner joined or left (the year is not split at that date, para 19(2)); the rule book awaits sign-off (none do since 4 November 2026). Notes: a non-resident partner files with the NRS; old-law gains go on a CGT return; keep the evidence for every relief (s.32).
 
 ## Who may do what
 
@@ -186,7 +186,7 @@ The PRD's worked example (Persona B) also gives ₦1,290,400; chargeable income 
 
 ## Tested
 
-`t_pit.sql` (91 checks) on a copy of production: the reliefs note's two examples to the naira; the PRD's sole proprietor corrected; a law firm with partners in Lagos, Port Harcourt and Abuja and a dormant partner abroad, under the old law and the NTA; losses and allowances carried from 2025 to 2026; other income of every kind with PAYE and foreign tax credits; minimum tax under the old law and none under the NTA; who may see and change what; approval, Flux, returns filed by the business, years filed outside Counta, deadlines and documents. The CIT suite gives the same results before and after.
+`t_pit.sql` (95 checks) on a copy of production: the reliefs note's two examples to the naira; the PRD's sole proprietor corrected; a law firm with partners in Lagos, Port Harcourt and Abuja and a dormant partner abroad, under the old law and the NTA; losses and allowances carried from 2025 to 2026; other income of every kind with PAYE and foreign tax credits; minimum tax under the old law and none under the NTA; who may see and change what; approval, Flux, returns filed by the business, years filed outside Counta, deadlines and documents. The CIT suite gives the same results before and after.
 
 `pit.py`, in the browser at 1440 and 390 pixels against the local stack: a law firm registered as a business name starts its income tax with the owner, adds three partners in the drawer (one in Port Harcourt, one in Abuja with rent and dividends, one dormant and abroad), confirms mixed use, attaches its statement of accounts, sees each partner's payable (₦5,994,096, ₦4,633,172, ₦2,687,848 and ₦1,128,480), approves with the attestation, downloads the computation in PDF, Word and Excel, sends the Lagos return to a stand-in for Flux (the request is signed and carries the figures and a working link to the statement), gets Flux's "filed" back with a payment link, and marks the Rivers return filed. The bookkeeper sees the business and each share, not the partners' tax. Incorporated trustees see the exemption until the owner says it trades; a company CAC records as limited by guarantee is taxed as a company once the owner says it is not an NGO, and stays so when CAC is read again. Nothing runs off the side of a phone screen.
 

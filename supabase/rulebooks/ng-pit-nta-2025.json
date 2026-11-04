@@ -2,7 +2,7 @@
   "$schema": "https://taxstreem.dev/schemas/pit-business-config-v1.json",
   "meta": {
     "config_id": "ng-pit-nta-2025",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "regime": "NTA_2025_PIT",
     "governing_law": "Nigeria Tax Act 2025 and Nigeria Tax Administration Act 2025",
     "applies_to": "Accounts for years ending in 2026 and later (year of assessment 2027 onwards)",
@@ -10,7 +10,7 @@
       "TaxStreem PIT rule book, s.1 to s.10, s.12",
       "How personal tax reliefs are calculated in our engine (YOA 2026)",
       "NTA 2025 s.15, s.20, s.21, s.28, s.30, s.58, Fourth and Twelfth Schedules",
-      "TaxStreem answers of 4 November 2026"
+      "TaxStreem answers and sign-off of 4 November 2026"
     ]
   },
   "entity_kinds": {
@@ -79,7 +79,7 @@
   },
   "business": {
     "rd_cap_pct_of_turnover": 0.05,
-    "donations_deductible": false,
+    "donations_deductible": true,
     "mixed_use": {
       "business_pct": 50,
       "lines": [
@@ -174,13 +174,13 @@
         "title": "No minimum tax",
         "reading": "The NTA has no minimum tax for individuals, and the exemption for those earning the national minimum wage (s.162(1)(t)) covers employment income only, so neither applies to business profit. (The Numen contract applies both.)",
         "source": "NTA 2025 s.58, s.162(1)(t)",
-        "status": "counta_reading"
+        "status": "agreed"
       },
       "P-6": {
         "title": "Gains in income",
         "reading": "Gains on the business's disposals are shared in the profit-sharing ratio and taxed with each person's income at the Fourth Schedule rates. A net loss on disposals is carried forward with the business loss (s.28(3)(b)).",
         "source": "NTA 2025 s.28(2)(a)(v), s.28(3)",
-        "status": "counta_reading"
+        "status": "agreed"
       },
       "P-3": {
         "title": "Due date",
@@ -198,49 +198,49 @@
         "title": "Capital allowances",
         "reading": "Allowances are worked out for the business as one enterprise and shared in the profit-sharing ratio at the year end (First Schedule para 19(3)). An asset used partly for private life gets the business share of its allowance (para 16). 2025 accounts use the old initial and annual allowances with ₦10 kept on each asset, with no two-thirds restriction and no investment allowance for individuals; 2026 accounts onwards the First Schedule rates on cost with 1% kept.",
         "source": "NTA 2025 First Schedule paras 16, 19, 22, 23; PITA (as amended)",
-        "status": "counta_reading"
+        "status": "agreed"
       },
       "P-9": {
         "title": "Losses",
         "reading": "A business loss is carried forward against the person's later business income only, never set against other income. Under the NTA there is no time limit (s.28(3)). Losses brought into 2025 accounts are taken as entered; the four-year limit of the old law is for the person to observe.",
         "source": "NTA 2025 s.15(2), s.28(3); PITA s.35",
-        "status": "counta_reading"
+        "status": "agreed"
       },
       "P-10": {
         "title": "Partners' pay",
         "reading": "Salary, interest on capital and benefits charged in the accounts for a partner go to that partner before the profit is shared (s.15(1)(a)). A sole proprietor's own pay charged as an expense is his drawing and is added back to him. Private or domestic expenses of a partner are never deducted.",
         "source": "NTA 2025 s.15(1), s.21(c)",
-        "status": "counta_reading"
+        "status": "agreed"
       },
       "P-11": {
         "title": "Which state",
         "reading": "A partner engaged in the business pays the state of the office he works from; a dormant partner pays the state he usually lives in; a dormant partner who does not live in Nigeria pays the NRS. A sole proprietor pays the state he lived in on 1 January of the year of assessment.",
         "source": "NTA 2025 Twelfth Schedule paras 4 and 6; NTAA 2025 s.3",
-        "status": "counta_reading"
+        "status": "agreed"
       },
       "P-12": {
         "title": "WHT credit notes",
         "reading": "WHT credit notes the business holds at the year end (account 1401), less those already used in earlier returns, are shared in the profit-sharing ratio and set against each person's tax. What a person cannot use stays for later years.",
         "source": "Counta reading",
-        "status": "counta_reading"
+        "status": "agreed"
       },
       "P-13": {
         "title": "Tax deducted at source",
         "reading": "Dividends and interest on which tax was deducted at source are taken as taxed in full (final tax) and left out of total income. Interest on government bonds, foreign dividends, interest, rent and royalties brought in through a domiciliary account, and pensions and gratuities are exempt. Employment income of the national minimum wage or less is exempt.",
         "source": "NTA 2025 s.28(2)(b)(iii) and (iv), s.162(1)(i), (n), (s) and (t); PIT rule book s.6",
-        "status": "counta_reading"
+        "status": "agreed"
       },
       "P-14": {
         "title": "Research and development",
         "reading": "Research and development costs above 5% of turnover are added back, as the PIT rule book says. (The 5% limit in s.164 is written for companies; s.20(1)(i) gives no limit.)",
         "source": "PIT rule book s.2",
-        "status": "counta_reading"
+        "status": "agreed"
       },
       "P-15": {
         "title": "Donations",
-        "reading": "Donations are not deductible for a business name or partnership: the deduction in s.163 is for companies, and a gift is not an expense incurred in producing the income.",
-        "source": "NTA 2025 s.20, s.163",
-        "status": "counta_reading"
+        "reading": "A business name or partnership deducts donations on the same terms as a company: only gifts to the bodies the law lists (public funds, statutory bodies, religious, charitable, educational and scientific institutions in Nigeria, and the like), at most 10% of the profit before the donations, with the evidence kept. The rest is added back. Gifts to bodies not listed are entered under Adjustments.",
+        "source": "NTA 2025 s.163 (CITA s.25 and the Fifth Schedule for 2025 accounts), as the companies income tax rules apply them; TaxStreem sign-off, 4 November 2026",
+        "status": "agreed"
       },
       "P-16": {
         "title": "Mixed use",
