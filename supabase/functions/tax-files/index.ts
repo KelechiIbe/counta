@@ -11,7 +11,21 @@
 //                                           to Flux, one per person, for the states Flux files (Lagos first): the person's
 //                                           computation, the business's, the partners and the statement of accounts as a
 //                                           signed link (docs/flux-pit-handoff.md). Other states' returns are filed by the
-//                                           business and marked filed in Counta.
+//                                           business and marked filed in Counta. Each return also carries what the state
+//                                           portal's screens ask for: the statement of income, the accommodation, the
+//                                           reliefs with their documents, the staff and the fixed assets, the person's
+//                                           computation (made by the app as a PDF) and Flux's reference to the business's
+//                                           login for that portal.
+//   { action: 'pit_tcc_request', org_id, year, person_id }
+//                                        -> asks Flux to apply for the person's tax clearance certificate once the return is
+//                                           filed and paid: the profile picture, the three years' returns and the authority to
+//                                           file any outstanding one.
+//   { action: 'portal_login_save', org_id, authority: 'NRS' | 'SIRS:LA' ..., username, password, tax_office? }
+//   { action: 'portal_login_remove', org_id, authority }
+//                                        -> the owner (signed in with two-step) saves or removes the business's login to a
+//                                           tax portal. The login goes straight to Flux, which keeps it; Counta keeps only
+//                                           Flux's reference, a hint of the username and the tax office. The password is
+//                                           never stored, logged or sent back.
 //   { action: 'wht_files', org_id, period: 'YYYY-MM', authority: 'NRS' | 'SIRS:LA' ... }
 //                                        -> the month's WHT schedule on the NRS template (130 rows a file) or the state template.
 //   { action: 'vat_file', org_id, period: 'YYYY-MM' }
@@ -163,6 +177,13 @@ async function citSend(p: CitPack, acc: any = null) {
   return { ok: true, status: row.status, flux_ref: row.flux_ref };
 }
 
+// A signed link to a file the return needs, or a plain reason when it is not in storage.
+async function linkTo(path: string, seconds: number, name: string, what: string) {
+  try { return await signed(path, seconds, name); } catch { throw new UserError(`${what} is missing from Counta's storage. Attach it again.`); }
+}
+const fileName = (path: string) => String(path).split('/').pop()!.replace(/^\d+-/, '');
+const listOf = (names: string[]) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
 // Personal income tax: each person's approved return to Flux, for the states it files.
 async function pitSend(sb: SupabaseClient, orgId: string, year: number, personId: string | null) {
   const { data: pk, error } = await sb.rpc('pit_pack', { p_org: orgId, p_year: year });
@@ -174,14 +195,35 @@ async function pitSend(sb: SupabaseClient, orgId: string, year: number, personId
   if (!people.length) {
     return { ok: false, reason: 'nothing_to_send', error: personId ? 'Flux does not file that return, or it is already with Flux.' : 'None of these returns is for a state Flux files yet, or they are already with Flux.' };
   }
+  if (!pk.portal_ready) throw new UserError(`Reopen the ${year} return and approve it again: the state portal now asks for each relief's documents, the accommodation and the staff.`);
   if (!pk.soa_path) throw new UserError('Attach the statement of accounts first.');
+  const logins = pk.logins || {};
+  const noLogin = Array.from(new Set(people.filter((p) => !logins[p.authority]?.flux_ref).map((p) => p.authority_short || p.authority_name || p.authority)));
+  if (noLogin.length) throw new UserError(`Save the business's ${listOf(noLogin)} login under Settings, Tax portal logins, so Flux can sign in and file.`);
+  const noComp = people.filter((p) => !p.computation_path).map((p) => p.name);
+  if (noComp.length) throw new UserError(`The computation for ${listOf(noComp)} is not ready yet. Send again from the app, which makes it.`);
   const week = 7 * 24 * 3600;
-  const soaName = String(pk.soa_path).split('/').pop()!.replace(/^\d+-/, '');
-  const soaUrl = await signed(pk.soa_path, week, soaName);
+  const soaName = fileName(pk.soa_path);
+  const soaUrl = await linkTo(pk.soa_path, week, soaName, 'The statement of accounts');
+  const needs = pk.relief_needs || {};
   const partners = pk.kind === 'partnership'
     ? all.map((p) => ({ person_id: p.person_id, name: p.name, tin: p.tin ?? null, share_pct: p.share_pct, role: p.role, authority: p.authority })) : [];
   const results: { person_id: string; name: string; ok: boolean; flux_ref?: string; error?: string }[] = [];
   for (const p of people) {
+    // The reliefs Counta counted, each with the documents the portal asks for (a relief without them was left out).
+    const reliefs = [];
+    for (const [k, amount] of Object.entries(p.reliefs_claimed || {})) {
+      const docs = [];
+      for (const d of ((p.relief_docs || {})[k] || []) as any[]) {
+        const label = (needs[k]?.docs || []).find((x: any) => x.id === d.doc)?.label || d.doc;
+        docs.push({ doc: d.doc, label, name: d.name, url: await linkTo(d.path, week, d.name, `${p.name}'s ${String(label).toLowerCase()}`), expires_in: week });
+      }
+      reliefs.push({ relief: k, label: needs[k]?.label || k, amount,
+        ...(k === 'pension' ? { rsa_number: p.pension_details?.rsa_number ?? null, pfa: p.pension_details?.pfa ?? null, total_contribution: amount } : {}),
+        documents: docs });
+    }
+    const compName = `${p.name} income tax computation ${year}.pdf`;
+    const login = logins[p.authority];
     const body = {
       event: 'pit.return.approved',
       counta_org_id: orgId, taxstreem_org_id: pk.org?.taxstreem_org_id ?? null,
@@ -192,10 +234,28 @@ async function pitSend(sb: SupabaseClient, orgId: string, year: number, personId
       taxpayer: { person_id: p.person_id, name: p.name, tin: p.tin ?? null, role: p.role, share_pct: p.share_pct, resident: p.resident !== false,
         authority: p.authority, authority_name: p.authority_name ?? null, state: p.authority_state ?? null, office: p.office ?? null },
       computation: { rows: p.computation?.rows, figures: p.computation?.figures, bands: p.computation?.bands, other_income: p.computation?.other_income },
-      reliefs: p.reliefs ?? {},
+      reliefs: p.reliefs_claimed ?? {},
       business_computation: { rows: pk.business, figures: pk.business_figures },
       partners,
-      files: { statement_of_accounts: { name: soaName, url: soaUrl, content_type: 'application/pdf', expires_in: week } },
+      // What the portal's screens ask for, in their order: the statement of income (Counta's taxable figures, so the tax
+      // the portal works out is Counta's), the accommodation, the support staff, the assets, then each relief.
+      return_form: {
+        statement_of_income: p.income_fields?.fields ?? null,
+        income_total: p.income_fields?.total ?? null,
+        other_income_lines: p.income_fields?.other_lines ?? [],
+        left_out_of_income: p.income_fields?.left_out ?? [],
+        accommodation: p.accommodation ?? null,
+        support_staff: pk.staff ?? [],
+        assets: pk.assets ?? [],
+        reliefs,
+        reliefs_left_out: p.reliefs_held ?? [],
+      },
+      portal: { authority: p.authority, login_ref: login.flux_ref, tax_office: login.tax_office ?? null },
+      payment: { mode: 'pay_link', note: 'Generate the pay bill after filing and send it back as bill, with its payment link. The partner or the business pays through it; report the payment as paid.' },
+      files: {
+        statement_of_accounts: { name: soaName, url: soaUrl, content_type: 'application/pdf', expires_in: week },
+        tax_computation: { name: compName, url: await linkTo(p.computation_path, week, compName, `${p.name}'s computation`), content_type: 'application/pdf', expires_in: week },
+      },
       rulebook: pk.rulebook,
       callback_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/pit-status`,
     };
@@ -213,6 +273,88 @@ async function pitSend(sb: SupabaseClient, orgId: string, year: number, personId
   const sent = results.filter((x) => x.ok).length;
   return { ok: sent > 0, sent, failed: results.length - sent, results,
     error: sent ? undefined : results.map((x) => `${x.name}: ${x.error}`).join(' ') };
+}
+
+// The tax clearance certificate for a person whose return is filed and paid: Flux applies for it on the portal.
+async function pitTccRequest(sb: SupabaseClient, orgId: string, year: number, personId: string) {
+  const { data: t, error } = await sb.rpc('pit_tcc_pack', { p_org: orgId, p_year: year, p_person: personId });
+  if (error) throw new UserError(error.message);
+  const cfg = await fluxConfig();
+  if (!cfg) return { ok: false, reason: 'not_configured', error: 'TaxStreem Flux is not connected yet. Apply for the certificate on the state portal, or ask TaxStreem to connect Flux.' };
+  if (!t.login?.flux_ref) throw new UserError(`Save the business's ${t.taxpayer?.authority_name || 'state'} login under Settings, Tax portal logins, first.`);
+  const week = 7 * 24 * 3600;
+  const photoName = t.photo_name || fileName(t.photo_path);
+  const returns = [];
+  for (const y of (t.years || []) as any[]) {
+    returns.push(y.filed_in_counta
+      ? { accounting_year: y.year, year_of_assessment: y.yoa, filed_in_counta: true, acknowledgement_ref: y.acknowledgement_ref ?? null }
+      : { accounting_year: y.year, year_of_assessment: y.yoa, filed_in_counta: false,
+          file: { name: y.name || fileName(y.path), url: await linkTo(y.path, week, y.name || fileName(y.path), `The ${y.year} return`), expires_in: week } });
+  }
+  const body = {
+    event: 'pit.tcc.requested',
+    counta_org_id: orgId, taxstreem_org_id: t.org?.taxstreem_org_id ?? null,
+    business: { name: t.org?.name, tin: t.org?.tin ?? null, registration_number: t.org?.rc_number ?? null, address: t.org?.address ?? null },
+    accounting_year: t.year, year_of_assessment: t.yoa, taxpayer: t.taxpayer,
+    portal: { authority: t.taxpayer?.authority, login_ref: t.login.flux_ref, tax_office: t.login.tax_office ?? null },
+    profile_picture: { name: photoName, url: await linkTo(t.photo_path, week, photoName, 'The profile picture'), expires_in: week },
+    returns, authorise_outstanding: t.authorise_outstanding === true, payment: t.paid,
+    callback_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/pit-status`,
+  };
+  const r = await postFlux(cfg, '/counta/pit-tcc', body);
+  if (!r.ok) return { ok: false, reason: r.reason, error: r.reason === 'flux_unreachable' ? 'Flux did not answer. Try again in a few minutes.' : r.error };
+  const row = await svc('svc_pit_flux_update', { p_org: orgId, p_year: year, p_person: personId,
+    p: { tcc: { status: 'requested', ref: String(r.out.ref || r.out.id || ''), message: r.out.message ? String(r.out.message) : null } } });
+  return { ok: true, tcc: row.tcc };
+}
+
+// A login to a tax portal, handed to Flux at once. Counta keeps Flux's reference and a hint of the username only.
+function usernameHint(u: string) {
+  const at = u.indexOf('@');
+  if (at > 0) return `${u.slice(0, Math.min(2, at))}•••@${u.slice(at + 1)}`.slice(0, 80);
+  return u.length <= 4 ? `${u.slice(0, 1)}•••` : `${u.slice(0, 2)}•••${u.slice(-2)}`;
+}
+async function portalLoginSave(sb: SupabaseClient, orgId: string, body: any) {
+  const authority = String(body.authority || '');
+  const username = String(body.username ?? '').trim();
+  const password = String(body.password ?? '');
+  const office = String(body.tax_office ?? '').trim().slice(0, 120);
+  if (!/^(NRS|SIRS:[A-Z]{2})$/.test(authority)) throw new UserError('Choose the tax authority.');
+  if (!username || username.length > 120) throw new UserError('Enter the username (at most 120 characters).');
+  if (!password || password.length > 200) throw new UserError('Enter the password (at most 200 characters).');
+  const { data: b, error } = await sb.rpc('portal_login_begin', { p_org: orgId, p_authority: authority });
+  if (error) throw new UserError(error.message);
+  const cfg = await fluxConfig();
+  if (!cfg) return { ok: false, reason: 'not_configured', error: 'TaxStreem Flux is not connected yet, so there is nowhere to keep the login. Nothing was saved.' };
+  const r = await postFlux(cfg, '/counta/portal-credentials', {
+    event: 'portal.credentials.saved',
+    counta_org_id: orgId, taxstreem_org_id: b.org?.taxstreem_org_id ?? null,
+    business: { name: b.org?.name, tin: b.org?.tin ?? null, registration_number: b.org?.rc_number ?? null },
+    authority: b.authority, username, password, tax_office: office || null, replaces: b.existing?.flux_ref ?? null,
+    callback_url: `${SUPABASE_URL}/functions/v1/taxstreem/flux/portal-login-status`,
+  });
+  // Flux's answer is passed on, never with the password in it.
+  const clean = (s: string) => s.split(password).join('•••');
+  if (!r.ok) return { ok: false, reason: r.reason, error: r.reason === 'flux_unreachable' ? 'Flux did not answer, so the login was not saved. Try again in a few minutes.' : clean(r.error) };
+  const ref = String(r.out.ref || r.out.id || '').slice(0, 200);
+  if (!ref) return { ok: false, reason: 'flux_refused', error: 'Flux did not confirm that it kept the login, so nothing was saved. Try again.' };
+  const row = await svc('svc_portal_login_saved', { p_org: orgId, p_authority: authority,
+    p: { username_hint: usernameHint(username), tax_office: office, flux_ref: ref, member_id: b.member_id } });
+  return { ok: true, login: row };
+}
+async function portalLoginRemove(sb: SupabaseClient, orgId: string, body: any) {
+  const authority = String(body.authority || '');
+  if (!/^(NRS|SIRS:[A-Z]{2})$/.test(authority)) throw new UserError('Choose the tax authority.');
+  const { data: b, error } = await sb.rpc('portal_login_begin', { p_org: orgId, p_authority: authority });
+  if (error) throw new UserError(error.message);
+  if (!b.existing) return { ok: true, removed: false };
+  const cfg = await fluxConfig();
+  if (cfg && b.existing.flux_ref) {
+    const r = await postFlux(cfg, '/counta/portal-credentials', { event: 'portal.credentials.removed', counta_org_id: orgId, authority: b.authority, ref: b.existing.flux_ref });
+    if (!r.ok) return { ok: false, reason: r.reason, error: r.reason === 'flux_unreachable' ? 'Flux did not answer, so the login is still saved. Try again in a few minutes.' : r.error };
+  }
+  await svc('svc_portal_login_removed', { p_org: orgId, p_authority: authority });
+  return { ok: true, removed: true };
 }
 
 async function whtFiles(sb: SupabaseClient, orgId: string, period: string, authority: string, original = false) {
@@ -452,6 +594,8 @@ Deno.serve(async (req) => {
     const orgId = String(body.org_id || ''), year = Number(body.year);
     if (!/^[0-9a-f-]{36}$/i.test(orgId)) return json({ ok: false, error: 'Choose the business.' }, 400);
     if (body.action === 'accountant_upload') return json(await accountantUpload(sb, u.user.id, orgId, body));
+    if (body.action === 'portal_login_save') return json(await portalLoginSave(sb, orgId, body));
+    if (body.action === 'portal_login_remove') return json(await portalLoginRemove(sb, orgId, body));
     if (body.action === 'flux_send') {
       const period = String(body.period || '').slice(0, 7), tax = String(body.tax || '');
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period) || !['vat', 'wht', 'wvat'].includes(tax)) return json({ ok: false, error: 'Choose the tax and the month.' }, 400);
@@ -488,6 +632,11 @@ Deno.serve(async (req) => {
         const person = body.person_id == null || body.person_id === '' ? null : String(body.person_id);
         if (person && !/^[0-9a-f-]{36}$/i.test(person)) return json({ ok: false, error: 'Choose the person.' }, 400);
         return json(await pitSend(sb, orgId, year, person));
+      }
+      case 'pit_tcc_request': {
+        const person = String(body.person_id || '');
+        if (!/^[0-9a-f-]{36}$/i.test(person)) return json({ ok: false, error: 'Choose the person.' }, 400);
+        return json(await pitTccRequest(sb, orgId, year, person));
       }
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }

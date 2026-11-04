@@ -15,7 +15,13 @@
 //                                              message, acknowledgement_ref, filed_at, rev360_computation }
 // on a personal income tax return of a business name or partnership, one person at a time (docs/flux-pit-handoff.md):
 //   POST /taxstreem/flux/pit-status     body { counta_org_id, accounting_year, person_id, status: processing|sent|filed|rejected, ref,
-//                                              message, acknowledgement_ref, filed_at, assessment, payment_url }
+//                                              message, acknowledgement_ref, filed_at, assessment, payment_url,
+//                                              bill: { amount, reference, agency, revenue, payer_id, payment_url, generated_at, expires_at },
+//                                              paid: { paid_at, reference, amount },
+//                                              tcc: { status: processing|issued|rejected, ref, number, issued_at, expires_on, message } }
+//                                       (status may be left out when the call only carries the bill, the payment or the certificate)
+// on whether a login to a tax portal worked when Flux signed in with it:
+//   POST /taxstreem/flux/portal-login-status  body { counta_org_id, authority: NRS|SIRS:XX, status: verified|failed, message }
 // and on the VAT, WHT and withholding VAT returns, and the payment Rev360 asks for after each return (docs/flux-tax-returns.md):
 //   POST /taxstreem/flux/return-status  body { counta_org_id, tax: vat|wht|wvat, period: 'YYYY-MM', status, ref, message,
 //                                              acknowledgement_ref, filed_at }
@@ -302,14 +308,33 @@ async function fluxPit(raw: string, sig: string | null) {
     return json({ ok: false, error: 'counta_org_id, accounting_year and person_id are required.' }, 400);
   }
   const status = String(b.status || '');
-  if (!['processing', 'sent', 'filed', 'rejected'].includes(status)) return json({ ok: false, error: 'status must be processing, sent, filed or rejected.' }, 400);
-  const p: Record<string, unknown> = { status };
+  const isObj = (x: unknown) => !!x && typeof x === 'object' && !Array.isArray(x);
+  const parts = ['bill', 'paid', 'tcc'].filter((k) => isObj(b[k]));
+  if (status && !['processing', 'sent', 'filed', 'rejected'].includes(status)) return json({ ok: false, error: 'status must be processing, sent, filed or rejected.' }, 400);
+  if (!status && !parts.length) return json({ ok: false, error: 'Send status, or the bill, the payment (paid) or the certificate (tcc).' }, 400);
+  const p: Record<string, unknown> = {};
+  if (status) p.status = status;
   for (const k of ['ref', 'message', 'acknowledgement_ref', 'filed_at', 'payment_url']) if (b[k] != null && b[k] !== '') p[k] = String(b[k]);
-  if (b.assessment && typeof b.assessment === 'object' && !Array.isArray(b.assessment)) p.assessment = b.assessment;
+  if (isObj(b.assessment)) p.assessment = b.assessment;
+  for (const k of parts) p[k] = b[k];
   const { data, error } = await admin.rpc('svc_pit_flux_update', { p_org: org, p_year: year, p_person: person, p });
   if (error) return json({ ok: false, error: error.message }, 422);
   const documents = await keepDocuments(org, b.documents, { tax: 'pit', year });
   return json({ ok: true, status: data.status, year_state: data.year_state, ...(documents ? { documents } : {}) });
+}
+
+// Flux saying whether a business's login to a tax portal worked.
+async function fluxPortalLogin(raw: string, sig: string | null) {
+  const v = await signedJson(raw, sig);
+  if (v instanceof Response) return v;
+  const b = v.body || {};
+  const org = String(b.counta_org_id || ''), authority = String(b.authority || ''), status = String(b.status || '');
+  if (!UUID.test(org) || !/^(NRS|SIRS:[A-Z]{2})$/.test(authority)) return json({ ok: false, error: 'counta_org_id and authority (NRS or SIRS:XX) are required.' }, 400);
+  if (!['verified', 'failed'].includes(status)) return json({ ok: false, error: 'status must be verified or failed.' }, 400);
+  const { data, error } = await admin.rpc('svc_portal_login_status', { p_org: org, p_authority: authority,
+    p: { status, ...(b.message ? { message: String(b.message).slice(0, 1000) } : {}) } });
+  if (error) return json({ ok: false, error: error.message }, 422);
+  return json({ ok: true, status: data.status });
 }
 
 Deno.serve(async (req) => {
@@ -320,6 +345,7 @@ Deno.serve(async (req) => {
     if (/\/prism\/(bills|bill-status)$/.test(path)) return await prism(path, await req.text(), req.headers.get('x-taxstreem-signature'));
     if (/\/flux\/cit-status$/.test(path)) return await flux(await req.text(), req.headers.get('x-counta-signature'));
     if (/\/flux\/pit-status$/.test(path)) return await fluxPit(await req.text(), req.headers.get('x-counta-signature'));
+    if (/\/flux\/portal-login-status$/.test(path)) return await fluxPortalLogin(await req.text(), req.headers.get('x-counta-signature'));
     if (/\/flux\/return-status$/.test(path)) return await fluxReturn(await req.text(), req.headers.get('x-counta-signature'));
     if (/\/flux\/payment$/.test(path)) return await fluxPayment(await req.text(), req.headers.get('x-counta-signature'));
     if (/\/flux\/payment-status$/.test(path)) return await fluxPaymentStatus(await req.text(), req.headers.get('x-counta-signature'));

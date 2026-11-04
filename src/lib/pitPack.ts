@@ -10,7 +10,12 @@ const rowsOf = (rows: any[], extra?: (r: any) => Record<string, unknown>): PRow[
   (rows || []).map((r) => ({ cells: { line: r.line, basis: r.basis || '', amount: r.amount, ...(extra ? extra(r) : {}) },
     style: r._style === 'memo' ? 'line' : r._style || 'line', indent: 0 }));
 
-export function buildPitPack(d: any, orgName: string): PackModel {
+const FIELDS: [string, string][] = [['salary', 'Salary'], ['commission', 'Commission'], ['trade_income', 'Trade income'], ['allowance', 'Allowance'], ['pension', 'Pension'],
+  ['annuity', 'Annuity'], ['foreign_income', 'Foreign income (in naira)'], ['dividend', 'Dividend'], ['interest', 'Interest'], ['rent', 'Rent'], ['other_income', 'Other income']];
+
+// opts.personId: one person's computation only (the business, how the profit is shared and the allowances stay), as the
+// state portal takes it with that person's return.
+export function buildPitPack(d: any, orgName: string, opts: { personId?: string } = {}): PackModel {
   const comp = d.computation || {};
   const biz = comp.business || {};
   const people: any[] = comp.people || [];
@@ -39,7 +44,7 @@ export function buildPitPack(d: any, orgName: string): PackModel {
   }
 
   for (const p of people) {
-    if (p.hidden) continue;
+    if (p.hidden || (opts.personId && p.person_id !== opts.personId)) continue;
     const f = p.computation?.figures || {};
     const blocks: Block[] = [
       { t: 'kv', items: [['Taxpayer', p.name], ['Tax ID', p.tin || 'Not given'], ['Role', ROLE[p.role] || p.role],
@@ -57,6 +62,20 @@ export function buildPitPack(d: any, orgName: string): PackModel {
     if (left.length) blocks.push({ t: 'para', text: 'Left out of total income: ' + left.map((l: any) => `${l.label} (${l.treatment === 'final' ? 'taxed in full at source' : 'exempt'})`).join('; ') + '.' });
     blocks.push({ t: 'para', text: `Carried forward to the next year: business losses ₦${Number(p.computation?.cf?.losses || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 })}, `
       + `unused capital allowances ₦${Number(p.computation?.cf?.ca || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 })}. Effective rate ${(Number(f.effective_rate || 0) * 100).toFixed(1)}%.` });
+    // The same figures as the state portal's statement of income, and the reliefs claimed with their documents.
+    const fields = p.income_fields?.fields;
+    if (fields) {
+      blocks.push({ t: 'heading', level: 3, text: 'On the return form' });
+      blocks.push({ t: 'table', cols: [{ key: 'line', label: 'Statement of income', type: 'text' }, money('amount', '₦')],
+        rows: [...FIELDS.filter(([k]) => Number(fields[k] || 0) !== 0).map(([k, label]) => ({ cells: { line: label, amount: fields[k] }, style: 'line' as const, indent: 0 })),
+          { cells: { line: 'Total income', amount: p.income_fields?.total }, style: 'subtotal' as const, indent: 0 }] });
+      const claimed = Object.entries(p.reliefs_claimed || {}).filter(([, v]) => Number(v) > 0);
+      const needs = d.relief_needs || {};
+      if (claimed.length) blocks.push({ t: 'para', text: 'Reliefs claimed: ' + claimed.map(([k, v]) => `${needs[k]?.label || k} ₦${Number(v).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`
+        + ((p.relief_docs?.[k] || []).length ? ` (${(p.relief_docs[k] as any[]).map((x) => x.name).join(', ')})` : '')).join('; ') + '.' });
+      const held = (p.reliefs_held || []) as any[];
+      if (held.length) blocks.push({ t: 'para', text: 'Left out until their documents are attached: ' + held.map((h) => `${h.label} (${(h.missing || []).join(', ')})`).join('; ') + '.' });
+    }
     blocks.push({ t: 'sign', items: [{ name: p.name, role: 'Taxpayer' }, { name: '', role: 'Prepared by' }] });
     sections.push({ key: `person_${p.person_id}`, group: 'tax', title: p.name, subtitle: `Personal income tax ${periodText}`, blocks });
   }
@@ -83,7 +102,7 @@ export function buildPitPack(d: any, orgName: string): PackModel {
   }
 
   return {
-    orgName, legal: [], reportTitle: 'Personal income tax computation', periodText, endText: DATE(comp.to), framework: '',
+    orgName, legal: [], reportTitle: opts.personId ? `Personal income tax computation of ${people.find((p) => p.person_id === opts.personId)?.name || 'the taxpayer'}` : 'Personal income tax computation', periodText, endText: DATE(comp.to), framework: '',
     frameworkText: `Year of assessment ${comp.yoa}. Prepared under ${law}${comp.rulebook?.status !== 'approved' ? ', on rules awaiting TaxStreem sign-off' : ''}.`,
     sections, warnings: [], generated: new Date().toISOString(), approvedOn: d.row?.approved_at ? String(d.row.approved_at).slice(0, 10) : null, signers: [],
   };

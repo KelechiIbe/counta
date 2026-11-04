@@ -23,6 +23,7 @@ import { IdentityPanel, useIdentity } from './onboarding/Identity';
 import { MartinaAnywhere } from './settings/MartinaAnywhere';
 import { AccountantSection } from './settings/Accountant';
 import { EInvoicingPanel } from './settings/EInvoicing';
+import { PortalLoginsPanel } from './settings/PortalLogins';
 import { useAttention } from '../lib/api';
 import { TwoStepSettings } from '../components/TwoStep';
 
@@ -332,6 +333,11 @@ export default function Settings() {
       {(edit || can(inv, 'keep_books') || can(inv, 'file_tax')) && (
         <Section id="einvoicing" title="E-invoicing (NRS)" sub="Invoices to businesses and government bodies go through the Nigeria Revenue Service's e-invoicing system. TaxStreem connects Counta to it as System Integrator and Access Point Provider.">
           <EInvoicingPanel />
+        </Section>
+      )}
+      {(owner || can(inv, 'file_tax')) && (
+        <Section id="tax-logins" title="Tax portal logins" sub="TaxStreem Flux signs in to the tax portals as the business to file the returns Counta prepares: NRS Rev360, LIRS e-Tax and the other state revenue services. For personal income tax, Flux files in Lagos for now and adds states as TaxStreem switches them on.">
+          <PortalLoginsPanel />
         </Section>
       )}
       <NotificationsSection />
