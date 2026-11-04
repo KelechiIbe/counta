@@ -16,6 +16,19 @@
 //                                           reliefs with their documents, the staff and the fixed assets, the person's
 //                                           computation (made by the app as a PDF) and Flux's reference to the business's
 //                                           login for that portal.
+//                                           A person whose state Counta's own bot files (LIRS e-Tax, bots/lirs) is not sent
+//                                           to Flux: their return is queued for the bot, which signs in with the person's
+//                                           own e-Tax login and files it as them (docs/lirs-etax-bot.md), and the bot is woken.
+//   { action: 'pit_etax_login_save', org_id, person_id, payer_id, password }
+//   { action: 'pit_etax_login_remove', org_id, person_id }
+//                                        -> the person, or whoever files the business's tax, saves or removes the person's
+//                                           own LIRS e-Tax login. The password goes into Supabase Vault for the bot alone;
+//                                           it is never stored elsewhere, logged or sent back.
+//   { action: 'pit_bill', org_id, year, person_id }
+//                                        -> asks the bot to raise the person's bill on e-Tax again (after a bill failed).
+//   { action: 'pit_pay', org_id, year, person_id, pay_with: 'transfer' }
+//                                        -> asks the bot for a one-time account to pay the person's bill by transfer (e-Tax's
+//                                           Flutterwave channel); the app shows it when the bot reports back.
 //   { action: 'pit_tcc_request', org_id, year, person_id }
 //                                        -> asks Flux to apply for the person's tax clearance certificate once the return is
 //                                           filed and paid: the profile picture, the three years' returns and the authority to
@@ -185,16 +198,64 @@ const fileName = (path: string) => String(path).split('/').pop()!.replace(/^\d+-
 const listOf = (names: string[]) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
 
 // Personal income tax: each person's approved return to Flux, for the states it files.
+type SendResult = { person_id: string; name: string; ok: boolean; flux_ref?: string; error?: string; bot?: boolean; job_id?: string };
 async function pitSend(sb: SupabaseClient, orgId: string, year: number, personId: string | null) {
   const { data: pk, error } = await sb.rpc('pit_pack', { p_org: orgId, p_year: year });
   if (error) throw new UserError(error.message);
-  const cfg = await fluxConfig();
-  if (!cfg) return { ok: false, reason: 'not_configured', error: 'TaxStreem Flux is not connected yet. Download the computation and file each return with the state, or ask TaxStreem to connect Flux.' };
   const all = (pk.people || []) as any[];
-  const people = all.filter((p) => p.flux && (!personId || p.person_id === personId) && ['approved', 'rejected'].includes(p.status));
-  if (!people.length) {
-    return { ok: false, reason: 'nothing_to_send', error: personId ? 'Flux does not file that return, or it is already with Flux.' : 'None of these returns is for a state Flux files yet, or they are already with Flux.' };
+  const bots: string[] = pk.bot_authorities || [];
+  const isBot = (p: any) => bots.includes(p.authority);
+  const open = all.filter((p) => (p.flux || isBot(p)) && (!personId || p.person_id === personId) && ['approved', 'rejected'].includes(p.status));
+  const botPeople = open.filter(isBot), fluxPeople = open.filter((p) => !isBot(p));
+  if (!open.length) {
+    return { ok: false, reason: 'nothing_to_send', error: personId ? 'That return is not one Counta or Flux files, or it is already on its way.' : 'None of these returns is for a state Counta or Flux files yet, or they are already on their way.' };
   }
+  const results: SendResult[] = [];
+  // LIRS e-Tax: Counta's own bot, signing in as each person with their own login.
+  for (const p of botPeople) {
+    const { data, error: qe } = await sb.rpc('pit_lirs_queue', { p_org: orgId, p_year: year, p_person: p.person_id, p_kind: 'file', p_request: {} });
+    if (qe) results.push({ person_id: p.person_id, name: p.name, ok: false, bot: true, error: qe.message });
+    else results.push({ person_id: p.person_id, name: p.name, ok: true, bot: true, job_id: data?.job?.id });
+  }
+  const woke = results.some((r) => r.ok) ? await wakeBot('pit_send') : false;
+  if (fluxPeople.length) {
+    try { results.push(...await pitSendFlux(sb, pk, orgId, year, fluxPeople)); }
+    catch (e) {
+      if (!botPeople.length) throw e;
+      const msg = e instanceof UserError ? e.message : 'Flux could not take it.';
+      for (const p of fluxPeople) results.push({ person_id: p.person_id, name: p.name, ok: false, error: msg });
+    }
+  }
+  const sent = results.filter((x) => x.ok).length;
+  return { ok: sent > 0, sent, failed: results.length - sent, results, bot: results.filter((x) => x.bot && x.ok).length, woke,
+    error: sent ? undefined : results.map((x) => `${x.name}: ${x.error}`).join(' ') };
+}
+
+// Counta's LIRS bot: told there is work, so a job seldom waits for the database's next round (every five minutes while a
+// job is due). The bot answers at once and works on. Set LIRS_BOT_URL (the Cloud Run address) and LIRS_BOT_SECRET (shared
+// with the bot) in the admin portal or as Edge Function secrets.
+async function wakeBot(reason: string): Promise<boolean> {
+  const url = (await vaultFirst('LIRS_BOT_URL')).replace(/\/+$/, '');
+  const secret = await vaultFirst('LIRS_BOT_SECRET');
+  if (!url || !secret) return false;
+  const raw = JSON.stringify({ reason, at: new Date().toISOString() });
+  const call = (async () => {
+    try {
+      const r = await fetch(`${url}/tick`, { method: 'POST', body: raw, signal: AbortSignal.timeout(15_000),
+        headers: { 'Content-Type': 'application/json', 'x-counta-signature': await sign(raw, secret) } });
+      await r.body?.cancel();
+    } catch { /* the bot's scheduled round picks the job up */ }
+  })();
+  // The answer goes back at once; the call to the bot carries on after it.
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt?.waitUntil) rt.waitUntil(call);
+  return true;
+}
+
+async function pitSendFlux(sb: SupabaseClient, pk: any, orgId: string, year: number, people: any[]): Promise<SendResult[]> {
+  const all = (pk.people || []) as any[];
+  const cfg = await fluxConfig();
+  if (!cfg) throw new UserError('TaxStreem Flux is not connected yet. Download the computation and file each return with the state, or ask TaxStreem to connect Flux.');
   if (!pk.portal_ready) throw new UserError(`Reopen the ${year} return and approve it again: the state portal now asks for each relief's documents, the accommodation and the staff.`);
   if (!pk.soa_path) throw new UserError('Attach the statement of accounts first.');
   const logins = pk.logins || {};
@@ -208,7 +269,7 @@ async function pitSend(sb: SupabaseClient, orgId: string, year: number, personId
   const needs = pk.relief_needs || {};
   const partners = pk.kind === 'partnership'
     ? all.map((p) => ({ person_id: p.person_id, name: p.name, tin: p.tin ?? null, share_pct: p.share_pct, role: p.role, authority: p.authority })) : [];
-  const results: { person_id: string; name: string; ok: boolean; flux_ref?: string; error?: string }[] = [];
+  const results: SendResult[] = [];
   for (const p of people) {
     // The reliefs Counta counted, each with the documents the portal asks for (a relief without them was left out).
     const reliefs = [];
@@ -270,9 +331,43 @@ async function pitSend(sb: SupabaseClient, orgId: string, year: number, personId
       p: { status: 'sent', ref: String(r.out.ref || r.out.id || ''), message: r.out.message ? String(r.out.message) : 'Received by Flux' } });
     results.push({ person_id: p.person_id, name: p.name, ok: true, flux_ref: row.flux_ref });
   }
-  const sent = results.filter((x) => x.ok).length;
-  return { ok: sent > 0, sent, failed: results.length - sent, results,
-    error: sent ? undefined : results.map((x) => `${x.name}: ${x.error}`).join(' ') };
+  return results;
+}
+
+// A person's own LIRS e-Tax login, for Counta's bot. Asked first as the person signed in (the database checks that it is
+// the person, or someone who files the business's tax, with two-step where the business asks for it), then saved by
+// the service: the password goes into Supabase Vault and nowhere else.
+async function etaxLoginSave(sb: SupabaseClient, orgId: string, body: any) {
+  const person = String(body.person_id || '');
+  if (!/^[0-9a-f-]{36}$/i.test(person)) throw new UserError('Choose the person.');
+  const payer = String(body.payer_id ?? '').trim().toUpperCase().replace(/\s+/g, '');
+  const password = String(body.password ?? '');
+  if (!/^[NC]-\d{4,12}$/.test(payer)) throw new UserError('Enter the Payer ID as e-Tax shows it, with N- in front (for example N-1234567).');
+  if (payer.startsWith('C-')) throw new UserError('That is a company\'s Payer ID. Each person files with their own, which starts with N-.');
+  if (!password.trim() || password.length > 200) throw new UserError('Enter the e-Tax password (at most 200 characters).');
+  if (password !== password.trim()) throw new UserError('e-Tax ignores spaces at the start and end of a password. Enter it without them.');
+  const { data: b, error } = await sb.rpc('pit_etax_login_begin', { p_org: orgId, p_person: person });
+  if (error) throw new UserError(error.message);
+  const row = await svc('svc_pit_etax_login_save', { p_org: orgId, p_person: person, p: { payer_id: payer, password, member_id: b.member_id } });
+  return { ok: true, login: row };
+}
+async function etaxLoginRemove(sb: SupabaseClient, orgId: string, body: any) {
+  const person = String(body.person_id || '');
+  if (!/^[0-9a-f-]{36}$/i.test(person)) throw new UserError('Choose the person.');
+  const { error } = await sb.rpc('pit_etax_login_begin', { p_org: orgId, p_person: person });
+  if (error) throw new UserError(error.message);
+  try { return { ok: true, ...(await svc('svc_pit_etax_login_remove', { p_org: orgId, p_person: person })) }; }
+  catch (e) { throw new UserError(String((e as Error).message).replace(/^svc_pit_etax_login_remove: /, '')); }
+}
+// The bot again for a person's bill: raise it, or fetch an account to pay it by transfer.
+async function pitBot(sb: SupabaseClient, orgId: string, year: number, body: any, kind: 'bill' | 'pay_account') {
+  const person = String(body.person_id || '');
+  if (!/^[0-9a-f-]{36}$/i.test(person)) throw new UserError('Choose the person.');
+  const request = kind === 'pay_account' ? { pay_with: String(body.pay_with || 'transfer') } : {};
+  const { data, error } = await sb.rpc('pit_lirs_queue', { p_org: orgId, p_year: year, p_person: person, p_kind: kind, p_request: request });
+  if (error) throw new UserError(error.message);
+  const woke = await wakeBot(kind);
+  return { ok: true, job: data?.job ?? null, already: data?.already === true, woke };
 }
 
 // The tax clearance certificate for a person whose return is filed and paid: Flux applies for it on the portal.
@@ -596,6 +691,8 @@ Deno.serve(async (req) => {
     if (body.action === 'accountant_upload') return json(await accountantUpload(sb, u.user.id, orgId, body));
     if (body.action === 'portal_login_save') return json(await portalLoginSave(sb, orgId, body));
     if (body.action === 'portal_login_remove') return json(await portalLoginRemove(sb, orgId, body));
+    if (body.action === 'pit_etax_login_save') return json(await etaxLoginSave(sb, orgId, body));
+    if (body.action === 'pit_etax_login_remove') return json(await etaxLoginRemove(sb, orgId, body));
     if (body.action === 'flux_send') {
       const period = String(body.period || '').slice(0, 7), tax = String(body.tax || '');
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period) || !['vat', 'wht', 'wvat'].includes(tax)) return json({ ok: false, error: 'Choose the tax and the month.' }, 400);
@@ -633,6 +730,8 @@ Deno.serve(async (req) => {
         if (person && !/^[0-9a-f-]{36}$/i.test(person)) return json({ ok: false, error: 'Choose the person.' }, 400);
         return json(await pitSend(sb, orgId, year, person));
       }
+      case 'pit_bill': return json(await pitBot(sb, orgId, year, body, 'bill'));
+      case 'pit_pay': return json(await pitBot(sb, orgId, year, body, 'pay_account'));
       case 'pit_tcc_request': {
         const person = String(body.person_id || '');
         if (!/^[0-9a-f-]{36}$/i.test(person)) return json({ ok: false, error: 'Choose the person.' }, 400);

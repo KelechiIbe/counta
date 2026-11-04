@@ -43,7 +43,7 @@ export const TAX_KEYS = ['cit-years', 'cit-year', 'pit-years', 'pit-year', 'tax-
   'vat-schedule', 'customs', 'customers', 'inv', 'item-nrs'];
 
 export const CIT_STATUS: Record<string, { label: string; tone: string }> = {
-  draft: { label: 'Draft', tone: 't-grey' }, approved: { label: 'Approved', tone: 't-blue' }, sent: { label: 'With Flux', tone: 't-amber' },
+  draft: { label: 'Draft', tone: 't-grey' }, approved: { label: 'Approved', tone: 't-blue' }, sent: { label: 'Being filed', tone: 't-amber' },
   filed: { label: 'Filed', tone: 't-green' }, rejected: { label: 'Sent back', tone: 't-red' },
 };
 // How the business pays income tax, from what CAC says it is (through Mono) and what the owner has told Counta: a company
@@ -58,7 +58,7 @@ export function incomeTaxKind(org: { legal_form?: string | null; cit_profile?: R
 }
 export const INCOME_TAX_LABEL: Record<IncomeTaxKind, string> = { cit: 'Companies income tax', pit: 'Personal income tax', exempt: 'Income tax' };
 export const PIT_STATE: Record<string, { label: string; tone: string }> = {
-  draft: { label: 'Draft', tone: 't-grey' }, approved: { label: 'Approved', tone: 't-blue' }, sent: { label: 'With Flux', tone: 't-amber' },
+  draft: { label: 'Draft', tone: 't-grey' }, approved: { label: 'Approved', tone: 't-blue' }, sent: { label: 'Being filed', tone: 't-amber' },
   filed: { label: 'Filed', tone: 't-green' }, rejected: { label: 'Sent back', tone: 't-red' }, filed_outside: { label: 'Filed outside Counta', tone: 't-green' },
 };
 export const pitLaw = (regime?: string | null) => (regime === 'PITA' ? 'Personal Income Tax Act (old law)' : 'Nigeria Tax Act 2025');
@@ -85,6 +85,7 @@ export const OTHER_INCOME: { id: string; label: string; hint?: string; kind?: st
   { id: 'gov_bond_interest', label: 'Interest on government bonds', hint: 'Exempt' },
   { id: 'pension_gratuity', label: 'Pension or gratuity received', hint: 'Exempt' },
   { id: 'pension_gratuity:annuity', kind: 'pension_gratuity', field: 'annuity', label: 'Annuity received', hint: 'Exempt when paid under the Pension Reform Act' },
+  { id: 'pension_gratuity:gratuities', kind: 'pension_gratuity', field: 'gratuities', label: 'Gratuity received', hint: 'Exempt where paid under the Pension Reform Act' },
   { id: 'other', label: 'Other income' },
 ];
 // The choice an income line shows, from its kind and the portal line it goes on, and back.
@@ -95,6 +96,11 @@ export const incomeOf = (choice: string) => { const x = OTHER_INCOME.find((o) =>
 export const HOME_TYPES: { id: string; label: string }[] = [
   { id: 'flat', label: 'Flat or apartment' }, { id: 'room', label: 'Room or self-contained' }, { id: 'bungalow', label: 'Bungalow' }, { id: 'duplex', label: 'Duplex' },
   { id: 'terrace', label: 'Terrace house' }, { id: 'detached', label: 'Detached house' }, { id: 'other', label: 'Other' },
+];
+// e-Tax's household (support) staff, kept on each person's own e-Tax profile.
+export const STAFF_ROLES: { id: string; label: string }[] = [
+  { id: 'driver', label: 'Driver' }, { id: 'cook', label: 'Cook' }, { id: 'security', label: 'Security' }, { id: 'cleaner', label: 'Cleaner' },
+  { id: 'gardener', label: 'Gardener' }, { id: 'other', label: 'Other support staff' },
 ];
 export const OCCUPANCY: { id: string; label: string }[] = [
   { id: 'tenant', label: 'Rents it (tenant)' }, { id: 'owner', label: 'Owns it (landlord)' }, { id: 'employer', label: 'Provided by an employer' },
