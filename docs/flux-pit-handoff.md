@@ -43,7 +43,7 @@ Until both are set, "Send to Flux" answers `not_configured` and tells the user t
   "business_computation": { "rows": [ { "id": "AP", "line": "Assessable profit / (loss) of the business", "amount": 104400000 } ], "figures": { "assessable": 104400000 } },
   "partners": [ { "person_id": "5f0c...", "name": "Ada Obi", "tin": "1234567-0001", "share_pct": 40, "role": "active", "authority": "SIRS:LA" } ],
   "files": { "statement_of_accounts": { "name": "statements.pdf", "url": "<signed link, 7 days>", "content_type": "application/pdf", "expires_in": 604800 } },
-  "rulebook": { "id": "ng-pit-pita-legacy@1.0.0", "version": "1.0.0", "status": "draft" },
+  "rulebook": { "id": "ng-pit-pita-legacy@1.1.0", "version": "1.1.0", "status": "approved" },
   "callback_url": "https://<project>.supabase.co/functions/v1/taxstreem/flux/pit-status"
 }
 ```
