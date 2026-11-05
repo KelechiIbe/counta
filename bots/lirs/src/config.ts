@@ -15,6 +15,9 @@ export const cfg = {
   // without the app running beside them.
   etaxApiPage: env('ETAX_API_PAGE', '/js/google-analytics.js'),
   worker: env('WORKER_NAME') || env('K_REVISION') || 'lirs-bot',
+  // How many jobs run side by side, each in its own browser context (for different people: Counta never hands out two jobs
+  // for one person at once). The Cloud Run service needs about 400 MB of memory for each.
+  lanes: num('BOT_LANES', 8),
   // How long one tick may work before it stops taking jobs, and the most jobs in one tick.
   budgetMs: num('TICK_BUDGET_MS', 9 * 60_000),
   maxJobs: num('TICK_MAX_JOBS', 30),

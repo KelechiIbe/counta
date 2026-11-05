@@ -11,7 +11,7 @@ const SECRET = 'test-secret-0123456789abcdefghijklmnopqrstuvwxyz';
 const PASSWORD = 'Pa55-word!quiet';
 let mock: Awaited<ReturnType<typeof startMock>>;
 let st: State;
-let counta: { url: string; close: () => void; jobs: any[]; reports: any[]; files: Map<string, Buffer>; badSig: number; busy: { next: number; report: number } };
+let counta: { url: string; close: () => void; jobs: any[]; reports: any[]; files: Map<string, Buffer>; badSig: number; busy: { next: number; report: number }; peak: number; workers: Set<string> };
 let runner: typeof import('../src/runner.js');
 let sign: typeof import('../src/sign.js');
 
@@ -37,9 +37,12 @@ function startCounta() {
     if (url.pathname === '/lirs/next' && busy.next > 0) { busy.next--; res.writeHead(422); return res.end('{"ok":false,"error":"canceling statement due to statement timeout"}'); }
     if (url.pathname === '/lirs/report' && busy.report > 0) { busy.report--; res.writeHead(422); return res.end('{"ok":false,"error":"canceling statement due to statement timeout"}'); }
     if (url.pathname === '/lirs/next') {
-      const j = jobs.find((x) => x.status === 'queued');
+      // As Counta does: never two jobs at once for one person.
+      const j = jobs.find((x) => x.status === 'queued' && !jobs.some((r) => r.status === 'running' && r.person === x.person));
       if (!j) return res.end(JSON.stringify({ ok: true, job: null }));
-      j.status = 'running'; j.attempt = (j.attempt || 0) + 1;
+      j.status = 'running'; j.attempt = (j.attempt || 0) + 1; j.worker = b.worker;
+      c.workers.add(String(b.worker));
+      c.peak = Math.max(c.peak, jobs.filter((x) => x.status === 'running').length);
       const paths: string[] = [];
       const walk = (x: any) => { if (!x || typeof x !== 'object') return; for (const [k, v] of Object.entries(x)) { if (typeof v === 'string' && files.has(v)) paths.push(v); else walk(v); } };
       walk(j.context);
@@ -56,8 +59,9 @@ function startCounta() {
     }
     res.writeHead(404); res.end('{}');
   });
+  const c = { url: '', close: () => srv.close(), jobs, reports, files, busy, peak: 0, workers: new Set<string>(), get badSig() { return badSig; } } as any;
   return new Promise<typeof counta>((resolve) => srv.listen(0, '127.0.0.1', () => {
-    const c = { url: `http://127.0.0.1:${(srv.address() as any).port}`, close: () => srv.close(), jobs, reports, files, busy, get badSig() { return badSig; } } as any;
+    c.url = `http://127.0.0.1:${(srv.address() as any).port}`;
     resolve(c);
   }));
 }
@@ -333,6 +337,50 @@ test('e-Tax asks which kind of login it is: the bot chooses Taxpayer', async () 
     assert.equal(j.status, 'done', j.error);
     assert.equal(reportsOf(j).find((x) => x.login).login, 'verified');
   } finally { st.faults.chooser = false; }
+});
+
+test('up to eight jobs side by side for different people; one person\'s jobs one after another in one session', async () => {
+  const logins = st.logins, sessions = st.sessions.size;
+  counta.peak = 0; counta.workers.clear();
+  const a = queue('check', checkCtx({ payer_id: 'N-16000001', password: PASSWORD }, 'Ada Obi'), 'p1');
+  const b = queue('check', checkCtx({ payer_id: 'N-16000002', password: 'other-pass-1' }, 'Bayo Ade'), 'p2');
+  const d = queue('check', checkCtx({ payer_id: 'N-16000004', password: 'no-office-123' }, 'Dan Uzo'), 'p4');
+  const a2 = queue('check', checkCtx({ payer_id: 'N-16000001', password: PASSWORD }, 'Ada Obi'), 'p1');
+  const t0 = Date.now();
+  const out = await runner.tick({ budgetMs: 120_000 });
+  for (const j of [a, b, d, a2]) assert.equal(j.status, 'done', `${j.id}: ${j.error}`);
+  assert.ok(counta.peak >= 3, `ran side by side (at most ${counta.peak} at once)`);
+  assert.ok(counta.workers.size >= 3 && [...counta.workers].every((w) => /#\d+$/.test(w)), `each lane says which it is: ${[...counta.workers]}`);
+  assert.equal(st.logins, logins + 4, 'a login check signs in and out each time');
+  assert.ok(a2.attempt === 1 && reportsOf(a2).some((x) => x.done), 'Ada\'s second job waited for her first, then ran');
+  assert.equal(st.sessions.size, sessions, 'every lane signed out');
+  assert.ok((out as any).lanes >= 3 && (out as any).more === false, JSON.stringify(out));
+  // One lane when set so: one job at a time.
+  counta.peak = 0;
+  const e = queue('check', checkCtx({ payer_id: 'N-16000002', password: 'other-pass-1' }, 'Bayo Ade'), 'p2');
+  const f = queue('check', checkCtx({ payer_id: 'N-16000004', password: 'no-office-123' }, 'Dan Uzo'), 'p4');
+  await runner.tick({ budgetMs: 120_000, lanes: 1 });
+  assert.equal(e.status, 'done'); assert.equal(f.status, 'done'); assert.equal(counta.peak, 1);
+  assert.ok(Date.now() - t0 < 120_000);
+});
+
+test('a tick that stops for its job limit says there is more to do', async () => {
+  const g = queue('check', checkCtx({ payer_id: 'N-16000002', password: 'other-pass-1' }, 'Bayo Ade'), 'p2');
+  const h = queue('check', checkCtx({ payer_id: 'N-16000004', password: 'no-office-123' }, 'Dan Uzo'), 'p4');
+  const out: any = await runner.tick({ budgetMs: 120_000, maxJobs: 1, lanes: 1 });
+  assert.equal(out.ran.length, 1); assert.equal(out.more, true);
+  const out2: any = await runner.tick({ budgetMs: 120_000, lanes: 1 });
+  assert.equal(g.status, 'done'); assert.equal(h.status, 'done'); assert.equal(out2.more, false);
+});
+
+test('Counta out of reach before any job: the tick says so', async () => {
+  const url = process.env.COUNTA_BOT_URL;
+  const cfgMod = await import('../src/config.js');
+  const was = cfgMod.cfg.countaUrl;
+  (cfgMod.cfg as any).countaUrl = 'http://127.0.0.1:9/lirs';
+  try { await assert.rejects(() => runner.tick({ budgetMs: 20_000 })); }
+  finally { (cfgMod.cfg as any).countaUrl = was; process.env.COUNTA_BOT_URL = url; }
+  assert.equal(runner.isRunning(), false);
 });
 
 test('the door: only signed calls start a tick', async () => {

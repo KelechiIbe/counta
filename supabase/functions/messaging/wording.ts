@@ -115,8 +115,10 @@ export function wording(m: Msg) {
       const lines = (Array.isArray(p.lines) ? p.lines : [p.body]).map((l: unknown) => String(l ?? '').trim()).filter(Boolean).slice(0, 8);
       const wa = p.wa && typeof p.wa.name === 'string' && /^counta_[a-z_]+$/.test(p.wa.name) && Array.isArray(p.wa.params)
         ? { name: p.wa.name, params: p.wa.params.map((x: unknown) => String(x ?? '')) } : null;
+      // A reminder that is not one of the chosen alerts (a tax payment Counta set up that has not gone through) says so.
+      const footer = typeof p.footer === 'string' && p.footer.trim() ? p.footer.trim().slice(0, 200) : `Counta sends these for ${biz}. Choose which you get in Settings, Alerts.`;
       return { heading: String(p.heading || m.subject || 'Something needs doing in Counta'), lines, button: String(p.button || 'Open Counta'), link: p.link, wa,
-        greet: first(p.person_name), from: 'Counta', footer: `Counta sends these for ${biz}. Choose which you get in Settings, Alerts.` };
+        greet: first(p.person_name), from: 'Counta', footer };
     }
     case 'practice': {
       // The accountant portal's invitations (a practice to its staff or to a business owner, a business to its accountant):

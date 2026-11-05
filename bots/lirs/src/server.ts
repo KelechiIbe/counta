@@ -5,7 +5,7 @@
 //                 {"wait": true} in the body it answers when the tick is done: {ok, ran: [{job_id, kind, status}], ms}.
 // Counta calls /tick when someone sends a return or asks for a transfer account, and its database every five minutes
 // while a job is due (a retry, a payment check). The service runs with CPU always allocated, so the work carries on
-// after the answer.
+// after the answer. A tick works up to BOT_LANES jobs side by side (src/runner.ts).
 import { createServer } from 'node:http';
 import { cfg, checkConfig } from './config.js';
 import { verify } from './sign.js';
@@ -26,10 +26,14 @@ const server = createServer(async (req, res) => {
   if (isRunning()) { poke(); return send(res, 200, { ok: true, busy: true }); }
   let wait = false;
   try { wait = JSON.parse(raw || '{}')?.wait === true; } catch { /* a plain wake-up */ }
-  const run = tick().catch((e) => {
+  // A tick that stopped for time with work still waiting is followed by another at once, so a busy day has no gaps between
+  // wake-ups.
+  const go = () => tick().catch((e) => {
     console.error(JSON.stringify({ at: new Date().toISOString(), error: (e as Error).message }));
     return null;
   });
+  const run = go();
+  void run.then(async (out) => { let o = out; while (o && 'more' in o && o.more) o = await go(); });
   if (!wait) return send(res, 202, { ok: true, started: true });
   const out = await run;
   if (!out) return send(res, 500, { ok: false, error: 'The bot could not reach Counta or start its browser.' });

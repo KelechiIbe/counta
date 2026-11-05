@@ -59,7 +59,7 @@ gcloud run deploy counta-lirs-bot \
   --service-account "counta-lirs-bot@$(gcloud config get-value project).iam.gserviceaccount.com" \
   --allow-unauthenticated \
   --no-cpu-throttling \
-  --cpu 1 --memory 2Gi \
+  --cpu 2 --memory 4Gi \
   --min-instances 0 --max-instances 1 --concurrency 4 \
   --timeout 900 \
   --set-env-vars "COUNTA_BOT_URL=https://krtqqhndmncarwusukrw.supabase.co/functions/v1/taxstreem/lirs" \
@@ -75,7 +75,10 @@ What the settings do:
 - `--allow-unauthenticated`: Counta's database and functions call the bot over the internet. Every call must carry a
   signature made with the shared secret; the bot refuses anything else, and its only open page says whether it is up.
 - `--no-cpu-throttling`: the bot answers Counta at once and carries on working.
-- `--max-instances 1`: one browser, one person at a time, as e-Tax keeps one session per account.
+- `--max-instances 1`: one browser, which works up to eight jobs side by side for different people (`BOT_LANES`, eight
+  unless set). e-Tax keeps one session per account, and Counta never hands out two jobs for one person at once.
+- `--cpu 2 --memory 4Gi`: room for eight browser contexts at once, about 400 MB each. With `BOT_LANES=1` the bot works one
+  job at a time and `--cpu 1 --memory 2Gi` is enough.
 - `--min-instances 0`: nothing runs, and nothing is billed, while there is no work.
 
 If Google refuses `--allow-unauthenticated` with a message about an organisation policy ("do not belong to a permitted
