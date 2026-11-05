@@ -20,12 +20,15 @@ import IssueScreen from './IssuePhone';
 import { TillScreen } from './TillPhone';
 import { AddScreen } from './AddPhone';
 import { useVatRate } from '../lib/vat';
+import { useMode } from '../lib/wording';
+import { BillPhone, InvoicePhone, PaymentPhone, TodayNumbers } from './ServicePhone';
 
 export default function MobileApp() {
   // The VAT rule book, so every VAT figure and label on the screens uses the rate on its own date.
   useVatRate();
   const { data: inv, isLoading } = useInventory();
   const { orgId } = useSession();
+  const mode = useMode();
   const queue = useQueue(orgId);
   const key = 'counta.m.loc.' + orgId;
   const [loc, setLocState] = useState<string>(() => { try { return localStorage.getItem(key) || ''; } catch { return ''; } });
@@ -44,12 +47,21 @@ export default function MobileApp() {
   const value = useMemo(() => ({ loc, setLoc, queue }), [loc, queue]); // eslint-disable-line react-hooks/exhaustive-deps
   if (isLoading && !inv) return <div className="m-shell" style={{ display: 'grid', placeItems: 'center' }}><Spinner /></div>;
   if (!inv) return <div className="m-shell" style={{ display: 'grid', placeItems: 'center', padding: 24, textAlign: 'center' }}>Could not load your business. Connect to data once so the phone can save a copy.</div>;
-  const tabs: [string, string, string, boolean][] = [
+  // A business that sells services only has no stock to scan, receive or count: it invoices, takes payments and photographs
+  // its bills. Clinics, hotels and schools keep the till for walk-in customers.
+  const tabs: [string, string, string, boolean][] = mode.stock ? [
     ['/m', 'Today', 'house', true],
     ['/m/scan', 'Scan', 'scan', true],
     ['/m/till', 'Sell', 'receipt', can(inv, 'record_sales')],
     ['/m/receive', 'Receive', 'camera', can(inv, 'receive_stock')],
     ['/m/count', 'Count', 'list', can(inv, 'count_stock')],
+    ['/m/chat', 'Martina', 'martina', true],
+  ] : [
+    ['/m', 'Today', 'house', true],
+    ['/m/till', 'Till', 'receipt', mode.till && can(inv, 'record_sales')],
+    ['/m/invoice', 'Invoice', 'file', can(inv, 'record_sales')],
+    ['/m/payment', 'Payment', 'card', can(inv, 'record_sales')],
+    ['/m/bill', 'Bills', 'camera', can(inv, 'keep_books')],
     ['/m/chat', 'Martina', 'martina', true],
   ];
   const shown = tabs.filter((t) => t[3]);
@@ -69,11 +81,14 @@ export default function MobileApp() {
             <Route path="count/:id" element={<CountSheet />} />
             <Route path="chat" element={<ChatScreen />} />
             <Route path="issue" element={<IssueScreen />} />
+            <Route path="invoice" element={<InvoicePhone />} />
+            <Route path="payment" element={<PaymentPhone />} />
+            <Route path="bill" element={<BillPhone />} />
           </Routes>
         </div>
         <nav className="m-tabs" style={{ gridTemplateColumns: `repeat(${shown.length}, 1fr)` }}>
           {shown.map(([to, label, icon]) => {
-            const on = to === '/m' ? path === '/m' || path === '/m/' : path.startsWith(to) || (to === '/m/till' && path.startsWith('/m/sell'));
+            const on = to === '/m' ? path === '/m' || path === '/m/' : path.startsWith(to) || (to === '/m/till' && mode.stock && path.startsWith('/m/sell'));
             return <NavLink key={to} to={to} end={to === '/m'} className={'m-tab' + (on ? ' on' : '')}><Icon name={icon} size={20} color={on ? '#0072F5' : '#6B7280'} />{label}</NavLink>;
           })}
         </nav>
@@ -104,6 +119,7 @@ function Today() {
   const { orgId } = useSession();
   const { loc, queue } = useM();
   const nav = useNavigate();
+  const mode = useMode();
   const counts = useCounts();
   const transfers = useTransfers();
   const items = useMemo(() => (inv ? buildItems(inv, loc || 'ALL') : []), [inv, loc]);
@@ -117,7 +133,13 @@ function Today() {
   const incoming = (transfers.data || []).filter((t) => t.status === 'in_transit' && t.to_location_id === loc);
   const low = items.filter((i) => i.vel > 0 && i.q <= Number(i.reorder_floor)).sort((a, b) => (a.cover ?? 0) - (b.cover ?? 0)).slice(0, 5);
   const ops = [...queue.ops].reverse().slice(0, 12);
-  const quick: [string, string, string, boolean][] = [
+  const quick: [string, string, string, boolean][] = !mode.stock ? [
+    ['file', 'Issue an invoice', '/m/invoice', can(inv, 'record_sales')],
+    ['card', 'Record a payment received', '/m/payment', can(inv, 'record_sales')],
+    ['receipt', 'Record a sale at the till', '/m/till', mode.till && can(inv, 'record_sales')],
+    ['camera', 'Photograph a supplier invoice or receipt', '/m/bill', can(inv, 'keep_books')],
+    ['martina', 'Ask Martina', '/m/chat', true],
+  ] : [
     ['receipt', 'Scan to sell', '/m/till', can(inv, 'record_sales')],
     ['camera', 'Add a product from photos', '/m/add', can(inv, 'add_items') || can(inv, 'edit_prices')],
     ['scan', 'Scan an item', '/m/scan', true],
@@ -144,6 +166,7 @@ function Today() {
             </button>
           ))}
         </div>
+        {!mode.stock && <TodayNumbers />}
         {mine.length > 0 && (
           <div className="stack" style={{ gap: 8 }}>
             <div className="label">Counts for you</div>
@@ -170,7 +193,7 @@ function Today() {
             })}
           </div>
         )}
-        {low.length > 0 && (
+        {mode.stock && low.length > 0 && (
           <div className="stack" style={{ gap: 6 }}>
             <div className="label">Running low here</div>
             <div className="m-card" style={{ padding: '4px 12px' }}>
@@ -182,13 +205,13 @@ function Today() {
             </div>
           </div>
         )}
-        <div className="stack" style={{ gap: 2 }}>
+        {(mode.till || ops.length > 0) && <div className="stack" style={{ gap: 2 }}>
           <div className="label">On this phone</div>
-          {ops.length ? ops.map((o) => <OpRow key={o.id} op={o} who={o.author} />) : <div className="muted" style={{ fontSize: 13, padding: '8px 0' }}>Sales, counts and invoices you record here show up in this list, with their sync status.</div>}
-        </div>
+          {ops.length ? ops.map((o) => <OpRow key={o.id} op={o} who={o.author} />) : <div className="muted" style={{ fontSize: 13, padding: '8px 0' }}>{mode.stock ? 'Sales, counts and invoices you record here show up in this list, with their sync status.' : 'Sales you record at the till on this phone show up here, with their sync status. Invoices and payments go straight to the books.'}</div>}
+        </div>}
         <button className="m-card row" style={{ cursor: 'pointer', font: 'inherit', textAlign: 'left' }} onClick={() => { store.set('counta-view', 'full'); nav('/home'); }}>
           <Icon name="panel" size={18} color="#0072F5" />
-          <span className="grow"><span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>Open the full app</span><span className="faint" style={{ fontSize: 11 }}>Reports, approvals, reorders, pricing and settings, sized for this phone</span></span>
+          <span className="grow"><span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>Open the full app</span><span className="faint" style={{ fontSize: 11 }}>{mode.stock ? 'Reports, approvals, reorders, pricing and settings, sized for this phone' : 'Reports, tax returns, approvals and settings, sized for this phone'}</span></span>
           <Icon name="chevR" size={16} color="#9CA3AF" />
         </button>
       </div>

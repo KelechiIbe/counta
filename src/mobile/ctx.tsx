@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useInventory } from '../state/session';
+import { useMode } from '../lib/wording';
 import { Icon } from '../components/Icon';
 import type { useQueue } from './queue';
 
@@ -23,10 +24,12 @@ export function MTop({ title, right }: { title: ReactNode; right?: ReactNode }) 
 
 export function QueueBanner() {
   const { queue } = useM();
+  const mode = useMode();
   const n = queue.pending.length;
   const [shown, setShown] = useState<number | null>(null);
   useEffect(() => { if (queue.lastSync) { setShown(queue.lastSync.n); const t = setTimeout(() => setShown(null), 6000); return () => clearTimeout(t); } }, [queue.lastSync?.at]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!queue.online) {
+    if (!mode.stock && !n) return <div style={{ background: '#FFF7ED', color: '#9A3412', fontSize: 12, padding: '10px 16px', lineHeight: 1.45 }}>No data right now. Invoices, payments and bills need a connection{mode.till ? '; sales at the till are saved on this phone and post when data returns' : ''}.</div>;
     return <div style={{ background: '#FFF7ED', color: '#9A3412', fontSize: 12, padding: '10px 16px', lineHeight: 1.45 }}>No data right now. {n ? `${n} movement${n === 1 ? ' is' : 's are'} saved on this phone and will post in order when you reconnect.` : 'Anything you record is saved on this phone and posts when data returns.'} Keep selling.</div>;
   }
   if (queue.syncing) return <div style={{ background: '#F0F7FF', height: 4, overflow: 'hidden' }}><div style={{ height: '100%', background: '#0072F5', animation: 'tsBar 1.8s linear forwards' }} /></div>;

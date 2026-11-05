@@ -59,12 +59,19 @@ export class Etax {
     const pw = page.locator('input[type="password"]').first();
     try { await id.waitFor({ state: 'visible' }); } catch { throw new Transient('e-Tax\'s login page did not show the sign-in form.'); }
     await csrf;
+    await this.pickTaxpayer();
     await id.fill(payerId);
     await pw.fill(password);
-    const auth = page.waitForResponse((r) => /\/api\/v1\/auth\/local\/payers\/authenticate/.test(r.url()), { timeout: cfg.navTimeoutMs });
+    const auth = page.waitForResponse((r) => /\/api\/v1\/auth\/local\/[a-z_-]+\/authenticate/.test(r.url()), { timeout: cfg.navTimeoutMs });
     await page.locator('button[type="submit"]').first().click();
+    let res;
+    try { res = await auth; } catch { throw new Transient('e-Tax did not answer the sign-in.'); }
+    // The sign-in went as another kind of login (an agent's, say): that is the bot's choice on the page, not the password.
+    if (!/\/auth\/local\/payers\/authenticate/.test(res.url())) {
+      throw new Transient('Counta could not choose the taxpayer login on e-Tax\'s sign-in page, so the password was not tried. It tries again shortly.');
+    }
     let data: any;
-    try { data = await (await auth).json(); } catch (e) { throw new Transient('e-Tax did not answer the sign-in.'); }
+    try { data = await res.json(); } catch (e) { throw new Transient('e-Tax did not answer the sign-in.'); }
     if (!data || data.error || data.status === 'error' || !data.user) {
       const msg = scrub(String(data?.message || ''), this.secrets);
       if (data?.code === 'INTERNAL_ERROR') throw new Transient(`e-Tax could not sign in just now${msg ? `: ${msg}` : ''}.`);
@@ -89,6 +96,25 @@ export class Etax {
       throw new LoginRefused('This Payer ID belongs to a company on e-Tax, not a person. Save the person\'s own Payer ID, which starts with N-.');
     }
     this.me = { taxPayerId, individualId, payerId: String(user.reg_no || profile?.tax_payer?.reg_no || payerId), name: fullName(profile) || fullName(user.entity), profile };
+  }
+
+  // The sign-in page can ask what kind of login this is (a taxpayer, or someone acting for one). The person's own Payer ID
+  // is a taxpayer login: choose it when the page asks, and do nothing when it does not.
+  private async pickTaxpayer() {
+    const page = this.page;
+    const name = /^\s*(individual\s+)?tax\s*-?\s*payers?\s*$/i;
+    try {
+      const radio = page.getByRole('radio', { name }).first();
+      if (await radio.count()) {
+        // A styled radio often hides the input itself: a click on it from the page works when a click at its place cannot.
+        if (!(await radio.isChecked().catch(() => false))) {
+          await radio.check({ force: true, timeout: 3000 }).catch(() => radio.evaluate((el) => (el as HTMLElement).click()));
+        }
+        return;
+      }
+      const label = page.locator('label, .md-radio-label, [role="tab"], button[type="button"]', { hasText: name }).first();
+      if (await label.count()) await label.click({ timeout: 5000 });
+    } catch { /* no chooser, or one the bot cannot read: the sign-in below says which login e-Tax took */ }
   }
 
   // One call to e-Tax from its own origin.

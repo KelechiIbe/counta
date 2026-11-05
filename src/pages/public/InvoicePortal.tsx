@@ -1,5 +1,6 @@
-// The invoice portal: a business's link where its suppliers upload invoices, with no account. Counta reads each one at once
-// and tells the supplier on the page (and by email or WhatsApp) anything they must fix.
+// The invoice portal: a business's link where its suppliers upload invoices, with no account. The invoice is taken as soon
+// as the file arrives; Counta reads and checks it afterwards and tells the supplier by email (or WhatsApp, with no email)
+// anything they must fix.
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -41,21 +42,13 @@ export default function InvoicePortal() {
   const org = { name: p.business, logo_path: p.logo_path };
   if (!p.open) return <Frame org={org}><Alert kind="yellow" icon="info">{p.business} is not taking invoices on this link just now. Send your invoice to them directly.</Alert></Frame>;
   if (done) {
-    const issues: string[] = done.issues || [];
+    const where = done.told === 'email' ? `by email at ${who.email.trim()}` : `on WhatsApp at ${who.phone.trim()}`;
     return (
       <Frame org={org}>
-        <div className="card card-pad stack" style={{ gap: 12 }}>
+        <div className="card card-pad stack" style={{ gap: 12 }} data-testid="portal-received">
           <div className="row" style={{ gap: 10 }}><Icon name="check" size={22} color="#15803D" /><div style={{ fontSize: 18, fontWeight: 700 }}>{p.business} has your invoice</div></div>
-          <div className="muted" style={{ fontSize: 14 }}>Reference {done.number}. {done.status === 'reading' ? 'Counta is still reading it; you will hear if anything needs fixing.' : ''}</div>
-          {done.failed ? <Alert kind="yellow" icon="alert">Counta could not read the file. {p.business} will look at it by hand; a clearer copy helps.</Alert>
-            : issues.length ? (
-              <Alert kind="amber" icon="alert">
-                <b>Please fix these and send a corrected invoice:</b>
-                <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>{issues.map((t, i) => <li key={i} style={{ marginTop: 3 }}>{t}</li>)}</ul>
-                {done.emailed && <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>We have sent you these as well.</div>}
-                <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>An invoice without the Tax ID (where withholding tax applies) or, for a business, without its address, cannot be paid until it is corrected.</div>
-              </Alert>
-            ) : <Alert kind="green" icon="check">Counta checked it and found nothing for you to fix. {p.business} approves it for payment.</Alert>}
+          <div className="muted" style={{ fontSize: 14, lineHeight: 1.5 }}>Reference <b>{done.number}</b>. Counta is reading and checking it now: the sums, VAT, your Tax ID, your address and the account to pay. If anything needs fixing, you will hear {where} within a few minutes, with what to change.</div>
+          <div className="faint" style={{ fontSize: 12 }}>An invoice without the Tax ID (where withholding tax applies) or, for a business, without its address, cannot be paid until it is corrected.</div>
           <button className="btn btn-secondary" onClick={() => { setDone(null); setFile(null); }}>Send another invoice</button>
         </div>
       </Frame>
@@ -66,18 +59,18 @@ export default function InvoicePortal() {
       <div className="card card-pad stack" style={{ gap: 12 }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 700 }}>Send an invoice to {p.business}</div>
-          <div className="muted" style={{ fontSize: 13.5, marginTop: 4 }}>Upload your invoice as a PDF or a clear photo. It is checked at once: the sums, VAT, your Tax ID, your address and the account to pay. Anything to fix is shown here and sent to you.</div>
+          <div className="muted" style={{ fontSize: 13.5, marginTop: 4 }}>Upload your invoice as a PDF or a clear photo. Counta checks the sums, VAT, your Tax ID, your address and the account to pay, and tells you by email (or WhatsApp) anything to fix.</div>
         </div>
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <Field label="Your name or your business's" req><input className="input" value={who.name} maxLength={120} onChange={(e) => setWho({ ...who, name: e.target.value })} autoComplete="organization" /></Field>
           <Field label="Email" error={emailOk ? null : 'Check the email address.'}><input className="input" type="email" inputMode="email" value={who.email} onChange={(e) => setWho({ ...who, email: e.target.value })} autoComplete="email" /></Field>
-          <Field label="WhatsApp number" hint="An email or a number, so you hear back." error={phoneOk ? null : 'Check the number.'}><input className="input" type="tel" inputMode="tel" value={who.phone} onChange={(e) => setWho({ ...who, phone: e.target.value })} autoComplete="tel" /></Field>
+          <Field label="WhatsApp number" hint="An email or a WhatsApp number, so you hear back. With both, Counta writes by email." error={phoneOk ? null : 'Check the number.'}><input className="input" type="tel" inputMode="tel" value={who.phone} onChange={(e) => setWho({ ...who, phone: e.target.value })} autoComplete="tel" /></Field>
           <Field label="The invoice" req hint="PDF, JPEG, PNG or WebP, up to 8 MB.">
             <input className="input" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(e) => { setFile(e.target.files?.[0] || null); setErr(null); }} />
           </Field>
         </div>
         {err && <Alert kind="red" icon="alert">{err}</Alert>}
-        <button className="btn btn-primary" disabled={!ready || busy} onClick={send}>{busy ? <><Spinner small />Sending and checking…</> : 'Send the invoice'}</button>
+        <button className="btn btn-primary" disabled={!ready || busy} onClick={send}>{busy ? <><Spinner small />Sending…</> : 'Send the invoice'}</button>
         <div className="faint" style={{ fontSize: 11.5 }}>Your details go to {p.business} only, with the invoice.</div>
       </div>
     </Frame>

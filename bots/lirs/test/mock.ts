@@ -22,7 +22,7 @@ function fresh() {
     bills: [] as any[],
     invoices: new Map<string, any>(), // LASG invoices by bill reference
     charges: [] as any[],
-    faults: {} as { killAfter?: number; internal?: string; offices?: Record<string, any> },
+    faults: {} as { killAfter?: number; internal?: string; offices?: Record<string, any>; chooser?: boolean },
     ids: 1000,
   };
 }
@@ -75,8 +75,13 @@ function parseParams(p: string) {
 const filterVal = (filters: any[], field: string) => (filters || []).find((f) => f.field === field)?.value;
 const money = (v: unknown) => Number(String(v ?? '').replace(/,/g, ''));
 
-const LOGIN_PAGE = (api: string) => `<!doctype html><html><head><title>e-Tax | LIRS</title></head><body><div id="app">
-<form id="f"><input type="text" placeholder="There should be a prefix 'N-' or 'C-'" id="identifier"><input type="password" id="password">
+// With the chooser (as e-Tax shows now), the page signs in as the login type ticked, a tax agent's unless Taxpayer is chosen.
+const CHOOSER = `<div class="md-radio md-checked"><div class="md-radio-container"><input type="radio" id="lt-agent" name="lt" value="agents" checked
+  style="position:absolute;opacity:0;width:0;height:0"></div><label for="lt-agent" class="md-radio-label">Tax Agent</label></div>
+<div class="md-radio"><div class="md-radio-container"><input type="radio" id="lt-payer" name="lt" value="payers" style="position:absolute;opacity:0;width:0;height:0"></div>
+<label for="lt-payer" class="md-radio-label">Taxpayer</label></div>`;
+const LOGIN_PAGE = (api: string, chooser = false) => `<!doctype html><html><head><title>e-Tax | LIRS</title></head><body><div id="app">
+<form id="f">${chooser ? CHOOSER : ''}<input type="text" placeholder="There should be a prefix 'N-' or 'C-'" id="identifier"><input type="password" id="password">
 <button type="submit" class="md-button md-success">Login</button></form><div id="msg"></div></div>
 <script>
 let token = '';
@@ -84,7 +89,8 @@ document.cookie = '_csrf=;';
 setTimeout(() => fetch('${api}get_csrf').then(r => r.json()).then(j => { token = j.csrfToken; }), 300);
 document.getElementById('f').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const r = await fetch('${api}auth/local/payers/authenticate', { method: 'POST', credentials: 'include',
+  const lt = document.querySelector('input[name="lt"]:checked');
+  const r = await fetch('${api}auth/local/' + (lt ? lt.value : 'payers') + '/authenticate', { method: 'POST', credentials: 'include',
     headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'x-csrf-token': token },
     body: JSON.stringify({ method: 'POST', body: { identifier: document.getElementById('identifier').value.trim(), password: document.getElementById('password').value.trim() } }) });
   const j = await r.json();
@@ -167,6 +173,7 @@ export function startMock(opts: { etaxPort?: number; flwPort?: number } = {}) {
     let w: any = null, mp: ReturnType<typeof multipart> = null;
     if (type.startsWith('multipart/form-data')) mp = multipart(raw, type);
     else { try { w = JSON.parse(raw.toString('utf8')); } catch { return err(res, 'INVALID_INPUT', 'Invalid JSON'); } }
+    if (resource === 'auth/local/agents/authenticate') return err(res, 'INVALID_CRED', 'Invalid credentials provided. Please retry');
     if (resource === 'auth/local/payers/authenticate') {
       const tokenOk = ck._csrf && st.csrf.get(ck._csrf) === req.headers['x-csrf-token'];
       if (!tokenOk) return err(res, 'INVALID_INPUT', 'invalid csrf token');
@@ -350,7 +357,7 @@ export function startMock(opts: { etaxPort?: number; flwPort?: number } = {}) {
       if (p === '/__pay' && req.method === 'POST') { const b = JSON.parse((await bodyOf(req)).toString('utf8')); const inv = st.invoices.get(b.reference); if (inv) inv.status = 'paid'; return ok(res, { ok: !!inv }); }
       if (p === '/__state') return ok(res, { logins: st.logins, calls: st.calls, returns: st.returns, docs: st.docs, relations: st.relations, links: st.links, bills: st.bills, charges: st.charges, invoices: [...st.invoices.values()], sessions: st.sessions.size });
       if (p.startsWith('/api/v1/')) return await api(req, res, decodeURIComponent(p.slice(8)) + (url.search && p.includes('revenues') ? url.search : ''));
-      if (p === '/login') return html(res, LOGIN_PAGE('/api/v1/'));
+      if (p === '/login') return html(res, LOGIN_PAGE('/api/v1/', !!st.faults.chooser));
       if (p === '/js/google-analytics.js') { res.writeHead(200, { 'Content-Type': 'application/javascript' }); return res.end('window.dataLayer = window.dataLayer || [];'); }
       if (p.startsWith('/user/')) return html(res, '<h1>Profile</h1>');
       if (p === '/tax-confirm' || p.startsWith('/api/')) return await lasg(req, res, url);

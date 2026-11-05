@@ -10,7 +10,7 @@ import { store } from '../lib/pwa';
 import { useAttention, useInbox } from '../lib/api';
 import { useAdminMe } from '../admin/api';
 import { usePracticesMine } from '../practice/api';
-import { cap, useWords } from '../lib/wording';
+import { cap, useMode, useWords } from '../lib/wording';
 import { useVatRate } from '../lib/vat';
 import { INCOME_TAX_LABEL, incomeTaxKind } from '../lib/tax';
 
@@ -136,6 +136,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
   const staff = useAdminMe(menu).data?.staff === true;
   const practices = (usePracticesMine(menu).data?.practices.length || 0) > 0;
   const w = useWords();
+  const mode = useMode();
   const populated = (inv?.items.length ?? 0) > 0;
   const current = memberships.find((m) => m.org_id === orgId);
   const p = loc.pathname;
@@ -181,7 +182,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
           subs={w.has_stock
             ? [['/sell/till', 'Till'], ['/sell/sales', `${cap(w.sales)} & invoices`, n('invoices_overdue')], ['/sell/customers', cap(w.customers)], ['/sell/orders', 'Orders & deliveries', n('orders_to_confirm')],
               ['/sell/price-lists', 'Price lists'], ['/sell/shop', 'Online shop']]
-            : [['/sell/sales', 'Invoices', n('invoices_overdue')], ['/sell/customers', cap(w.customers)], ['/sell/price-lists', 'Price lists']]} />
+            : [...(mode.walkIn ? [['/sell/till', 'Till'] as [string, string]] : []), ['/sell/sales', 'Invoices', n('invoices_overdue')], ['/sell/customers', cap(w.customers)], ['/sell/price-lists', 'Price lists']]} />
         <Group to="/payments" label="Payments" icon="card" active={p.startsWith('/payments')} onClose={onClose} rail={rail} drawer={drawer} show={can(inv, 'record_sales') || money}
           subs={[['/payments', 'Wallet & payments', Number(ib?.payouts_to_approve || 0) + n('tax_wallet')]]} />
         <Group to="/purchases/bills" label="Purchases" icon="file" active={p.startsWith('/purchases')} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'approve_pos')}

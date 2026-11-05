@@ -11,7 +11,7 @@ const SECRET = 'test-secret-0123456789abcdefghijklmnopqrstuvwxyz';
 const PASSWORD = 'Pa55-word!quiet';
 let mock: Awaited<ReturnType<typeof startMock>>;
 let st: State;
-let counta: { url: string; close: () => void; jobs: any[]; reports: any[]; files: Map<string, Buffer>; badSig: number };
+let counta: { url: string; close: () => void; jobs: any[]; reports: any[]; files: Map<string, Buffer>; badSig: number; busy: { next: number; report: number } };
 let runner: typeof import('../src/runner.js');
 let sign: typeof import('../src/sign.js');
 
@@ -23,6 +23,8 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 
 function startCounta() {
   const jobs: any[] = [], reports: any[] = [], files = new Map<string, Buffer>();
+  // Counta busy for a moment: the next few claims or reports are answered with an error, as a cancelled statement is.
+  const busy = { next: 0, report: 0 };
   let badSig = 0;
   const srv = createServer(async (req, res) => {
     const chunks: Buffer[] = []; for await (const c of req) chunks.push(c as Buffer);
@@ -32,6 +34,8 @@ function startCounta() {
     if (!sign.verify(raw, req.headers['x-counta-signature'] as string, SECRET)) { badSig++; res.writeHead(401); return res.end('{"ok":false,"error":"Bad signature."}'); }
     const b = JSON.parse(raw || '{}');
     res.setHeader('Content-Type', 'application/json');
+    if (url.pathname === '/lirs/next' && busy.next > 0) { busy.next--; res.writeHead(422); return res.end('{"ok":false,"error":"canceling statement due to statement timeout"}'); }
+    if (url.pathname === '/lirs/report' && busy.report > 0) { busy.report--; res.writeHead(422); return res.end('{"ok":false,"error":"canceling statement due to statement timeout"}'); }
     if (url.pathname === '/lirs/next') {
       const j = jobs.find((x) => x.status === 'queued');
       if (!j) return res.end(JSON.stringify({ ok: true, job: null }));
@@ -53,7 +57,7 @@ function startCounta() {
     res.writeHead(404); res.end('{}');
   });
   return new Promise<typeof counta>((resolve) => srv.listen(0, '127.0.0.1', () => {
-    const c = { url: `http://127.0.0.1:${(srv.address() as any).port}`, close: () => srv.close(), jobs, reports, files, get badSig() { return badSig; } } as any;
+    const c = { url: `http://127.0.0.1:${(srv.address() as any).port}`, close: () => srv.close(), jobs, reports, files, busy, get badSig() { return badSig; } } as any;
     resolve(c);
   }));
 }
@@ -100,7 +104,8 @@ before(async () => {
   st = mock.state;
   sign = await import('../src/sign.js');
   counta = await startCounta();
-  Object.assign(process.env, { COUNTA_BOT_URL: `${counta.url}/lirs`, LIRS_BOT_SECRET: SECRET, ETAX_BASE: mock.etaxUrl, LASG_BASE: mock.etaxUrl, ETAX_GAP_MS: '1', NAV_TIMEOUT_MS: '15000' });
+  Object.assign(process.env, { COUNTA_BOT_URL: `${counta.url}/lirs`, LIRS_BOT_SECRET: SECRET, ETAX_BASE: mock.etaxUrl, LASG_BASE: mock.etaxUrl, ETAX_GAP_MS: '1', NAV_TIMEOUT_MS: '15000',
+    COUNTA_RETRY_MS: '50' });
   runner = await import('../src/runner.js');
   st.accounts.push({ payerId: 'N-16000001', password: PASSWORD, tp: 9550001, ind: 10620001, first: 'Ada', last: 'Obi', office: 501 });
   st.accounts.push({ payerId: 'N-16000002', password: 'other-pass-1', tp: 9550002, ind: 10620002, first: 'Bayo', last: 'Ade', office: 502 });
@@ -302,7 +307,32 @@ test('a login e-Tax refuses is marked as not working, and not tried again', asyn
   assert.equal(j.status, 'failed'); assert.equal(j.retry, false);
   const l = reportsOf(j).find((x) => x.login);
   assert.equal(l.login, 'failed'); assert.match(l.login_message, /Invalid Payer ID or password/);
+  // One report carries both, so the login is never left showing "checking" when one of two reports is lost.
+  assert.equal(reportsOf(j).filter((x) => x.login).length, 1); assert.equal(l.failed, true); assert.equal(l.retry, false);
   assert.ok(!JSON.stringify(counta.reports).includes('not-the-password'));
+});
+
+test('Counta busy for a moment: the claim and the reports are tried again, and the result arrives', async () => {
+  const j = queue('check', checkCtx({ payer_id: 'N-16000002', password: 'other-pass-1' }, 'Bayo Ade'));
+  counta.busy.next = 1;
+  const before = st.logins;
+  await run();
+  assert.equal(j.status, 'done', j.error);
+  const k = queue('check', checkCtx({ payer_id: 'N-16000002', password: 'not-the-password' }, 'Bayo Ade'));
+  counta.busy.report = 2;
+  await run();
+  assert.equal(k.status, 'failed'); assert.equal(reportsOf(k).find((x) => x.failed).login, 'failed');
+  assert.equal(st.logins, before + 1, 'the refused password is tried once');
+});
+
+test('e-Tax asks which kind of login it is: the bot chooses Taxpayer', async () => {
+  st.faults.chooser = true;
+  try {
+    const j = queue('check', checkCtx({ payer_id: 'N-16000002', password: 'other-pass-1' }, 'Bayo Ade'));
+    await run();
+    assert.equal(j.status, 'done', j.error);
+    assert.equal(reportsOf(j).find((x) => x.login).login, 'verified');
+  } finally { st.faults.chooser = false; }
 });
 
 test('the door: only signed calls start a tick', async () => {

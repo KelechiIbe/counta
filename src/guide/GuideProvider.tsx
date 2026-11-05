@@ -16,6 +16,7 @@ import { assistantTools } from './assistantTools';
 import { clearPending, currentPending, runPending, voiceActions } from './actions';
 import { chime, chooseHandsFree, handsFreeChosen, micBusyNow, onMicChange, WakeListener, wakeSupported, type WakeState } from './handsFree';
 import type { Inventory } from '../lib/types';
+import { modeFor } from '../lib/wording';
 import { checkNin } from '../pages/onboarding/Identity';
 
 export type Line = { role: 'agent' | 'user'; text: string; at: number };
@@ -57,8 +58,8 @@ const Ctx = createContext<GuideCtx>(null as any);
 export const useGuideTalk = () => useContext(Ctx);
 
 const ONBOARD: Record<string, OnboardScreen> = { questions: 'questions', summary: 'summary', score: 'score', identity: 'identity', document: 'document' };
-const ROUTES: Record<string, string> = { home: '/home', payments: '/payments', sell: '/sell/till', banking: '/accounting/banking', statements: '/accounting/banking',
-  products: '/inventory/items', team: '/inventory/locations' };
+const ROUTES: Record<string, string> = { home: '/home', payments: '/payments', sell: '/sell/till', invoice: '/sell/sales?new=invoice', banking: '/accounting/banking',
+  statements: '/accounting/banking', products: '/inventory/items', team: '/inventory/locations' };
 // Eleven digits in a row (spaces or dashes between groups allowed) are treated as an NIN.
 const looksLikeNin = (t: string) => /(^|\D)\d{11}(\D|$)/.test(String(t || '').replace(/(\d)[\s-]+(?=\d)/g, '$1'));
 const short = (o: unknown) => JSON.stringify(o, (_k, v) => (v === null || v === '' || (Array.isArray(v) && !v.length) ? undefined : v));
@@ -227,7 +228,14 @@ export function GuideProvider({ children }: { children: ReactNode }) {
       show_screen: safe(async ({ screen: s }) => {
         if (s === 'voice') { setVoicePicker(true); return 'The voice choices are on screen.'; }
         if (ONBOARD[s]) { goOnboard(ONBOARD[s]); return `Showing ${s}.`; }
-        if (ROUTES[s]) { if (!live.current.orgId) return { error: 'The business is not set up yet.' }; live.current.nav(ROUTES[s]); return `Showing ${s}.`; }
+        if (ROUTES[s]) {
+          if (!live.current.orgId) return { error: 'The business is not set up yet.' };
+          // A business with no till (services only, not a clinic, hotel or school) records its first sale by invoice.
+          const o = qc.getQueryData<Inventory>(['inv', org()])?.org;
+          const to = s === 'sell' && o && !modeFor(o).till ? 'invoice' : s;
+          if (to === 'products' && o && !modeFor(o).stock) return { error: 'This business sells services only, so it has no products to add.' };
+          live.current.nav(ROUTES[to]); return `Showing ${to === 'invoice' ? 'a new invoice' : to}.`;
+        }
         return { error: 'Unknown screen.' };
       }),
       get_account_number: safe(async () => {

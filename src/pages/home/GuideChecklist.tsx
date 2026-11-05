@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useInventory, useSession, useToast } from '../../state/session';
-import { guideConsent, guideMark, openWallet, STEP_TEXT, useGuide, type GuideStep } from '../../lib/onboard';
+import { guideConsent, guideMark, openWallet, stepText, useGuide, type GuideStep } from '../../lib/onboard';
+import { useMode } from '../../lib/wording';
 import { localPhone } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Spinner } from '../../components/ui';
@@ -28,6 +29,7 @@ export function GuideChecklist() {
   const [phone, setPhone] = useState<string>(() => localPhone((session?.user?.user_metadata as any)?.phone));
   const [askCall, setAskCall] = useState(false);
   const [showDone, setShowDone] = useState(false);
+  const mode = useMode();
   const gs = guide.data;
   if (!inv || inv.me.role !== 'owner' || inv.org.is_sample || !gs || gs.completed || gs.dismissed || gs.org?.id !== orgId) return null;
   const refresh = () => { void qc.invalidateQueries({ queryKey: ['guide'] }); void qc.invalidateQueries({ queryKey: ['compliance'] }); };
@@ -36,7 +38,7 @@ export function GuideChecklist() {
 
   async function act(s: GuideStep) {
     setErr(null);
-    const t = STEP_TEXT[s.id];
+    const t = stepText(s.id, mode);
     if (s.phase === 'profile') { nav(`/onboarding?org=${orgId}${s.id === 'cac_document' ? '&screen=document' : ''}`); return; }
     if (s.id === 'voice') { g.setVoicePicker(true); return; }
     if (s.id === 'account_number') {
@@ -86,7 +88,7 @@ export function GuideChecklist() {
         </div>
       )}
       {steps.filter((s) => showDone || !(s.done || s.skipped)).map((s) => {
-        const t = STEP_TEXT[s.id];
+        const t = stepText(s.id, mode);
         const isNext = gs.next === s.id;
         const finished = s.done || s.skipped;
         return (

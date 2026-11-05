@@ -23,7 +23,9 @@ const NOTICE: Record<string, string> = { sent: 'Supplier told', none: '', skippe
 
 export function useSupplierInvoices(filter: Filter = 'open', on = true) {
   const { orgId } = useSession();
-  return useQuery({ queryKey: ['supplier-invoices', orgId, filter], enabled: !!orgId && on, refetchInterval: 20_000, retry: 1,
+  // Every few seconds while one is being read, so it moves to "to review" soon after Counta has read it.
+  return useQuery({ queryKey: ['supplier-invoices', orgId, filter], enabled: !!orgId && on, retry: 1,
+    refetchInterval: (query) => (((query.state.data as any)?.rows || []).some((r: any) => r.status === 'reading') ? 4000 : 20_000),
     queryFn: () => rpc<any>('supplier_invoices_list', { p_org: orgId, p: { status: filter === 'all' ? null : filter } }) });
 }
 
@@ -127,6 +129,7 @@ function UploadButton() {
   const qc = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
   const [progress, setProgress] = useState<{ name: string; state: 'waiting' | 'reading' | 'done' | 'failed'; note?: string }[]>([]);
+  // Counta takes each file at once and reads it afterwards: the list shows it as being read until it is ready.
   const busy = progress.some((p) => p.state === 'waiting' || p.state === 'reading');
   async function go(files: File[]) {
     const ok = files.filter((f) => /^(application\/pdf|image\/(jpeg|png|webp))$/.test(f.type) && f.size <= 8 * 1024 * 1024);
@@ -147,7 +150,7 @@ function UploadButton() {
           const r = await ai<{ invoice: any }>('read_supplier_invoice', { org_id: orgId, path, file_name: f.name });
           if (r.ok === false) throw new Error(r.error || 'Could not read it.');
           const si = r.invoice || {};
-          mark(i, { state: 'done', note: si.status === 'failed' ? si.error : Number(si.blocks) ? `${si.number}: ${si.blocks} to fix before payment` : `${si.number}: read` });
+          mark(i, { state: 'done', note: si.status === 'reading' ? `${si.number}: received, being read` : si.status === 'failed' ? si.error : Number(si.blocks) ? `${si.number}: ${si.blocks} to fix before payment` : `${si.number}: read` });
         } catch (e) { mark(i, { state: 'failed', note: (e as Error).message }); }
         await qc.invalidateQueries({ queryKey: ['supplier-invoices'] });
       }
@@ -166,7 +169,7 @@ function UploadButton() {
             <div key={i} className="row" style={{ gap: 6, justifyContent: 'space-between' }}>
               <span className="ellipsis" style={{ minWidth: 0 }}>{p.name}</span>
               <span style={{ color: p.state === 'failed' ? '#B91C1C' : p.state === 'done' ? '#15803D' : '#6B7280', flex: 'none' }}>
-                {p.state === 'waiting' ? 'waiting' : p.state === 'reading' ? 'reading…' : p.note}</span>
+                {p.state === 'waiting' ? 'waiting' : p.state === 'reading' ? 'sending…' : p.note}</span>
             </div>
           ))}
           {!busy && <button className="btn btn-ghost btn-xs" onClick={() => setProgress([])}>Clear</button>}

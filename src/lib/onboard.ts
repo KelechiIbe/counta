@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { ai, cleanError, rpc, supabase } from './supabase';
 import { edge } from './api';
+import type { Mode } from './wording';
 
 // ---------------------------------------------------------------- types
 export interface Candidate { id: number | string; name: string; rc_number?: string; classification?: string; active?: boolean; registered_on?: string; address?: string; state?: string; city?: string }
@@ -75,16 +76,37 @@ export const FILING: { id: Filing; label: string }[] = [
 export const TAXES = [
   { id: 'vat', label: 'VAT returns', q: 'Do you file VAT returns?', hint: 'Monthly, by the 21st' },
   { id: 'wht', label: 'Withholding tax', q: 'Do you deduct and file withholding tax?', hint: 'When you pay for services, rent and contracts' },
-  { id: 'cit', label: 'Companies income tax', q: 'Do you file your income tax return?', hint: 'Once a year, within six months of your year end' },
+  { id: 'cit', label: 'Income tax', q: 'Do you file your income tax return?', hint: 'Once a year' },
 ] as const;
+type Tax = { id: 'vat' | 'wht' | 'cit'; label: string; q: string; hint: string };
+// How the business's profit is taxed: a company pays companies income tax; a business name (and a business not registered
+// yet) pays none, and its profit is taxed as its owners' personal income tax. The same rule as private.income_tax_kind.
+export type IncomeTax = 'company' | 'personal' | 'unknown';
+export function incomeTaxOf(b: Pick<Business, 'classification'> | null | undefined, source?: Kyc['source']): IncomeTax {
+  const c = String(b?.classification || '').toUpperCase();
+  if (c.startsWith('COMPANY')) return 'company';
+  if (c === 'BUSINESS_NAME' || c === 'LP' || source === 'manual') return 'personal';
+  return 'unknown';
+}
+// The three tax questions, the income tax one in the business's own terms.
+export function taxesFor(kind: IncomeTax): Tax[] {
+  return TAXES.map((t): Tax => t.id !== 'cit' ? t
+    : kind === 'company' ? { id: 'cit', label: 'Companies income tax', q: 'Do you file your companies income tax return?', hint: 'Once a year, within six months of your year end' }
+    : kind === 'personal' ? { id: 'cit', label: 'Personal income tax', q: "Do the owners file personal income tax returns on the business's profit?",
+        hint: "A business name pays no companies income tax. Its profit is taxed as its owners' income, with the state, by 31 March every year." }
+    : t);
+}
 // The onboarding questions in the order Martina asks them; the screen shows one at a time in the same order.
 export const QUESTION_ORDER = ['offering', 'category', 'revenue_band', 'receive_methods', 'pay_methods', 'reasons', 'examples', 'filing_vat', 'filing_wht', 'filing_cit'] as const;
 export type QuestionId = (typeof QUESTION_ORDER)[number];
+// The questions this business is asked: a business that sells services only is not asked for products it sells.
+export const questionsFor = (a: Partial<Answers>): QuestionId[] => QUESTION_ORDER.filter((q) => !(q === 'examples' && a.offering === 'services'));
 // Whether a question has its answer (the same rules as the database's list of what is missing).
 export function answered(id: string, a: Partial<Answers>): boolean {
   switch (id) {
     case 'offering': case 'category': case 'revenue_band': return Boolean((a as any)[id]);
-    case 'receive_methods': case 'pay_methods': case 'examples': return Boolean(((a as any)[id] || []).length);
+    case 'examples': return a.offering === 'services' || Boolean((a.examples || []).length);
+    case 'receive_methods': case 'pay_methods': return Boolean(((a as any)[id] || []).length);
     case 'reasons': return Boolean((a.reasons || []).length || String(a.reason_note || '').trim());
     case 'filing_vat': case 'filing_wht': case 'filing_cit': return Boolean(a.filing?.[id.slice(7) as 'vat' | 'wht' | 'cit']);
     default: return false;
@@ -92,7 +114,7 @@ export function answered(id: string, a: Partial<Answers>): boolean {
 }
 export const QUESTION_LABEL: Record<string, string> = {
   offering: 'Goods or services', category: 'Category', revenue_band: 'Yearly sales', receive_methods: 'How customers pay you', pay_methods: 'How you pay others',
-  reasons: 'Why Counta', examples: 'What you sell', filing_vat: 'VAT returns', filing_wht: 'Withholding tax', filing_cit: 'Companies income tax',
+  reasons: 'Why Counta', examples: 'What you sell', filing_vat: 'VAT returns', filing_wht: 'Withholding tax', filing_cit: 'Income tax',
 };
 export const STEP_TEXT: Record<string, { title: string; body: string; cta: string; to?: string }> = {
   find_business: { title: 'Find your business', body: 'On the CAC register, or tell us it is not registered yet.', cta: 'Find it', to: '/onboarding' },
@@ -107,6 +129,14 @@ export const STEP_TEXT: Record<string, { title: string; body: string; cta: strin
   products: { title: 'Add your products', body: 'Type a few, scan barcodes, or import a spreadsheet.', cta: 'Add', to: '/inventory/items' },
   team: { title: 'Invite your team', body: 'Each person sees only what their role allows.', cta: 'Invite', to: '/inventory/locations' },
 };
+// A step in the business's own terms: a professional services firm issues its first invoice; a services business without
+// walk-in customers records its first sale by invoice or receipt, with no till.
+export function stepText(id: string, mode: Mode): { title: string; body: string; cta: string; to?: string } | undefined {
+  if (id === 'first_sale' && mode.professional) return { title: 'Issue your first invoice', body: 'To a client, for work you have done. Counta posts it to your books.', cta: 'New invoice', to: '/sell/sales?new=invoice' };
+  if (id === 'first_sale' && !mode.till) return { title: 'Record your first sale', body: 'By invoice or receipt, or just by talking.', cta: 'New invoice', to: '/sell/sales?new=invoice' };
+  if (id === 'first_sale' && mode.walkIn) return { title: 'Record your first sale', body: 'At the till, by invoice, or just by talking.', cta: 'Open the till', to: '/sell/till' };
+  return STEP_TEXT[id];
+}
 
 // ---------------------------------------------------------------- reads
 export function useKyc(orgId?: string | null, enabled = true) {

@@ -42,6 +42,7 @@ export interface Org {
   audit_exempt?: boolean; bankers?: string | null; solicitors?: string | null; registered_office?: string | null; incorporation_date?: string | null;
   share_info?: Record<string, any>; fs_narrative?: Record<string, any>;
   offering?: 'goods' | 'services' | 'both' | null; category_id?: string | null; identity_status?: string; payments_open?: boolean;
+  professional_services?: boolean; legal_form?: string | null; revenue_account?: string | null;
 }
 export interface Location { id: string; org_id: string; name: string; code: string; address: string | null; is_main: boolean; state?: string | null; lga?: string | null;
   city?: string | null; postcode?: string | null; }

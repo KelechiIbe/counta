@@ -62,7 +62,8 @@ export async function tick(opts: { budgetMs?: number; maxJobs?: number; browser?
           if (!c.login?.payer_id || !c.login?.password) throw new LoginRefused('Counta has no e-Tax login for this person.');
           const et = await Etax.signIn(browser!, String(c.login.payer_id), String(c.login.password));
           session = { key, et };
-          await counta.report(job.id, { step: 'signed_in', note: 'Signed in to e-Tax as the taxpayer.', login: 'verified' });
+          await counta.reportSure(job.id, { step: 'signed_in', note: 'Signed in to e-Tax as the taxpayer.', login: 'verified' })
+            .catch((e) => log({ job: job.id, warn: `sign-in report: ${e.message}` }));
           return et;
         };
         const work = async () => {
@@ -89,17 +90,16 @@ export async function tick(opts: { budgetMs?: number; maxJobs?: number; browser?
             out = await withTimeout(work(), cfg.jobTimeoutMs, 'The job');
           } else throw e;
         }
-        await counta.report(job.id, { done: true, result: out.result, ...(out.tax_station ? { tax_station: out.tax_station } : {}) });
+        await counta.reportSure(job.id, { done: true, result: out.result, ...(out.tax_station ? { tax_station: out.tax_station } : {}) });
         ran.push({ job_id: job.id, kind: job.kind, status: 'done' });
         log({ job: job.id, kind: job.kind, done: true });
       } catch (e) {
         const msg = say((e as Error).message || 'Something went wrong on e-Tax.').slice(0, 1500);
         const retry = retryable(e);
-        if (e instanceof LoginRefused) {
-          await counta.report(job.id, { login: 'failed', login_message: msg }).catch(() => {});
-        }
         if (session && (e instanceof SessionLost || !retry)) { await end(); }
-        await counta.report(job.id, { failed: true, error: msg, retry }).catch((x) => log({ job: job.id, warn: `fail report: ${x.message}` }));
+        // One report with the outcome, and for a refused sign-in the login's state with it, so neither arrives alone.
+        await counta.reportSure(job.id, { failed: true, error: msg, retry, ...(e instanceof LoginRefused ? { login: 'failed', login_message: msg } : {}) })
+          .catch((x) => log({ job: job.id, warn: `fail report: ${x.message}` }));
         ran.push({ job_id: job.id, kind: job.kind, status: 'failed', retry, error: msg });
         log({ job: job.id, kind: job.kind, failed: msg, retry });
       }

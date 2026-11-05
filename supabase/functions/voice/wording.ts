@@ -33,17 +33,30 @@ export function wordsFor(o: { offering?: string | null; category_id?: string | n
   return { ...BASE[kind], ...(BY_CATEGORY[String(o?.category_id || '')] || {}), kind };
 }
 
-// What Martina is told about the business's words.
-export function wordingNote(o: { offering?: string | null; category_id?: string | null; category_label?: string | null } | null | undefined) {
+// What Martina is told about the business: its words, how its profit is taxed, whether it is a professional services firm,
+// and how it records its sales. Clinics, hotels and schools keep the till; other businesses that sell services only invoice.
+export type BusinessFacts = { offering?: string | null; category_id?: string | null; category_label?: string | null;
+  income_tax?: 'company' | 'personal' | 'exempt' | null; professional?: boolean | null };
+const WALK_IN = ['health', 'hospitality', 'education'];
+export function wordingNote(o: BusinessFacts | null | undefined) {
+  const tax = !o?.income_tax ? ''
+    : o.income_tax === 'company' ? 'It is a company: its income tax is companies income tax (CIT), with a return every year.'
+    : o.income_tax === 'personal' ? 'It is a business name, not a company: it pays no companies income tax. Its profit is taxed as the owners\' personal income tax'
+      + ' (each partner on their share), filed with the state by 31 March every year. Never talk to it about companies income tax or a CIT return.'
+    : 'It is a not-for-profit body: its income is exempt from income tax unless it trades.';
+  const prof = o?.professional ? 'It is a professional services firm, so it is never a small company for tax: it charges VAT on its fees whatever its size.' : '';
   if (!o?.offering) {
-    return 'We do not yet know whether the business sells goods, services or both. Use neutral words ("what you sell or the services you offer", '
-      + '"sales or revenue", "customers or clients") until you find out.';
+    return ['We do not yet know whether the business sells goods, services or both. Use neutral words ("what you sell or the services you offer", '
+      + '"sales or revenue", "customers or clients") until you find out.', tax, prof].filter(Boolean).join(' ');
   }
   const w = wordsFor(o);
   const what = w.kind === 'goods' ? 'sells goods' : w.kind === 'services' ? 'sells services only, with no stock' : 'sells both goods and services';
+  const till = w.kind !== 'services' ? '' : WALK_IN.includes(String(o.category_id || '')) ? 'It serves walk-in customers, so it can use the till as well as invoices.'
+    : o.professional ? 'It issues invoices for its work and has no till.' : 'It records its sales by invoice or receipt and has no till.';
   return [
     `This business ${what}${o.category_label ? ` (${o.category_label})` : ''}. Use its words: say "${w.revenue}" for its income, "${w.customers}" for the people`
       + ` who pay it, "${w.items}" for what it sells, and "${w.sales}" for the documents of what it ${w.sell}s.`,
-    w.has_stock ? '' : 'Never ask about stock, products sold or "what did you sell"; ask about work done, invoices raised and revenue.',
+    w.has_stock ? '' : 'Never ask about stock, products sold, scanning or "what did you sell"; ask about work done, invoices raised and revenue.',
+    till, tax, prof,
   ].filter(Boolean).join(' ');
 }
