@@ -42,7 +42,8 @@ export default function InvoicePortal() {
   const org = { name: p.business, logo_path: p.logo_path };
   if (!p.open) return <Frame org={org}><Alert kind="yellow" icon="info">{p.business} is not taking invoices on this link just now. Send your invoice to them directly.</Alert></Frame>;
   if (done) {
-    const where = done.told === 'email' ? `by email at ${who.email.trim()}` : `on WhatsApp at ${who.phone.trim()}`;
+    // Where the supplier hears back: the email they gave, else their WhatsApp number (as private.si_contact chooses).
+    const where = who.email.trim() ? `by email at ${who.email.trim()}` : `on WhatsApp at ${who.phone.trim()}`;
     return (
       <Frame org={org}>
         <div className="card card-pad stack" style={{ gap: 12 }} data-testid="portal-received">
