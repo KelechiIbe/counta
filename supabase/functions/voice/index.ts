@@ -31,7 +31,7 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 import { FOLLOWUP_DATA, FOLLOWUP_PROMPT, firstMessage, GUIDE_PROMPT, GUIDE_TOOLS, stepLabel, TALK, toolConfig, type ToolDef, whatWeKnow } from './guide.ts';
 import { ASSISTANT_PROMPT, ASSISTANT_TOOLS, assistantFirst, handsFreeFirst, PERM_WORDS } from './assistant.ts';
-import { wordingNote, wordsFor } from './wording.ts';
+import { wordingNote, wordsFor, type BusinessFacts } from './wording.ts';
 import { cacheable, phrase, shortName } from './phrases.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -660,13 +660,17 @@ async function startToken(agentId: string, userId: string, textOnly: boolean) {
   return t;
 }
 
-// The business's words and kind, from what it recorded (or what the person answered in onboarding so far).
-async function businessWords(orgId: string | null, answers?: any) {
-  const { data: o } = orgId ? await admin.from('orgs').select('offering, category_id').eq('id', orgId).maybeSingle() : { data: null };
+// The business's words, kind and tax position, from what it recorded (or, in onboarding, what CAC says and what the person
+// has answered so far). A company pays companies income tax; a business name's profit is its owners' personal income tax.
+async function businessWords(orgId: string | null, answers?: any, kyc?: any): Promise<BusinessFacts> {
+  const { data: o } = orgId ? await admin.from('orgs').select('offering, category_id, legal_form, professional_services').eq('id', orgId).maybeSingle() : { data: null };
   const offering = o?.offering || answers?.offering || null;
   const category_id = o?.category_id || answers?.category || null;
   const { data: c } = category_id ? await admin.from('business_categories').select('label').eq('id', category_id).maybeSingle() : { data: null };
-  return { offering, category_id, category_label: c?.label || null };
+  const cls = String(kyc?.business?.classification || '').toUpperCase();
+  const form = o?.legal_form || (cls.startsWith('COMPANY') ? 'company' : cls === 'BUSINESS_NAME' || cls === 'LP' || kyc?.source === 'manual' ? 'enterprise' : cls === 'IT' ? 'ngo' : null);
+  const income_tax = !form ? null : form === 'company' ? 'company' : form === 'ngo' ? 'exempt' : 'personal';
+  return { offering, category_id, category_label: c?.label || null, income_tax, professional: !!o?.professional_services || category_id === 'professional' };
 }
 
 async function guideToken(sb: SupabaseClient, userId: string, textOnly = false, orgId: string | null = null) {
@@ -686,7 +690,7 @@ async function guideToken(sb: SupabaseClient, userId: string, textOnly = false, 
   const voice = g?.org?.voice_id && VOICE_ID.test(g.org.voice_id) ? g.org.voice_id : await defaultVoice();
   const next = String(g?.next || '');
   const phase = (g?.steps || []).find((s: any) => s.id === next)?.phase;
-  const bw = await businessWords(g?.org?.id || null, k?.answers);
+  const bw = await businessWords(g?.org?.id || null, k?.answers, k);
   const dynamic_variables = {
     first_name: String(g?.first_name || '').slice(0, 40) || 'friend',
     business_name: String(g?.org?.name || k?.business?.name || 'not found yet').slice(0, 120),

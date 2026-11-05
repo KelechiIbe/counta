@@ -8,9 +8,9 @@ import { useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { localPhone } from '../../lib/format';
 import {
-  answered, cacSearch, cacSelect, cacStatusReport, classLabel, FILING, guideLanguage, guideMark, kycAnswer, kycManual, kycSubmit, longDate, naira, OFFERING, PAY, QUESTION_LABEL,
-  QUESTION_ORDER, readCacDocument, REASONS, RECEIVE, REVENUE, TAXES, titleCase, uploadCacDocument, useCategories, useGuide, useKyc, useScore, yearsSince, type Answers, type Candidate,
-  type Kyc, type Score,
+  answered, cacSearch, cacSelect, cacStatusReport, classLabel, FILING, guideLanguage, guideMark, incomeTaxOf, kycAnswer, kycManual, kycSubmit, longDate, naira, OFFERING, PAY,
+  QUESTION_LABEL, questionsFor, readCacDocument, REASONS, RECEIVE, REVENUE, taxesFor, titleCase, uploadCacDocument, useCategories, useGuide, useKyc, useScore, yearsSince,
+  type Answers, type Candidate, type IncomeTax, type Kyc, type Score,
 } from '../../lib/onboard';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Spinner } from '../../components/ui';
@@ -18,6 +18,7 @@ import { Orb } from '../../guide/GuideDock';
 import { useGuideTalk, type OnboardScreen } from '../../guide/GuideProvider';
 import { IdentityPanel, useIdentity } from './Identity';
 import { usePracticesMine } from '../../practice/api';
+import { wordsFor } from '../../lib/wording';
 import '../../guide/guide.css';
 
 const ORDER: OnboardScreen[] = ['welcome', 'find', 'found', 'questions', 'summary', 'score', 'identity', 'document', 'done'];
@@ -378,15 +379,23 @@ function Q({ id, title, hint, done, filled, children }: { id: string; title: str
   );
 }
 
-// Candid tips, as the answers come in.
-function adviceFor(a: Answers): string[] {
+// Candid tips, as the answers come in, for the business as it is: a professional services firm is never a small company,
+// and a business name pays personal income tax through its owners, not companies income tax.
+function adviceFor(a: Answers, itax: IncomeTax): string[] {
   const out: string[] = [];
   const rec = a.receive_methods || [];
+  const professional = a.category === 'professional';
+  const small = a.revenue_band && a.revenue_band !== 'over_100m';
   if (rec.length === 1 && rec[0] === 'cash') out.push('Cash only? Transfers leave a trail that banks and lenders like. Your own Counta account number fixes that in a minute.');
-  if (a.revenue_band && a.revenue_band !== 'over_100m') out.push('Up to ₦100 million a year (and not a professional services firm) makes you a small company: no companies income tax and no VAT to charge. A company still files its return every year, so we\'ll keep that easy.');
+  if (professional && a.revenue_band) out.push('A professional services firm is never a small company for tax, whatever its size. It charges VAT on its fees and files a VAT return every month by the 21st, even a nil one. Counta builds it from your invoices and bills.');
+  else if (small && itax === 'company') out.push('Up to ₦100 million a year (and not a professional services firm) makes you a small company: no companies income tax and no VAT to charge. A company still files its return every year, so we\'ll keep that easy.');
+  else if (small && itax === 'personal') out.push('Up to ₦100 million a year (and not a professional services firm), you have no VAT to charge.');
+  else if (small) out.push('Up to ₦100 million a year (and not a professional services firm), you have no VAT to charge, and a company in that band pays no companies income tax.');
+  if (itax === 'personal' && a.revenue_band) out.push('A business name pays no companies income tax. Its profit is taxed as the owners\' personal income tax (each partner on their share), filed with the state by 31 March. Counta prepares the returns from your books.');
   if (a.revenue_band === 'over_100m' && a.filing?.vat && a.filing.vat !== 'always') out.push('Above ₦100 million, VAT is not optional: a return every month by the 21st, even when it\'s nil. Counta builds it from your sales and bills.');
   if (a.filing?.wht === 'never' && (a.pay_methods || []).length) out.push('If you pay for services, rent or contracts, withholding tax is usually due. Counta works it out on each bill so you never guess.');
-  if (a.filing?.cit === 'never' && a.revenue_band) out.push('Missed CIT returns attract penalties, even when no tax is due. Counta puts your return together from the books.');
+  if (a.filing?.cit === 'never' && a.revenue_band) out.push(itax === 'personal' ? 'Missed personal income tax returns attract penalties from the state, even when little tax is due. Counta puts the returns together from the books.'
+    : 'Missed income tax returns attract penalties, even when no tax is due. Counta puts your return together from the books.');
   if ((a.reasons || []).includes('loans')) out.push('Lenders want 6 to 12 months of clean books and bank records. Starting today is the right move.');
   return out.slice(0, 2);
 }
@@ -405,21 +414,29 @@ function Questions({ k, live, onNext }: { k: Kyc; live: boolean; onNext: () => v
   const [tag, setTag] = useState('');
   const [note, setNote] = useState(k.answers?.reason_note || '');
   useEffect(() => { setA(k.answers || {}); }, [k.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
-  const order = QUESTION_ORDER as readonly string[];
+  // The questions for this business: one that sells services only is not asked what products it sells.
+  const order: readonly string[] = questionsFor(a);
   const aRef = useRef(a);
   aRef.current = a;
   // The next question still open after this one (wrapping round), never this one.
   const nextOpen = (after: string | null, ans: Answers = aRef.current) => {
-    const i = after ? order.indexOf(after) : -1;
-    for (const q of [...order.slice(i + 1), ...order.slice(0, Math.max(i, 0))]) if (q !== after && !answered(q, ans)) return q;
+    const ord: readonly string[] = questionsFor(ans);
+    const i = after ? ord.indexOf(after) : -1;
+    for (const q of [...ord.slice(i + 1), ...ord.slice(0, Math.max(i, 0))]) if (q !== after && !answered(q, ans)) return q;
     return null;
   };
-  const [cur, setCurState] = useState<string | null>(() => (g.question && order.includes(g.question.id) ? g.question.id
-    : order.find((q) => !answered(q, k.answers || {})) || null));
+  const [cur, setCurState] = useState<string | null>(() => {
+    const ord: readonly string[] = questionsFor(k.answers || {});
+    return g.question && ord.includes(g.question.id) ? g.question.id : ord.find((q) => !answered(q, k.answers || {})) || null;
+  });
   // When the question on screen last changed: an answer Martina saved before then does not move it on.
   const curAt = useRef(Date.now());
   const setCur = (q: string | null) => { curAt.current = Date.now(); setCurState(q); };
   useEffect(() => { if (g.question && order.includes(g.question.id)) setCur(g.question.id); }, [g.question?.at]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The income tax question in the business's own terms (companies income tax, or the owners' personal income tax).
+  const itax = incomeTaxOf(k.business, k.source);
+  const taxes = taxesFor(itax);
+  const labelOf = (q: string) => (q === 'filing_cit' ? taxes[2].label : QUESTION_LABEL[q] || q);
   // An answer Martina saved by voice for the question on screen moves it on, once the answer has reached the screen (the
   // marks can come before the answers, and she may fill several at once).
   const f = g.filled;
@@ -471,17 +488,17 @@ function Questions({ k, live, onNext }: { k: Kyc; live: boolean; onNext: () => v
     const i = cur ? order.indexOf(cur) : order.length;
     if (i <= 0) return;
     const q = order[i - 1];
-    setCur(q); g.notify(`On screen, the person went back to the question about ${QUESTION_LABEL[q].toLowerCase()}.`);
+    setCur(q); g.notify(`On screen, the person went back to the question about ${labelOf(q).toLowerCase()}.`);
   };
   const list = cats.data || [];
   const fit = list.filter((c) => !a.offering || a.offering === 'both' || c.kind === a.offering || c.kind === 'both');
   const suggested = w?.category_guess || null;
   const shown = (all ? fit : fit.slice(0, 10)).sort((x, y) => Number(y.id === suggested) - Number(x.id === suggested));
   if (a.category && !shown.some((c) => c.id === a.category)) { const c = list.find((x) => x.id === a.category); if (c) shown.unshift(c); }
-  const tips = adviceFor(a);
+  const tips = adviceFor(a, itax);
   const left = order.filter((q) => !answered(q, a)).length;
   const idx = cur ? order.indexOf(cur) : -1;
-  const tax = cur?.startsWith('filing_') ? TAXES.find((t) => 'filing_' + t.id === cur) : null;
+  const tax = cur?.startsWith('filing_') ? taxes.find((t) => 'filing_' + t.id === cur) : null;
   const question = (() => {
     switch (cur) {
       case 'offering': return (
@@ -517,7 +534,7 @@ function Questions({ k, live, onNext }: { k: Kyc; live: boolean; onNext: () => v
           </div>
         </Q>);
       case 'receive_methods': return (
-        <Q id="receive_methods" title="How do customers pay you today?" hint="Pick all that apply, then Done." done={!!a.receive_methods?.length} filled={f.receive_methods}>
+        <Q id="receive_methods" title={`How do ${wordsFor({ offering: a.offering, category_id: a.category }).customers} pay you today?`} hint="Pick all that apply, then Done." done={!!a.receive_methods?.length} filled={f.receive_methods}>
           <div className="ob-chips">{RECEIVE.map((m) => <button key={m.id} className={'ob-chip' + (a.receive_methods?.includes(m.id) ? ' on' : '')} onClick={() => toggle('receive_methods', m.id)}>{m.label}</button>)}</div>
         </Q>);
       case 'pay_methods': return (
@@ -563,9 +580,9 @@ function Questions({ k, live, onNext }: { k: Kyc; live: boolean; onNext: () => v
           <span className="faint" style={{ fontSize: 12.5 }} data-testid="question-count">{cur ? `Question ${idx + 1} of ${order.length}` : `All ${order.length} answered`}</span>
           <div className="ob-dots" role="list" aria-label="Questions">
             {order.map((q) => (
-              <button key={q} role="listitem" aria-label={`${QUESTION_LABEL[q]}${answered(q, a) ? ', answered' : ''}`} aria-current={q === cur ? 'step' : undefined}
+              <button key={q} role="listitem" aria-label={`${labelOf(q)}${answered(q, a) ? ', answered' : ''}`} aria-current={q === cur ? 'step' : undefined}
                 className={'ob-dot' + (answered(q, a) ? ' done' : '') + (q === cur ? ' cur' : '')}
-                onClick={() => { setCur(q); if (q !== cur) g.notify(`On screen, the person opened the question about ${QUESTION_LABEL[q].toLowerCase()}.`); }} />
+                onClick={() => { setCur(q); if (q !== cur) g.notify(`On screen, the person opened the question about ${labelOf(q).toLowerCase()}.`); }} />
             ))}
           </div>
         </div>
@@ -609,6 +626,7 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const a = k.answers || {};
+  const taxes = taxesFor(incomeTaxOf(k.business, k.source));
   const lbl = (list: readonly { id: string; label: string }[], ids?: string[] | string) => (Array.isArray(ids) ? ids : ids ? [ids] : []).map((i) => list.find((x) => x.id === i)?.label || i).join(', ');
   const rows: [string, string, string][] = [
     ['offering', QUESTION_LABEL.offering, lbl(OFFERING, a.offering)],
@@ -617,8 +635,8 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
     ['receive_methods', QUESTION_LABEL.receive_methods, lbl(RECEIVE, a.receive_methods)],
     ['pay_methods', QUESTION_LABEL.pay_methods, lbl(PAY, a.pay_methods)],
     ['reasons', QUESTION_LABEL.reasons, [lbl(REASONS, a.reasons), a.reason_note].filter(Boolean).join('. ')],
-    ['examples', QUESTION_LABEL.examples, (a.examples || []).join(', ')],
-    ...TAXES.map((t) => ['filing_' + t.id, t.label, lbl(FILING, a.filing?.[t.id])] as [string, string, string]),
+    ...(a.offering === 'services' ? [] : [['examples', QUESTION_LABEL.examples, (a.examples || []).join(', ')] as [string, string, string]]),
+    ...taxes.map((t) => ['filing_' + t.id, t.label, lbl(FILING, a.filing?.[t.id])] as [string, string, string]),
   ];
   async function submit() {
     setErr(null); setBusy(true);
@@ -633,7 +651,7 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
       onDone(r.org_id);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
-  const jump = (id: string) => { g.showQuestion(id); g.notify(`On screen, the person is changing their answer about ${(QUESTION_LABEL[id] || id).toLowerCase()}.`); onEdit(); };
+  const jump = (id: string) => { g.showQuestion(id); g.notify(`On screen, the person is changing their answer about ${(id === 'filing_cit' ? taxes[2].label : QUESTION_LABEL[id] || id).toLowerCase()}.`); onEdit(); };
   return (
     <>
       <Say live={live}>Here's everything in one place. Fix anything that looks off, then I'll set up {titleCase(b?.name) || 'the business'}.</Say>
@@ -666,7 +684,8 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
 }
 
 // ---------------------------------------------------------------- score
-const ACTION_ROUTE: Record<string, string> = { settings: '/settings', vat: '/tax/vat', wht: '/tax/wht', cit: '/tax/cit', account_number: '/home', bank: '/accounting/banking', first_sale: '/sell/till' };
+const ACTION_ROUTE: Record<string, string> = { settings: '/settings', vat: '/tax/vat', wht: '/tax/wht', cit: '/tax/cit', pit: '/tax/pit', account_number: '/home', bank: '/accounting/banking',
+  first_sale: '/sell/till', first_invoice: '/sell/sales?new=invoice' };
 function Ring({ score, total }: { score: number; total: number }) {
   const [n, setN] = useState(0);
   useEffect(() => {

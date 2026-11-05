@@ -18,15 +18,31 @@ async function post(path: string, body: unknown, timeoutMs = 60_000): Promise<an
   return out;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Counta can be slow for a moment (a busy database cancels a statement): a call that matters is tried again after a pause.
+// Both calls are safe to repeat: a job is claimed once, and a report on a job that has ended is ignored.
+export async function again<T>(what: () => Promise<T>, tries = 3, pauseMs = Number(process.env.COUNTA_RETRY_MS || 3000)): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < tries; i++) {
+    if (i) await sleep(pauseMs * i);
+    try { return await what(); } catch (e) { last = e; }
+  }
+  throw last;
+}
+
 export async function next(): Promise<Next> {
-  const out = await post('/next', { worker: cfg.worker });
+  const out = await again(() => post('/next', { worker: cfg.worker }));
   return { job: out.job ?? null, context: out.context, files: out.files || {} };
 }
 
 // p: {step, note} | {login: verified|failed, login_message} | {tax_station: {code, name}} | {portal: {...}}
-//    | {done: true, result} | {failed: true, error, retry}
+//    | {done: true, result} | {failed: true, error, retry} (a refused sign-in comes with login: 'failed' in the same report)
 export async function report(jobId: string, p: Record<string, unknown>) {
   return post('/report', { job_id: jobId, ...p });
+}
+// A report that must arrive (the outcome, the sign-in): tried again when Counta does not take it.
+export async function reportSure(jobId: string, p: Record<string, unknown>) {
+  return again(() => report(jobId, p));
 }
 
 export async function download(url: string): Promise<{ bytes: Buffer; type: string }> {

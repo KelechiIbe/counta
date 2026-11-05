@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import { useInventory, useSession, useToast } from '../../../state/session';
 import { ai, rpc, signedDoc, supabase } from '../../../lib/supabase';
 import { edge, money } from '../../../lib/api';
-import { N2, fmtDay, when } from '../../../lib/format';
+import { N2, fmtDay, fmtTime, when } from '../../../lib/format';
 import { CA_CATEGORIES, HOME_TYPES, OCCUPANCY, OTHER_INCOME, PIT_STATE, RELIEFS, STAFF_ROLES, incomeChoice, incomeOf, pitLaw, usePitYear, usePitYears } from '../../../lib/tax';
 import { buildPitPack } from '../../../lib/pitPack';
 import { downloadBlob, safeName } from '../../../lib/exporters';
@@ -834,6 +834,13 @@ function EtaxLogin({ year, person }: { year: number; person: any }) {
     const t = setInterval(() => { void refresh(); }, 4000);
     return () => clearInterval(t);
   }, [checking]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A check waiting to be tried again: look again just after its time.
+  const retryAt: string | null = l?.check_retry_at || null;
+  useEffect(() => {
+    if (!retryAt) return;
+    const t = setTimeout(() => { void refresh(); }, Math.max(5000, Math.min(Date.parse(retryAt) - Date.now() + 5000, 15 * 60_000)));
+    return () => clearTimeout(t);
+  }, [retryAt]); // eslint-disable-line react-hooks/exhaustive-deps
   async function call(kind: 'save' | 'remove') {
     setBusy(kind);
     try {
@@ -860,7 +867,9 @@ function EtaxLogin({ year, person }: { year: number; person: any }) {
       {l?.status === 'failed' && !checking && <Alert kind="red" icon="lock">e-Tax did not accept it{l.message ? `: ${l.message}` : ''}. Save it again.</Alert>}
       {checking && <div className="row" style={{ gap: 8, fontSize: 13 }} data-testid="pit-etax-checking"><Spinner small />Counta's bot is signing in to e-Tax with it to check it. Nothing on e-Tax is changed.</div>}
       {l?.status === 'verified' && !checking && l.message && <Alert kind="yellow" icon="info">{l.message}</Alert>}
-      {l?.status === 'saved' && !checking && l.check_error && <Alert kind="grey" icon="info">Counta could not check it with e-Tax yet: {l.check_error} Save it again to check it now; otherwise it is checked when the return is sent.</Alert>}
+      {l?.status === 'saved' && !checking && l.check_retry_at && <Alert kind="grey" icon="clock">Counta could not check it with e-Tax yet{l.check_error ? `: ${l.check_error}` : '.'} It tries again at {fmtTime(l.check_retry_at)}.</Alert>}
+      {l?.status === 'saved' && !checking && !l.check_retry_at && l.check_waiting && <Alert kind="grey" icon="clock">Counta's bot has not reached it yet. It checks it as soon as it runs, and again before the return is sent.</Alert>}
+      {l?.status === 'saved' && !checking && !l.check_retry_at && !l.check_waiting && l.check_error && <Alert kind="grey" icon="info">Counta could not check it with e-Tax yet: {l.check_error} Save it again to check it now; otherwise it is checked when the return is sent.</Alert>}
       {l && !open && (
         <div className="row wrap" style={{ gap: 8, fontSize: 13 }}>
           <span>Payer ID <b>{l.payer_id}</b>{l.saved_by ? <span className="faint"> · saved by {l.saved_by}{l.saved_at ? `, ${when(l.saved_at)}` : ''}</span> : null}</span>

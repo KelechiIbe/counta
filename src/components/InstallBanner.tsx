@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useToast } from '../state/session';
 import { enablePush, iosVersion, promptInstall, store, usePwaState } from '../lib/pwa';
 import { Icon } from './Icon';
+import { useMode } from '../lib/wording';
 
 const WEEK = 7 * 24 * 3600_000;
 const snoozed = (k: string) => Number(store.get(k) || 0) > Date.now() - WEEK;
@@ -20,6 +21,7 @@ function ShareGlyph() {
 export function InstallBanner({ phone = false }: { phone?: boolean }) {
   const s = usePwaState();
   const toast = useToast();
+  const mode = useMode();
   const [hideInstall, setHideInstall] = useState(() => snoozed('counta-install-later'));
   const [hidePush, setHidePush] = useState(() => snoozed('counta-push-later'));
   const [busy, setBusy] = useState(false);
@@ -63,7 +65,8 @@ export function InstallBanner({ phone = false }: { phone?: boolean }) {
         <span style={{ width: 40, height: 40, borderRadius: 10, background: '#F0F7FF', display: 'grid', placeItems: 'center', flex: 'none' }}><Icon name="bell" size={20} color="#0072F5" /></span>
         <div className="grow" style={{ minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>Turn on notifications</div>
-          <div className="ink3" style={{ fontSize: 13, lineHeight: 1.5, marginTop: 2 }}>Counta tells you when a count needs approval, an invoice needs checking or stock is on its way to your branch.</div>
+          <div className="ink3" style={{ fontSize: 13, lineHeight: 1.5, marginTop: 2 }}>{mode.stock ? 'Counta tells you when a count needs approval, an invoice needs checking or stock is on its way to your branch.'
+            : 'Counta tells you when a client pays, an invoice is overdue or a supplier invoice needs checking.'}</div>
         </div>
         <div className="row" style={{ gap: 4, flex: 'none' }}>
           <button className="btn btn-primary btn-sm" disabled={busy} onClick={async () => {

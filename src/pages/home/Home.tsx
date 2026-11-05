@@ -33,8 +33,8 @@ export default function Home() {
   const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Africa/Lagos' }));
   const actions = [
     ...(ib?.questions?.length ? [{ key: 'q', t: `${ib.questions.length} question${ib.questions.length === 1 ? '' : 's'} from Atlas`, d: 'Bank lines it was not sure about. Each answer can teach it a rule.', to: '/accounting/inbox', icon: 'sparkles', color: '#7C3AED', bg: '#F5F3FF', cta: 'Answer' }] : []),
-    ...(Number(ib?.payments_to_confirm) ? [{ key: 'p', t: `${ib.payments_to_confirm} payment${Number(ib.payments_to_confirm) === 1 ? '' : 's'} to confirm`, d: 'Transfers and POS taken at the till or on invoices.', to: '/sell/sales?tab=confirm', icon: 'card', color: '#0072F5', bg: '#F0F7FF', cta: 'Confirm' }] : []),
-    ...(Number(ib?.bills_to_approve) ? [{ key: 'b', t: `${ib.bills_to_approve} bill${Number(ib.bills_to_approve) === 1 ? '' : 's'} to approve`, d: 'From stock receipts, Prism or typed in.', to: '/purchases/bills', icon: 'file', color: '#C2410C', bg: '#FFF7ED', cta: 'Review' }] : []),
+    ...(Number(ib?.payments_to_confirm) ? [{ key: 'p', t: `${ib.payments_to_confirm} payment${Number(ib.payments_to_confirm) === 1 ? '' : 's'} to confirm`, d: w.has_stock ? 'Transfers and POS taken at the till or on invoices.' : 'Transfers and POS taken on invoices.', to: '/sell/sales?tab=confirm', icon: 'card', color: '#0072F5', bg: '#F0F7FF', cta: 'Confirm' }] : []),
+    ...(Number(ib?.bills_to_approve) ? [{ key: 'b', t: `${ib.bills_to_approve} bill${Number(ib.bills_to_approve) === 1 ? '' : 's'} to approve`, d: w.has_stock ? 'From stock receipts, Prism or typed in.' : 'From supplier invoices, Prism or typed in.', to: '/purchases/bills', icon: 'file', color: '#C2410C', bg: '#FFF7ED', cta: 'Review' }] : []),
     ...(Number(ib?.payouts_to_approve) ? [{ key: 'po', t: `${ib.payouts_to_approve} payout${Number(ib.payouts_to_approve) === 1 ? '' : 's'} to approve`, d: 'Above the amount that needs a second person.', to: '/payments', icon: 'send', color: '#DC2626', bg: '#FEF2F2', cta: 'Approve' }] : []),
     ...rows.map((r) => ({ key: r.key, t: r.t, d: r.d, to: r.to, icon: r.icon, color: r.color, bg: r.bg, cta: r.cta })),
   ];
@@ -59,7 +59,7 @@ export default function Home() {
           <div className="muted" style={{ fontSize: 13 }}>{inv.org.name}{o.closed_through ? ` · books closed to ${fmtDay(o.closed_through)}` : ''}</div></div>
         <div className="row wrap">
           {can(inv, 'record_sales') && w.has_stock && <button className="btn btn-primary btn-sm" onClick={() => nav('/sell/till')}><Icon name="receipt" size={14} color="#fff" />Sell</button>}
-          {can(inv, 'record_sales') && <button className={'btn btn-sm ' + (w.has_stock ? 'btn-secondary' : 'btn-primary')} onClick={() => nav('/sell/sales')}><Icon name="file" size={14} color={w.has_stock ? undefined : '#fff'} />Invoice</button>}
+          {can(inv, 'record_sales') && <button className={'btn btn-sm ' + (w.has_stock ? 'btn-secondary' : 'btn-primary')} onClick={() => nav(w.has_stock ? '/sell/sales' : '/sell/sales?new=invoice')}><Icon name="file" size={14} color={w.has_stock ? undefined : '#fff'} />{w.has_stock ? 'Invoice' : 'New invoice'}</button>}
           {(can(inv, 'keep_books') || can(inv, 'approve_pos')) && <button className="btn btn-secondary btn-sm" onClick={() => nav('/purchases/bills')}><Icon name="paperclip" size={14} />Bill</button>}
           {can(inv, 'keep_books') && <button className="btn btn-secondary btn-sm" onClick={() => nav('/accounting/banking')}><Icon name="upload" size={14} />Bank statement</button>}
         </div>

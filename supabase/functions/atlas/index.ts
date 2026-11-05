@@ -78,7 +78,11 @@ export async function bookkeep(orgId: string) {
       run.error = on === false ? 'AI reading is off for this business (paused by TaxStreem, or not in its plan).' : cfg.g.problem || 'Gemini is not connected: add the service account key in the admin portal.';
       return { org_id: orgId, ...run };
     }
+    // Rounds of forty lines, but none started after about a hundred seconds: the function is stopped at its time limit
+    // (546) part way through a round otherwise. The rest wait for the next tick.
+    const started = Date.now();
     for (let round = 0; round < 5; round++) {
+      if (round && Date.now() - started > 100_000) break;
       const ctx = await svc<Ctx>('svc_lines_for_ai', { p_org: orgId, p_limit: 40 });
       if (!ctx?.lines?.length) break;
       let answers;

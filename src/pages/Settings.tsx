@@ -26,6 +26,7 @@ import { EInvoicingPanel } from './settings/EInvoicing';
 import { PortalLoginsPanel } from './settings/PortalLogins';
 import { useAttention } from '../lib/api';
 import { TwoStepSettings } from '../components/TwoStep';
+import { useMode } from '../lib/wording';
 
 function Section({ id, title, sub, children }: { id?: string; title: string; sub?: string; children: ReactNode }) {
   return (
@@ -234,6 +235,8 @@ export default function Settings() {
   const { hash } = useLocation();
   const qc = useQueryClient();
   const owner = inv?.me.role === 'owner';
+  // A business that sells services only keeps no stock, so it has no stock rules.
+  const mode = useMode();
   // Changing the business's settings is a permission of its own (owners and admins by default).
   const edit = can(inv, 'manage_settings');
   const [f, setF] = useState<Record<string, any>>({});
@@ -314,7 +317,7 @@ export default function Settings() {
       <TeamSection />
       <YourAccountantSection />
       <IdentitySection />
-      <Section title="Stock rules" sub="These drive reorder suggestions, price proposals and voice review.">
+      {mode.stock && <Section title="Stock rules" sub="These drive reorder suggestions, price proposals and voice review.">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
           <Field label="Margin threshold (%)" hint="Prices under this margin get a proposal. Default 8%."><input className="input" type="number" min={0} max={99} disabled={!edit} value={f.margin_threshold || ''} onChange={(e) => set('margin_threshold', e.target.value)} /></Field>
           <Field label="Safety stock (days)" hint="Extra days added to each vendor's lead time."><input className="input" type="number" min={0} disabled={!edit} value={f.safety_days || ''} onChange={(e) => set('safety_days', e.target.value)} /></Field>
@@ -323,7 +326,7 @@ export default function Settings() {
           <Field label="Voice entries before trust" hint="Each person's voice sales are reviewed until this many go through clean."><input className="input" type="number" min={0} disabled={!edit} value={f.voice_trust_threshold || ''} onChange={(e) => set('voice_trust_threshold', e.target.value)} /></Field>
         </div>
         {edit && <div><button className="btn btn-primary" onClick={saveOrg} disabled={busy}>Save settings</button></div>}
-      </Section>
+      </Section>}
       <BooksSection />
       <MessagesSection />
       <Section title="Chart of accounts" sub={edit ? 'TaxStreem standard chart. Change where an entry lands; stock value moves with it.' : 'TaxStreem standard chart. Only people who can change settings change the rules.'}>
@@ -347,8 +350,10 @@ export default function Settings() {
         <MartinaAnywhere />
       </Section>
       <CallsSection />
-      <Section title="Phone app" sub="For the people who handle stock. Works offline and syncs in order when data returns.">
-        <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>Open <b>{window.location.host}</b> on the phone. On Android, Chrome offers <b>Install</b>; on iPhone, tap Share in Safari and choose <b>Add to Home Screen</b>. Staff sign in with the email you invited and land on the phone screens for scanning, blind counts, invoice photos and voice entry. The full app, with approvals and reports, is one tap away and fits the phone too.</div>
+      <Section title="Phone app" sub={mode.stock ? 'For the people who handle stock. Works offline and syncs in order when data returns.' : 'For you and your team away from the desk. Works offline and syncs in order when data returns.'}>
+        <div className="ink3" style={{ fontSize: 13, lineHeight: 1.6 }}>Open <b>{window.location.host}</b> on the phone. On Android, Chrome offers <b>Install</b>; on iPhone, tap Share in Safari and choose <b>Add to Home Screen</b>. {mode.stock
+          ? <>Staff sign in with the email you invited and land on the phone screens for scanning, blind counts, invoice photos and voice entry.</>
+          : <>Your team signs in with the email you invited and lands on the phone screens for issuing invoices, recording payments, photographing bills and asking Martina.</>} The full app, with approvals and reports, is one tap away and fits the phone too.</div>
         <div><button className="btn btn-secondary btn-sm" onClick={() => nav('/m')}><Icon name="phone" size={14} />Open the phone app here</button></div>
       </Section>
       {inv.org.is_sample && owner && (

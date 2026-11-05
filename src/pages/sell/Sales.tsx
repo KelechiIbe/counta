@@ -19,11 +19,13 @@ import { useDraft, type Drafts } from '../../lib/drafts';
 import { CustomerPicker, PaymentsList, PrintButtons, RecordPayment, RequestPayment, SaleLines, SendBox, StatusChip, docUrl, dueText } from './common';
 import { EinvoiceStatus, heldFromBuyer, nrsChip } from '../../components/Einvoice';
 import { useVatRate, vatInside, vatPct, vatRateOn } from '../../lib/vat';
+import { cap, useMode, useWords } from '../../lib/wording';
 
 type Tab = 'all' | 'invoice' | 'receipt' | 'quote' | 'credit_note' | 'unpaid' | 'confirm' | 'settle';
 
 export default function Sales() {
   const { data: inv } = useInventory();
+  const w = useWords();
   const [params, setParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>(() => (params.get('tab') as Tab) || 'all');
   const [q, setQ] = useState('');
@@ -35,6 +37,13 @@ export default function Sales() {
   // An invoice Martina prepared opens in the editor for the person to check.
   const draft = useDraft('invoice');
   useEffect(() => { if (draft) setEditing({ type: 'invoice', draft }); }, [draft]);
+  // A link that opens a new invoice or quote (the checklist's "Issue your first invoice").
+  useEffect(() => {
+    const n = params.get('new');
+    if (n !== 'invoice' && n !== 'quote') return;
+    setEditing({ type: n });
+    const next = new URLSearchParams(params); next.delete('new'); setParams(next, { replace: true });
+  }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
   const open = params.get('open');
   const filter = useMemo(() => ({
     q: q || null, from: range.from || null, to: range.to || null,
@@ -72,7 +81,7 @@ export default function Sales() {
       {tab === 'settle' ? <SettleSales data={toSettle.data} loading={toSettle.isLoading} /> : tab === 'confirm' ? <PendingPayments rows={pending} /> : (
         <div className="card" style={{ overflow: 'hidden' }}>
           <div className="card-hd">
-            <div className="row" style={{ flex: '1 1 260px' }}><Icon name="search" size={15} color="#9CA3AF" /><input className="input input-sm" style={{ border: 0, boxShadow: 'none' }} placeholder="Number, customer, phone or reference" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search sales" /></div>
+            <div className="row" style={{ flex: '1 1 260px' }}><Icon name="search" size={15} color="#9CA3AF" /><input className="input input-sm" style={{ border: 0, boxShadow: 'none' }} placeholder={`Number, ${w.customer}, phone or reference`} value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search sales" /></div>
             <div className="row wrap">
               <PeriodPicker value={period} onChange={setPeriod} align="end" />
               <select className="input input-sm" value={vs} onChange={(e) => setVs(e.target.value)} style={{ width: 170 }} aria-label="VAT status">
@@ -85,7 +94,7 @@ export default function Sales() {
           </div>
           <div className="tbl">
             <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '130px 110px minmax(160px,1.4fr) 90px 130px 120px 120px 140px', minWidth: 990 }}>
-              <span>Number</span><span>Date</span><span>Customer</span><span title="0 VATable · 1 Exempt · 2 Zero-rated">VAT status</span><span>Status</span><span className="right">Total</span><span className="right">Balance</span><span>Due</span>
+              <span>Number</span><span>Date</span><span>{cap(w.customer)}</span><span title="0 VATable · 1 Exempt · 2 Zero-rated">VAT status</span><span>Status</span><span className="right">Total</span><span className="right">Balance</span><span>Due</span>
             </div>
             {sales.isLoading ? <SkeletonRows n={8} /> : !rows.length ? <div style={{ padding: 20 }}><Empty>No sales match.</Empty></div> : rows.map((r) => (
               <div key={r.id} className="tr click" onClick={() => setParams({ open: r.id })} style={{ gridTemplateColumns: '130px 110px minmax(160px,1.4fr) 90px 130px 120px 120px 140px', minWidth: 990 }}>
@@ -476,7 +485,14 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
   const chart = useChart();
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [f, setF] = useState({ issue_date: today(), due_date: '', prices_include_vat: !!inv?.org.prices_include_vat, delivery_fee: '', notes: '', terms: inv?.org.invoice_note || '', reference: '', price_list_id: '' });
-  const [lines, setLines] = useState<ELine[]>([]);
+  // A business that sells services only describes the work on each line; one with products picks them from its list.
+  const mode = useMode();
+  const svc = !mode.stock;
+  const w = useWords();
+  const grid = svc ? 'minmax(260px,3fr) 70px 130px 110px 120px 30px' : 'minmax(180px,2fr) 80px 120px 100px 110px 110px 30px';
+  const serviceLine = (): ELine => ({ key: crypto.randomUUID(), item_id: null, description: '', qty: '1', unit: 'selling', unit_price: '', discount: '', vat_treatment: 'standard', revenue_account: '', pack: 1, units: ['unit', 'unit'] });
+  const [lines, setLines] = useState<ELine[]>(() => (svc && !id && !draft ? [serviceLine()] : []));
+  useEffect(() => { if (svc && !id && !draft) setLines((ls) => (ls.length ? ls : [serviceLine()])); }, [svc]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(false);
   const revenue = (chart.data?.accounts || []).filter((a: any) => !a.is_group && a.active && /^4/.test(a.code));
   useEffect(() => {
@@ -524,8 +540,9 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
   const vat = inv.org.vat_registered && !exp ? lines.reduce((a, l) => a + (l.vat_treatment === 'standard' ? (f.prices_include_vat ? vatInside(gross(l), f.issue_date) : gross(l) * vatRateOn(f.issue_date)) : 0), 0) : 0;
   const total = f.prices_include_vat ? sum : sum + vat;
   async function save(issue: boolean) {
-    if (!customer) { toast('Choose the customer.', 'err'); return; }
+    if (!customer) { toast(`Choose the ${w.customer}.`, 'err'); return; }
     if (!lines.length) { toast('Add at least one line.', 'err'); return; }
+    if (lines.some((l) => !l.item_id && !l.description.trim())) { toast(svc ? 'Describe the service on each line.' : 'Describe each service or charge.', 'err'); return; }
     setBusy(true);
     try {
       const r = await rpc<Sale>('save_sale_doc', { p_org: orgId, p_doc: {
@@ -544,25 +561,29 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
   return (
     <Drawer onClose={onClose} width={860}>
       <div className="drawer-hd"><div className="grow"><div className="drawer-title">{id ? `Edit ${existing.data?.number || ''}` : type === 'invoice' ? 'New invoice' : 'New quote'}</div>
-        <div className="muted" style={{ fontSize: 13 }}>{type === 'invoice' ? 'Issuing posts it: revenue, output VAT and the stock.' : 'A quote changes nothing in the books until it becomes an invoice.'}</div></div>
+        <div className="muted" style={{ fontSize: 13 }}>{type === 'invoice' ? (svc ? 'Issuing posts it: revenue and output VAT.' : 'Issuing posts it: revenue, output VAT and the stock.') : 'A quote changes nothing in the books until it becomes an invoice.'}</div></div>
         <button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button></div>
       <div className="drawer-body stack" style={{ gap: 14 }}>
         {draft && !id && <Alert kind="blue" icon="martina">Martina prepared this {type}. Check the {unmatched ? 'customer, ' : ''}lines and prices, then save it or issue it. Nothing is posted until you do.</Alert>}
         {unmatched && !customer && <Alert kind="amber" icon="info">No customer called "{unmatched}" yet. Choose one, or add them from the customer box.</Alert>}
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 12 }}>
-          <Field label="Customer" req hint={exp ? `Export${isExport(customer?.country) ? ` to ${countryName(customer?.country)}` : ''}: zero-rated for VAT.` : undefined}>
-            <CustomerPicker value={customer} onChange={setCustomer} walkIn={false} placeholder="Choose the customer" /></Field>
+          <Field label={cap(w.customer)} req hint={exp ? `Export${isExport(customer?.country) ? ` to ${countryName(customer?.country)}` : ''}: zero-rated for VAT.` : undefined}>
+            <CustomerPicker value={customer} onChange={setCustomer} walkIn={false} placeholder={`Choose the ${w.customer}`} /></Field>
           <Field label="Date"><input className="input" type="date" value={f.issue_date} onChange={(e) => set('issue_date', e.target.value)} /></Field>
-          <Field label={type === 'quote' ? 'Valid until' : 'Due'} hint={customer?.terms_days ? `${customer.terms_days} days for this customer` : undefined}><input className="input" type="date" value={f.due_date} onChange={(e) => set('due_date', e.target.value)} /></Field>
+          <Field label={type === 'quote' ? 'Valid until' : 'Due'} hint={customer?.terms_days ? `${customer.terms_days} days for this ${w.customer}` : undefined}><input className="input" type="date" value={f.due_date} onChange={(e) => set('due_date', e.target.value)} /></Field>
         </div>
         <div className="card" style={{ overflow: 'visible' }}>
-          <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: 'minmax(180px,2fr) 80px 120px 100px 110px 110px 30px' }}>
-            <span>Item or service</span><span className="right">Qty</span><span>Unit</span><span className="right">Price</span><span className="right">Discount</span><span className="right">Amount</span><span />
+          {/* A service needs room for its description and has no units. */}
+          <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: grid }}>
+            <span>{svc ? 'Service' : 'Item or service'}</span><span className="right">Qty</span>{!svc && <span>Unit</span>}<span className="right">Price</span><span className="right">Discount</span><span className="right">Amount</span><span />
           </div>
           {lines.map((l) => (
-            <div key={l.key} className="tr" style={{ gridTemplateColumns: 'minmax(180px,2fr) 80px 120px 100px 110px 110px 30px', alignItems: 'start' }}>
+            <div key={l.key} className="tr" style={{ gridTemplateColumns: grid, alignItems: 'start' }}>
               <span className="stack" style={{ gap: 4 }}>
-                {l.item_id ? <b>{l.description}</b> : <input className="input input-sm" value={l.description} placeholder="Service or charge" onChange={(e) => upd(l.key, { description: e.target.value })} />}
+                {l.item_id ? <b>{l.description}</b> : svc
+                  ? <textarea className="input input-sm" rows={2} value={l.description} placeholder="Describe the service rendered" aria-label="Description" style={{ resize: 'vertical', minHeight: 54 }}
+                      autoFocus={lines.length === 1 && !id} onChange={(e) => upd(l.key, { description: e.target.value })} />
+                  : <input className="input input-sm" value={l.description} placeholder="Service or charge" aria-label="Description" onChange={(e) => upd(l.key, { description: e.target.value })} />}
                 {!l.item_id && <div className="row" style={{ gap: 4 }}>
                   <select className="input input-sm" value={l.vat_treatment} onChange={(e) => upd(l.key, { vat_treatment: e.target.value })} aria-label="VAT"><option value="standard">VAT {vatPct(f.issue_date)}</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select>
                   <select className="input input-sm" value={l.revenue_account} onChange={(e) => upd(l.key, { revenue_account: e.target.value })} aria-label="Income account"><option value="">Usual income account</option>{revenue.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select>
@@ -575,7 +596,7 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
                 </span>
               </span>
               <input className="input input-sm num" inputMode="decimal" value={l.qty} onChange={(e) => upd(l.key, { qty: e.target.value })} aria-label="Quantity" />
-              {l.item_id && l.pack > 1 ? <select className="input input-sm" value={l.unit} onChange={(e) => {
+              {svc ? null : l.item_id && l.pack > 1 ? <select className="input input-sm" value={l.unit} onChange={(e) => {
                 const u = e.target.value as 'selling' | 'purchase';
                 const it = inv.items.find((i) => i.id === l.item_id)!;
                 upd(l.key, { unit: u, unit_price: String(Number(it.price) * (u === 'purchase' ? it.pack_size : 1)) });
@@ -586,17 +607,24 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
               <button className="btn btn-ghost btn-xs" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label="Remove line"><Icon name="trash" size={13} /></button>
             </div>
           ))}
-          <div className="row wrap" style={{ padding: 12, gap: 8 }}>
-            <div style={{ flex: '1 1 300px' }}><ItemPicker items={inv.items} onPick={(it) => setLines((ls) => [...ls, { key: crypto.randomUUID(), item_id: it.id, description: it.name, qty: '1', unit: 'selling', unit_price: String(Number(it.price)), discount: '', vat_treatment: it.vat_treatment, revenue_account: '', pack: it.pack_size, units: [it.selling_unit, it.purchase_unit] }])} /></div>
-            <button className="btn btn-secondary btn-sm" onClick={() => setLines((ls) => [...ls, { key: crypto.randomUUID(), item_id: null, description: '', qty: '1', unit: 'selling', unit_price: '', discount: '', vat_treatment: 'standard', revenue_account: '', pack: 1, units: ['unit', 'unit'] }])}><Icon name="plus" size={13} />Service or charge</button>
-          </div>
+          {svc ? (
+            <div className="row wrap" style={{ padding: 12, gap: 8 }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => setLines((ls) => [...ls, serviceLine()])}><Icon name="plus" size={13} />{lines.length ? 'Add another service' : 'Add a service'}</button>
+              {inv.items.length > 0 && <div style={{ flex: '1 1 260px' }}><ItemPicker items={inv.items} placeholder="Or pick one of your saved services" onPick={(it) => setLines((ls) => [...ls.filter((l) => l.item_id || l.description.trim() || l.unit_price), { key: crypto.randomUUID(), item_id: it.id, description: it.name, qty: '1', unit: 'selling', unit_price: String(Number(it.price)), discount: '', vat_treatment: it.vat_treatment, revenue_account: '', pack: it.pack_size, units: [it.selling_unit, it.purchase_unit] }])} /></div>}
+            </div>
+          ) : (
+            <div className="row wrap" style={{ padding: 12, gap: 8 }}>
+              <div style={{ flex: '1 1 300px' }}><ItemPicker items={inv.items} onPick={(it) => setLines((ls) => [...ls, { key: crypto.randomUUID(), item_id: it.id, description: it.name, qty: '1', unit: 'selling', unit_price: String(Number(it.price)), discount: '', vat_treatment: it.vat_treatment, revenue_account: '', pack: it.pack_size, units: [it.selling_unit, it.purchase_unit] }])} /></div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setLines((ls) => [...ls, serviceLine()])}><Icon name="plus" size={13} />Service or charge</button>
+            </div>
+          )}
         </div>
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 16 }}>
           <div className="stack" style={{ gap: 10 }}>
             <label className="check"><input type="checkbox" checked={f.prices_include_vat} onChange={(e) => set('prices_include_vat', e.target.checked)} />Prices include VAT</label>
-            <Field label="Delivery charge"><input className="input" inputMode="decimal" value={f.delivery_fee} onChange={(e) => set('delivery_fee', e.target.value)} placeholder="0.00" style={{ maxWidth: 180 }} /></Field>
-            <Field label="Customer's reference (PO number)"><input className="input" value={f.reference} onChange={(e) => set('reference', e.target.value)} style={{ maxWidth: 260 }} /></Field>
-            <Field label="Note to the customer"><textarea className="input" value={f.notes} onChange={(e) => set('notes', e.target.value)} /></Field>
+            {(!svc || !!money(f.delivery_fee)) && <Field label="Delivery charge"><input className="input" inputMode="decimal" value={f.delivery_fee} onChange={(e) => set('delivery_fee', e.target.value)} placeholder="0.00" style={{ maxWidth: 180 }} /></Field>}
+            <Field label={`${cap(w.customer)}'s reference (PO number)`}><input className="input" value={f.reference} onChange={(e) => set('reference', e.target.value)} style={{ maxWidth: 260 }} /></Field>
+            <Field label={`Note to the ${w.customer}`}><textarea className="input" value={f.notes} onChange={(e) => set('notes', e.target.value)} /></Field>
             <Field label="Terms"><textarea className="input" value={f.terms} onChange={(e) => set('terms', e.target.value)} placeholder="Bank details, payment terms" /></Field>
           </div>
           <div className="stack" style={{ gap: 6, background: '#FAFAFA', borderRadius: 12, padding: 14, alignSelf: 'start' }}>

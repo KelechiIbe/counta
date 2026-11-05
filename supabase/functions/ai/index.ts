@@ -1073,16 +1073,22 @@ async function readSupplier(admin: SupabaseClient, open: any, bytes: Uint8Array,
   if (!aiOn()) return await finish({ error: 'Counta could not read it: AI reading is not switched on yet. Enter the bill by hand from the invoice.' });
   if (await paused(admin, open.org_id)) return await finish({ error: 'AI reading is paused for this business. Enter the bill by hand from the invoice.' });
   const { data: org } = await admin.from('orgs').select('name, tin').eq('id', open.org_id).maybeSingle();
-  let x: any, model = MODEL;
-  try {
-    const r = await gemini(supplierSystem({ name: org?.name || open.business, tin: org?.tin }, open.accounts || [], open.wht || []),
-      [{ text: 'Read this invoice.' }, { inlineData: { mimeType: mime, data: encodeBase64(bytes) } }], SUPPLIER_SCHEMA, 0,
-      { thinking: 'low', timeoutMs: 80_000, org: open.org_id, kind: 'supplier_invoice' });
-    x = cleanSupplier(r.data); model = r.model;
-  } catch (e) {
-    if (e instanceof CredentialError) return await finish({ error: 'Counta could not read it just now (AI reading is not available). Enter the bill by hand from the invoice.' });
-    return await finish({ error: 'Counta could not read the invoice: ' + (e as Error).message });
+  let x: any = null, model = MODEL, why = '';
+  // Read once more after a short wait when the first try fails: nobody is waiting on the answer any more.
+  for (let attempt = 0; attempt < 2 && !x; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, 4000));
+    try {
+      const r = await gemini(supplierSystem({ name: org?.name || open.business, tin: org?.tin }, open.accounts || [], open.wht || []),
+        [{ text: 'Read this invoice.' }, { inlineData: { mimeType: mime, data: encodeBase64(bytes) } }], SUPPLIER_SCHEMA, 0,
+        { thinking: 'low', timeoutMs: 80_000, org: open.org_id, kind: 'supplier_invoice' });
+      x = cleanSupplier(r.data); model = r.model;
+    } catch (e) {
+      if (e instanceof CredentialError) return await finish({ error: 'Counta could not read it just now (AI reading is not available). Enter the bill by hand from the invoice.' });
+      why = (e as Error).message;
+    }
   }
+  // The supplier hears that the business will enter it by hand, and that a clearer copy is quicker.
+  if (!x) return await finish({ error: 'Counta could not read the invoice: ' + why, tell_supplier: true });
   // Whose name the bank holds the account in, when the invoice gives one.
   let resolved: string | null = null;
   const acct = String(x.bank?.account_number || '').replace(/\D/g, '');
@@ -1098,10 +1104,23 @@ async function readSupplier(admin: SupabaseClient, open: any, bytes: Uint8Array,
   return done;
 }
 
-// What the supplier is told on the page: the problems Counta found that are theirs to fix.
-const supplierView = (si: any) => ({ number: si?.number, status: si?.status, business: si?.business,
-  issues: (Array.isArray(si?.checks) ? si.checks : []).filter((c: any) => c.notify && c.severity !== 'info').map((c: any) => String(c.text)),
-  emailed: si?.notice_status === 'sent', failed: si?.status === 'failed' });
+// The upload is answered as soon as the file is saved; the reading carries on after the answer. On Supabase the runtime keeps
+// it going (EdgeRuntime.waitUntil); elsewhere (the tests) it runs before the answer. A reading that stops part-way marks
+// the invoice failed, and private.si_stale catches one that never reports back.
+async function readLater(admin: SupabaseClient, open: any, bytes: Uint8Array, mime: string) {
+  const work = (async () => {
+    try { await readSupplier(admin, open, bytes, mime); }
+    catch (e) {
+      const why = (e as Error).message || 'it stopped part-way';
+      console.error('supplier invoice', open.id, why);
+      try {
+        await admin.rpc('svc_si_read', { p_id: open.id, p: { error: 'Counta could not finish reading it (' + why.slice(0, 200) + '). Enter the bill by hand from the invoice, or upload it again.', tell_supplier: true } });
+      } catch { /* si_stale fails it later */ }
+    }
+  })();
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt?.waitUntil) rt.waitUntil(work); else await work;
+}
 
 async function portalUpload(admin: SupabaseClient, req: Request, body: any) {
   const raw = String(body.file || '');
@@ -1122,13 +1141,11 @@ async function portalUpload(admin: SupabaseClient, req: Request, body: any) {
   const up = await admin.storage.from('documents').upload(path, bytes, { contentType: mime, upsert: false });
   if (up.error) return json({ ok: false, error: 'The file could not be saved just now. Try again.' }, 500);
   open.path = path;
-  try {
-    const si = await readSupplier(admin, open, bytes, mime);
-    return json({ ok: true, invoice: { ...supplierView(si), business: open.business } });
-  } catch (e) {
-    console.error('portal invoice', (e as Error).message);
-    return json({ ok: true, invoice: { number: open.number, business: open.business, status: 'reading', issues: [], emailed: false } });
-  }
+  // Taken: the supplier hears by email (or WhatsApp) if anything needs fixing once Counta has read it.
+  const sub = body.submitter || {};
+  const told = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(sub.email || '').trim()) ? 'email' : 'whatsapp';
+  await readLater(admin, open, bytes, mime);
+  return json({ ok: true, invoice: { number: open.number, business: open.business, status: 'reading', issues: [], emailed: false, told } });
 }
 
 async function readSupplierUpload(sb: SupabaseClient, admin: SupabaseClient, body: any, userId: string) {
@@ -1146,8 +1163,9 @@ async function readSupplierUpload(sb: SupabaseClient, admin: SupabaseClient, bod
   const { data: open, error } = await admin.rpc('svc_si_open', { p: { source: 'upload', org_id: orgId, member_id: me.id, path, mime,
     file_name: String(body.file_name || '').slice(0, 160), file_size: bytes.length, sha256: await sha256hex(bytes) } });
   if (error) return json({ ok: false, error: error.message });
-  const si = await readSupplier(admin, open, bytes, mime);
-  return json({ ok: true, invoice: si });
+  // Taken at once; it shows on the list as being read until Counta has read it.
+  await readLater(admin, open, bytes, mime);
+  return json({ ok: true, invoice: { id: open.id, number: open.number, status: 'reading' } });
 }
 
 // A product from photos of its front and back, for someone who may add products to the business.

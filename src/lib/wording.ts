@@ -41,4 +41,23 @@ export function useWords(): Words {
   const o = inv?.org as { offering?: string | null; category_id?: string | null } | undefined;
   return wordsFor(o);
 }
+
+// How the business sells, for the screens that change with it. A business that sells services only keeps no stock. Clinics,
+// hotels and schools take walk-in customers, so they keep the till; a professional services firm (a law or accounting firm,
+// a consultancy) issues invoices; any other services business records its sales by invoice or receipt. The database decides
+// the same way in private.compliance_items.
+export const WALK_IN = ['health', 'hospitality', 'education'];
+export type Mode = { serviceOnly: boolean; walkIn: boolean; professional: boolean; till: boolean; stock: boolean };
+type ModeOrg = { offering?: string | null; category_id?: string | null; professional_services?: boolean | null };
+export function modeFor(o: ModeOrg | null | undefined): Mode {
+  const serviceOnly = o?.offering === 'services';
+  const cat = String(o?.category_id || '');
+  const walkIn = serviceOnly && WALK_IN.includes(cat);
+  const professional = serviceOnly && !walkIn && (o?.professional_services === true || cat === 'professional');
+  return { serviceOnly, walkIn, professional, till: !serviceOnly || walkIn, stock: !serviceOnly };
+}
+export function useMode(): Mode {
+  const { data: inv } = useInventory();
+  return modeFor(inv?.org as ModeOrg | undefined);
+}
 export const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
