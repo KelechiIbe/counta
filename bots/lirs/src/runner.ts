@@ -8,6 +8,7 @@ import { Etax } from './etax.js';
 import { LoginRefused, Refused, SessionLost, retryable, scrub } from './errors.js';
 import { fileReturn, type FileStore, type Reporter } from './file.js';
 import { raiseBill } from './bill.js';
+import { checkLogin } from './check.js';
 import { billStatus, transferAccount } from './lasg.js';
 
 export type Outcome = { job_id: string; kind: string; status: 'done' | 'failed'; retry?: boolean; error?: string };
@@ -66,6 +67,7 @@ export async function tick(opts: { budgetMs?: number; maxJobs?: number; browser?
         };
         const work = async () => {
           switch (job.kind) {
+            case 'check': { const et = await signIn(); return await checkLogin(et, c, rep); }
             case 'file': { const et = await signIn(); return { result: await fileReturn(et, c, files, rep) }; }
             case 'bill': { const et = await signIn(); const b = await raiseBill(et, c, rep); return { result: b.result, tax_station: b.tax_station }; }
             case 'pay_account': {
@@ -81,7 +83,7 @@ export async function tick(opts: { budgetMs?: number; maxJobs?: number; browser?
         try { out = await withTimeout(work(), cfg.jobTimeoutMs, 'The job'); }
         catch (e) {
           // A session e-Tax ended part way is tried once more at once with a fresh sign-in; the steps pick up where they were.
-          if (e instanceof SessionLost && (job.kind === 'file' || job.kind === 'bill')) {
+          if (e instanceof SessionLost && (job.kind === 'file' || job.kind === 'bill' || job.kind === 'check')) {
             if (session) { await session.et.ctx.close().catch(() => {}); session = null; }
             await rep.step('signed_in_again', 'e-Tax ended the session; signing in again.');
             out = await withTimeout(work(), cfg.jobTimeoutMs, 'The job');

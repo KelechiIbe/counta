@@ -4,7 +4,7 @@
 import { cfg } from './config.js';
 import { sign } from './sign.js';
 
-export type Job = { id: string; kind: 'file' | 'bill' | 'pay_account' | 'status'; attempt: number; max_attempts: number; org_id: string; year: number; person_id: string };
+export type Job = { id: string; kind: 'check' | 'file' | 'bill' | 'pay_account' | 'status'; attempt: number; max_attempts: number; org_id: string; year: number | null; person_id: string };
 export type Next = { job: Job | null; context?: any; files?: Record<string, string> };
 
 async function post(path: string, body: unknown, timeoutMs = 60_000): Promise<any> {

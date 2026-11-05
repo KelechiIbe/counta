@@ -120,7 +120,8 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
   const live = (d?.computation?.people || []) as any[];
   const bots: string[] = d?.bot_authorities || [];
   // While Counta's bot is at work on e-Tax, the year looks again every few seconds.
-  const working = live.some((p) => (p.bot || bots.includes(p.authority)) && (p.status === 'sent' || ['queued', 'running'].includes(p.jobs?.bill?.status) || ['queued', 'running'].includes(p.jobs?.pay_account?.status)));
+  const working = live.some((p) => (p.bot || bots.includes(p.authority)) && (p.status === 'sent' || !!p.etax_login?.checking
+    || ['queued', 'running'].includes(p.jobs?.bill?.status) || ['queued', 'running'].includes(p.jobs?.pay_account?.status)));
   useEffect(() => {
     if (!working) return;
     const t = setInterval(() => { void refresh(); }, 8000);
@@ -736,7 +737,7 @@ function People({ d, year, firstYear }: { d: any; year: number; firstYear: numbe
               <span className="m-line">{p.authority_name || <span style={{ color: '#B45309' }}>Choose the state</span>}
                 {(p.bot || (d.bot_authorities || []).includes(p.authority)) && 'etax_login' in p && (
                   <span style={{ display: 'block', fontSize: 11, color: !p.etax_login ? '#B45309' : p.etax_login.status === 'failed' ? '#B91C1C' : undefined }} className={p.etax_login && p.etax_login.status !== 'failed' ? 'faint' : undefined} data-testid="pit-person-etax">
-                    {p.etax_login ? `e-Tax ${p.etax_login.payer_id} · ${(LOGIN_STATE[p.etax_login.status] || LOGIN_STATE.saved).label.toLowerCase()}` : 'No e-Tax login yet'}</span>)}</span>
+                    {p.etax_login ? `e-Tax ${p.etax_login.payer_id} · ${loginState(p.etax_login).label.toLowerCase()}` : 'No e-Tax login yet'}</span>)}</span>
             </div>
           );
         })}
@@ -810,8 +811,11 @@ function ReliefDocs({ id, need, docs, prefix, onChange }: { id: string; need: Ne
 
 // The person's own LIRS e-Tax login, for Counta's bot: saved through the server into a locked vault, never shown again.
 const LOGIN_STATE: Record<string, { label: string; tone: string }> = {
-  saved: { label: 'Saved, not used yet', tone: 't-grey' }, verified: { label: 'Working', tone: 't-green' }, failed: { label: 'Did not work', tone: 't-red' },
+  saved: { label: 'Saved, not checked yet', tone: 't-grey' }, verified: { label: 'Working', tone: 't-green' }, failed: { label: 'Did not work', tone: 't-red' },
+  checking: { label: 'Checking with e-Tax', tone: 't-blue' },
 };
+// While the bot checks a login it has just been given, that is what the person sees.
+const loginState = (l: any) => (l?.checking ? LOGIN_STATE.checking : LOGIN_STATE[l?.status] || LOGIN_STATE.saved);
 function EtaxLogin({ year, person }: { year: number; person: any }) {
   const { orgId } = useSession();
   const toast = useToast();
@@ -822,7 +826,14 @@ function EtaxLogin({ year, person }: { year: number; person: any }) {
   const [pw, setPw] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const first = String(person.name || '').trim().split(/\s+/)[0] || 'they';
-  const st = l ? LOGIN_STATE[l.status] || LOGIN_STATE.saved : null;
+  const st = l ? loginState(l) : null;
+  // The check takes a minute or so: the login looks again every few seconds until it is done.
+  const checking = !!l?.checking;
+  useEffect(() => {
+    if (!checking) return;
+    const t = setInterval(() => { void refresh(); }, 4000);
+    return () => clearInterval(t);
+  }, [checking]); // eslint-disable-line react-hooks/exhaustive-deps
   async function call(kind: 'save' | 'remove') {
     setBusy(kind);
     try {
@@ -831,7 +842,8 @@ function EtaxLogin({ year, person }: { year: number; person: any }) {
         : { action: 'pit_etax_login_remove', org_id: orgId, person_id: person.person_id });
       if (!r.ok) throw new Error(r.error || 'That did not work.');
       setPw('');
-      toast(kind === 'save' ? 'e-Tax login saved' : 'e-Tax login removed');
+      toast(kind === 'remove' ? 'e-Tax login removed'
+        : r.woke === false ? 'e-Tax login saved. Counta checks it with e-Tax once its bot is running.' : 'e-Tax login saved. Counta is checking it with e-Tax.');
       await refresh();
       setOpen(kind === 'remove');
     } catch (e) { toast((e as Error).message, 'err'); }
@@ -845,13 +857,19 @@ function EtaxLogin({ year, person }: { year: number; person: any }) {
       </div>
       <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>Counta's bot signs in to e-Tax as {person.name} with this login to file the {year} return and raise the bill,
         as {first} would. The password is kept in a locked vault for the bot alone and is never shown again. If {first} is signed in to e-Tax while the bot works, e-Tax signs {first} out.</div>
-      {l?.status === 'failed' && <Alert kind="red" icon="lock">e-Tax did not accept it{l.message ? `: ${l.message}` : ''}. Save it again.</Alert>}
+      {l?.status === 'failed' && !checking && <Alert kind="red" icon="lock">e-Tax did not accept it{l.message ? `: ${l.message}` : ''}. Save it again.</Alert>}
+      {checking && <div className="row" style={{ gap: 8, fontSize: 13 }} data-testid="pit-etax-checking"><Spinner small />Counta's bot is signing in to e-Tax with it to check it. Nothing on e-Tax is changed.</div>}
+      {l?.status === 'verified' && !checking && l.message && <Alert kind="yellow" icon="info">{l.message}</Alert>}
+      {l?.status === 'saved' && !checking && l.check_error && <Alert kind="grey" icon="info">Counta could not check it with e-Tax yet: {l.check_error} Save it again to check it now; otherwise it is checked when the return is sent.</Alert>}
       {l && !open && (
         <div className="row wrap" style={{ gap: 8, fontSize: 13 }}>
           <span>Payer ID <b>{l.payer_id}</b>{l.saved_by ? <span className="faint"> · saved by {l.saved_by}{l.saved_at ? `, ${when(l.saved_at)}` : ''}</span> : null}</span>
           <button className="btn btn-ghost btn-xs" onClick={() => setOpen(true)}>Change</button>
           <button className="btn btn-ghost btn-xs" disabled={!!busy} onClick={() => call('remove')}>{busy === 'remove' ? 'Removing…' : 'Remove'}</button>
         </div>
+      )}
+      {l?.status === 'verified' && !checking && (l.etax_name || l.tax_station_name) && (
+        <div className="faint" style={{ fontSize: 12 }} data-testid="pit-etax-found">On e-Tax as {l.etax_name || person.name}{l.tax_station_name ? `, tax station ${l.tax_station_name}` : ''}{l.checked_at ? ` · checked ${when(l.checked_at)}` : ''}.</div>
       )}
       {open && (
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) auto', gap: 8, alignItems: 'end' }}>

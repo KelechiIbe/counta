@@ -86,7 +86,7 @@ export class Etax {
     const taxPayerId = Number(profile?.tax_payer?.id ?? user.id);
     if (!taxPayerId || !individualId) throw new Refused('e-Tax signed in but did not say who the taxpayer is. Is this an individual\'s Payer ID?');
     if (user.entity_type_id && profile?.tax_payer?.entity_type_id && String(profile.tax_payer.entity_type_id) !== String(user.entity_type_id)) {
-      throw new Refused('This Payer ID belongs to a company on e-Tax, not a person.');
+      throw new LoginRefused('This Payer ID belongs to a company on e-Tax, not a person. Save the person\'s own Payer ID, which starts with N-.');
     }
     this.me = { taxPayerId, individualId, payerId: String(user.reg_no || profile?.tax_payer?.reg_no || payerId), name: fullName(profile) || fullName(user.entity), profile };
   }

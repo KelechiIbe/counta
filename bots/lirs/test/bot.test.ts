@@ -264,6 +264,47 @@ test('a tax station it cannot place, and e-Tax errors worth another try', async 
   assert.equal(k3.status, 'done'); assert.equal(st.bills.length, before); assert.equal(k3.result.reference, k2.result.reference);
 });
 
+// A login checked when it is saved: no year, no return, only who the account is and where its tax station is.
+const checkCtx = (login: any, name: string) => ({ login: { tax_station: null, tax_station_name: null, ...login }, taxpayer: { person_id: 'p9', name, authority: 'SIRS:LA' },
+  year: null, yoa: null, org: { name: 'Obi & Co' }, portal: {}, return: null, bill: null, request: { login_saved_at: '2026-11-05T00:00:00Z' } });
+
+test('checks a login as soon as it is saved, and changes nothing on e-Tax', async () => {
+  const logins = st.logins, calls = st.calls.length, bills = st.bills.length, returns = st.returns.length, sessions = st.sessions.size;
+  const j = queue('check', checkCtx({ payer_id: 'n-16000001', password: PASSWORD }, 'Ada Obi'));
+  await run();
+  assert.equal(j.status, 'done', j.error);
+  assert.deepEqual(j.result, { payer_id: 'N-16000001', name: 'Ada Obi', name_matches: true, tax_station: { code: '13086', name: 'Lekki II Tax Stattion' }, warning: null });
+  assert.equal(st.logins, logins + 1);
+  assert.equal(reportsOf(j).find((x) => x.step === 'signed_in').login, 'verified');
+  assert.deepEqual(reportsOf(j).find((x) => x.done).tax_station, { code: '13086', name: 'Lekki II Tax Stattion' });
+  assert.match(reportsOf(j).find((x) => x.step === 'checked').note, /Ada Obi, tax station Lekki II Tax Stattion\. Nothing on e-Tax was changed/);
+  const made = st.calls.slice(calls).filter((x) => x.resource !== 'auth/logout');
+  assert.ok(made.length && made.every((x) => x.method === 'GET'), `only reads: ${JSON.stringify(made)}`);
+  assert.equal(st.bills.length, bills); assert.equal(st.returns.length, returns);
+  assert.equal(st.sessions.size, sessions, 'signed out');
+  assert.ok(!JSON.stringify(counta.reports).includes(PASSWORD));
+});
+
+test('a login in another name, or with no tax station Counta can place, is kept with a warning', async () => {
+  const j = queue('check', checkCtx({ payer_id: 'N-16000004', password: 'no-office-123' }, 'Ngozi Okafor'));
+  await run();
+  assert.equal(j.status, 'done', j.error);
+  assert.equal(j.result.name, 'Dan Uzo'); assert.equal(j.result.name_matches, false); assert.equal(j.result.tax_station, null);
+  assert.match(j.result.warning, /in the name Dan Uzo\. Make sure it is Ngozi Okafor's own login\./);
+  assert.match(j.result.warning, /tax station "Badagry/);
+  assert.equal(reportsOf(j).find((x) => x.login).login, 'verified');
+  assert.ok(!reportsOf(j).find((x) => x.done).tax_station);
+});
+
+test('a login e-Tax refuses is marked as not working, and not tried again', async () => {
+  const j = queue('check', checkCtx({ payer_id: 'N-16000002', password: 'not-the-password' }, 'Bayo Ade'));
+  await run();
+  assert.equal(j.status, 'failed'); assert.equal(j.retry, false);
+  const l = reportsOf(j).find((x) => x.login);
+  assert.equal(l.login, 'failed'); assert.match(l.login_message, /Invalid Payer ID or password/);
+  assert.ok(!JSON.stringify(counta.reports).includes('not-the-password'));
+});
+
 test('the door: only signed calls start a tick', async () => {
   const { verify, sign: s } = sign;
   const raw = '{"reason":"test"}';
