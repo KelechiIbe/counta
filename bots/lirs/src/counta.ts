@@ -30,8 +30,9 @@ export async function again<T>(what: () => Promise<T>, tries = 3, pauseMs = Numb
   throw last;
 }
 
-export async function next(): Promise<Next> {
-  const out = await again(() => post('/next', { worker: cfg.worker }));
+// The next job for a lane of the bot (its name goes on the job, as who has it).
+export async function next(worker: string = cfg.worker): Promise<Next> {
+  const out = await again(() => post('/next', { worker }));
   return { job: out.job ?? null, context: out.context, files: out.files || {} };
 }
 

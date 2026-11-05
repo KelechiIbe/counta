@@ -233,6 +233,7 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
         {d.row?.status === 'approved' && <div className="faint" style={{ fontSize: 12 }}>Approved by {d.row.approved_by || 'someone'} ({when(d.row.approved_at)}), who confirmed the statement of accounts. The figures are frozen; reopen the year to change them.</div>}
         {d.row?.status === 'filed_outside' && <Alert kind="green" icon="check">Marked as filed outside Counta{d.row.settings?.filed_outside?.note ? `: ${d.row.settings.filed_outside.note}` : ''}. Losses and allowances still carry on to the next year.</Alert>}
         {d.row?.status === 'approved' && <FilingList people={people} bots={bots} canMark={!!can.approve} canPay={!!can.see_all} onMark={setFiling} onTcc={setTcc} onPay={(p) => setPay(p.person_id)} onLogin={(p) => setLoginFor(p.person_id)}
+          onPaid={(p) => act(`paid-${p.person_id}`, () => rpc('pit_pay_tapped', { p_org: orgId, p_year: year, p_person: p.person_id }), `Counta will confirm ${p.name}'s payment with LIRS`)}
           onAgain={(p, kind) => act(`again-${p.person_id}`, async () => {
             const r = await edge<any>('tax-files', kind === 'file' ? { action: 'pit_send', org_id: orgId, year, person_id: p.person_id } : { action: 'pit_bill', org_id: orgId, year, person_id: p.person_id });
             if (!r.ok) throw new Error(r.error || 'That did not work.');
@@ -352,8 +353,8 @@ const STEP_LABEL: Record<string, string> = {
   support_staff: 'Household staff in', assets: 'Assets in', reliefs: 'Reliefs in', confirmed: 'Confirmed', bill: 'Bill raised', payment_page: 'On the payments page',
   transfer_account: 'Account ready', checked: 'Checked for the payment',
 };
-function FilingList({ people, bots, canMark, canPay, onMark, onTcc, onPay, onAgain, onLogin }: { people: any[]; bots: string[]; canMark: boolean; canPay: boolean; onMark: (p: any) => void;
-  onTcc: (p: any) => void; onPay: (p: any) => void; onAgain: (p: any, kind: 'file' | 'bill') => void; onLogin: (p: any) => void }) {
+function FilingList({ people, bots, canMark, canPay, onMark, onTcc, onPay, onPaid, onAgain, onLogin }: { people: any[]; bots: string[]; canMark: boolean; canPay: boolean; onMark: (p: any) => void;
+  onTcc: (p: any) => void; onPay: (p: any) => void; onPaid: (p: any) => void; onAgain: (p: any, kind: 'file' | 'bill') => void; onLogin: (p: any) => void }) {
   return (
     <div className="stack" style={{ gap: 8 }} data-testid="pit-filing">
       {people.map((p) => {
@@ -374,6 +375,10 @@ function FilingList({ people, bots, canMark, canPay, onMark, onTcc, onPay, onAga
         const billJob = jobs.bill;
         const billFailed = bot && p.status === 'filed' && !bill && billJob?.status === 'failed';
         const billWaiting = bot && p.status === 'filed' && !bill && ['queued', 'running'].includes(billJob?.status);
+        // Counta checks the Lagos State payments page only once money has gone out (the wallet, a bank line, or I've paid).
+        const pc = jobs.pay_checks || null;
+        const checking = bot && !p.paid_at && !!pc?.active;
+        const notShowing = bot && !p.paid_at && !!pc && !pc.active && !!pc.ended_at;
         return (
           <div key={p.person_id} className="stack" style={{ gap: 4 }} data-testid="pit-filing-row" data-person={p.name}>
             <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8, fontSize: 13 }}>
@@ -382,6 +387,8 @@ function FilingList({ people, bots, canMark, canPay, onMark, onTcc, onPay, onAga
                 <span className={'chip ' + s.tone} data-testid="pit-filing-state">{s.text}</span>
                 {payUrl && <a className="btn btn-ghost btn-xs" href={payUrl} target="_blank" rel="noopener noreferrer"><Icon name="card" size={12} />Pay{bill?.amount != null ? ` ${N2(bill.amount)}` : ''}</a>}
                 {bot && bill && !p.paid_at && canPay && <button className="btn btn-primary btn-xs" onClick={() => onPay(p)} data-testid="pit-pay"><Icon name="card" size={12} color="#fff" />Pay {N2(bill.amount)}</button>}
+                {bot && bill && !p.paid_at && canPay && !checking && <button className="btn btn-ghost btn-xs" onClick={() => onPaid(p)} data-testid="pit-paid"
+                  title="Paid from outside Counta? Counta then confirms it with LIRS."><Icon name="check" size={12} />I've paid</button>}
                 {bot && 'etax_login' in p && p.status !== 'filed' && <button className="btn btn-ghost btn-xs" onClick={() => onLogin(p)} data-testid="pit-login-open">
                   <Icon name="lock" size={12} />{p.etax_login ? 'e-Tax login' : 'Add e-Tax login'}</button>}
                 {canMark && bot && p.flux_status === 'send_failed' && p.status === 'approved' && <button className="btn btn-ghost btn-xs" onClick={() => onAgain(p, 'file')}>Try again</button>}
@@ -396,6 +403,8 @@ function FilingList({ people, bots, canMark, canPay, onMark, onTcc, onPay, onAga
               <div className="row wrap faint" style={{ gap: 8, fontSize: 12, justifyContent: 'flex-end' }} data-testid="pit-after-filing">
                 {bill && <span>Bill {bill.reference || ''} for {N2(bill.amount)}{bill.agency ? ` · ${bill.agency}` : ''}{bill.expires_at && !p.paid_at ? ` · pay by ${fmtDay(String(bill.expires_at).slice(0, 10))}` : ''}</span>}
                 {p.paid_at && <span className="chip t-green">Paid {fmtDay(String(p.paid_at).slice(0, 10))}{p.payment_ref ? ` · ${p.payment_ref}` : ''}</span>}
+                {checking && <span className="chip t-amber" data-testid="pit-checking-chip">Confirming with LIRS{pc.next_at ? ` · next check ${fmtTime(pc.next_at)}` : ''}</span>}
+                {notShowing && <span className="chip t-red" data-testid="pit-not-showing">Not showing as paid on LIRS</span>}
                 {tl && <span className={'chip ' + tl.tone}>{tl.label}{t.number ? ` ${t.number}` : ''}{t.expires_on ? `, valid to ${fmtDay(t.expires_on)}` : ''}{t.status === 'rejected' && t.message ? `: ${t.message}` : ''}</span>}
               </div>
             )}
@@ -407,8 +416,11 @@ function FilingList({ people, bots, canMark, canPay, onMark, onTcc, onPay, onAga
 }
 
 // Paying a person's e-Tax bill. By transfer for now: Counta's bot opens the bill on e-Tax's Flutterwave channel (the Lagos State
-// payments page), chooses bank transfer and brings back the one-time account for the exact amount. Counta then checks
-// e-Tax's payments page every 15 minutes and marks the bill paid when the payment shows.
+// payments page), chooses bank transfer and brings back the one-time account for the exact amount. The account works for 15
+// minutes, so the bot fetches it only when the person says they are ready, and the screen counts the time down; once it has
+// expired the number is hidden. Counta checks the payments page only once money has gone out: a payment from the Counta
+// wallet, the bank line in the books, or the person tapping I've paid (up to two hours after the account expired).
+const mmss = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 function PayModal({ year, person, onClose }: { year: number; person: any; onClose: () => void }) {
   const { orgId } = useSession();
   const toast = useToast();
@@ -416,11 +428,18 @@ function PayModal({ year, person, onClose }: { year: number; person: any; onClos
   const [method, setMethod] = useState<'transfer' | 'tax_wallet' | 'business'>('transfer');
   const [asked, setAsked] = useState<{ at: number; fetched: number; job: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [now, setNow] = useState(Date.now());
   const bill = person.bill || {};
   const tr = bill.transfer || null;
   const job = person.jobs?.pay_account || null;
+  const pc = person.jobs?.pay_checks || null;
+  const checking = !person.paid_at && !!pc?.active;
   const fetched = tr?.fetched_at ? Date.parse(tr.fetched_at) : 0;
-  const live = !!tr && (!tr.expires_at || Date.parse(tr.expires_at) > Date.now());
+  // Flutterwave's time, or 15 minutes after the bot fetched it.
+  const expires = tr ? (tr.expires_at ? Date.parse(tr.expires_at) : fetched + 15 * 60_000) : 0;
+  const left = Math.max(0, expires - now);
+  const live = !!tr && left > 0;
+  const lately = !!tr && now - expires < 2 * 3600_000;
   // Waiting for the account asked for: a newer one arrives, or that job fails, or three minutes pass.
   const got = !!asked && fetched > asked.fetched;
   const jobFailed = !!asked && !!job && job.id === asked.job && job.status === 'failed';
@@ -431,6 +450,13 @@ function PayModal({ year, person, onClose }: { year: number; person: any; onClos
     const t = setInterval(() => { void refresh(); }, 3000);
     return () => clearInterval(t);
   }, [waiting]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The countdown, while the account works.
+  useEffect(() => {
+    setNow(Date.now());
+    if (!tr) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [tr?.fetched_at]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (person.paid_at) { toast(`${person.name}'s ${year} income tax is paid`); onClose(); } }, [person.paid_at]); // eslint-disable-line react-hooks/exhaustive-deps
   async function ask() {
     setBusy(true);
@@ -442,16 +468,29 @@ function PayModal({ year, person, onClose }: { year: number; person: any; onClos
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
   }
+  async function paid() {
+    setBusy(true);
+    try {
+      const r = await rpc<any>('pit_pay_tapped', { p_org: orgId, p_year: year, p_person: person.person_id });
+      toast(r?.result === 'already' ? 'Counta is already confirming this payment with LIRS' : 'Thank you. Counta will confirm the payment with LIRS');
+      await refresh();
+    } catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(false);
+  }
   const copy = async (v: string) => { try { await navigator.clipboard.writeText(v); toast('Copied'); } catch { /* the number is on the screen */ } };
   const opts: { id: 'transfer' | 'tax_wallet' | 'business'; label: string; sub: string; off?: boolean }[] = [
-    { id: 'transfer', label: 'Bank transfer', sub: 'A one-time account from e-Tax\'s Flutterwave channel, for the exact amount.' },
+    { id: 'transfer', label: 'Bank transfer', sub: 'A one-time account from e-Tax\'s Flutterwave channel, for the exact amount. It works for 15 minutes.' },
     { id: 'tax_wallet', label: 'Tax wallet', sub: 'Comes next.', off: true },
     { id: 'business', label: 'Business account', sub: 'Comes next.', off: true },
   ];
+  // A new account only once the one on screen is about to stop working (Counta refuses one sooner).
+  const canAsk = !waiting && method === 'transfer' && (!live || left <= 3 * 60_000);
   return (
     <Modal onClose={onClose} width={520}>
       <ModalHead title={`Pay ${person.name}'s ${year} income tax`} sub={`Bill ${bill.reference || ''} · ${N2(bill.amount)}${bill.agency ? ` · ${bill.agency}` : ''}`} onClose={onClose} />
       <div className="modal-body stack" style={{ gap: 12, fontSize: 14 }} data-testid="pit-pay-modal">
+        {checking && <Alert kind="blue" icon="clock"><span data-testid="pit-checking">Counta is confirming the payment with LIRS{pc.next_at ? `. The next check is at ${fmtTime(pc.next_at)}` : ''}.
+          The bill shows as paid here once the Lagos State payments page does, so you can close this.</span></Alert>}
         <div className="stack" style={{ gap: 6 }}>
           {opts.map((o) => (
             <label key={o.id} className="check" style={{ alignItems: 'flex-start', opacity: o.off ? 0.55 : 1 }}>
@@ -469,21 +508,26 @@ function PayModal({ year, person, onClose }: { year: number; person: any; onClos
               <button className="btn btn-ghost btn-xs" onClick={() => copy(tr.account_number)}><Icon name="copy" size={12} />Copy</button>
             </div>
             <div style={{ fontSize: 13 }}>{tr.bank_name} · {tr.account_name}</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: left <= 3 * 60_000 ? '#B91C1C' : '#1f2933' }} data-testid="pit-countdown">
+              Works for another {mmss(left)} (until {fmtTime(new Date(expires).toISOString())})</div>
             <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>
               {Number(tr.fee) > 0 ? `The amount includes the payment page's ${N2(tr.fee)} processing fee. ` : ''}
-              {tr.expires_at ? `The account works until ${new Date(tr.expires_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} today. ` : ''}
-              Pay it in one transfer from any bank. Counta checks for the payment every 15 minutes and marks the bill paid when it shows.
+              Pay it in one transfer from any bank, then tap I've paid. Counta then confirms the payment with LIRS.
             </div>
           </div>
         )}
-        {tr && !live && !waiting && <Alert kind="amber" icon="clock">The last account expired. Ask for a new one before paying.</Alert>}
+        {tr && !live && !waiting && !checking && <Alert kind="amber" icon="clock"><span data-testid="pit-transfer-expired">This account has expired, so don't pay into it. When you're ready to pay, ask for a new one.</span></Alert>}
+        {!live && !waiting && !person.paid_at && !checking && <div className="faint" style={{ fontSize: 12.5, lineHeight: 1.5 }} data-testid="pit-ready-note">
+          Have your bank app open before you ask. The account works for 15 minutes from when it appears, so pay it straight away.</div>}
         {waiting && <div className="row" style={{ gap: 8, fontSize: 13 }} data-testid="pit-transfer-waiting"><Spinner small />Counta's bot is getting the account from the Lagos State payments page{job?.step ? ` (${STEP_LABEL[job.step] || job.step})` : ''}…</div>}
         {failed && <Alert kind="red" icon="info">{failed}</Alert>}
       </div>
       <div className="modal-ft">
         <button className="btn btn-secondary" onClick={onClose}>Close</button>
-        <button className="btn btn-primary" disabled={busy || waiting || method !== 'transfer'} onClick={ask} data-testid="pit-transfer-ask">
-          {busy ? 'Asking…' : live ? 'Get a new account' : 'Get the account to pay'}</button>
+        {(live || lately) && !waiting && !checking && <button className="btn btn-secondary" disabled={busy} onClick={paid} data-testid="pit-paid-modal"><Icon name="check" size={13} />I've paid</button>}
+        {/* While Counta confirms a payment, a new account is still there for anyone who tapped I've paid by mistake. */}
+        {canAsk && <button className={checking ? 'btn btn-secondary' : 'btn btn-primary'} disabled={busy} onClick={ask} data-testid="pit-transfer-ask">
+          {busy ? 'Asking…' : checking ? 'Get a new account' : tr ? 'I\'m ready, get a new account' : 'I\'m ready, get the account'}</button>}
       </div>
     </Modal>
   );

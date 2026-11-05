@@ -129,18 +129,37 @@ Pay Now on a bill opens e-Tax's list of 17 payment channels. Flutterwave's is th
 amount, the name, the tax station, the revenue and the bill reference, and asks for an email address and phone number
 (the business's, in Counta). Make Payment offers Card, Bank transfer or USSD, with a processing fee (NGN 5 on NGN 500).
 Bank transfer opens Flutterwave's checkout for "LASG Collection", which gives a one-time account: the exact amount (bill plus
-fee), a 10-digit account number at Flutterwave MFB, beneficiary LASG Collection, valid for this payment only and for about
-an hour. The bot reads the account from Flutterwave's own answer (or the checkout, failing that), then closes the page; it
+fee), a 10-digit account number at Flutterwave MFB, beneficiary LASG Collection, valid for this payment only and for 15
+minutes. The bot reads the account from Flutterwave's own answer (or the checkout, failing that), then closes the page; it
 never presses "I have made this bank transfer" and never pays. A page holding an earlier unused account is reset first
 ("Reset Payment").
 
-The account expires, so the bot fetches it only when someone chooses to pay. In Counta the person chooses each time how to
-pay: by their own bank transfer now (Counta shows the account, the exact amount and when it expires, with a button for a new
-one); from the tax wallet or the business account next.
+The account expires after 15 minutes, so the bot fetches it only when someone says they are ready to pay ("I'm ready, get
+the account"), and fetching it goes ahead of the bot's other work. Counta counts the 15 minutes down on the screen, tells
+whoever asked when the account is ready, and hides the number once it has expired. It takes Flutterwave's expiry when that is
+sooner, and never more than 15 minutes. No new account is fetched while the one on screen works for three minutes or more,
+and at most three are fetched for a bill in 24 hours, since each is a visit to the payments page. From the tax wallet or the
+business account comes next.
 
-The same payments page shows the bill paid once the transfer lands ("Payment successfully completed"). The bot checks it
-every 15 minutes for three days after the account was fetched, which never signs the person out of e-Tax, and Counta then
-records the payment and tells whoever files tax. e-Tax's own bill list lagged the payments page in the live test.
+The same payments page shows the bill paid once the transfer lands ("Payment successfully completed"). The bot looks at it
+only once Counta sees money go out for the bill:
+
+- a payout from the Counta wallet to the one-time account (once Flutterwave has it);
+- a debit in the books for the exact amount: the transfer amount within two days of the account being given, or the bill's
+  own amount any time after it was raised (a bank feed, a statement, or the wallet's own feed);
+- someone tapping "I've paid" on the bill, for a payment made outside Counta.
+
+From that moment it checks at about 5 and 20 minutes, 1, 4 and 12 hours, 1 day and 46 hours, each a little early or late so
+the visits do not land on a fixed beat (up to a tenth of the gap before it earlier, a twentieth later). A check tried again
+because the page was down counts, and a bill never has more than ten checks in any two days: a check that would be the
+eleventh waits for its turn. After the last, whoever files tax is told how many times Counta looked and to take it up with
+LIRS with the transfer receipt. A second sign of the same payment does not start another round; one after a round has ended
+does. Each check is one visit to the public payments page, which never signs the person out of e-Tax. e-Tax's own bill list
+lagged the payments page in the live test.
+
+If Counta has seen no money go out 30 minutes after an account was given, the person who asked for it and the business's owner
+get an email (and a notification): the account has expired, log in and press Pay for a fresh one, or tap I've paid if the
+money has gone. One email per account; none for the sample business or while TaxStreem has email paused.
 
 ## 5. How Counta runs the bot
 
@@ -163,7 +182,12 @@ Counta app ── tax-files (pit_send, pit_pay, pit_bill) ──► lirs_jobs �
   (`x-counta-signature: t=<seconds>,v1=<HMAC-SHA256 of "<t>.<body>">`, as with Flux).
 - Counta wakes the bot when it adds a job (`POST <LIRS_BOT_URL>/tick`, signed the same way). Every five minutes while a job
   is due, the database's `counta-lirs-bot` cron job asks the taxstreem function to wake it too, which is when payment checks
-  and retries run.
+  and retries run. The `counta-pit-pay-remind` cron job sends the 30-minute emails.
+- The bot works up to eight jobs side by side (`BOT_LANES`), each in its own browser context, for different people: Counta
+  never hands out two jobs for one person at once. A lane that takes a job wakes one more to look for the next, so a quiet
+  queue keeps one lane busy and a deadline day fills all eight. A tick that stops for time with work still waiting is
+  followed by another at once. e-Tax sessions belong to the tick, by person: a filing keeps the person signed in for the
+  bill that follows, whichever lane takes it, and anything else signs them out when it ends.
 - A login is checked as soon as it is saved. The `check` job belongs to the login, not to a year: the bot signs in, reads
   whose account it is (the name e-Tax has on it) and the tax station the profile names, and signs out. Nothing on e-Tax is
   changed. The person's row then shows the login as working, with a warning when e-Tax has another name on the account or
