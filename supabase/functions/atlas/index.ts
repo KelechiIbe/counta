@@ -65,12 +65,15 @@ function same(a: string, b: string) {
 
 // ------------------------------------------------------------------ bookkeeper
 const running = new Set<string>();
-// suggestRounds: how many batches of forty waiting questions get a short list in this run. The scheduled runs take one
-// batch per business each tick, so a business with hundreds waiting is worked through over a few ticks.
-export async function bookkeep(orgId: string, suggestRounds = 1) {
+// Lines (or questions) per call to the model. Each answer carries a guess and up to four alternatives with reasons, so a
+// batch is kept small enough for the model to answer well inside its 55-second limit.
+const BATCH = 15;
+// suggestRounds: how many batches of waiting questions get a short list in this run. The scheduled runs take one batch per
+// business each tick, so a business with hundreds waiting is worked through over a few ticks. No batch starts after the
+// deadline: an Edge Function is stopped about 150 seconds after it starts.
+export async function bookkeep(orgId: string, suggestRounds = 1, deadline = Date.now() + 90_000) {
   if (running.has(orgId)) return { org_id: orgId, skipped: 'already running' };
   running.add(orgId);
-  const started = Date.now();
   const run = { items: 0, posted: 0, asked: 0, suggested: 0, model: '', error: null as string | null };
   try {
     const cfg = await geminiCfg();
@@ -81,11 +84,11 @@ export async function bookkeep(orgId: string, suggestRounds = 1) {
       run.error = on === false ? 'AI reading is off for this business (paused by TaxStreem, or not in its plan).' : cfg.g.problem || 'Gemini is not connected: add the service account key in the admin portal.';
       return { org_id: orgId, ...run };
     }
-    // Rounds of forty lines, but none started after about a hundred seconds: the function is stopped at its time limit
-    // (546) part way through a round otherwise. The rest wait for the next tick.
-    for (let round = 0; round < 5; round++) {
-      if (round && Date.now() - started > 100_000) break;
-      const ctx = await svc<Ctx>('svc_lines_for_ai', { p_org: orgId, p_limit: 40 });
+    // Rounds of a batch of lines, none started after the deadline: the function is stopped at its time limit (546) part
+    // way through a round otherwise. The rest wait for the next tick.
+    for (let round = 0; round < 8; round++) {
+      if (round && Date.now() > deadline) break;
+      const ctx = await svc<Ctx>('svc_lines_for_ai', { p_org: orgId, p_limit: BATCH });
       if (!ctx?.lines?.length) break;
       let answers;
       try {
@@ -118,7 +121,7 @@ export async function bookkeep(orgId: string, suggestRounds = 1) {
     // Questions already waiting without a short list of likely accounts (asked before Atlas gave one, or when the model
     // was away) get one now. Nothing is posted here: the owner still answers each.
     if (!run.error) {
-      try { await suggest(orgId, cfg, started, run, suggestRounds); } catch (e) { console.error('atlas suggest', (e as Error).message); }
+      try { await suggest(orgId, cfg, deadline, run, suggestRounds); } catch (e) { console.error('atlas suggest', (e as Error).message); }
     }
     return { org_id: orgId, ...run };
   } finally {
@@ -128,10 +131,10 @@ export async function bookkeep(orgId: string, suggestRounds = 1) {
 }
 
 // The short list for questions already waiting. Never posts.
-async function suggest(orgId: string, cfg: Awaited<ReturnType<typeof geminiCfg>>, started: number, run: { suggested: number; model: string; error: string | null }, rounds: number) {
+async function suggest(orgId: string, cfg: Awaited<ReturnType<typeof geminiCfg>>, deadline: number, run: { suggested: number; model: string; error: string | null }, rounds: number) {
   for (let round = 0; round < rounds; round++) {
-    if (Date.now() - started > 100_000) break;
-    const ctx = await svc<Ctx>('svc_questions_for_ai', { p_org: orgId, p_limit: 40 });
+    if (Date.now() > deadline) break;
+    const ctx = await svc<Ctx>('svc_questions_for_ai', { p_org: orgId, p_limit: BATCH });
     if (!ctx?.lines?.length) break;
     let answers;
     try {
@@ -200,13 +203,20 @@ Deno.serve(async (req) => {
     const hook = req.headers.get('x-counta-hook') || '';
     if (hook) {
       if (!same(hook, await secret('PUSH_HOOK_SECRET'))) return json({ ok: false, error: 'Not allowed.' }, 401);
-      if (body.action === 'classify_lines' && body.org_id) return json({ ok: true, result: await bookkeep(String(body.org_id)) });
+      if (body.action === 'classify_lines' && body.org_id) return json({ ok: true, result: await bookkeep(String(body.org_id), 1, Date.now() + 60_000) });
       if (body.action === 'classify_all') {
-        // Businesses with new lines first, then those with questions still waiting for a short list.
+        // Businesses with new lines first (in turn), then those with questions still waiting for a short list (in a new
+        // order each tick, so one slow business never holds the others back). Nothing new starts after 45 seconds.
+        const t0 = Date.now();
+        const shuffle = (a: string[]) => a.map((v) => [Math.random(), v] as const).sort((x, y) => x[0] - y[0]).map((x) => x[1]);
+        const withLines = (await svc<string[]>('svc_orgs_with_lines', {})) || [];
         const waiting = await svc<string[]>('svc_orgs_with_questions', {}).catch(() => [] as string[]);
-        const orgs = [...new Set([...((await svc<string[]>('svc_orgs_with_lines', {})) || []), ...(waiting || [])])].slice(0, 20);
+        const orgs = [...new Set([...shuffle(withLines), ...shuffle(waiting || [])])].slice(0, 20);
         const results = [];
-        for (const o of orgs) results.push(await bookkeep(o));
+        for (const o of orgs) {
+          if (Date.now() - t0 > 45_000) break;
+          results.push(await bookkeep(o, 1, t0 + 45_000));
+        }
         return json({ ok: true, results });
       }
       return json({ ok: false, error: 'Unknown action.' }, 400);
@@ -223,7 +233,7 @@ Deno.serve(async (req) => {
       case 'run': {
         const { data: m } = await sb.from('members').select('role, p_keep_books').eq('org_id', body.org_id).eq('user_id', u.user.id).eq('status', 'active').maybeSingle();
         if (!m || !(m.role === 'owner' || m.p_keep_books)) return json({ ok: false, error: 'Only someone who keeps the books runs the bookkeeper.' });
-        return json({ ok: true, result: await bookkeep(String(body.org_id), 5) });
+        return json({ ok: true, result: await bookkeep(String(body.org_id), 5, Date.now() + 90_000) });
       }
       case 'commentary': return json(await commentary(sb, String(body.org_id), body.from || null, body.to || null));
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
