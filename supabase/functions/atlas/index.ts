@@ -65,7 +65,9 @@ function same(a: string, b: string) {
 
 // ------------------------------------------------------------------ bookkeeper
 const running = new Set<string>();
-export async function bookkeep(orgId: string) {
+// suggestRounds: how many batches of forty waiting questions get a short list in this run. The scheduled runs take one
+// batch per business each tick, so a business with hundreds waiting is worked through over a few ticks.
+export async function bookkeep(orgId: string, suggestRounds = 1) {
   if (running.has(orgId)) return { org_id: orgId, skipped: 'already running' };
   running.add(orgId);
   const started = Date.now();
@@ -116,7 +118,7 @@ export async function bookkeep(orgId: string) {
     // Questions already waiting without a short list of likely accounts (asked before Atlas gave one, or when the model
     // was away) get one now. Nothing is posted here: the owner still answers each.
     if (!run.error) {
-      try { await suggest(orgId, cfg, started, run); } catch (e) { console.error('atlas suggest', (e as Error).message); }
+      try { await suggest(orgId, cfg, started, run, suggestRounds); } catch (e) { console.error('atlas suggest', (e as Error).message); }
     }
     return { org_id: orgId, ...run };
   } finally {
@@ -126,8 +128,8 @@ export async function bookkeep(orgId: string) {
 }
 
 // The short list for questions already waiting. Never posts.
-async function suggest(orgId: string, cfg: Awaited<ReturnType<typeof geminiCfg>>, started: number, run: { suggested: number; model: string; error: string | null }) {
-  for (let round = 0; round < 5; round++) {
+async function suggest(orgId: string, cfg: Awaited<ReturnType<typeof geminiCfg>>, started: number, run: { suggested: number; model: string; error: string | null }, rounds: number) {
+  for (let round = 0; round < rounds; round++) {
     if (Date.now() - started > 100_000) break;
     const ctx = await svc<Ctx>('svc_questions_for_ai', { p_org: orgId, p_limit: 40 });
     if (!ctx?.lines?.length) break;
@@ -221,7 +223,7 @@ Deno.serve(async (req) => {
       case 'run': {
         const { data: m } = await sb.from('members').select('role, p_keep_books').eq('org_id', body.org_id).eq('user_id', u.user.id).eq('status', 'active').maybeSingle();
         if (!m || !(m.role === 'owner' || m.p_keep_books)) return json({ ok: false, error: 'Only someone who keeps the books runs the bookkeeper.' });
-        return json({ ok: true, result: await bookkeep(String(body.org_id)) });
+        return json({ ok: true, result: await bookkeep(String(body.org_id), 5) });
       }
       case 'commentary': return json(await commentary(sb, String(body.org_id), body.from || null, body.to || null));
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
