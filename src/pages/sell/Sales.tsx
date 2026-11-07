@@ -130,6 +130,51 @@ export function VatStatusChips({ codes }: { codes?: number[] }) {
   );
 }
 
+// What the customer may keep back from this invoice: WHT at the rate expected on it, the NCD levy for an oil and gas
+// customer, VAT for a withholding agent. A payment short by exactly these settles the invoice. For the business only.
+const RATE_FROM: Record<string, string> = { invoice: 'set on this invoice', customer: 'what this customer deducts', business: 'usual for your type of work', person: 'a person rarely deducts WHT' };
+function Withholding({ sale }: { sale: Sale }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['sale', sale.id, 'withholding', sale.amount_paid], queryFn: () => rpc<any>('sale_withholding', { p_sale: sale.id }), staleTime: 30_000 });
+  const [busy, setBusy] = useState(false);
+  const w = q.data;
+  if (!w || w.walk_in) return null;
+  const rate = Number(w.expected?.rate || 0);
+  const pctText = (r: number) => `${Math.round(r * 1000) / 10}%`;
+  const rates = [0, 0.02, 0.05, 0.1, ...(w.business?.doubled ? [0.04, 0.2] : [])].sort((a, b) => a - b);
+  async function setRate(v: string) {
+    setBusy(true);
+    try { await rpc('set_sale_wht_rate', { p_sale: sale.id, p_rate: v === '' ? null : Number(v) }); toast('Expected WHT saved'); await qc.invalidateQueries({ queryKey: ['sale', sale.id, 'withholding'] }); }
+    catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(false);
+  }
+  return (
+    <div className="stack" style={{ gap: 6, border: '1px solid var(--line)', borderRadius: 12, padding: '10px 14px', fontSize: 13 }} data-testid="withholding">
+      <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
+        <span className="label" style={{ margin: 0 }}>What the customer may keep back</span>
+        <span className="faint" style={{ fontSize: 11 }}>Not shown to the customer</span>
+      </div>
+      <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
+        <span>{rate > 0 ? `WHT at ${pctText(rate)}` : 'No WHT expected'}<span className="faint"> · {RATE_FROM[w.expected?.source] || ''}</span></span>
+        <span className="row" style={{ gap: 8 }}>
+          {rate > 0 && <b className="num">{N2(w.wht)}</b>}
+          {w.can_change && <select className="input input-sm" style={{ width: 'auto' }} value={w.expected?.source === 'invoice' ? String(rate) : ''} disabled={busy}
+            onChange={(e) => setRate(e.target.value)} aria-label="WHT expected on this invoice">
+            <option value="">{w.expected?.source === 'invoice' ? 'Back to the usual' : 'Change'}</option>
+            {rates.map((r) => <option key={r} value={String(r)}>{r ? pctText(r) : 'None'}</option>)}
+          </select>}
+        </span>
+      </div>
+      {w.ncd_levy && <div className="row" style={{ justifyContent: 'space-between' }}><span>NCD levy at 1%<span className="faint"> · oil and gas customer</span></span><b className="num">{N2(w.ncd_net)}</b></div>}
+      {w.wvat_agent && Number(w.vat) > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span>VAT withheld<span className="faint"> · withholding VAT agent</span></span><b className="num">{N2(w.vat)}</b></div>}
+      <div className="faint" style={{ fontSize: 12 }}>{w.ncd_levy || (w.wvat_agent && Number(w.vat) > 0) ? 'A payment short by exactly these is recorded as paid in full.'
+        : rate > 0 ? 'A payment short by exactly this, with or without the 1% NCD levy oil and gas customers deduct, is recorded as paid in full.'
+        : 'A payment short by exactly the 1% NCD levy oil and gas customers deduct is recorded as paid in full.'}</div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- one document
 export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClose: () => void; onEdit?: (s: Sale) => void; actions?: (s: Sale, act: (fn: () => Promise<any>, ok: string) => Promise<void>, busy: boolean) => React.ReactNode }) {
   const { data: inv } = useInventory();
@@ -177,6 +222,7 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
             {s.viewed_at && <div className="faint" style={{ fontSize: 12 }}>The customer opened it {when(s.viewed_at)}.</div>}
             <SaleLines sale={s} />
             <PaymentsList sale={s} />
+            {owed && ['invoice', 'order'].includes(s.doc_type) && s.journal_id && <Withholding sale={s} />}
             {(s.credit_notes || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Credit notes</div>{s.credit_notes.map((c: any) => <div key={c.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{c.number} · {c.notes || ''}</span><b className="num">{N2(c.total)}</b></div>)}</div>}
             {(s.deliveries || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Delivery</div>{s.deliveries.map((d: any) => <div key={d.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{d.number} · {d.address || ''}</span><StatusChip s={d.status} /></div>)}</div>}
             {s.notes && <div className="muted" style={{ fontSize: 13 }}>{s.notes}</div>}

@@ -421,19 +421,39 @@ export function RecordPayment({ sale, onClose, onDone }: { sale: Sale; onClose: 
   const { data: inv } = useInventory();
   const toast = useToast();
   const qc = useQueryClient();
-  const [f, setF] = useState({ amount: String(Number(sale.balance) || ''), method: 'transfer', reference: '', bank_account_id: '', wht_amount: '', wvat_amount: '', received_at: new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' }) });
+  const [f, setF] = useState({ amount: String(Number(sale.balance) || ''), method: 'transfer', reference: '', bank_account_id: '', wht_amount: '', wvat_amount: '', ncd_amount: '', received_at: new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' }) });
+  const [split, setSplit] = useState<any>(null);
+  const [inFull, setInFull] = useState(true);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const canConfirm = can(inv, 'keep_books') || can(inv, 'approve_adjustments');
   const [confirm, setConfirm] = useState(false);
   useEffect(() => { moneyAccounts(orgId!).then((accounts) => setAccounts(accounts || [])).catch(() => {}); }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
+  // A payment short of the balance, with nothing typed for WHT, VAT or the levy: Counta checks whether the shortfall is
+  // exactly what the customer was expected to keep back.
+  const typedDeductions = (Number(f.wht_amount) || 0) + (Number(f.wvat_amount) || 0) + (Number(f.ncd_amount) || 0) > 0;
+  const amt = Number(f.amount) || 0;
+  const short = amt > 0 && amt < Number(sale.balance) - 0.004 ? Math.round((Number(sale.balance) - amt) * 100) / 100 : 0;
+  const canSplit = ['invoice', 'order'].includes(sale.doc_type) && !!(sale as any).journal_id;
+  useEffect(() => {
+    setSplit(null);
+    if (!short || typedDeductions || !canSplit) return;
+    let live = true;
+    const t = setTimeout(() => {
+      rpc<any>('sale_withholding', { p_sale: sale.id, p_amount: amt }).then((r) => { if (live) setSplit(r?.split || null); }).catch(() => {});
+    }, 350);
+    return () => { live = false; clearTimeout(t); };
+  }, [amt, short, typedDeductions, canSplit, sale.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const keptText = (x: any) => [Number(x.wht) ? `WHT${x.wht_rate ? ` at ${Math.round(Number(x.wht_rate) * 1000) / 10}%` : ''} (${N2(x.wht)})` : '',
+    Number(x.ncd) ? `the 1% NCD levy (${N2(x.ncd)})` : '', Number(x.wvat) ? `VAT withheld (${N2(x.wvat)})` : ''].filter(Boolean).join(' and ');
   async function save() {
     setBusy(true);
     try {
       await rpc('record_payment', { p_org: orgId, p_payment: { sale_id: sale.id, amount: Number(f.amount) || 0, method: f.method, confirmed: confirm,
-        reference: f.reference || null, bank_account_id: f.bank_account_id || null, wht_amount: Number(f.wht_amount) || 0, wvat_amount: Number(f.wvat_amount) || 0, received_at: f.received_at } });
-      toast('Payment recorded');
+        reference: f.reference || null, bank_account_id: f.bank_account_id || null, wht_amount: Number(f.wht_amount) || 0, wvat_amount: Number(f.wvat_amount) || 0,
+        ncd_amount: Number(f.ncd_amount) || 0, auto_split: inFull, received_at: f.received_at } });
+      toast(split && inFull ? `Payment recorded. ${sale.number} is paid in full` : 'Payment recorded');
       await Promise.all(['sale', 'sales', 'customers', 'inbox'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
       onDone?.(); onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
@@ -467,15 +487,25 @@ export function RecordPayment({ sale, onClose, onDone }: { sale: Sale; onClose: 
             </select>
           </Field>
         )}
-        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <Field label="Reference"><input className="input" value={f.reference} onChange={(e) => set('reference', e.target.value)} placeholder="Bank reference" /></Field>
+        <Field label="Reference"><input className="input" value={f.reference} onChange={(e) => set('reference', e.target.value)} placeholder="Bank reference" /></Field>
+        {split ? (
+          <div className="stack" style={{ gap: 8 }} data-testid="split-found">
+            <Alert kind="green" icon="check">The {N2(short)} short is exactly {keptText(split)}, which the customer keeps back and pays to the government for you.
+              {inFull ? ` ${sale.number} will be marked paid in full${Number(split.wht) ? ' and the WHT kept as your tax credit' : ''}.` : ''}</Alert>
+            <label className="check" style={{ fontSize: 13 }}><input type="checkbox" checked={inFull} onChange={(e) => setInFull(e.target.checked)} />Treat it as paid in full</label>
+          </div>
+        ) : short > 0 && !typedDeductions && canSplit ? (
+          <Alert kind="grey" icon="info">{N2(short)} will still be owed. If the customer kept back WHT or the NCD levy, enter it below.</Alert>
+        ) : null}
+        {!split && <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="WHT deducted by the customer" hint="Keep the credit note; it is your tax credit."><input className="input" inputMode="decimal" value={f.wht_amount} onChange={(e) => set('wht_amount', e.target.value)} placeholder="0.00" /></Field>
-        </div>
-        {Number((sale as any).vat_total) > 0 && <Field label="VAT withheld by the customer" hint={`Only when the customer is a withholding VAT agent (a bank, telecom, oil company or government body). It is credited in your VAT return; up to ${N2((sale as any).vat_total)}.`}>
+          <Field label="NCD levy deducted (1%)" hint="Oil and gas customers keep 1% for the Nigerian Content fund. Ask for their receipt."><input className="input" inputMode="decimal" value={f.ncd_amount} onChange={(e) => set('ncd_amount', e.target.value)} placeholder="0.00" /></Field>
+        </div>}
+        {!split && Number((sale as any).vat_total) > 0 && <Field label="VAT withheld by the customer" hint={`Only when the customer is a withholding VAT agent (a bank, telecom, oil company or government body). It is credited in your VAT return; up to ${N2((sale as any).vat_total)}.`}>
           <input className="input" inputMode="decimal" value={f.wvat_amount} onChange={(e) => set('wvat_amount', e.target.value)} placeholder="0.00" style={{ maxWidth: 220 }} /></Field>}
         {canConfirm && f.method !== 'cash' && <label className="check"><input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} />I can see this money in the account: confirm it now</label>}
       </div>
-      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || !(Number(f.amount) > 0 || Number(f.wht_amount) > 0 || Number(f.wvat_amount) > 0) || (confirm && !f.bank_account_id)} onClick={save}>Record payment</button></div>
+      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || !(Number(f.amount) > 0 || Number(f.wht_amount) > 0 || Number(f.wvat_amount) > 0 || Number(f.ncd_amount) > 0) || (confirm && !f.bank_account_id)} onClick={save}>Record payment</button></div>
     </Modal>
   );
 }

@@ -46,6 +46,17 @@ A sale logged with Later waits in Sales, To settle, for someone who keeps the bo
 - Credit notes reverse revenue, VAT and stock for returned goods.
 - A credit note for an amount (Return or credit, then Credit an amount) covers a price reduction, a discount agreed after the sale or a service not delivered. Nothing comes back into stock. The amount is spread over the lines by what each can still be credited, or entered line by line; the VAT inside it comes off output VAT at each line's own rate, and the rest comes off revenue (4131 Sales Returns for goods, the line's own revenue account for services). A line cannot be credited twice, whether by a return or a credit note. The credit clears what is still owed on the sale first, then is refunded or kept as the customer's credit (`credit_sale`).
 
+## What a customer keeps back
+
+Companies, government bodies and oil and gas operators often pay an invoice less what they deduct for the government: WHT, the 1% Nigerian Content Development (NCD) levy, and VAT when they are withholding VAT agents. When a payment is short by exactly that, the invoice is paid in full and each part is booked against it. Anything else leaves the invoice partly paid, and the person enters what was kept back by hand.
+
+- The WHT expected on an invoice is the rate set on the invoice (Sales, the invoice, "What the customer may keep back"; never printed), else the rate this customer deducted last time, else none for a person, else the business's usual rate for its type of work: professional, consultancy, technical and management services 5%, construction 5%, rent 10%, goods 2%, other services 2%, doubled when the business has no Tax ID.
+- Counta tries the expected rate first, then none, 2%, 5% and 10% (and 4% and 20% for a business with no Tax ID), on the value before VAT; the NCD levy at 1% of the value before VAT or of the total; and, for a withholding VAT agent, the VAT not yet credited. Exact matches win; then WHT and the levy may be a naira out (0.1% of the value on a small invoice), the rounding going to the WHT, else the levy.
+- What was already booked on the invoice is taken off, so the last payment of several can settle it.
+- Entries: WHT Dr 1401 (WHT credit notes), the levy Dr 6512 (or the account the business picks for the `ncd_levy` posting rule), VAT withheld Dr 1405, each Cr receivables.
+- The customer is then marked as deducting the levy and their WHT rate is remembered (both can be changed on the customer, Details, by a manager, an accountant or the owner). The people who keep the books are told what was kept back and which receipts to ask for.
+- It applies to Record a payment (as the amount is typed, with "Treat it as paid in full" to say the rest is still owed), the bank feed, the books inbox, pay-by-transfer accounts and sales schedules. One function does it: `private.customer_short_split`; `private.book_customer_withholding` books it; `sale_withholding` and `set_sale_wht_rate` serve the screens. Migration `20261121000100_inbox_picker_short_payments.sql`.
+
 ## Customers and credit
 
 - Each customer can have a price list, payment terms and a credit limit. Only a manager, an accountant or the owner sets a limit.

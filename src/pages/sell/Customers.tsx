@@ -83,7 +83,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   const toast = useToast();
   const qc = useQueryClient();
   const [tab, setTab] = useState<'details' | 'statement' | 'documents'>(customer ? 'statement' : 'details');
-  const [f, setF] = useState({ name: '', phone: '', email: '', address: '', tin: '', kind: 'business', credit_limit: '', terms_days: '', price_list_id: '', whatsapp_opt_in: true, wvat_agent: false,
+  const [f, setF] = useState({ name: '', phone: '', email: '', address: '', tin: '', kind: 'business', credit_limit: '', terms_days: '', price_list_id: '', whatsapp_opt_in: true, wvat_agent: false, ncd_levy: false, wht_rate: '',
     city: '', state: '', lga: '', postcode: '', country: 'NG', contact_person: '', cc_emails: '' });
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState<'pay' | 'refund' | null>(null);
@@ -93,6 +93,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   useEffect(() => {
     if (customer) setF({ name: customer.name, phone: customer.phone || '', email: customer.email || '', address: customer.address || '', tin: customer.tin || '', kind: customer.kind || 'business',
       credit_limit: String(Number(customer.credit_limit) || ''), terms_days: String(customer.terms_days || ''), price_list_id: customer.price_list_id || '', whatsapp_opt_in: customer.whatsapp_opt_in, wvat_agent: !!(customer as any).wvat_agent,
+      ncd_levy: !!(customer as any).ncd_levy, wht_rate: (customer as any).wht_rate == null ? '' : String(Number((customer as any).wht_rate)),
       city: customer.city || '', state: customer.state || '', lga: (customer as any).lga || '', postcode: (customer as any).postcode || '', country: customer.country || 'NG', contact_person: customer.contact_person || '', cc_emails: (customer.cc_emails || []).join(', ') });
   }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const statement = useQuery({ queryKey: ['statement', customer?.id, range.from, range.to], enabled: !!customer && tab === 'statement', placeholderData: (prev, q) => (q?.queryKey[1] === customer?.id ? prev : undefined),
@@ -111,7 +112,8 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
         kind: f.kind, price_list_id: f.price_list_id || null, whatsapp_opt_in: f.whatsapp_opt_in, city: f.city || null, state: f.state || null, country: f.country || 'NG',
         lga: abroad ? null : f.lga || null, postcode: f.postcode.trim() || null,
         contact_person: f.contact_person || null, cc_emails: f.cc_emails.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean),
-        ...(canCredit ? { credit_limit: money(f.credit_limit) ?? 0, terms_days: Number(f.terms_days) || 0, wvat_agent: f.wvat_agent } : {}) } });
+        ...(canCredit ? { credit_limit: money(f.credit_limit) ?? 0, terms_days: Number(f.terms_days) || 0, wvat_agent: f.wvat_agent,
+          ...(f.kind === 'business' || f.kind === 'government' ? { ncd_levy: f.ncd_levy, wht_rate: f.wht_rate } : {}) } : {}) } });
       toast('Customer saved'); await qc.invalidateQueries({ queryKey: ['customers'] }); if (!customer) onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
@@ -158,6 +160,13 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
             <label className="check"><input type="checkbox" checked={f.whatsapp_opt_in} onChange={(e) => set('whatsapp_opt_in', e.target.checked)} />Send receipts and reminders by WhatsApp</label>
             {(f.kind === 'business' || f.kind === 'government') && <label className="check" title={canCredit ? undefined : 'Set by a manager or the bookkeeper.'}><input type="checkbox" disabled={!canCredit} checked={f.wvat_agent} onChange={(e) => set('wvat_agent', e.target.checked)} />
               A withholding VAT agent (a bank, telecom, oil company or government body): it keeps the VAT on our invoices and pays it to the NRS for us</label>}
+            {(f.kind === 'business' || f.kind === 'government') && <label className="check" title={canCredit ? undefined : 'Set by a manager or the bookkeeper.'}><input type="checkbox" disabled={!canCredit} checked={f.ncd_levy} onChange={(e) => set('ncd_levy', e.target.checked)} />
+              Deducts the 1% NCD levy (an oil and gas company): it keeps 1% of our invoices for the Nigerian Content Development Fund</label>}
+            {(f.kind === 'business' || f.kind === 'government') && <Field label="WHT this customer deducts" hint="Counta works it out from their payments. A payment short by exactly this settles the invoice.">
+              <select className="input" disabled={!canCredit} value={f.wht_rate} onChange={(e) => set('wht_rate', e.target.value)} style={{ maxWidth: 260 }}>
+                <option value="">Not known yet</option><option value="0">None</option><option value="0.02">2%</option><option value="0.05">5%</option><option value="0.1">10%</option>
+                {f.wht_rate && !['0', '0.02', '0.05', '0.1'].includes(f.wht_rate) && <option value={f.wht_rate}>{Math.round(Number(f.wht_rate) * 1000) / 10}%</option>}
+              </select></Field>}
             <div><button className="btn btn-primary" disabled={busy || !f.name.trim()} onClick={save}>Save customer</button></div>
           </div>
         )}
