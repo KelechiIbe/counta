@@ -18,7 +18,7 @@ Every agent run is logged in `agent_runs` with what it looked at, what it posted
 
 An agent posts on its own only when its confidence is at least the business's threshold, which can never be set below 80% (`orgs.auto_post_threshold`, check constraint `orgs_auto_post_threshold_check`). The owner can raise it in Settings, Books and tax.
 
-Anything less goes to account 9001 (Suspense) and waits in the Books inbox as an `ai_proposals` row with the agent's question. The person's answer moves the amount out of suspense with a reversing pair, and when they tick "remember this", the answer becomes a rule in `entity_rules` that the bookkeeper applies first next time. Tax decisions follow the same rule: below the threshold the item keeps its current VAT treatment and the tax agent's suggestion waits for a person.
+Anything less goes to account 9001 (Suspense) and waits in the Books inbox as an `ai_proposals` row with the agent's question. The question carries the agent's best guess and up to four other likely accounts, each with when it would be right (`proposal.alternatives`); the inbox shows them as a short list in plain words, with the guess chosen only when the agent is at least 50% sure, and a search over the whole chart by everyday words ("diesel", "salary", "nepa"; `src/lib/accountHints.ts`). Questions asked before the short list existed get one on the next run (`svc_questions_for_ai`, `svc_suggest_proposal`), which never posts. The person's answer moves the amount out of suspense with a reversing pair, and when they tick "remember this", the answer becomes a rule in `entity_rules` that the bookkeeper applies first next time. Tax decisions follow the same rule: below the threshold the item keeps its current VAT treatment and the tax agent's suggestion waits for a person.
 
 ## How the bookkeeper decides
 
@@ -26,7 +26,7 @@ The order is fixed, cheapest and safest first:
 
 1. Match. A bank line that matches an open invoice, a bill payment, a payout, a sweep or a transfer between the business's own accounts is settled against it. No model is involved.
 2. Rules. A payee the business has already explained (`entity_rules`) is posted the way the person said.
-3. Model. Gemini (for now) gets up to 40 lines at a time with the chart of accounts, the payee's history and the business's settings, and must answer with an account and a confidence for each line.
+3. Model. Gemini (for now) gets up to 40 lines at a time with the chart of accounts, the payee's history and the business's settings, and must answer with its best guess of the account, a confidence and up to four other likely accounts for each line. It always guesses, even for a payment to a person with no history; the confidence keeps such a guess from posting.
 4. Calibration. `calibrate()` in `atlas/bookkeeper.ts` lowers the model's confidence where experience says it is often wrong:
 
 | Situation | Confidence capped at |
@@ -39,6 +39,8 @@ The order is fixed, cheapest and safest first:
 | A payment to a private individual, the owner or an unknown name | 60% |
 | An account that goes against how this payee was posted before | 75% |
 | An account that does not exist in the chart | never posts; becomes a question |
+| The model asked the owner a question | 79% (never posts) |
+| No guess, only alternatives | the first alternative becomes a 30% guess |
 
 A line the model skipped still gets a question, so nothing is lost. If the model fails, the remaining lines go to suspense with a question each and the run is logged with the error.
 

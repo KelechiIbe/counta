@@ -52,7 +52,7 @@ Each new line, from a statement or a feed, runs through the matcher in this orde
 
 1. Already in the books on that account within three days (a payment recorded at the till or against a bill).
 2. Money in: a transfer waiting for confirmation is confirmed.
-3. Money in: the narration names an open invoice or order (INV-0042, inv 42, Invoice no. 42), whoever paid it. Short by 2%, 5% or 10% of the net amount, the difference is the customer's WHT credit. Paid over, the extra is held as the customer's credit and flagged.
+3. Money in: the narration names an open invoice or order (INV-0042, inv 42, Invoice no. 42), whoever paid it. Short by exactly what the customer was allowed to keep back (WHT, the 1% NCD levy, VAT withheld, or a mix; see [selling.md](selling.md#what-a-customer-keeps-back)), the invoice is settled in full and each part is booked. Paid over, the extra is held as the customer's credit and flagged.
 4. Money out: tax and levy payments go to their tax account. A bill named in the narration is paid, with WHT if the amount is net of it: by Counta's number, or by the supplier's own invoice number (with or without its punctuation, standing on its own in the narration) when the amount is what is owed or the supplier is named too.
 5. A customer or supplier named in the narration.
 6. Transfers between the business's own accounts.

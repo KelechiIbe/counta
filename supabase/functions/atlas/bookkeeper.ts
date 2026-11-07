@@ -9,8 +9,9 @@ export type Line = { id: string; date: string; amount: number; narration?: strin
 export type Account = { code: string; name: string; category?: string; ifrs_line?: string };
 export type Ctx = { org: { name: string; industry?: string; vat_registered?: boolean; cash_sales_without_invoices?: boolean; threshold: number };
   lines: Line[]; accounts: Account[]; customers: { id: string; name: string }[]; vendors: { id: string; name: string }[]; directors: string[] };
+export type Alt = { account_code: string; why: string };
 export type Answer = { line_id: string; account_code: string | null; confidence: number; title: string; rationale: string; question: string | null;
-  party_type: 'customer' | 'vendor' | null; party_id: string | null; kind: string };
+  party_type: 'customer' | 'vendor' | null; party_id: string | null; kind: string; alternatives: Alt[] };
 
 export const SCHEMA = {
   type: 'OBJECT',
@@ -21,7 +22,13 @@ export const SCHEMA = {
         type: 'OBJECT',
         properties: {
           line_id: S.str,
-          account_code: { type: 'STRING', nullable: true, description: 'One code from the accounts list, or null when you cannot tell' },
+          account_code: { type: 'STRING', nullable: true, description: 'Your best guess: one code from the accounts list, even when you are unsure' },
+          alternatives: {
+            type: 'ARRAY',
+            description: 'Up to four other codes from the accounts list that could also be right, most likely first',
+            items: { type: 'OBJECT', properties: { account_code: S.str, why: { type: 'STRING', description: 'When this one would be right, in under 12 plain words' } },
+              required: ['account_code', 'why'] },
+          },
           confidence: { type: 'NUMBER', description: 'Probability from 0 to 1 that this account is right' },
           title: { type: 'STRING', description: 'Short memo for the journal, e.g. "Diesel for generator"' },
           rationale: { type: 'STRING', description: 'One sentence: why this account' },
@@ -30,7 +37,7 @@ export const SCHEMA = {
           party_id: { type: 'STRING', nullable: true },
           kind: { type: 'STRING', enum: ['expense', 'asset', 'income', 'refund', 'owner', 'loan', 'statutory', 'transfer', 'private', 'unknown'] },
         },
-        required: ['line_id', 'account_code', 'confidence', 'title', 'rationale', 'kind'],
+        required: ['line_id', 'account_code', 'confidence', 'title', 'rationale', 'kind', 'alternatives'],
       },
     },
   },
@@ -40,24 +47,33 @@ export const SCHEMA = {
 export function systemPrompt(ctx: Ctx) {
   const o = ctx.org;
   return `You are Atlas, the bookkeeper for ${o.name}, a Nigerian business${o.industry ? ` (${o.industry})` : ''}. You keep the books under IFRS.
-You receive bank and wallet lines that nothing else could explain. For each line choose the one account it should post to (the other side is the bank),
-or say you cannot tell.
+You receive bank and wallet lines that nothing else could explain. For each line give your best guess of the one account it should post to (the other
+side is the bank), how sure you are, and up to four other accounts that could also be right.
+
+Always guess. The owner usually does not know the chart of accounts, so a short list of likely accounts is what they answer from: your best guess first,
+then the alternatives, most likely first. A wrong guess costs nothing because anything below the threshold waits for the owner, so be honest in the
+confidence instead of leaving account_code empty. Leave it null only when the line is truly unreadable (no narration, no payee, no history).
 
 Rules you must follow:
-1. Use only codes from the accounts list. Never invent a code. Positive amounts are money in; negative amounts are money out.
+1. Use only codes from the accounts list, for the guess and the alternatives. Never invent a code. Positive amounts are money in; negative amounts are money out.
 2. Money in is never revenue unless the business sells for cash without invoices (this business: ${o.cash_sales_without_invoices ? 'yes, it does' : 'no, it does not'}).
-   Otherwise money in from an unknown sender gets account_code null and a question such as "Who sent ₦250,000 on 3 Oct and what was it for?".
-3. Money in from an owner or director (${ctx.directors.join(', ') || 'none listed'}) is never income: account_code null, kind "owner", and ask whether it is
-   capital for shares, a loan to the business, or a deposit for shares.
-4. Money out is an expense only when the narration or the payee's history makes the nature clear. Payments to individuals with no history: null and ask.
+   Otherwise money in from an unknown sender is a question such as "Who sent ₦250,000 on 3 Oct and what was it for?": still guess (a customer paying in
+   advance, a loan, a refund, other income), with confidence at most 0.45.
+3. Money in from an owner or director (${ctx.directors.join(', ') || 'none listed'}) is never income: kind "owner", confidence at most 0.45, and ask whether it is
+   capital for shares, a loan to the business, or a deposit for shares. Offer those three as the guess and alternatives.
+4. Money out is an expense you are sure of only when the narration or the payee's history makes the nature clear. A payment to an individual with no
+   history is a question: still guess from the amount, the narration and the trade (staff pay, a contractor or casual labour, a supplier, the owner
+   taking money out), with confidence at most 0.45.
 5. Payments at supermarkets, schools, hospitals, for personal travel or to family members may be private: kind "private", confidence at most 0.6,
-   and ask whether it was for the business.
+   and ask whether it was for the business. Include the owner's drawings or director's account among the alternatives.
 6. VAT, withholding tax, PAYE and pension never come from a bank line: do not pick tax or control accounts (they are not in the list anyway).
 7. Equipment, vehicles, computers, furniture or building work above about ₦250,000 are assets, not expenses (PPE accounts), unless clearly a repair.
 8. Bank charges, SMS alerts, card maintenance, stamp duty and the electronic money transfer levy go to bank charges.
 9. Sundry, general, miscellaneous or "other" accounts are not a hiding place: if that is your best answer, confidence at most 0.5.
 10. history lists the accounts this payee was posted to before, most frequent first. Follow it unless the narration clearly says otherwise.
 11. If the line names a customer or vendor from the lists, give party_type and party_id (the id from the list).
+12. Alternatives: different accounts from the guess and from each other, only ones a sensible bookkeeper would consider for this line, never padding.
+    For each, say in plain words when it would be the right one ("if this was the driver's monthly pay"). Up to four; fewer is fine.
 
 Confidence must be honest: 0.95 or more only when the narration and history leave no doubt; 0.8 to 0.95 when you are fairly sure;
 below 0.8 when a person should confirm. Anything below ${Math.round(o.threshold * 100)}% waits for the owner, so ask a short, specific question
@@ -74,6 +90,20 @@ export function userPrompt(ctx: Ctx) {
 }
 
 const FALLBACK = /(sundry|general expense|miscellaneous|other income|other sectors|other expenses|other operating)/i;
+
+// The other accounts the model offered: only real codes from the list, none twice, never the guess itself, at most four.
+export function alternativesOf(raw: unknown, codes: Map<string, Account>, guess: string | null): Alt[] {
+  const out: Alt[] = [];
+  const seen = new Set<string>(guess ? [guess] : []);
+  for (const a of Array.isArray(raw) ? raw : []) {
+    const code = String((a as any)?.account_code ?? a ?? '').trim();
+    if (!code || seen.has(code) || !codes.has(code)) continue;
+    seen.add(code);
+    out.push({ account_code: code, why: String((a as any)?.why || '').trim().slice(0, 120) });
+    if (out.length === 4) break;
+  }
+  return out;
+}
 
 // Code, not the model, has the last word on confidence.
 export function calibrate(ctx: Ctx, raw: any[]): Answer[] {
@@ -98,17 +128,22 @@ export function calibrate(ctx: Ctx, raw: any[]): Answer[] {
     if (code && inflow && /^[567]/.test(code)) { conf = Math.min(conf, 0.7); notes.push('money in to an expense account (a refund?)'); }
     if (code && /^3/.test(code)) { conf = Math.min(conf, 0.6); notes.push('equity needs the owner to confirm'); }
     if (r.kind === 'private' || r.kind === 'owner' || r.kind === 'unknown') conf = Math.min(conf, 0.6);
+    // The model asking the owner something means it wants a person to decide: it never posts on its own then.
+    if (r.question && String(r.question).trim()) conf = Math.min(conf, 0.79);
     // Following the payee's own history is the strongest evidence there is.
     const top = line.history?.[0];
     if (code && top && top.code !== code && top.n >= 3) { conf = Math.min(conf, 0.75); notes.push(`this payee usually goes to ${top.code}`); }
     let partyType: 'customer' | 'vendor' | null = null, partyId: string | null = null;
     if (r.party_id && parties.has(String(r.party_id))) { partyId = String(r.party_id); partyType = parties.get(partyId)!; }
+    const alternatives = alternativesOf(r.alternatives, codes, code);
+    // No usable guess but a usable alternative: the first alternative becomes the guess, as a weak one.
+    if (!code && alternatives.length) { code = alternatives.shift()!.account_code; conf = Math.min(conf, 0.3); }
     const question = conf < ctx.org.threshold
       ? (r.question && String(r.question).trim()) || (inflow ? 'What was this money for?' : 'What was this payment for?')
       : null;
     out.push({ line_id: line.id, account_code: code, confidence: Math.round(conf * 1000) / 1000, title: String(r.title || line.narration || '').slice(0, 120),
       rationale: [String(r.rationale || '').slice(0, 400), ...notes].filter(Boolean).join(' · '), question, party_type: partyType, party_id: partyId,
-      kind: String(r.kind || 'unknown') });
+      kind: String(r.kind || 'unknown'), alternatives });
   }
   return out;
 }

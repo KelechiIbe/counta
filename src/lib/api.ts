@@ -142,7 +142,7 @@ export const STATUS_TONE: Record<string, string> = {
 };
 export const statusLabel = (s: string) => s.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 export const METHOD_LABEL: Record<string, string> = {
-  cash: 'Cash', transfer: 'Bank transfer', card: 'Card', pos: 'POS', flutterwave: 'Pay by transfer', rail: 'Pay by transfer', cheque: 'Cheque', wht_credit: 'WHT credit note',
+  cash: 'Cash', transfer: 'Bank transfer', card: 'Card', pos: 'POS', flutterwave: 'Pay by transfer', rail: 'Pay by transfer', cheque: 'Cheque', wht_credit: 'WHT credit note', wvat_credit: 'VAT withheld', ncd_levy: 'NCD levy (1%)',
   advance: 'Customer credit', other: 'Other', account: 'Pay by transfer', link: 'Payment link', qr: 'QR code', credit: 'On account',
 };
 export function money(v: string | number | null | undefined): number | null {

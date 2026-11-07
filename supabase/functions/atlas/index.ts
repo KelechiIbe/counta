@@ -68,7 +68,8 @@ const running = new Set<string>();
 export async function bookkeep(orgId: string) {
   if (running.has(orgId)) return { org_id: orgId, skipped: 'already running' };
   running.add(orgId);
-  const run = { items: 0, posted: 0, asked: 0, model: '', error: null as string | null };
+  const started = Date.now();
+  const run = { items: 0, posted: 0, asked: 0, suggested: 0, model: '', error: null as string | null };
   try {
     const cfg = await geminiCfg();
     const { data: on } = await admin.rpc('svc_feature', { p_org: orgId, p_feature: 'ai_reading' });
@@ -80,7 +81,6 @@ export async function bookkeep(orgId: string) {
     }
     // Rounds of forty lines, but none started after about a hundred seconds: the function is stopped at its time limit
     // (546) part way through a round otherwise. The rest wait for the next tick.
-    const started = Date.now();
     for (let round = 0; round < 5; round++) {
       if (round && Date.now() - started > 100_000) break;
       const ctx = await svc<Ctx>('svc_lines_for_ai', { p_org: orgId, p_limit: 40 });
@@ -113,10 +113,43 @@ export async function bookkeep(orgId: string) {
       }
     }
     if (run.error) run.asked += await svc<number>('svc_suspend_rest', { p_org: orgId });
+    // Questions already waiting without a short list of likely accounts (asked before Atlas gave one, or when the model
+    // was away) get one now. Nothing is posted here: the owner still answers each.
+    if (!run.error) {
+      try { await suggest(orgId, cfg, started, run); } catch (e) { console.error('atlas suggest', (e as Error).message); }
+    }
     return { org_id: orgId, ...run };
   } finally {
     running.delete(orgId);
     await admin.rpc('svc_agent_run', { p_org: orgId, p_agent: 'bookkeeper', p_action: 'classify_lines', p: run });
+  }
+}
+
+// The short list for questions already waiting. Never posts.
+async function suggest(orgId: string, cfg: Awaited<ReturnType<typeof geminiCfg>>, started: number, run: { suggested: number; model: string; error: string | null }) {
+  for (let round = 0; round < 5; round++) {
+    if (Date.now() - started > 100_000) break;
+    const ctx = await svc<Ctx>('svc_questions_for_ai', { p_org: orgId, p_limit: 40 });
+    if (!ctx?.lines?.length) break;
+    let answers;
+    try {
+      const res = await gemini(cfg, systemPrompt(ctx), userPrompt(ctx), SCHEMA, 0.1);
+      meter(orgId, 'bookkeeper', res);
+      run.model = res.model;
+      answers = calibrate(ctx, res.data?.results || []);
+    } catch (e) {
+      run.error = (e as Error).message;
+      break;
+    }
+    const done = new Set<string>();
+    for (const a of answers) {
+      if (done.has(a.line_id)) continue;
+      done.add(a.line_id);
+      const r = await svc('svc_suggest_proposal', { p_proposal: a.line_id, p: { ...a, model: run.model } });
+      if (r?.ok) run.suggested++;
+    }
+    // A question the model passed over is marked as looked at, so it does not come round again.
+    for (const l of ctx.lines) if (!done.has(l.id)) await svc('svc_suggest_proposal', { p_proposal: l.id, p: { alternatives: [], model: run.model } });
   }
 }
 
@@ -167,7 +200,9 @@ Deno.serve(async (req) => {
       if (!same(hook, await secret('PUSH_HOOK_SECRET'))) return json({ ok: false, error: 'Not allowed.' }, 401);
       if (body.action === 'classify_lines' && body.org_id) return json({ ok: true, result: await bookkeep(String(body.org_id)) });
       if (body.action === 'classify_all') {
-        const orgs = ((await svc<string[]>('svc_orgs_with_lines', {})) || []).slice(0, 20);
+        // Businesses with new lines first, then those with questions still waiting for a short list.
+        const waiting = await svc<string[]>('svc_orgs_with_questions', {}).catch(() => [] as string[]);
+        const orgs = [...new Set([...((await svc<string[]>('svc_orgs_with_lines', {})) || []), ...(waiting || [])])].slice(0, 20);
         const results = [];
         for (const o of orgs) results.push(await bookkeep(o));
         return json({ ok: true, results });

@@ -9,6 +9,8 @@ import { edge, useChart, useCustomers, useInbox, useBills, type AiProposal } fro
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Empty, Pills, SkeletonRows } from '../../components/ui';
+import { AccountPicker, type PickOption } from '../../components/AccountPicker';
+import { fillShortList, forBankLine } from '../../lib/accountHints';
 import { vatPct } from '../../lib/vat';
 
 const pct = (c: number) => `${Math.round(Number(c) * 100)}%`;
@@ -27,7 +29,12 @@ export default function Inbox() {
     setRunning(true);
     const r = await edge<{ result: any }>('atlas', { action: 'run', org_id: orgId });
     if (r.ok === false) toast(r.error || 'The bookkeeper could not run.', 'err');
-    else toast(r.result?.items ? `Atlas looked at ${r.result.items} line${r.result.items === 1 ? '' : 's'}: ${r.result.posted} posted, ${r.result.asked} asked` : 'Nothing waiting for the bookkeeper');
+    else {
+      const res = r.result || {};
+      const looked = res.items ? `Atlas looked at ${res.items} line${res.items === 1 ? '' : 's'}: ${res.posted} posted, ${res.asked} asked` : '';
+      const listed = res.suggested ? `${res.suggested} question${res.suggested === 1 ? '' : 's'} given likely accounts` : '';
+      toast([looked, listed].filter(Boolean).join('; ') || 'Nothing waiting for the bookkeeper');
+    }
     await qc.invalidateQueries({ queryKey: ['inbox'] }); setRunning(false);
   }
   const counters: [number, string, string, string][] = d ? [
@@ -62,20 +69,39 @@ export default function Inbox() {
   );
 }
 
-function useAccountsFor(direction: 'in' | 'out' | null) {
+// Accounts a bank line can go to.
+function useLineAccounts() {
   const chart = useChart();
-  return useMemo(() => (chart.data?.accounts || []).filter((a: any) => !a.is_group && a.active && !/^(2201|1402|2202|1401|9)/.test(a.code)
-    && (direction !== 'in' || !/^[56]/.test(a.code) || true)), [chart.data, direction]);
+  return useMemo(() => forBankLine(chart.data?.accounts || []), [chart.data]);
+}
+
+// Atlas's best guess and its other likely accounts, topped up to five from the narration and the usual accounts for
+// money in or out (for questions asked before Atlas gave a list, or when it gave fewer).
+function useShortList(p: AiProposal, accounts: any[]): PickOption[] {
+  return useMemo(() => {
+    const l = p.line || {};
+    const known = new Set(accounts.map((a: any) => a.code));
+    const out: PickOption[] = [];
+    const guess = p.proposal?.account_code;
+    if (guess && known.has(guess)) out.push({ code: guess, guess: true });
+    for (const a of Array.isArray(p.proposal?.alternatives) ? p.proposal.alternatives : []) {
+      if (a?.account_code && known.has(a.account_code) && !out.some((o) => o.code === a.account_code)) out.push({ code: a.account_code, why: a.why || undefined });
+    }
+    const more = fillShortList(accounts, out.map((o) => o.code), `${l.narration || ''} ${l.counterparty || ''} ${p.title || ''}`, Number(l.amount ?? p.amount) > 0);
+    return [...out, ...more.filter((c) => !out.some((o) => o.code === c)).map((code) => ({ code }))].slice(0, 5);
+  }, [p, accounts]);
 }
 
 function Question({ p }: { p: AiProposal }) {
   const { data: inv } = useInventory();
   const toast = useToast();
   const qc = useQueryClient();
-  const accounts = useAccountsFor(p.line ? (Number(p.line.amount) > 0 ? 'in' : 'out') : null);
+  const accounts = useLineAccounts();
+  const shortList = useShortList(p, accounts);
   const customers = useCustomers();
   const bills = useBills({}, p.kind !== 'item_vat');
-  const [code, setCode] = useState<string>(p.proposal?.account_code || '');
+  // Atlas's guess comes chosen only when it is at least half sure; below that the owner picks from the list.
+  const [code, setCode] = useState<string>(Number(p.confidence) >= 0.5 ? p.proposal?.account_code || '' : '');
   const [party, setParty] = useState('');
   const [remember, setRemember] = useState(true);
   const [note, setNote] = useState('');
@@ -133,7 +159,8 @@ function Question({ p }: { p: AiProposal }) {
     const cands: any[] = Array.isArray(match.candidates) && match.candidates.length ? match.candidates
       : [{ kind: match.kind === 'invoice_match' ? 'sale' : 'bill', id: match.sale_id || match.bill_id, number: match.number, party_name: match.customer_name || match.vendor_name, reasons: [] }];
     const isIn = match.kind === 'invoice_match';
-    const how = (c: any) => c.basis === 'less_wht' ? `${N2(c.due)} owed${Number(c.wht) ? `, less ${N2(c.wht)} WHT` : ''}${Number(c.wvat) ? `${Number(c.wht) ? ' and' : ', less'} ${N2(c.wvat)} VAT withheld` : ''}`
+    const kept = (c: any) => [Number(c.wht) ? `${N2(c.wht)} WHT` : '', Number(c.ncd) ? `${N2(c.ncd)} NCD levy` : '', Number(c.wvat) ? `${N2(c.wvat)} VAT withheld` : ''].filter(Boolean);
+    const how = (c: any) => c.basis === 'less_wht' ? `${N2(c.due)} owed${kept(c).length ? `, less ${kept(c).join(' and ')}` : ''}`
       : c.basis === 'bank_charge' ? `${N2(c.due)} owed, ${N2(c.fee)} ${isIn ? 'less' : 'more'} for bank charges`
       : c.basis === 'less_wht_charge' ? `${N2(c.due)} owed, less ${N2(c.wht)} WHT and ${N2(c.fee)} charges`
       : c.basis === 'part' ? `Part of ${N2(c.due)} owed` : c.basis === 'over' ? `More than the ${N2(c.due)} owed; the extra is held as credit`
@@ -180,17 +207,13 @@ function Question({ p }: { p: AiProposal }) {
         </div>
         <b className="num" style={{ color: amt > 0 ? '#15803D' : '#111827', whiteSpace: 'nowrap' }}>{amt > 0 ? '+' : '−'}{N2(Math.abs(amt))}</b>
       </div>
-      {p.proposal?.account_code && <div className="muted" style={{ fontSize: 13 }}>Atlas thinks <b>{p.proposal.account_code} {p.account_name || ''}</b> ({pct(p.confidence)} sure){p.rationale ? `: ${p.rationale}` : ''}</div>}
-      {!p.proposal?.account_code && p.rationale && <div className="muted" style={{ fontSize: 13 }}>{p.rationale}</div>}
+      {p.rationale && <div className="muted" style={{ fontSize: 13 }}>{p.proposal?.account_code ? `${p.account_name ? `Atlas's best guess is ${p.account_name}` : 'Atlas'}: ` : ''}{p.rationale}</div>}
       {canAnswer ? (
         <>
-          <div className="row wrap" style={{ gap: 8 }}>
-            <select className="input input-sm" style={{ flex: '1 1 260px' }} value={code} onChange={(e) => { setCode(e.target.value); setParty(''); }} aria-label="Account">
-              <option value="">Where does it belong?</option>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
-            </select>
-            {needsParty && <select className="input input-sm" style={{ flex: '1 1 200px' }} value={party} onChange={(e) => setParty(e.target.value)} aria-label={needsParty}>
-              <option value="">Which {needsParty}?</option>{partyList.map((x: any) => <option key={x.id} value={x.id}>{x.name}</option>)}</select>}
-          </div>
+          <AccountPicker accounts={accounts} options={shortList} value={code} onChange={(c) => { setCode(c); setParty(''); }} disabled={busy}
+            sure={p.proposal?.account_code ? Number(p.confidence) : null} />
+          {needsParty && <select className="input input-sm" value={party} onChange={(e) => setParty(e.target.value)} aria-label={needsParty}>
+            <option value="">Which {needsParty}?</option>{partyList.map((x: any) => <option key={x.id} value={x.id}>{x.name}</option>)}</select>}
           <div className="row wrap" style={{ gap: 10 }}>
             <label className="check" style={{ fontSize: 13 }}><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />Do the same next time for this payee</label>
             <input className="input input-sm" style={{ flex: '1 1 200px' }} placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
@@ -209,9 +232,11 @@ function Reviewed({ p }: { p: any }) {
   const { data: inv } = useInventory();
   const toast = useToast();
   const qc = useQueryClient();
-  const accounts = useAccountsFor(null);
+  const accounts = useLineAccounts();
+  // The other likely accounts, without the one it went to.
+  const shortList = useShortList({ ...p, proposal: { ...p.proposal, account_code: null } }, accounts).filter((o) => o.code !== p.proposal?.account_code);
   const [edit, setEdit] = useState(false);
-  const [code, setCode] = useState(p.proposal?.account_code || '');
+  const [code, setCode] = useState('');
   async function change() {
     try { await rpc('resolve_proposal', { p_proposal: p.id, p: { action: 'change', account_code: code, remember: true } }); toast('Moved'); setEdit(false); await qc.invalidateQueries({ queryKey: ['inbox'] }); }
     catch (e) { toast((e as Error).message, 'err'); }
@@ -223,8 +248,10 @@ function Reviewed({ p }: { p: any }) {
   return (
     <div className="tr rsp" style={{ gridTemplateColumns: 'minmax(0,1.4fr) 120px 110px auto', gap: 12 }} data-testid="atlas-posted">
       <span className="m-main" style={{ minWidth: 0 }}><b>{p.title}</b><span className="faint" style={{ display: 'block', fontSize: 12 }}>{[[p.proposal?.account_code, p.account_name].filter(Boolean).join(' '), p.journal_ref, when(p.created_at), p.rationale].filter(Boolean).join(' · ')}</span>
-        {edit && <span className="row" style={{ marginTop: 6 }}><select className="input input-sm" value={code} onChange={(e) => setCode(e.target.value)}>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select>
-          <button className="btn btn-primary btn-xs" onClick={change}>Move</button></span>}</span>
+        {edit && <span className="stack" style={{ marginTop: 8, gap: 8, display: 'flex' }}>
+          <AccountPicker accounts={accounts} options={shortList} value={code} onChange={setCode} />
+          <span className="row"><button className="btn btn-primary btn-sm" disabled={!code} onClick={change}>Move it there</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setEdit(false); setCode(''); }}>Cancel</button></span></span>}</span>
       <span className="chip t-green" style={{ justifySelf: 'start' }}>{pct(p.confidence)} sure</span>
       <b className="num right m-end">{N2(p.amount)}</b>
       {can(inv, 'keep_books') && p.status === 'auto_posted' ? <span className="row m-line" style={{ gap: 4 }}><button className="btn btn-ghost btn-xs" onClick={confirm}>Right</button><button className="btn btn-ghost btn-xs" onClick={() => setEdit(!edit)}>Wrong account</button></span> : <span />}
