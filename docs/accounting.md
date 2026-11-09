@@ -50,6 +50,7 @@ Codes below are the defaults. Amounts are net of VAT unless marked.
 | --- | --- | --- | --- |
 | Opening stock from a spreadsheet | `import_items` | 1203 stock value | 3999 |
 | Vendor receipt | `post_receipt_internal` | 5101 net; 1402 input VAT (VAT-registered vendor, standard-rated lines, 7.5%) | 2101 gross |
+| Stock on a supplier's bill (uploaded invoice approved) | `approve_supplier_invoice` | The bill: 5101 for the stock lines, assets and expenses, 1402 input VAT. The linked receipt: the items' stock accounts at cost | The bill: 2101 gross. The receipt: 5400 (no 2101 or 1402: the bill carries them) |
 | | | 1203 net, per inventory account | 5400 net |
 | Landed cost (duty, clearing, haulage, agent) | `post_landed_cost` | 5105 duty and levies; 5104 the rest | 2101 total |
 | | | 1203 share on stock still on hand | 5400 same amount |

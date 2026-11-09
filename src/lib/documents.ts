@@ -20,7 +20,7 @@ export interface DocNode { year: number | null; month: number | null; cat: DocCa
 export interface DocTree { nodes: DocNode[]; can: Record<DocCat, boolean>; can_upload: boolean; business: string }
 export interface DocFile {
   id: string; cat: DocCat; folder: string; sub: string | null; period: string | null; year: number | null; day: string | null; name: string;
-  kind: 'file' | 'sale' | 'till' | 'prn'; path: string | null; mime: string | null; size: number | null; ref: string | null; party: string | null;
+  kind: 'file' | 'sale' | 'till' | 'prn' | 'bill'; path: string | null; mime: string | null; size: number | null; ref: string | null; party: string | null;
   amount: number | null; at: string | null; source: string;
 }
 // Where in the tree: a year (null: no date), a month (0: the full year), a kind, a folder and the folder's part ('' for
@@ -107,6 +107,7 @@ export async function fileBlob(org: string, f: DocFile, preloaded?: Map<string, 
   }
   if (f.kind === 'till') return pdf.tillPdf(await rpc('documents_till', { p_org: org, p_day: f.ref }));
   if (f.kind === 'prn') return pdf.prnPdf(await rpc('documents_prn', { p_org: org, p_id: f.ref }));
+  if (f.kind === 'bill') return pdf.billPdf(await rpc('documents_bill', { p_org: org, p_id: f.ref }));
   if (!f.path) throw new Error('This record has no file.');
   const { data, error } = await supabase.storage.from('documents').download(f.path);
   if (error || !data) throw new Error(/not.?found|404/i.test(String(error?.message)) ? 'The file is not in storage any more.' : (error?.message || 'The file did not download.'));

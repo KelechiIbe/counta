@@ -1,5 +1,6 @@
 // PDFs Counta makes when a document is opened in Documents: a sales document (invoice, receipt, quote, order or credit
-// note) as the customer's copy shows it, a day's walk-in till receipts, and the slip for a PRN Rev360 gave. Nothing is
+// note) as the customer's copy shows it, a day's walk-in till receipts, the slip for a PRN Rev360 gave, and a supplier's
+// bill that was typed in by hand (filed with the input VAT invoices once it is paid). Nothing is
 // stored; the same data always draws the same file. jsPDF's Helvetica covers Latin-1 only, so ₦ is written NGN.
 import type { DocData } from '../components/InvoiceDoc';
 import { cleanHex, inkOf, onColor } from '../components/InvoiceDoc';
@@ -326,5 +327,63 @@ export async function prnPdf(p: Record<string, any>): Promise<Blob> {
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(107, 114, 128);
   doc.text(doc.splitTextToSize(T('Counta made this record from what TaxStreem Flux reported from Rev360 and from Counta\'s own payment. Rev360\'s receipt, when Flux sends it, is kept beside it under Payment receipts.'), W - 80), 40, y);
   footer(doc, `PRN ${p.prn} · ${o.name || ''} · made by Counta`);
+  return doc.output('blob');
+}
+
+// ------------------------------------------------------------------ a supplier's bill typed in by hand
+const PAID_BY: Record<string, string> = { bank: 'Bank', wallet: 'Wallet', cash: 'Cash', credit: 'Supplier credit', other: 'Other' };
+export async function billPdf(b: Record<string, any>): Promise<Blob> {
+  const { jsPDF, autoTable } = await lib();
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const W = doc.internal.pageSize.getWidth();
+  const o = b.org || {};
+  const brand = rgb(o.brand_color || '#0072F5'), ink = rgb(inkOf(o.brand_color || '#0072F5'));
+  doc.setFillColor(...brand); doc.rect(0, 0, W, 5, 'F');
+  let y = await orgBlock(doc, o, 34);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(...ink);
+  doc.text('SUPPLIER BILL', W - 40, 52, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(17, 24, 39);
+  doc.text(T(`${b.number}${b.vendor_ref ? ` · their invoice ${b.vendor_ref}` : ''}`), W - 40, 68, { align: 'right' });
+  doc.text(T(`Dated ${day(b.bill_date)}${b.due_date ? ` · due ${day(b.due_date)}` : ''}`), W - 40, 80, { align: 'right' });
+  y = Math.max(y, 92) + 10;
+  const v = b.vendor || {};
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(107, 114, 128); doc.text('FROM', 40, y);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(17, 24, 39); doc.text(T(v.name || ''), 40, y + 14);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(75, 85, 99);
+  let vy = y + 26;
+  for (const l of [v.address, [v.phone, v.email].filter(Boolean).join(' · '), v.tin ? `Tax ID ${v.tin}` : ''].filter(Boolean)) {
+    for (const part of doc.splitTextToSize(T(l), 300)) { doc.text(part, 40, vy); vy += 11; }
+  }
+  y = vy + 8;
+  autoTable(doc as any, {
+    startY: y, theme: 'plain', margin: { left: 40, right: 40, bottom: 44 },
+    head: [['Description', 'Qty', 'Unit cost', 'Before VAT', 'VAT']],
+    body: (b.lines || []).map((l: any) => [T(l.description || ''), String(Number(l.qty)), money(l.unit_cost), money(l.net), money(l.vat)]),
+    foot: [['Total', '', '', money(b.subtotal), money(b.vat_total)]], showFoot: 'lastPage',
+    styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, textColor: [31, 41, 55] }, headStyles: { fillColor: [243, 244, 246], textColor: [55, 65, 81], fontStyle: 'bold' },
+    footStyles: { fillColor: [243, 244, 246], textColor: [17, 24, 39], fontStyle: 'bold' },
+    columnStyles: { 1: { halign: 'right', cellWidth: 40 }, 2: { halign: 'right', cellWidth: 80 }, 3: { halign: 'right', cellWidth: 85 }, 4: { halign: 'right', cellWidth: 75 } },
+    didParseCell: alignHead({ 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } }),
+  });
+  y = ((doc as any).lastAutoTable?.finalY || y) + 14;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(17, 24, 39);
+  doc.text(T(`Total NGN ${money(b.total)}`), W - 40, y, { align: 'right' }); y += 18;
+  const pays = b.payments || [];
+  if (pays.length) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text('Payments', 40, y);
+    autoTable(doc as any, {
+      startY: y + 6, theme: 'plain', margin: { left: 40, right: 40, bottom: 44 },
+      head: [['Paid on', 'How', 'Reference', 'Settled', 'WHT kept back']],
+      body: pays.map((p: any) => [day(String(p.paid_at || '').slice(0, 10)), PAID_BY[p.method] || String(p.method || ''), T(p.reference || ''), money(p.gross), money(p.wht)]),
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, textColor: [31, 41, 55] }, headStyles: { fillColor: [243, 244, 246], textColor: [55, 65, 81], fontStyle: 'bold' },
+      columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } }, didParseCell: alignHead({ 3: { halign: 'right' }, 4: { halign: 'right' } }),
+    });
+    y = ((doc as any).lastAutoTable?.finalY || y) + 16;
+  }
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(75, 85, 99);
+  const claim = b.vat_day ? `Input VAT of NGN ${money(b.vat_total)} is claimed in the VAT return for ${new Date(String(b.vat_day) + 'T12:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })}${b.paid_on ? `, the month the bill was paid in full (${day(b.paid_on)})` : ''}.`
+    : 'Input VAT on this bill is claimed in the month it is paid in full.';
+  doc.text(doc.splitTextToSize(T(`${claim} Counta drew this from the bill as it was entered${b.journal_ref ? ` (journal ${b.journal_ref})` : ''}; the supplier's own invoice is the evidence for the VAT.`), W - 80), 40, y);
+  footer(doc, `${b.number} · ${v.name || ''} · ${o.name || ''} · made by Counta`);
   return doc.output('blob');
 }

@@ -1078,7 +1078,7 @@ async function readSupplier(admin: SupabaseClient, open: any, bytes: Uint8Array,
   for (let attempt = 0; attempt < 2 && !x; attempt++) {
     if (attempt) await new Promise((r) => setTimeout(r, 4000));
     try {
-      const r = await gemini(supplierSystem({ name: org?.name || open.business, tin: org?.tin }, open.accounts || [], open.wht || []),
+      const r = await gemini(supplierSystem({ name: org?.name || open.business, tin: org?.tin }, open.accounts || [], open.wht || [], { profile: open.profile, items: open.items }),
         [{ text: 'Read this invoice.' }, { inlineData: { mimeType: mime, data: encodeBase64(bytes) } }], SUPPLIER_SCHEMA, 0,
         { thinking: 'low', timeoutMs: 80_000, org: open.org_id, kind: 'supplier_invoice' });
       x = cleanSupplier(r.data); model = r.model;

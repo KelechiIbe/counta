@@ -2,6 +2,7 @@
 // claim the input VAT), and money received into the bank with no Counta invoice behind it.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { useInventory, useSession, useToast } from '../../../state/session';
 import { rpc, supabase } from '../../../lib/supabase';
 import { edge, money, moneyAccounts, today } from '../../../lib/api';
@@ -12,6 +13,8 @@ import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } f
 import { StatusChip } from '../../sell/common';
 import { useTaxRefresh } from './CitTab';
 import { NG_STATES } from '../../../lib/countries';
+import { useInputVat } from '../../../lib/tax';
+import { ExportMenu, useMeta } from '../../../components/Books';
 
 // The VAT treatments in plain words.
 const TREAT: Record<string, string> = { standard: 'VAT at 7.5%', zero: 'No VAT (zero-rated)', exempt: 'No VAT (exempt)' };
@@ -409,29 +412,68 @@ function ScheduleModal({ id, canWork, onClose }: { id: string; canWork: boolean;
 }
 
 // ---------------------------------------------------------------- input VAT from purchase invoices
-export function PurchasesPanel({ data, canWork }: { data: any; canWork: boolean }) {
+// Input VAT invoices: every bill with VAT once it is paid in full, in the month its VAT is claimed, and the bills whose VAT
+// waits for payment. Invoices not in Counta yet are uploaded here with the account that paid them.
+export function PurchasesPanel({ from, to, canWork, vatRegistered }: { from: string; to: string; canWork: boolean; vatRegistered: boolean }) {
   const [open, setOpen] = useState(false);
-  const list: any[] = data?.purchases || [];
+  const [showWaiting, setShowWaiting] = useState(false);
+  const q = useInputVat(from, to);
+  const meta = useMeta();
+  const navigate = useNavigate();
+  const list: any[] = q.data?.claimed || [];
+  const waiting = q.data?.waiting || { count: 0, vat: 0, rows: [] };
+  const claimed = list.reduce((a, b) => a + Number(b.vat || 0), 0);
+  const openBill = (id: string) => navigate(`/purchases/bills?open=${id}`);
   return (
-    <div className="stack" style={{ gap: 12 }}>
+    <div className="stack" style={{ gap: 12 }} data-testid="input-vat">
       <div className="card card-pad row wrap" style={{ justifyContent: 'space-between', gap: 10 }}>
         <div style={{ flex: '1 1 320px' }}>
           <b>Input VAT on purchase invoices</b>
-          <div className="muted" style={{ fontSize: 13, marginTop: 4, lineHeight: 1.55 }}>Upload the invoices that show VAT. Counta reads each one and finds the payment behind it, and you check both. The VAT is claimed in the month of the invoice, and any withholding tax falls in the month it was paid. Invoices without a VAT figure carry nothing to claim.</div>
+          <div className="muted" style={{ fontSize: 13, marginTop: 4, lineHeight: 1.55 }}>A supplier's VAT is claimed in the month the bill is paid in full, and never before the month of the invoice. Every bill with VAT appears here once it is paid. For an invoice that is not in Counta yet, upload it and say which account paid it.</div>
         </div>
-        {canWork && <button className="btn btn-primary btn-sm" disabled={!data?.settings?.vat_registered} onClick={() => setOpen(true)}><Icon name="upload" size={14} color="#fff" />Upload invoices</button>}
+        {canWork && <button className="btn btn-primary btn-sm" disabled={!vatRegistered} onClick={() => setOpen(true)}><Icon name="upload" size={14} color="#fff" />Upload invoices</button>}
       </div>
-      <div className="card" style={{ overflow: 'hidden' }}>
-        {!list.length ? <div style={{ padding: 20 }}><Empty>Purchase invoices claimed here appear with their VAT.</Empty></div> : list.map((b) => (
-          <div key={b.id} className="tr" style={{ gridTemplateColumns: 'minmax(0,1.4fr) 100px 120px 110px' }}>
-            <span className="ellipsis"><b>{b.vendor}</b><span className="faint" style={{ display: 'block', fontSize: 12 }}>{b.vendor_ref || b.number} · {fmtDay(b.bill_date)} · {b.number}
-              {b.paid_on ? ` · paid ${fmtDay(b.paid_on)}` : ''}{Number(b.wht_borne) > 0 ? ` · WHT ${N2(b.wht_borne)} borne by you` : Number(b.wht_withheld) > 0 ? ` · WHT ${N2(b.wht_withheld)} kept back` : Number(b.wht) > 0 ? ` · WHT ${N2(b.wht)} when paid` : ''}</span></span>
-            <span><StatusChip s={b.status} /></span>
-            <span className="right num">{N2(b.total)}</span>
-            <span className="right num" style={{ color: '#15803D' }}>VAT {N2(b.vat)}</span>
+      {q.isLoading ? <SkeletonRows n={3} /> : q.error ? <Alert kind="grey" icon="shield">{(q.error as Error).message}</Alert> : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 8 }}>
+            <div className="card card-pad"><div className="muted" style={{ fontSize: 12 }}>Claimed in these months</div><div className="num" style={{ fontSize: 20, fontWeight: 700, color: '#15803D' }}>{N2(claimed)}</div>
+              <div className="faint" style={{ fontSize: 12 }}>{list.length} invoice{list.length === 1 ? '' : 's'} paid in full</div></div>
+            <button type="button" className="card card-pad" style={{ textAlign: 'left', cursor: Number(waiting.count) ? 'pointer' : 'default' }} disabled={!Number(waiting.count)} onClick={() => setShowWaiting((x) => !x)}>
+              <div className="muted" style={{ fontSize: 12 }}>Waiting for payment</div><div className="num" style={{ fontSize: 20, fontWeight: 700, color: Number(waiting.vat) ? '#B45309' : undefined }}>{N2(waiting.vat)}</div>
+              <div className="faint" style={{ fontSize: 12 }}>{Number(waiting.count) ? `${waiting.count} bill${Number(waiting.count) === 1 ? '' : 's'} not paid in full · ${showWaiting ? 'hide' : 'show'}` : 'Nothing waiting'}</div></button>
           </div>
-        ))}
-      </div>
+          {showWaiting && Number(waiting.count) > 0 && (
+            <div className="card" style={{ overflow: 'hidden' }} data-testid="input-vat-waiting">
+              <div className="card-hd"><b style={{ fontSize: 13 }}>VAT claimed when these are paid in full</b></div>
+              {(waiting.rows as any[]).map((b) => (
+                <div key={b.id} className="tr click" onClick={() => openBill(b.id)} style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}>
+                  <span style={{ minWidth: 0 }}><b className="ellipsis" style={{ display: 'block' }}>{b.vendor}</b>
+                    <span className="faint" style={{ fontSize: 12 }}>{b.vendor_ref || b.number} · {fmtDay(b.bill_date)} · {Number(b.paid) > 0 ? `${N2(b.paid)} of ${N2(b.total)} paid` : `${N2(b.total)} to pay`}{b.due_date ? ` · due ${fmtDay(b.due_date)}` : ''}</span></span>
+                  <span className="right num" style={{ color: '#B45309', whiteSpace: 'nowrap' }}>VAT {N2(b.vat)}</span>
+                </div>
+              ))}
+              {Number(waiting.count) > (waiting.rows as any[]).length && <div className="faint" style={{ padding: '8px 14px', fontSize: 12 }}>The latest {(waiting.rows as any[]).length} of {waiting.count}.</div>}
+            </div>
+          )}
+          <div className="card" style={{ overflow: 'hidden' }}>
+            <div className="card-hd row" style={{ justifyContent: 'space-between' }}><b style={{ fontSize: 13 }}>Claimed</b>
+              <ExportMenu name={`Input VAT invoices ${from} to ${to}`} disabled={!list.length} sheets={() => [{ meta: meta('Input VAT invoices', `${monthWord(from + '-01')} to ${monthWord(to + '-01')}`),
+                cols: [{ key: 'claim_day', label: 'Claimed', type: 'date' }, { key: 'vendor', label: 'Supplier' }, { key: 'vendor_ref', label: 'Their invoice' }, { key: 'number', label: 'Bill' },
+                  { key: 'bill_date', label: 'Invoice date', type: 'date' }, { key: 'net', label: 'Before VAT', type: 'money', total: true }, { key: 'vat', label: 'VAT', type: 'money', total: true },
+                  { key: 'total', label: 'Total', type: 'money', total: true }],
+                rows: list as any }]} /></div>
+            {!list.length ? <div style={{ padding: 20 }}><Empty>No bill with VAT was paid in full in these months.</Empty></div> : list.map((b) => (
+              <div key={b.id} className="tr click" onClick={() => openBill(b.id)} style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }} data-testid="input-vat-row">
+                <span style={{ minWidth: 0 }}><b className="ellipsis" style={{ display: 'block' }}>{b.vendor}</b>
+                  <span className="faint" style={{ fontSize: 12 }}>{b.vendor_ref || b.number} · invoice {fmtDay(b.bill_date)} · claimed {monthWord(b.claim_day)}{b.paid_on ? `, paid in full ${fmtDay(b.paid_on)}` : ''}
+                    {Number(b.wht_borne) > 0 ? ` · WHT ${N2(b.wht_borne)} borne by you` : Number(b.wht_withheld) > 0 ? ` · WHT ${N2(b.wht_withheld)} kept back` : ''}</span></span>
+                <span className="right" style={{ whiteSpace: 'nowrap' }}><span className="num" style={{ color: '#15803D', fontWeight: 600 }}>VAT {N2(b.vat)}</span>
+                  <span className="faint num" style={{ display: 'block', fontSize: 12 }}>of {N2(b.total)}</span></span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
       {open && <ClaimInvoicesModal onClose={() => setOpen(false)} />}
     </div>
   );
@@ -513,12 +555,12 @@ export function ClaimInvoicesModal({ onClose, bankLine }: { onClose: () => void;
         supplier_type: c.f.supplier_type || null, supplier_address: c.f.supplier_address || null, supplier_state: c.f.supplier_state || null,
         wht_category: c.f.wht_category || 'none', ...payment } });
       const b = r.bill || {};
-      const words = [`Input VAT of ${N2(b.vat)} claimed for ${monthWord(c.f.invoice_date)}.`,
+      const words = [r.vat_month ? `Input VAT of ${N2(b.vat)} claimed for ${monthWord(r.vat_month)}.` : `Input VAT of ${N2(b.vat)} is claimed in the month ${b.number} is paid in full.`,
         Number(b.wht_borne) > 0 ? `The business owes the WHT of ${N2(b.wht_borne)} itself, in ${monthWord(r.wht_month)}.`
           : Number(b.wht_withheld) > 0 ? `WHT of ${N2(b.wht_withheld)} is due for ${monthWord(r.wht_month)}.`
           : r.payment === 'unpaid' && Number(b.wht) > 0 ? `${b.number} is waiting in Purchases; WHT of ${N2(b.wht)} is kept back when you pay it.` : null].filter(Boolean).join(' ');
       set(c.key, { status: 'saved', done: words });
-      toast(`Input VAT of ${N2(money(c.f.vat) || 0)} claimed`);
+      toast(r.vat_month ? `Input VAT of ${N2(money(c.f.vat) || 0)} claimed` : `${b.number} saved; its VAT is claimed when it is paid`);
       await Promise.all([qc.invalidateQueries({ queryKey: ['vat_sources'] }), qc.invalidateQueries({ queryKey: ['banking'] }), refresh()]);
     } catch (e) { set(c.key, { status: 'ready', error: (e as Error).message }); }
   }
@@ -532,11 +574,11 @@ export function ClaimInvoicesModal({ onClose, bankLine }: { onClose: () => void;
           <button className="btn btn-secondary btn-sm" onClick={() => input.current?.click()}><Icon name="upload" size={14} />{claims.length ? 'Add more' : bankLine ? 'Choose the invoice' : 'Choose invoices'}</button>
           {!bankLine && (
             <select className="input input-sm" style={{ width: 'auto' }} value={paidFrom} onChange={(e) => setPaidFrom(e.target.value)} aria-label="Usually paid from">
-              <option value="">Usually paid from…</option>{(accts.data || []).map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              <option value="">Paid from…</option>{(accts.data || []).map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           )}
         </div>
-        {!bankLine && <div className="faint" style={{ fontSize: 12 }}>Counta looks for the payment behind each invoice in your bank lines and wallet payouts. If it is not there, you say when it was paid. WHT falls in the month of the payment.</div>}
+        {!bankLine && <div className="faint" style={{ fontSize: 12 }}>Choose the account the invoices were paid from. Counta looks for each payment in that account's bank lines and your wallet payouts; if it is not there, you say when it was paid. The VAT is claimed in the month an invoice was paid, never before the month of the invoice, and any WHT falls in that month too.</div>}
         {!claims.length && <Empty>Counta reads the supplier, the invoice number and date, and the VAT. You check them before anything is saved.</Empty>}
         {claims.map((c) => <ClaimCard key={c.key} c={c} set={(p) => set(c.key, p)} bankLine={bankLine} accounts={accts.data || []} paidFrom={paidFrom} onClaim={(look) => claim(c, look)} />)}
       </div>
@@ -684,14 +726,14 @@ function ClaimCard({ c, set, bankLine, accounts, paidFrom, onClaim }: { c: Claim
             </div>
           )}
           <label className="check" style={{ fontSize: 13 }}>
-            <input type="radio" name={`pay-${c.key}`} checked={c.pay === 'unpaid'} onChange={() => set({ pay: 'unpaid' })} />Not paid yet: put it in Purchases as a bill to pay
+            <input type="radio" name={`pay-${c.key}`} checked={c.pay === 'unpaid'} onChange={() => set({ pay: 'unpaid' })} />Not paid yet: put it in Purchases as a bill to pay (its VAT is claimed when you pay it)
           </label>
         </div>
       )}
       {editing && (
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button className="btn btn-primary btn-sm" disabled={c.status === 'saving' || !ready} onClick={() => onClaim(look)}>
-            Claim {N2(money(f.vat) || 0)} input VAT
+            {c.pay === 'unpaid' ? 'Save the bill' : `Claim ${N2(money(f.vat) || 0)} input VAT`}
           </button>
         </div>
       )}
