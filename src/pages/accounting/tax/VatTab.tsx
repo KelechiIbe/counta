@@ -75,7 +75,7 @@ export default function VatTab() {
             <ReceiptsVatCard settings={src.data?.settings} receipts={src.data?.receipts} counts={src.data?.receipt_counts} canWork={!!src.data?.can?.work} />
           </>)}
           {view === 'purchases' && (src.isLoading ? <SkeletonRows n={3} /> : src.error ? <Alert kind="grey" icon="shield">{(src.error as Error).message}</Alert>
-            : <PurchasesPanel data={src.data} canWork={!!src.data?.can?.work} />)}
+            : <PurchasesPanel from={from} to={to} canWork={!!src.data?.can?.work} vatRegistered={!!src.data?.settings?.vat_registered} />)}
           {view === 'months' && <>
           <div className="card" style={{ overflow: 'auto' }}>
             <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: '120px repeat(5,minmax(100px,1fr)) 120px 170px', minWidth: 1000 }}>
@@ -100,7 +100,7 @@ export default function VatTab() {
               );
             })}
           </div>
-          <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>A month's return and payment are due on the 21st of the next month. Input VAT on bills is claimed in the month of the bill;
+          <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>A month's return and payment are due on the 21st of the next month. Input VAT on a bill is claimed in the month the bill is paid in full, never before the month of the invoice;
             what is left over is carried forward and used in later months, oldest first, for up to five years. VAT on standard-rated stock written off is taken back
             in the month it is written off. NRS gives the month's return on the NRS template, ready to upload.</div>
           </>}

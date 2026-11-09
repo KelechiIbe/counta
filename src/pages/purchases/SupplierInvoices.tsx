@@ -1,8 +1,9 @@
-// Supplier invoices: sent by suppliers on the business's invoice portal, or uploaded here. Counta reads each one, adds the
-// supplier when it is new, checks the invoice (sums, VAT, Tax ID, address, bank account) and writes a draft bill. Problems the
-// supplier must fix go to them by email or WhatsApp; the business approves the bill for payment, or rejects the invoice and
-// the supplier is told why.
-import { useRef, useState } from 'react';
+// Supplier invoices: sent by suppliers on the business's invoice portal, or uploaded here. Counta reads each one with what the
+// business does and its items list, adds the supplier when it is new, checks the invoice (sums, VAT, Tax ID, address, bank
+// account) and writes a draft bill: each line stock, a fixed asset or an expense. Problems the supplier must fix go to them by
+// email or WhatsApp; the business approves the bill for payment (stock on it goes into the branch chosen, with what arrived),
+// or rejects the invoice and the supplier is told why.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { ai, rpc, signedDoc, supabase } from '../../lib/supabase';
@@ -190,10 +191,23 @@ function SupplierInvoiceDrawer({ id, onClose, onOpenBill }: { id: string; onClos
   const [busy, setBusy] = useState(false);
   const keep = inv ? can(inv, 'keep_books') : false;
   const x = si?.extract || {};
+  const stockLines: StockLine[] = si?.stock?.lines || [];
+  const [plan, setPlan] = useState<StockPlan>({ location_id: '', lines: {} });
+  useEffect(() => {
+    if (!si?.id || !inv) return;
+    setPlan({ location_id: inv.me?.location_id || inv.locations.find((l) => l.is_main)?.id || inv.locations[0]?.id || '',
+      lines: Object.fromEntries(stockLines.map((l) => [l.id, { item_id: l.item_id || '', qty: String(Number(l.qty)), add_new: false, name: l.new_item?.name || '',
+        item_type: l.new_item?.item_type || 'merchandise' }])) });
+  }, [si?.id, stockLines.length, !!inv]); // eslint-disable-line react-hooks/exhaustive-deps
+  const approveArgs = () => (stockLines.length ? { location_id: plan.location_id || null, lines: stockLines.map((l) => {
+    const c = plan.lines[l.id] || { item_id: l.item_id || '', qty: String(Number(l.qty)), add_new: false, name: '', item_type: 'merchandise' };
+    return { id: l.id, item_id: c.item_id || '', qty: Number(c.qty) || 0, add_new: !c.item_id && c.add_new,
+      ...(l.new_item && !c.item_id && c.add_new ? { new_item: { name: c.name.trim() || l.new_item.name, item_type: c.item_type } } : {}) };
+  }) } : {});
   const checks: any[] = si?.checks || [];
   async function act(fn: () => Promise<any>, ok: string) {
     setBusy(true);
-    try { const r = await fn(); if (r?.id) qc.setQueryData(['supplier-invoice', id], r); toast(ok); await Promise.all(['supplier-invoices', 'supplier-invoice', 'bills', 'bill'].map((k) => qc.invalidateQueries({ queryKey: [k] }))); }
+    try { const r = await fn(); if (r?.id) qc.setQueryData(['supplier-invoice', id], r); toast(ok); await Promise.all(['supplier-invoices', 'supplier-invoice', 'bills', 'bill', 'inv', 'input-vat'].map((k) => qc.invalidateQueries({ queryKey: [k] }))); }
     catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
   }
@@ -253,6 +267,11 @@ function SupplierInvoiceDrawer({ id, onClose, onOpenBill }: { id: string; onClos
                 {si.bill && <span className="faint">The bill: {N2(si.bill.total)}{Number(si.bill.wht_expected) > 0 ? `, WHT ${N2(si.bill.wht_expected)}` : ''}</span>}
               </div>
             </div>
+            {stockLines.length > 0 && si.status === 'review' && keep && <StockApproval lines={stockLines} plan={plan} setPlan={setPlan} />}
+            {si.stock?.receipt && (
+              <Alert kind="green" icon="package"><span data-testid="si-stock-done">Stock received into {si.stock.receipt.location || 'the branch'}{si.stock.receipt.ref ? ` · ${si.stock.receipt.ref}` : ''}:
+                {' '}{stockLines.filter((l) => Number(l.received_qty) > 0).map((l) => `${Number(l.received_qty)} ${unitOf(l)} ${l.item?.name || l.description}`).join(', ')}.</span></Alert>
+            )}
             {(x.lines || []).length > 0 && (
               <div className="card" style={{ overflow: 'hidden', borderRadius: 12, flex: 'none' }}>
                 {(x.lines || []).map((l: any, i: number) => (
@@ -265,8 +284,10 @@ function SupplierInvoiceDrawer({ id, onClose, onOpenBill }: { id: string; onClos
             )}
             {keep && si.status === 'review' && (
               <div className="row wrap" style={{ gap: 8 }}>
-                <button className="btn btn-primary btn-sm" disabled={busy || Number(si.blocks) > 0} title={Number(si.blocks) > 0 ? 'Fix the checks that stop payment first' : undefined}
-                  onClick={() => act(() => rpc('approve_supplier_invoice', { p_id: si.id }), 'Approved for payment')}><Icon name="check" size={14} color="#fff" />Approve for payment</button>
+                <button className="btn btn-primary btn-sm" disabled={busy || Number(si.blocks) > 0 || (stockLines.length > 0 && !plan.location_id)}
+                  title={Number(si.blocks) > 0 ? 'Fix the checks that stop payment first' : undefined} data-testid="si-approve"
+                  onClick={() => act(() => rpc('approve_supplier_invoice', { p_id: si.id, p: approveArgs() }), stockLines.length ? 'Approved, and the stock is in' : 'Approved for payment')}>
+                  <Icon name="check" size={14} color="#fff" />{stockLines.length ? 'Approve and receive the stock' : 'Approve for payment'}</button>
                 <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => setRejecting(true)}><Icon name="undo" size={14} />Reject</button>
                 <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => act(() => rpc('recheck_supplier_invoice', { p_id: si.id }), 'Checked again')}>Check again</button>
                 {si.bill && <button className="btn btn-ghost btn-sm" onClick={() => onOpenBill(si.bill.id)}>Edit the bill</button>}
@@ -278,6 +299,78 @@ function SupplierInvoiceDrawer({ id, onClose, onOpenBill }: { id: string; onClos
       </div>
       {rejecting && si && <RejectModal si={si} onClose={() => setRejecting(false)} onDone={() => act(async () => null, 'Rejected')} />}
     </Drawer>
+  );
+}
+
+type StockLine = { id: string; line_no: number; description: string; qty: number; unit_cost: number; net: number; unit_kind: 'purchase' | 'selling'; item_id: string | null;
+  received_qty: number | null; new_item: { name: string; item_type?: string; purchase_unit?: string; pack_size?: number; selling_unit?: string } | null;
+  item: { name: string; purchase_unit: string; pack_size: number; selling_unit: string } | null };
+type StockPlan = { location_id: string; lines: Record<string, { item_id: string; qty: string; add_new: boolean; name: string; item_type: string }> };
+const ITEM_TYPES: [string, string][] = [['merchandise', 'Goods for resale'], ['raw_material', 'Raw material'], ['packaging', 'Packaging'], ['consumable', 'Consumable'], ['spare_part', 'Spare part']];
+// "12 bottles", "1 bottle"; a unit already ending in s stays as it is.
+const packWords = (n: number, unit: string) => `${n} ${Number(n) === 1 || /s$/i.test(unit) ? unit : unit + 's'}`;
+const unitOf = (l: StockLine) => (l.unit_kind === 'selling' ? l.item?.selling_unit || l.new_item?.selling_unit || 'unit' : l.item?.purchase_unit || l.new_item?.purchase_unit || 'unit').toLowerCase();
+
+// What goes into stock when the invoice is approved: each line with the item it is (or a new product to add), how many arrived,
+// and the branch. A line with no item and no new product is booked as an expense.
+function StockApproval({ lines, plan, setPlan }: { lines: StockLine[]; plan: StockPlan; setPlan: (p: StockPlan) => void }) {
+  const { data: inv } = useInventory();
+  const items = useMemo(() => [...(inv?.items || [])].filter((i) => i.item_type !== 'service').sort((a, b) => a.name.localeCompare(b.name)), [inv?.items]);
+  if (!inv) return null;
+  const set = (id: string, p: Partial<StockPlan['lines'][string]>) => setPlan({ ...plan, lines: { ...plan.lines, [id]: { ...plan.lines[id], ...p } } });
+  const receiver = can(inv, 'receive_stock');
+  return (
+    <div className="card card-pad stack" style={{ gap: 10, borderRadius: 12 }} data-testid="si-stock">
+      <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ minWidth: 0, flex: '1 1 240px' }}><b style={{ fontSize: 14 }}>Into stock</b>
+          <div className="faint" style={{ fontSize: 12 }}>Approving puts these into stock. Lower a quantity if less arrived.</div></div>
+        {inv.locations.length > 1 && (
+          <select className="input input-sm" style={{ width: 'auto', minWidth: 160 }} value={plan.location_id} onChange={(e) => setPlan({ ...plan, location_id: e.target.value })} aria-label="Branch the stock goes to">
+            <option value="">Which branch?</option>{inv.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select>
+        )}
+      </div>
+      {!receiver && <Alert kind="amber" icon="info">Your role does not receive stock, so someone who does must approve this invoice.</Alert>}
+      {lines.map((l) => {
+        const c = plan.lines[l.id];
+        if (!c) return null;
+        const it = items.find((i) => i.id === c.item_id);
+        const unit = c.item_id ? (l.unit_kind === 'selling' ? it?.selling_unit : it?.purchase_unit) || unitOf(l) : unitOf(l);
+        const qty = Number(c.qty);
+        const short = Number.isFinite(qty) && qty < Number(l.qty);
+        const asNew = !c.item_id && l.new_item;
+        return (
+          <div key={l.id} className="stack" style={{ gap: 6, paddingTop: 8, borderTop: '1px solid #F3F4F6' }} data-testid="si-stock-line">
+            <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
+              <span style={{ minWidth: 0, fontSize: 13 }}><b>{l.description}</b><span className="faint" style={{ display: 'block', fontSize: 12 }}>{Number(l.qty)} × {N2(l.unit_cost)} on the invoice</span></span>
+              <span className="row" style={{ gap: 6, flex: 'none' }}>
+                <input className="input input-sm num" style={{ width: 72 }} inputMode="decimal" value={c.qty} onChange={(e) => set(l.id, { qty: e.target.value })} aria-label={`How many arrived: ${l.description}`} />
+                <span className="faint" style={{ fontSize: 12, minWidth: 40 }}>{String(unit || '').toLowerCase()}</span>
+              </span>
+            </div>
+            <select className="input input-sm" value={c.item_id} onChange={(e) => set(l.id, { item_id: e.target.value })} aria-label={`Item: ${l.description}`}>
+              <option value="">{l.new_item ? 'Not on my list' : 'Not stock: book it as an expense'}</option>
+              {items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+            </select>
+            {asNew && (
+              <div className="stack" style={{ gap: 6, paddingLeft: 2 }}>
+                <label className="check" style={{ fontSize: 13 }}><input type="checkbox" checked={c.add_new} onChange={(e) => set(l.id, { add_new: e.target.checked })} />
+                  Add it to my items and receive it</label>
+                {c.add_new ? (
+                  <div className="row wrap" style={{ gap: 6 }}>
+                    <input className="input input-sm" style={{ flex: '2 1 180px' }} value={c.name} onChange={(e) => set(l.id, { name: e.target.value })} aria-label="New item name" />
+                    <select className="input input-sm" style={{ flex: '1 1 140px' }} value={c.item_type} onChange={(e) => set(l.id, { item_type: e.target.value })} aria-label="What kind of item">
+                      {ITEM_TYPES.map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+                    <span className="faint" style={{ fontSize: 12, alignSelf: 'center' }}>{l.new_item!.purchase_unit || 'Unit'} of {packWords(l.new_item!.pack_size || 1, l.new_item!.selling_unit || 'piece')}</span>
+                  </div>
+                ) : <span className="faint" style={{ fontSize: 12 }}>Left unticked, it is booked as an expense and stock does not change.</span>}
+              </div>
+            )}
+            {!c.item_id && !l.new_item && <span className="faint" style={{ fontSize: 12 }}>Booked as an expense; stock does not change.</span>}
+            {short && (c.item_id || c.add_new) && <span style={{ fontSize: 12, color: '#B45309' }}>{Number(l.qty) - qty} short. The bill stays at what the invoice says; ask the supplier for a credit note for the rest.</span>}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

@@ -16,7 +16,7 @@ Year, then month, then kind, then folder, then (for tax) the part of the return:
 2026
   October
     Sales        Invoices · Receipts · Till receipts · Credit notes · Quotes · Orders · Delivery proofs
-    Purchases    Supplier invoices · From suppliers · Claim input VAT · Stock received · Supplier credit notes · Import entries
+    Purchases    Supplier invoices · From suppliers · Input VAT invoices · Stock received · Supplier credit notes · Import entries
     Tax          VAT · WHT · Withholding VAT
                    Return files · Accountant versions · Filing evidence · PRN and payment · Payment receipts · Uploaded · From Flux
     Accountant   Requests (files the accountant asked for, or sent)

@@ -31,6 +31,8 @@ export default function Bills() {
   // A notice about a supplier's invoice opens the Supplier invoices tab on it.
   const [tab, setTabState] = useState<Tab>(params.get('tab') === 'invoices' ? 'invoices' : 'unpaid');
   const setTab = (t: Tab) => { setTabState(t); if (params.get('tab') || params.get('open')) setParams({}); };
+  // A link to the Supplier invoices tab (from a bill with stock on it) switches to it.
+  useEffect(() => { if (params.get('tab') === 'invoices') setTabState('invoices'); }, [params]);
   // Supplier invoices are for people who keep the books; anyone else following a link lands on the bills to pay.
   useEffect(() => { if (inv && tab === 'invoices' && !can(inv, 'keep_books')) setTabState('unpaid'); }, [inv, tab]);
   const supplierInvoices = useSupplierInvoices('open', !!inv && can(inv, 'keep_books'));
@@ -101,7 +103,7 @@ export default function Bills() {
           ))}
         </div>
       </div>}
-      {open && tab !== 'invoices' && <BillDrawer id={open} whtRates={bills.data?.wht_rates || []} onClose={() => setParams({})} onEdit={(id) => setEditing(id)} />}
+      {open && tab !== 'invoices' && params.get('tab') !== 'invoices' && <BillDrawer id={open} whtRates={bills.data?.wht_rates || []} onClose={() => setParams({})} onEdit={(id) => setEditing(id)} />}
       {editing && <BillEditor id={editing === 'new' ? null : editing} draft={editing === 'new' ? billDraft : null} vendors={bills.data?.vendors || []} whtRates={bills.data?.wht_rates || []} assetClasses={bills.data?.asset_classes || []}
         onClose={() => { setEditing(null); setBillDraft(null); }} onSaved={(id) => { setEditing(null); setBillDraft(null); setParams({ open: id }); }} />}
     </div>
@@ -150,7 +152,11 @@ function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: a
             <div className="card" style={{ overflow: 'hidden', borderRadius: 12 }}>
               {(b.lines || []).map((l: any) => (
                 <div key={l.id} className="tr" style={{ gridTemplateColumns: 'minmax(0,1fr) 120px', padding: '9px 14px' }}>
-                  <span style={{ minWidth: 0 }}>{l.description}<span className="faint" style={{ display: 'block', fontSize: 12 }}>{l.account_code} {l.account_name} · {Number(l.qty)} × {N2(l.unit_cost)}{l.vat_treatment === 'standard' ? ` · VAT ${N2(l.vat)}${l.vat_recoverable ? '' : ' (not recoverable)'}` : l.vat_treatment === 'none' ? '' : ` · ${l.vat_treatment}`}
+                  <span style={{ minWidth: 0 }}>{l.description}
+                    {l.stock && <span style={{ display: 'block', fontSize: 12, color: '#0072F5' }} data-testid="bill-stock-line">{l.item_id
+                      ? `Stock: ${inv?.items.find((i) => i.id === l.item_id)?.name || 'an item'}${l.received_qty != null ? ` · ${Number(l.received_qty)} received` : ' · received when the invoice is approved'}`
+                      : `Stock: new item ${l.new_item?.name || ''}, added when the invoice is approved`}</span>}
+                    <span className="faint" style={{ display: 'block', fontSize: 12 }}>{l.account_code} {l.account_name} · {Number(l.qty)} × {N2(l.unit_cost)}{l.vat_treatment === 'standard' ? ` · VAT ${N2(l.vat)}${l.vat_recoverable ? '' : ' (not recoverable)'}` : l.vat_treatment === 'none' ? '' : ` · ${l.vat_treatment}`}
                     {Number(l.wht) > 0 ? ` · WHT ${pct(l.wht_rate)} ${N2(l.wht)}${l.wht_category_effective && l.wht_category_effective !== b.wht_category ? ` (${whtRates.find((w) => w.code === l.wht_category_effective)?.name || l.wht_category_effective})` : ''}` : ''}
                     {Number(l.reverse_charge_vat) > 0 ? ` · VAT self-charged ${N2(l.reverse_charge_vat)}` : ''}
                     <VatInfo side="purchase" treatment={l.vat_treatment} name={l.description} day={b.bill_date} recoverable={l.vat_recoverable !== false}
@@ -161,6 +167,11 @@ function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: a
               <div className="stack" style={{ padding: '10px 14px', gap: 4, borderTop: '1px solid #F3F4F6', fontSize: 13 }}>
                 <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Before VAT</span><span className="num">{N2(b.subtotal)}</span></div>
                 <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">VAT</span><span className="num">{N2(b.vat_total)}</span></div>
+                {(b.lines || []).some((l: any) => l.vat_recoverable !== false && Number(l.vat) > 0) && b.journal_id && b.status !== 'void' && b.source !== 'import' && (
+                  <div className="faint" style={{ fontSize: 12, marginTop: -2 }} data-testid="bill-vat-claim">{(b as any).vat_day
+                    ? `Input VAT claimed in ${new Date(String((b as any).vat_day) + 'T12:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}'s VAT return.`
+                    : 'Input VAT is claimed in the month this bill is paid in full.'}</div>
+                )}
                 <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700 }}><span>Total</span><span className="num">{N2(b.total)}</span></div>
                 <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Withholding tax{b.wht_category && b.wht_category !== 'none' ? ` (${whtRates.find((w) => w.code === b.wht_category)?.name || b.wht_category})` : ''}</span><span className="num">{N2(b.wht_expected)}</span></div>
                 {b.wht_note && <div className="faint" style={{ fontSize: 12, marginTop: -2 }}>{b.wht_note}</div>}
@@ -186,7 +197,10 @@ function BillDrawer({ id, whtRates, onClose, onEdit }: { id: string; whtRates: a
             {(b.assets || []).length > 0 && <Alert kind="blue" icon="info">{b.assets.length} fixed asset{b.assets.length === 1 ? '' : 's'} from this bill wait in Fixed assets to be confirmed.</Alert>}
             <div className="row wrap">
               {b.status === 'draft' && <button className="btn btn-secondary btn-sm" onClick={() => onEdit(b.id)}><Icon name="pencil" size={14} />Edit</button>}
-              {b.status === 'draft' && can(inv, 'keep_books') && <button className="btn btn-primary btn-sm" disabled={!!flags.missing_state} title={flags.missing_state ? 'Add the supplier\'s state first' : undefined}
+              {b.status === 'draft' && can(inv, 'keep_books') && (b.lines || []).some((l: any) => l.stock) && b.supplier_invoice_id ? (
+                <button className="btn btn-primary btn-sm" onClick={() => nav(`/purchases/bills?tab=invoices&open=${b.supplier_invoice_id}`)} title="Say what arrived and which branch it goes to">
+                  <Icon name="package" size={14} color="#fff" />Approve with the stock</button>
+              ) : b.status === 'draft' && can(inv, 'keep_books') && <button className="btn btn-primary btn-sm" disabled={!!flags.missing_state} title={flags.missing_state ? 'Add the supplier\'s state first' : undefined}
                 onClick={() => (flags.missing_tin ? setNoTin(true) : act(() => rpc('approve_bill', { p_bill: b.id }), `${b.number} approved and in the books`))}>Approve</button>}
               {['approved', 'partially_paid'].includes(b.status) && can(inv, 'make_payments') && <button className="btn btn-primary btn-sm" disabled={!!flags.missing_state || !!flags.tin_hold} title={flags.tin_hold ? holdText(flags.tin_hold, b.vendor?.name || 'The supplier') : flags.missing_state ? 'Add the supplier\'s state first' : undefined} onClick={() => setPay(true)}><Icon name="send" size={14} color="#fff" />Pay</button>}
               {flags.can_return && can(inv, 'keep_books') && !flags.missing_tin && !flags.missing_state && <button className="btn btn-ghost btn-sm" onClick={() => setSendBack('other')}><Icon name="undo" size={14} />Send back</button>}
@@ -372,7 +386,9 @@ function PayBill({ bill, onClose, onDone }: { bill: any; onClose: () => void; on
   );
 }
 
-interface BLine { key: string; description: string; account_code: string; qty: string; unit_cost: string; vat_treatment: string; vat_recoverable: boolean; asset_life_months: string; wht_category: string }
+interface BLine { key: string; description: string; account_code: string; qty: string; unit_cost: string; vat_treatment: string; vat_recoverable: boolean; asset_life_months: string; wht_category: string;
+  // A line of stock from an uploaded invoice keeps its item; it is received when the invoice is approved.
+  stock?: { stock: boolean; item_id: string | null; new_item: unknown; unit_kind: string | null } }
 
 function BillEditor({ id, draft, vendors, whtRates, assetClasses, onClose, onSaved }: { id: string | null; draft?: Drafts['bill'] | null; vendors: any[]; whtRates: any[]; assetClasses: any[]; onClose: () => void; onSaved: (id: string) => void }) {
   const { orgId } = useSession();
@@ -392,7 +408,8 @@ function BillEditor({ id, draft, vendors, whtRates, assetClasses, onClose, onSav
     setF({ vendor_ref: b.vendor_ref || '', bill_date: b.bill_date, due_date: b.due_date || '', vat_charged: b.vat_charged, prices_include_vat: b.prices_include_vat, wht_category: b.wht_category || '', notes: b.notes || '' });
     setLines((b.lines || []).map((l: any) => ({ key: l.id, description: l.description, account_code: l.account_code, qty: String(Number(l.qty)), unit_cost: String(Number(l.unit_cost)),
       vat_treatment: l.vat_treatment === 'none' ? 'standard' : l.vat_treatment, vat_recoverable: l.vat_recoverable, asset_life_months: l.asset_life_months ? String(l.asset_life_months) : '',
-      wht_category: l.wht_category && l.wht_category !== b.wht_category ? l.wht_category : '' })));
+      wht_category: l.wht_category && l.wht_category !== b.wht_category ? l.wht_category : '',
+      ...(l.stock ? { stock: { stock: true, item_id: l.item_id, new_item: l.new_item, unit_kind: l.unit_kind } } : {}) })));
   }, [existing.data?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!draft || id) return;
@@ -415,7 +432,7 @@ function BillEditor({ id, draft, vendors, whtRates, assetClasses, onClose, onSav
         ...f, due_date: f.due_date || null, wht_category: f.wht_category || null,
         lines: lines.filter((l) => l.description || l.unit_cost).map((l) => ({ description: l.description, account_code: l.account_code, qty: Number(l.qty) || 1, unit_cost: money(l.unit_cost),
           vat_treatment: l.vat_treatment, vat_recoverable: l.vat_recoverable, asset_life_months: assetCodes.has(l.account_code) ? Number(l.asset_life_months) || null : null,
-          wht_category: l.wht_category || null })) } });
+          wht_category: l.wht_category || null, ...(l.stock || {}) })) } });
       toast('Bill saved'); await qc.invalidateQueries({ queryKey: ['bills'] }); await qc.invalidateQueries({ queryKey: ['bill'] });
       onSaved(r?.id || id!);
     } catch (e) { toast((e as Error).message, 'err'); }
@@ -448,9 +465,12 @@ function BillEditor({ id, draft, vendors, whtRates, assetClasses, onClose, onSav
           <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: 'minmax(160px,1.5fr) minmax(180px,1.4fr) 70px 120px 120px 30px' }}><span>Description</span><span>Account</span><span className="right">Qty</span><span className="right">Unit cost</span><span>VAT</span><span /></div>
           {lines.map((l) => (
             <div key={l.key} className="tr" style={{ gridTemplateColumns: 'minmax(160px,1.5fr) minmax(180px,1.4fr) 70px 120px 120px 30px', alignItems: 'start' }}>
-              <input className="input input-sm" value={l.description} onChange={(e) => upd(l.key, { description: e.target.value })} placeholder="What it was for" />
               <span className="stack" style={{ gap: 4 }}>
-                <select className="input input-sm" value={l.account_code} onChange={(e) => upd(l.key, { account_code: e.target.value })}><option value="">Choose the account</option>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select>
+                <input className="input input-sm" value={l.description} onChange={(e) => upd(l.key, { description: e.target.value })} placeholder="What it was for" />
+                {l.stock && <span className="faint" style={{ fontSize: 11 }}>Stock: received when the invoice is approved</span>}
+              </span>
+              <span className="stack" style={{ gap: 4 }}>
+                <select className="input input-sm" disabled={!!l.stock} value={l.account_code} onChange={(e) => upd(l.key, { account_code: e.target.value })}><option value="">Choose the account</option>{accounts.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select>
                 {assetCodes.has(l.account_code) && <input className="input input-sm" inputMode="numeric" placeholder={`Useful life in months (default ${assetClasses.find((c) => c.cost_account === l.account_code)?.default_life_months || '—'})`} value={l.asset_life_months} onChange={(e) => upd(l.key, { asset_life_months: e.target.value })} />}
                 <select className="input input-sm" value={l.wht_category} onChange={(e) => upd(l.key, { wht_category: e.target.value })} aria-label="Withholding tax on this line" style={{ color: l.wht_category ? undefined : '#6B7280' }}>
                   <option value="">WHT as the bill</option>{whtRates.filter((w) => w.code !== 'none').map((w) => <option key={w.code} value={w.code}>WHT: {w.name}</option>)}</select>

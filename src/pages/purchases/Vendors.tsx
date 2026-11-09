@@ -1,5 +1,6 @@
-// Vendors: what the business owes each, their Tax ID and withholding tax category, bank details for paying from the wallet,
-// the account their bills usually go to, and a statement.
+// Vendors: what the business owes each, how to reach them (WhatsApp and email, where invoice problems and payment notices go),
+// their Tax ID and withholding tax category, bank details for paying from the wallet, the account their bills usually go to,
+// and a statement.
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -42,7 +43,7 @@ export default function Vendors() {
           <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: 'minmax(180px,1.5fr) 140px minmax(160px,1fr) 150px 130px', minWidth: 800 }}><span>Vendor</span><span>Tax ID</span><span>WHT</span><span>Bank</span><span className="right">We owe</span></div>
           {bills.isLoading ? <SkeletonRows n={6} /> : bills.error ? <div style={{ padding: 20 }}><Alert kind="yellow" icon="shield">{(bills.error as Error).message}</Alert></div> : !list.length ? <div style={{ padding: 20 }}><Empty>No vendors yet.</Empty></div> : list.map((v: any) => (
             <div key={v.id} className="tr click" onClick={() => setOpen(v)} style={{ gridTemplateColumns: 'minmax(180px,1.5fr) 140px minmax(160px,1fr) 150px 130px', minWidth: 800 }}>
-              <b className="ellipsis">{v.name}</b>
+              <span className="ellipsis"><b>{v.name}</b><span className="faint" style={{ display: 'block', fontSize: 12 }}>{v.phone || v.email ? [v.phone, v.email].filter(Boolean).join(' · ') : <span style={{ color: '#C2410C' }}>No WhatsApp or email</span>}</span></span>
               <span className="muted">{v.tin ? <>{v.tin}{isOldTin(v.tin) && <span className="faint" style={{ display: 'block', fontSize: 11 }}>old TIN</span>}
                 {v.resident !== false && <span style={{ display: 'block', marginTop: 2 }}><TinChip status={v.tin_status} hasTin /></span>}</> : <span style={{ color: '#C2410C' }}>No Tax ID</span>}</span>
               <span className="muted ellipsis">{(bills.data?.wht_rates || []).find((w: any) => w.code === v.wht_category)?.name || 'Not set'}</span>
@@ -70,12 +71,14 @@ function VendorDrawer({ vendor, whtRates, onClose, initialTab = 'statement' }: {
   const states: string[] = (prof.data?.authorities || []).filter((a: any) => a.state).map((a: any) => a.state);
   const [f, setF] = useState({ tin: vendor.tin || '', rc_number: vendor.rc_number || '', wht_category: vendor.wht_category || '', bank_code: vendor.bank_code || '',
     account_number: vendor.account_number || '', account_name: vendor.account_name || '', default_account: vendor.default_account || '', address: vendor.address || '',
+    phone: vendor.phone || '', email: vendor.email || '', channel: '',
     entity_type: '', resident: true, country: 'NG', state: '', nin: '', is_manufacturer: false, wht_exempt: false, digital_supplier: false, connected_person: false });
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     const t = tax.data;
     if (!t || loaded) return;
     setF((x) => ({ ...x, entity_type: t.entity_type || (t.is_individual ? 'individual' : ''), resident: t.resident !== false, country: t.country || 'NG', state: t.state || '', nin: t.nin || '',
+      phone: t.phone ?? x.phone, email: t.email ?? x.email, channel: t.channel === 'email' ? 'email' : 'whatsapp',
       is_manufacturer: !!t.is_manufacturer, wht_exempt: !!t.wht_exempt, digital_supplier: !!t.digital_supplier, connected_person: !!t.connected_person }));
     setLoaded(true);
   }, [tax.data]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -99,10 +102,12 @@ function VendorDrawer({ vendor, whtRates, onClose, initialTab = 'statement' }: {
     if (!loaded) { toast(tax.error ? (tax.error as Error).message : 'The supplier\'s details are still loading.', 'err'); return; }
     if (tinErr) { toast(tinErr, 'err'); return; }
     if (f.nin && !/^\d{11}$/.test(f.nin.replace(/\D/g, ''))) { toast('A NIN has 11 digits.', 'err'); return; }
+    if (f.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim())) { toast('That email address does not look right.', 'err'); return; }
     try {
       await rpc('save_vendor_details', { p_org: orgId, p_vendor: vendor.id, p_patch: { ...f, entity_type: f.entity_type || null, state: f.resident ? f.state || null : null,
-        country: f.resident ? 'NG' : f.country, bank_name: banks.find((b) => b.code === f.bank_code)?.name || null } });
-      toast('Vendor saved'); await Promise.all(['bills', 'bill', 'vendor-tax'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
+        country: f.resident ? 'NG' : f.country, bank_name: banks.find((b) => b.code === f.bank_code)?.name || null,
+        channel: f.channel === 'email' && f.email.trim() ? 'email' : f.phone.trim() ? 'whatsapp' : f.email.trim() ? 'email' : f.channel || 'whatsapp' } });
+      toast('Vendor saved'); await Promise.all(['bills', 'bill', 'vendor-tax', 'supplier-invoice', 'inv'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
       // A Tax ID typed or changed is checked with the NRS straight away, for a supplier in Nigeria.
       const typed = f.tin.replace(/[\s\-./]/g, '');
       if (f.resident && typed && typed !== String(tax.data?.tin || '').replace(/[\s\-./]/g, '')) await tin.check(vendor.id);
@@ -114,10 +119,22 @@ function VendorDrawer({ vendor, whtRates, onClose, initialTab = 'statement' }: {
       <div className="drawer-hd"><div className="grow"><div className="drawer-title">{vendor.name}</div><div className="muted" style={{ fontSize: 13 }}>{Number(vendor.balance) > 0 ? `We owe ${N2(vendor.balance)}` : 'Nothing owed'}</div></div>
         <button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button></div>
       <div className="drawer-body stack" style={{ gap: 14 }}>
-        <Pills value={tab} onChange={setTab} options={[{ id: 'statement', label: 'Statement' }, { id: 'details', label: 'Tax and bank details' }]} />
+        <Pills value={tab} onChange={setTab} options={[{ id: 'statement', label: 'Statement' }, { id: 'details', label: 'Vendor details' }]} />
         {tab === 'details' ? (
           <div className="stack" style={{ gap: 12 }}>
             {tax.error && <Alert kind="yellow" icon="shield">{(tax.error as Error).message}</Alert>}
+            <div className="stack" style={{ gap: 8 }} data-testid="vendor-contact">
+              <div><b style={{ fontSize: 14 }}>How to reach them</b><div className="faint" style={{ fontSize: 12 }}>Counta sends problems with their invoices here, and tells them when they are paid.</div></div>
+              {!f.phone.trim() && !f.email.trim() && <Alert kind="yellow" icon="alert">Without a WhatsApp number or an email, Counta cannot tell {vendor.name} what to fix on an invoice.</Alert>}
+              <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <Field label="WhatsApp number"><input className="input" type="tel" inputMode="tel" maxLength={20} placeholder="080…" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+                <Field label="Email"><input className="input" type="email" inputMode="email" maxLength={160} placeholder="accounts@supplier.ng" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
+              </div>
+              {f.phone.trim() && f.email.trim() && (
+                <Field label="Tell them by"><select className="input" value={f.channel === 'email' ? 'email' : 'whatsapp'} onChange={(e) => setF({ ...f, channel: e.target.value })}>
+                  <option value="whatsapp">WhatsApp</option><option value="email">Email</option></select></Field>
+              )}
+            </div>
             {!f.tin && f.resident && <Alert kind="yellow" icon="alert">Without a Tax ID, Counta will not pay this supplier's bills that carry withholding tax: the WHT schedule needs it.</Alert>}
             {Number(tax.data?.bills_held || 0) > 0 && <Alert kind="red" icon="shield">{tax.data.bills_held} bill{Number(tax.data.bills_held) === 1 ? '' : 's'} from {vendor.name} {Number(tax.data.bills_held) === 1 ? 'waits' : 'wait'} for a checked Tax ID before payment.</Alert>}
             {f.resident && tax.data && (tax.data.tin || tax.data.rc_number) && (

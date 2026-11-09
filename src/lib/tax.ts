@@ -22,6 +22,8 @@ export const useWithholding = (from: string, to: string, enabled = true) =>
 export const useWhtReceipts = (filter: Record<string, unknown>, enabled = true) =>
   useOrgQ<any[]>(['wht-receipts', JSON.stringify(filter)], (o) => rpc('wht_receipts', { p_org: o, p: filter }), enabled);
 export const useVendorTax = (vendor: string | null) => useOrgQ<any>(['vendor-tax', vendor], (o) => rpc('vendor_tax_details', { p_org: o, p_vendor: vendor }), !!vendor);
+// Bills whose input VAT is claimed in the months asked for (paid in full), and those whose VAT waits for payment.
+export const useInputVat = (from: string, to: string) => useOrgQ<any>(['input-vat', from, to], (o) => rpc('input_vat_invoices', { p_org: o, p: { from: from + '-01', to: to + '-01' } }));
 export const useVatSchedule = (period: string | null) => useOrgQ<any>(['vat-schedule', period], (o) => rpc('vat_schedule', { p_org: o, p_period: period }), !!period);
 export const useCustoms = (from?: string, to?: string) =>
   useOrgQ<any[]>(['customs', from, to], (o) => rpc('customs_entries_list', { p_org: o, p: { from: from || null, to: to || null } }));
@@ -39,7 +41,7 @@ export const useNrsLabels = () => useQuery({ queryKey: ['nrs-labels'], staleTime
 } });
 
 // Everything a tax action can change.
-export const TAX_KEYS = ['cit-years', 'cit-year', 'pit-years', 'pit-year', 'tax-profile', 'vat-position', 'withholding', 'wht-receipts', 'vendor-tax', 'bills', 'bill', 'fs-pack', 'report', 'ledger', 'inbox',
+export const TAX_KEYS = ['input-vat', 'cit-years', 'cit-year', 'pit-years', 'pit-year', 'tax-profile', 'vat-position', 'withholding', 'wht-receipts', 'vendor-tax', 'bills', 'bill', 'fs-pack', 'report', 'ledger', 'inbox',
   'vat-schedule', 'customs', 'customers', 'inv', 'item-nrs'];
 
 export const CIT_STATUS: Record<string, { label: string; tone: string }> = {

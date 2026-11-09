@@ -1,6 +1,6 @@
 # Supplier invoices
 
-Suppliers send invoices to a business on its own invoice link, and people who keep the books can upload invoices themselves (Purchases, Bills, Supplier invoices). Counta reads each one with Gemini, adds the supplier when it is new, checks the invoice and writes a draft bill. Problems the supplier must fix go to them by email or WhatsApp. The business then approves the bill for payment or rejects the invoice, and the supplier is told why.
+Suppliers send invoices to a business on its own invoice link, and people who keep the books can upload invoices themselves (Purchases, Bills, Supplier invoices). Counta reads each one with Gemini, adds the supplier when it is new, checks the invoice and writes a draft bill in which each line is stock, a fixed asset or an expense. Problems the supplier must fix go to them by email or WhatsApp. The business then approves the bill for payment (and any stock on it goes into the branch it chooses) or rejects the invoice, and the supplier is told why.
 
 ## The invoice link
 
@@ -35,17 +35,33 @@ Where withholding tax does not apply, a missing Tax ID is something to look at, 
 
 The draft bill uses Counta's own sums: VAT at the correct rate on what is VATable, withholding tax from the supplier's profile, and the account from the supplier's default or the business's expense account. The drawer shows the supplier's figures beside the bill's, so a corrected VAT is visible.
 
+## Stock, assets and expenses
+
+The reader is told what the business does (its principal activity, whether it sells goods or services, its legal form and its capitalisation threshold, `svc_si_open`'s `profile`) and its items list (up to 400 items in use, the most recently moved first, with each one's type, purchase unit, pack size and selling unit). It sorts each line:
+
+- **Stock**: goods the business keeps to sell or to make what it sells. A line that is a product on the list carries that item's id, and whether its quantity counts purchase units (cartons, bags, bales) or selling units. A product not on the list carries a proposed new item: its name, type (goods for resale, raw material, packaging, consumable or spare part), purchase unit, pack size and selling unit.
+- **Fixed asset**: equipment, furniture, vehicles, computers and the like used for more than a year, when one costs at least the capitalisation threshold. The line goes to the asset account, and approving puts the asset in the register to be confirmed, as with any bill.
+- **Expense**: everything else, on the account the reader picks.
+
+Stock lines go on the bill at the purchases account (5101) with their item (`bill_lines.stock`, `item_id`, `new_item`, `unit_kind`). An item id the reader gives that is not one of the business's items is ignored. A stock line with neither an item nor a new product is an expense.
+
+## Approving with stock
+
+An invoice with stock on it is approved from Supplier invoices, not from the bill (the bill's Approve button sends the person there). The drawer lists each stock line with the item it matched, which can be changed, and the quantity on the invoice, which can be lowered when less arrived. A proposed new product is shown with its name, type and units and a tick to add it; left unticked, the line stays on the bill as an expense on the account the reader picked. The person chooses the branch (a business with one branch is not asked). Approving needs Keep the books and Receive stock.
+
+`approve_supplier_invoice(p_id, p)` then, in one go: adds the new products ticked (from the supplier, priced at cost plus 15% for goods for resale and marked for a price review, 0 for raw materials and the like), approves the bill (Dr purchases, assets and expenses, Dr 1402 input VAT, Cr 2101), and posts a stock receipt for what arrived into that branch. The receipt is linked to the bill (`bills.receipt_id`) and moves only the stock (Dr the items' stock accounts, Cr 5400 purchases moved into stock, at the invoice's cost before VAT): the bill already carries the purchase, its VAT and what is owed, so nothing is counted twice and no second bill is written. Weighted average costs, batches and price proposals follow as for any stock receipt, and the receipt appears in Receive stock. When fewer arrived than were invoiced, the bill stays at what the invoice says and the screen suggests asking the supplier for a credit note. A bill whose stock is in the books cannot be voided; the stock is corrected first, or the supplier sends a credit note.
+
 ## The supplier
 
 Counta looks for the supplier by Tax ID, then by bank account, then by name. A new one is added with what the invoice gives: name, Tax ID, address, state, email, phone and bank account. A new supplier's Tax ID is checked with the NRS (through Mono) while the invoice is read, so a clean invoice is ready to approve at once. When Mono's Tax ID lookup does not answer properly, the Tax ID stays unchecked (never "not found") and the business checks it again later; see "A Tax ID check that could not run" in `onboarding-and-voices.md`. An existing supplier's details are never overwritten; a clash is shown as a check.
 
 ## Telling the supplier
 
-When an invoice has problems the supplier must fix, Counta sends one message listing them: to the email or WhatsApp number the supplier gave on the link (email first), otherwise to the supplier's email or phone on file. The message names the business and the invoice and says which problems stop payment. Messages go through the business's usual channels and count toward its plan. Rejecting an invoice sends the reason the business writes (the problems are filled in for it), unless the business unticks Send it to the supplier.
+When an invoice has problems the supplier must fix, Counta sends one message listing them: to the email or WhatsApp number the supplier gave on the link (email first), otherwise to the supplier's email or phone on file. Both can be added or changed on the supplier (Purchases, Vendors, Vendor details), with which of the two Counta uses when it has both. The message names the business and the invoice and says which problems stop payment. Messages go through the business's usual channels and count toward its plan. Rejecting an invoice sends the reason the business writes (the problems are filled in for it), unless the business unticks Send it to the supplier.
 
 ## Approving and rejecting
 
-Approve for payment approves and posts the draft bill; the bill is then paid like any other, singly or in a bulk payment. A bill whose checks stop payment cannot be approved until the business adds what is missing to the supplier and presses Check again. Reject withdraws the draft bill (nothing is paid) and records who rejected it and why. Edit the bill opens the bill itself for any change before approval.
+Approve for payment approves and posts the draft bill (with the stock, as above, when there is some); the bill is then paid like any other, singly or in a bulk payment. A bill whose checks stop payment cannot be approved until the business adds what is missing to the supplier and presses Check again. Reject withdraws the draft bill (nothing is paid) and records who rejected it and why. Edit the bill opens the bill itself for any change before approval.
 
 ## Costs
 
