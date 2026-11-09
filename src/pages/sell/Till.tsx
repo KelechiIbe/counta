@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { METHOD_LABEL, money, useChart, useCustomers, useSales, useTill, type Customer, type PayRequest, type Sale, type Shift } from '../../lib/api';
+import { METHOD_LABEL, money, useChart, useCustomers, usePosWaiting, useSales, useTill, useTillTerminals, type Customer, type PayRequest, type PosRequest, type Sale, type Shift } from '../../lib/api';
 import { N2, uuid, when } from '../../lib/format';
 import { store } from '../../lib/pwa';
 import type { Item } from '../../lib/types';
@@ -16,12 +16,14 @@ import { ItemPicker } from '../../components/ItemPicker';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Spinner, Thumb } from '../../components/ui';
 import { Camera } from '../../mobile/Scan';
 import { CustomerPicker, PayWait, ReceiptModal, StatusChip } from './common';
+import { PosWait } from './PosWait';
 import { useDraft } from '../../lib/drafts';
 
 type Unit = 'selling' | 'purchase';
 interface Line { key: string; item: Item; qty: number; unit: Unit; override: number | null; discount: number }
 type Method = 'cash' | 'transfer' | 'pos' | 'card' | 'account' | 'link' | 'qr' | 'credit' | 'cheque' | 'other';
-interface Tender { method: Method; amount: string; bank_account_id?: string; reference?: string }
+// terminal_id: a connected POS terminal the amount is sent to (undefined: the branch's own, '': none, record only or the Counta wallet).
+interface Tender { method: Method; amount: string; bank_account_id?: string; reference?: string; terminal_id?: string }
 
 const INSTANT: Method[] = ['account', 'link', 'qr'];
 const TENDER_LABEL: Record<Method, string> = {
@@ -44,6 +46,13 @@ export default function Till() {
   // A role without the Record sales permission sees the notice below, so the till is not read for it.
   const till = useTill(inv && can(inv, 'record_sales') ? loc : null);
   const shift = till.data?.shift || null;
+  // Connected POS terminals: the till sends a sale's amount to one, and the sale completes when the provider confirms the payment.
+  const terms = useTillTerminals(inv && can(inv, 'record_sales') ? loc : null);
+  const waiting = usePosWaiting(inv && can(inv, 'record_sales') ? loc : null);
+  const readyTerms = (terms.data || []).filter((x) => x.ready);
+  const hereTerm = readyTerms.find((x) => x.here);
+  const termOf = (t: Tender) => (t.terminal_id !== undefined ? t.terminal_id : t.method === 'pos' ? readyTerms[0]?.id || '' : t.method === 'account' ? hereTerm?.id || '' : '');
+  const sendsToTerminal = (t: Tender) => (t.method === 'pos' || t.method === 'account') && !!termOf(t);
   const settings = till.data?.settings || {};
 
   const [lines, setLines] = useState<Line[]>([]);
@@ -53,6 +62,7 @@ export default function Till() {
   const [tenders, setTenders] = useState<Tender[]>([{ method: 'cash', amount: '' }]);
   const [busy, setBusy] = useState(false);
   const [paying, setPaying] = useState<{ sale: Sale; request: PayRequest } | null>(null);
+  const [posPaying, setPosPaying] = useState<{ saleId: string; saleNumber: string | null; request: PosRequest } | null>(null);
   const [receipt, setReceipt] = useState<{ sale: Sale; change: number } | null>(null);
   const [scan, setScan] = useState(false);
   const [panel, setPanel] = useState<'shift' | 'sales' | null>(null);
@@ -128,8 +138,11 @@ export default function Till() {
   async function checkout() {
     if (!shift) { setOpening(true); return; }
     if (!lines.length) return;
-    const instant = effTenders.filter((t) => INSTANT.includes(t.method) && (money(t.amount) || 0) > 0);
-    if (instant.length > 1) { toast('Use one of pay by transfer, link or QR per sale.', 'err'); return; }
+    const instant = effTenders.filter((t) => (INSTANT.includes(t.method) || sendsToTerminal(t)) && (money(t.amount) || 0) > 0);
+    if (instant.length > 1) { toast('Use one of pay by transfer, a terminal, link or QR per sale.', 'err'); return; }
+    const sent = effTenders.filter((t) => (money(t.amount) || 0) > 0).map((t) => (sendsToTerminal(t)
+      ? { method: 'pos', amount: money(t.amount), terminal_id: termOf(t), pay_method: t.method === 'account' ? 'transfer' : 'any' }
+      : { method: t.method, amount: money(t.amount), bank_account_id: t.bank_account_id || null, reference: t.reference || null }));
     setBusy(true);
     try {
       const sale = await rpc<Sale>('till_checkout', { p_org: orgId, p_sale: {
@@ -137,13 +150,16 @@ export default function Till() {
         price_list_id: listId || null, retail_only: !listId,
         lines: lines.map((l) => ({ item_id: l.item.id, qty: l.qty, unit: l.unit, unit_price: l.override, discount: l.discount || 0 })),
         cart_discount: cartDisc || 0,
-        tenders: effTenders.filter((t) => (money(t.amount) || 0) > 0).map((t) => ({ method: t.method, amount: money(t.amount), bank_account_id: t.bank_account_id || null, reference: t.reference || null })),
+        tenders: sent,
       } });
       const chg = change;
       reset();
       qc.invalidateQueries({ queryKey: ['till'] }); qc.invalidateQueries({ queryKey: ['sales'] }); qc.invalidateQueries({ queryKey: ['inv'] });
+      const posReq = sent.some((x: any) => x.terminal_id)
+        ? (await rpc<PosRequest[]>('pos_sale_requests', { p_sale: sale.id })).find((r) => r.status === 'creating' || r.status === 'sent') : null;
       const req = (sale.requests || []).find((r) => r.status === 'creating' || r.status === 'pending');
-      if (req) setPaying({ sale, request: req });
+      if (posReq) setPosPaying({ saleId: sale.id, saleNumber: sale.number, request: posReq });
+      else if (req) setPaying({ sale, request: req });
       else setReceipt({ sale, change: chg });
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
@@ -181,6 +197,18 @@ export default function Till() {
         </div>
         <div className="row wrap faint" style={{ fontSize: 12 }}>F2 find · F9 pay</div>
       </div>
+      {!posPaying && (waiting.data || []).length > 0 && (
+        <Alert kind="amber" icon="clock">
+          <span className="row wrap" style={{ gap: 8 }}>
+            <span>{(waiting.data || []).length === 1 ? 'A sale is' : `${(waiting.data || []).length} sales are`} waiting at a terminal.</span>
+            {(waiting.data || []).map((r) => (
+              <button key={r.id} className="btn btn-secondary btn-xs" onClick={() => setPosPaying({ saleId: r.sale_id!, saleNumber: r.sale_number || null, request: r })}>
+                {r.sale_number} · {N2(r.amount)} · {r.terminal_name}
+              </button>
+            ))}
+          </span>
+        </Alert>
+      )}
 
       <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) minmax(320px,1fr)', gap: 16, alignItems: 'start' }}>
         {/* ---------------- cart ---------------- */}
@@ -269,7 +297,7 @@ export default function Till() {
             {tenders.map((t, i) => (
               <div key={i} className="stack" style={{ gap: 6, background: '#FAFAFA', borderRadius: 10, padding: 8 }}>
                 <div className="row" style={{ gap: 6 }}>
-                  <select className="input input-sm" value={t.method} onChange={(e) => setTenders((ts) => ts.map((x, j) => (j === i ? { ...x, method: e.target.value as Method } : x)))} aria-label="Way of paying">
+                  <select className="input input-sm" value={t.method} onChange={(e) => setTenders((ts) => ts.map((x, j) => (j === i ? { ...x, method: e.target.value as Method, terminal_id: undefined } : x)))} aria-label="Way of paying">
                     {methods.map((m) => <option key={m} value={m}>{TENDER_LABEL[m]}</option>)}
                   </select>
                   <input className="input input-sm num" inputMode="decimal" placeholder={tenders.length === 1 ? String(total.toFixed(2)) : 'Amount'} value={t.amount} style={{ width: 120, textAlign: 'right' }} aria-label="Amount"
@@ -281,9 +309,21 @@ export default function Till() {
                     <option value="">Which of our accounts?</option>{banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.account_number ? ` · ${b.account_number}` : ''}</option>)}
                   </select>
                 )}
-                {INSTANT.includes(t.method) && <div className="faint" style={{ fontSize: 12 }}>{t.method === 'account' ? 'Your business account number appears for the customer, with the receipt number to quote. Counta confirms the money itself.' : t.method === 'qr' ? 'Show the QR code to the customer.' : 'Send the link to the customer.'}</div>}
+                {(t.method === 'pos' || t.method === 'account') && readyTerms.length > 0 && (t.method === 'pos' || hereTerm) && (
+                  <select className="input input-sm" value={termOf(t)} onChange={(e) => setTenders((ts) => ts.map((x, j) => (j === i ? { ...x, terminal_id: e.target.value } : x)))}
+                    aria-label={t.method === 'pos' ? 'Terminal' : 'Where the customer transfers to'}>
+                    {readyTerms.map((x) => <option key={x.id} value={x.id}>{t.method === 'pos' ? `Send to ${x.name}` : `To ${x.name}'s account`}{x.here === false ? ' (another branch)' : ''}</option>)}
+                    <option value="">{t.method === 'pos' ? 'Keyed on another machine (record it only)' : 'To the Counta wallet'}</option>
+                  </select>
+                )}
+                {sendsToTerminal(t) && <div className="faint" style={{ fontSize: 12 }}>{t.method === 'account'
+                  ? 'The terminal shows its account number for the customer to transfer to. The sale completes when Moniepoint confirms the money.'
+                  : 'Counta sends the amount to the terminal. The sale completes when Moniepoint confirms the payment.'}</div>}
+                {INSTANT.includes(t.method) && !sendsToTerminal(t) && <div className="faint" style={{ fontSize: 12 }}>{t.method === 'account' ? 'Your business account number appears for the customer, with the receipt number to quote. Counta confirms the money itself.' : t.method === 'qr' ? 'Show the QR code to the customer.' : 'Send the link to the customer.'}</div>}
                 {t.method === 'transfer' && <div style={{ fontSize: 12, color: '#B45309' }}>A transfer to your own bank is not confirmed here: someone checks it against the bank later, and a delivery waits until then. To know before the goods leave, use Pay by transfer: Counta confirms it in seconds and says "payment received".</div>}
-                {(t.method === 'pos' || t.method === 'card' || t.method === 'cheque') && <div className="faint" style={{ fontSize: 12 }}>Confirmed later by someone who keeps the books, against the bank.</div>}
+                {((t.method === 'pos' && !sendsToTerminal(t)) || t.method === 'card' || t.method === 'cheque') && <div className="faint" style={{ fontSize: 12 }}>{t.method === 'pos' && readyTerms.length
+                  ? 'Confirmed when the terminal\'s payment reaches Counta, or later against the bank.' : 'Confirmed later by someone who keeps the books, against the bank.'}</div>}
+                {t.method === 'pos' && !readyTerms.length && (terms.data || []).length > 0 && <div style={{ fontSize: 12, color: '#B45309' }}>Your terminals are connected but not tested yet. The owner runs the ₦100 test in Payments, POS terminals.</div>}
               </div>
             ))}
             <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => setTenders((ts) => [...ts.map((t) => (t.amount ? t : { ...t, amount: '' })), { method: ts.some((x) => x.method === 'cash') ? 'account' : 'cash', amount: '' }])}>
@@ -310,6 +350,13 @@ export default function Till() {
         onClose={() => { setPaying(null); toast(`${paying.sale.number} waits for the transfer. It completes on its own when the money lands.`); }}
         onCancelSale={async () => {
           try { await rpc('cancel_order', { p_sale: paying.sale.id, p_reason: 'Customer did not pay by transfer' }); toast(`${paying.sale.number} cancelled`); setPaying(null); qc.invalidateQueries({ queryKey: ['till'] }); }
+          catch (e) { toast((e as Error).message, 'err'); }
+        }} />}
+      {posPaying && <PosWait request={posPaying.request} saleNumber={posPaying.saleNumber} terminals={terms.data || []}
+        onPaid={async () => { const s = await rpc<Sale>('get_sale', { p_sale: posPaying.saleId }); setPosPaying(null); setReceipt({ sale: s, change: 0 }); qc.invalidateQueries({ queryKey: ['till'] }); }}
+        onClose={() => { if (posPaying.request.status !== 'paid') toast(`${posPaying.saleNumber || 'The sale'} waits for the terminal. It completes on its own when Moniepoint confirms the payment.`); setPosPaying(null); qc.invalidateQueries({ queryKey: ['pos_waiting'] }); }}
+        onCancelSale={async () => {
+          try { await rpc('cancel_order', { p_sale: posPaying.saleId, p_reason: 'Customer did not pay on the terminal' }); toast(`${posPaying.saleNumber} cancelled`); setPosPaying(null); qc.invalidateQueries({ queryKey: ['till'] }); qc.invalidateQueries({ queryKey: ['pos_waiting'] }); }
           catch (e) { toast((e as Error).message, 'err'); }
         }} />}
       {receipt && <ReceiptModal sale={receipt.sale} change={receipt.change} onClose={() => setReceipt(null)} onNew={() => setReceipt(null)} />}

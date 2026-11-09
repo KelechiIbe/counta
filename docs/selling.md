@@ -13,7 +13,7 @@ An issued sale writes one journal:
 | Cr | 2201 Output VAT, for standard-rated lines |
 | Dr / Cr | 5400 Cost of sales and 1203 Inventory at weighted average cost |
 
-Money received posts separately as a collection: Dr till cash, bank or wallet (and Dr 6701 for a provider's fee), Cr 1101. Anything paid beyond what is owed goes to 2107 Customer advances. Cash confirms itself. Transfers, POS, cheques and other channels stay pending until a manager or the bookkeeper confirms them against the bank (Sales, Payments to confirm). Flutterwave and partner-rail payments confirm themselves once the rail's record says paid. Until a payment is confirmed the customer still owes the money.
+Money received posts separately as a collection: Dr till cash, bank or wallet (and Dr 6701 for a provider's fee), Cr 1101. Anything paid beyond what is owed goes to 2107 Customer advances. Cash confirms itself. Transfers, POS, cheques and other channels stay pending until a manager or the bookkeeper confirms them against the bank (Sales, Payments to confirm). A business with its Moniepoint terminals connected has POS payments confirmed by Moniepoint itself (see [pos-terminals.md](pos-terminals.md)). Flutterwave and partner-rail payments confirm themselves once the rail's record says paid. Until a payment is confirmed the customer still owes the money.
 
 The VAT on each line comes from the item's treatment, which the tax agent sets when the item is added (see [atlas.md](atlas.md)).
 
@@ -23,6 +23,7 @@ The VAT on each line comes from the item's treatment, which the tax agent sets w
 - Cart: scan with a barcode scanner or the camera, search by name or SKU, or tap a best seller. Lines can be sold by the selling unit or the purchase unit (a carton at the carton price). The customer's price list and quantity tiers apply before checkout (`till_prices`). People with Edit prices can override a price.
 - Discounts on a line and on the whole sale.
 - Split tender: cash, transfer to the business's account, pay by transfer (a one-off account from the rail), payment link, QR, POS, cheque and on account for customers with credit. Change is worked out on cash.
+- With Moniepoint connected, POS sends the amount to a terminal and the sale completes when Moniepoint confirms it; pay by transfer can show the terminal's account instead of the wallet's. "Record it only" keeps the old way for any other machine.
 - Pay by transfer waits on screen, checks every four seconds and says the payment out loud when the money arrives.
 - Receipt: on screen, by WhatsApp or email, printed on an 80 mm thermal printer over Bluetooth (ESC/POS), or printed from the browser.
 - Keyboard: F2 to search, F9 to pay.

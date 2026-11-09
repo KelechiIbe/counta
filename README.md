@@ -6,7 +6,7 @@ Counta is TaxStreem's operating system for trading businesses: selling, payments
 
 **Sell** has a till with shifts, floats and counts, split tender, returns and receipts by WhatsApp, email or a Bluetooth thermal printer; invoices, quotes and credit notes with a public page where the customer can pay; customers on credit with limits, statements and automatic payment reminders; price lists, phone and rep orders, deliveries and vans for distributors; and an online shop that follows live stock. See `docs/selling.md`.
 
-**Payments** gives each business a wallet with its own account number and takes payment by bank transfer, payment link and QR code (no tap-to-pay). Flutterwave confirms payments through its webhook and Counta checks each one with Flutterwave before recording it; payments by any other channel are confirmed by a manager or the bookkeeper. Suppliers, refunds and withdrawals are paid from the wallet with WHT deducted. A partner integrating TaxStreem can plug in its own rail through the Counta Rail API. See `docs/payment-rails.md`.
+**Payments** gives each business a wallet with its own account number and takes payment by bank transfer, payment link and QR code (no tap-to-pay). Flutterwave confirms payments through its webhook and Counta checks each one with Flutterwave before recording it; payments by any other channel are confirmed by a manager or the bookkeeper, except Moniepoint POS terminals once connected, where the till sends the amount to the terminal and Moniepoint confirms it (`docs/pos-terminals.md`). Suppliers, refunds and withdrawals are paid from the wallet with WHT deducted. A partner integrating TaxStreem can plug in its own rail through the Counta Rail API. See `docs/payment-rails.md`.
 
 **Purchases** holds bills from stock receipts, from Prism and typed in, with withholding tax by supplier category, approval and payment. Suppliers can send invoices on the business's own invoice link, or the business uploads them; Counta reads and checks each one (sums, VAT, Tax ID, address, bank account), adds the supplier when new, writes the bill and tells the supplier what to fix. See `docs/supplier-invoices.md`.
 
@@ -75,6 +75,7 @@ supabase/
   functions/voice    ElevenLabs outbound calls: vendor orders and staff reminders
   functions/push     Web Push delivery for the notifications table
   functions/einvoice NRS e-invoicing (MBS): the sandbox and HSM checks; TaxStreem as System Integrator and Access Point Provider
+  functions/pos      Moniepoint POS terminals: amounts sent from the till, payments by webhook and polling (docs/pos-terminals.md)
 public/push-sw.js    push and notification-click handlers, imported into the Workbox service worker
 ```
 

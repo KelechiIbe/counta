@@ -4,7 +4,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
-import { DOC_LABEL, METHOD_LABEL, VAT_STATUS, money, today, useChart, useCustomers, useSale, useSales, type Customer, type DocType, type Sale, type SaleRow, moneyAccounts } from '../../lib/api';
+import { DOC_LABEL, METHOD_LABEL, VAT_STATUS, money, today, useChart, useCustomers, usePosToMatch, useSale, useSales, type Customer, type DocType, type Sale, type SaleRow, moneyAccounts } from '../../lib/api';
+import { PosToMatch } from '../payments/PosMatch';
 import { countryName, isExport } from '../../lib/countries';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
@@ -54,6 +55,8 @@ export default function Sales() {
   const meta = useMeta();
   const toSettle = useQuery({ queryKey: ['sales-to-settle', orgId], enabled: !!orgId && !!inv && can(inv, 'keep_books'), refetchInterval: 30_000, retry: 1,
     queryFn: () => rpc<any>('sales_to_settle', { p_org: orgId, p: {} }) });
+  // POS payments nobody rang up: the people who confirm payments say what each was.
+  const posMatch = usePosToMatch(!!inv && (can(inv, 'keep_books') || can(inv, 'approve_adjustments')));
   if (!inv) return null;
   const rows = sales.data?.rows || [];
   const pending = sales.data?.pending_payments || [];
@@ -66,7 +69,7 @@ export default function Sales() {
       <div className="row wrap" style={{ justifyContent: 'space-between', gap: 10 }}>
         <Pills value={tab} onChange={setTab} options={[
           { id: 'all', label: 'All' }, { id: 'invoice', label: 'Invoices' }, { id: 'receipt', label: 'Receipts' }, { id: 'quote', label: 'Quotes' },
-          { id: 'credit_note', label: 'Credit notes' }, { id: 'unpaid', label: 'Unpaid' }, { id: 'confirm', label: 'Payments to confirm', count: pending.length || undefined },
+          { id: 'credit_note', label: 'Credit notes' }, { id: 'unpaid', label: 'Unpaid' }, { id: 'confirm', label: 'Payments to confirm', count: (pending.length + (posMatch.data || []).length) || undefined },
           ...(can(inv, 'keep_books') ? [{ id: 'settle' as Tab, label: 'To settle', count: (toSettle.data?.rows || []).length || undefined }] : []),
         ]} />
         <div className="row wrap">
@@ -78,7 +81,7 @@ export default function Sales() {
           <button className="btn btn-primary btn-sm" onClick={() => setEditing({ type: 'invoice' })}><Icon name="plus" size={14} color="#fff" />Invoice</button>
         </div>
       </div>
-      {tab === 'settle' ? <SettleSales data={toSettle.data} loading={toSettle.isLoading} /> : tab === 'confirm' ? <PendingPayments rows={pending} /> : (
+      {tab === 'settle' ? <SettleSales data={toSettle.data} loading={toSettle.isLoading} /> : tab === 'confirm' ? <div className="stack" style={{ gap: 16 }}><PosToMatch rows={posMatch.data || []} />{(!(posMatch.data || []).length || pending.length > 0) && <PendingPayments rows={pending} />}</div> : (
         <div className="card" style={{ overflow: 'hidden' }}>
           <div className="card-hd">
             <div className="row" style={{ flex: '1 1 260px' }}><Icon name="search" size={15} color="#9CA3AF" /><input className="input input-sm" style={{ border: 0, boxShadow: 'none' }} placeholder={`Number, ${w.customer}, phone or reference`} value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search sales" /></div>
