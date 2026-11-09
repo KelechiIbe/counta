@@ -18,6 +18,7 @@ import type { Customer, PayRequest } from '../../lib/api';
 import { BatchList, BatchModal, BulkPayModal, TemplateButton } from './BulkPay';
 import { isOn, offNote, useFeatures } from '../../lib/features';
 import { TaxWalletPanel, walletError } from './TaxWallet';
+import { PosTerminals } from './PosTerminals';
 
 export default function Payments() {
   const { data: inv } = useInventory();
@@ -27,9 +28,9 @@ export default function Payments() {
   const [period, setPeriod] = useScreenPeriod(orgId, 'payments', 'all', inv?.org.fiscal_year_start || 1);
   const pay = usePayments(true, period.preset === 'all' ? null : period);
   const feats = useFeatures();
-  type Tab = 'collections' | 'payouts' | 'bulk' | 'tax' | 'reconciliations' | 'settings';
+  type Tab = 'collections' | 'payouts' | 'bulk' | 'tax' | 'reconciliations' | 'pos' | 'settings';
   const [params, setParams] = useSearchParams();
-  const [tab, setTabState] = useState<Tab>(() => (['collections', 'payouts', 'bulk', 'tax', 'reconciliations', 'settings'].includes(params.get('tab') || '') ? params.get('tab') as Tab : 'collections'));
+  const [tab, setTabState] = useState<Tab>(() => (['collections', 'payouts', 'bulk', 'tax', 'reconciliations', 'pos', 'settings'].includes(params.get('tab') || '') ? params.get('tab') as Tab : 'collections'));
   const setTab = (t: Tab) => { setTabState(t); const n = new URLSearchParams(params); n.set('tab', t); n.delete('batch'); setParams(n, { replace: true }); };
   const openBatch = params.get('batch');
   const setOpenBatch = (id: string | null) => { const n = new URLSearchParams(params); if (id) { n.set('tab', 'bulk'); n.set('batch', id); } else n.delete('batch'); setParams(n, { replace: true }); };
@@ -110,6 +111,7 @@ export default function Payments() {
           { id: 'bulk' as const, label: 'Bulk payments', count: (d?.batches || []).filter((b: any) => b.status === 'pending_approval').length || undefined },
           { id: 'tax' as const, label: 'Tax wallet' },
           { id: 'reconciliations' as const, label: 'Reconciliations' }] : []),
+        { id: 'pos' as const, label: 'POS terminals' },
         ...(d?.can?.settings ? [{ id: 'settings' as const, label: 'Settings' }] : []),
       ]} />
       {['collections', 'payouts', 'bulk'].includes(tab) && <div><PeriodPicker value={period} onChange={setPeriod} label="Payments made" /></div>}
@@ -177,6 +179,7 @@ export default function Payments() {
         </div>
       )}
       {tab === 'tax' && money_ && <TaxWalletPanel />}
+      {tab === 'pos' && <PosTerminals />}
       {tab === 'settings' && d?.can?.settings && <PaymentSettings data={d} onSaved={refresh} />}
       {payout && <PayoutModal onClose={() => setPayout(false)} />}
       {bulk && <BulkPayModal onClose={() => setBulk(false)} onCreated={(b) => { setBulk(false); setTabState('bulk'); setOpenBatch(b.id); }} />}

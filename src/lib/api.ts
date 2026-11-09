@@ -59,6 +59,34 @@ export interface SaleEinvoice {
   buyer?: { state: 'due' | 'sending' | 'transmitting' | 'transmitted' | 'acknowledged' | 'failed'; note: string | null; at: string | null; sent_at: string | null;
     tries: number; next_at: string | null } | null;
 }
+// An amount sent to a POS terminal from the till, and what the terminal answered.
+export interface PosRequest {
+  id: string; reference: string; purpose: 'sale' | 'test'; amount: number; pay_method: 'any' | 'card' | 'transfer';
+  status: 'creating' | 'sent' | 'paid' | 'declined' | 'cancelled' | 'expired' | 'failed'; paid_amount?: number | null; paid_how?: 'card' | 'transfer' | 'other' | null;
+  paid_at?: string | null; response_code?: string | null; response_message?: string | null; error?: string | null; sent_at?: string | null; created_at: string;
+  sale_id?: string | null; sale_number?: string | null; sale_status?: string | null; terminal_id: string; terminal_name: string; terminal_serial: string;
+  provider: string; provider_name: string;
+}
+export interface TillTerminal { id: string; name: string; serial: string; location_id: string | null; here: boolean | null; provider: string; provider_name: string; ready: boolean }
+export interface PosTerminal { id: string; serial: string; label: string | null; name: string; location_id: string | null; location_name: string | null; active: boolean; last_seen_at: string | null }
+export interface PosConnection {
+  id: string; provider: string; provider_name: string; label: string; environment: string; business_ref: string | null; business_name: string | null;
+  status: 'live' | 'error' | 'removed'; amount_unit: 'kobo' | 'naira'; unit_checked: boolean; scopes: string[]; key_hint: string | null;
+  bank_account_id: string | null; bank_account_name: string | null; last_event_at: string | null; last_pull_at: string | null; last_error: string | null;
+  last_error_at: string | null; connected_at: string; connected_by: string | null; terminals: PosTerminal[]; in_clearing: number; in_clearing_count: number;
+}
+export interface PosTxn {
+  id: string; transaction_ref: string; kind: 'card' | 'transfer' | 'other'; amount: number; fee: number; status: string; occurred_at: string;
+  outcome: 'new' | 'request' | 'collection' | 'sale' | 'unassigned' | 'assigned' | 'ignored'; note: string | null; payer: string | null; response_message: string | null;
+  terminal_serial: string | null; terminal_name: string | null; location_id: string | null; sale_id: string | null; sale_number: string | null;
+  request_reference: string | null; cleared: boolean; assigned_by: string | null; assigned_at: string | null; provider_name: string;
+  candidates?: { id: string; number: string; doc_type: string; customer: string; issue_date: string; due: number }[];
+}
+export interface PosOverview {
+  can: { connect: boolean; manage: boolean; assign: boolean }; sample: boolean; connections: PosConnection[];
+  accounts: { id: string; name: string; bank_name: string | null; account_number: string | null }[]; locations: { id: string; name: string }[];
+  unassigned: PosTxn[]; recent: PosTxn[];
+}
 export interface PayRequest {
   id: string; tx_ref?: string; method: 'account' | 'link' | 'qr'; rail?: string; amount: number; status: string; account_number: string | null; bank_name: string | null;
   account_name: string | null; link_url: string | null; qr_image: string | null; expires_at: string | null; paid_amount?: number | null; paid_at?: string | null;
@@ -96,7 +124,7 @@ export interface AiProposal {
 
 // ---------------------------------------------------------------- reads
 // keep: while a new period loads, the figures already on screen stay (for the same business).
-function useOrgQuery<T>(key: unknown[], fn: (org: string) => Promise<T>, enabled = true, refetchInterval?: number, keep = false) {
+export function useOrgQuery<T>(key: unknown[], fn: (org: string) => Promise<T>, enabled = true, refetchInterval?: number, keep = false) {
   const { orgId } = useSession();
   return useQuery<T>({ queryKey: [...key, orgId], enabled: !!orgId && enabled, queryFn: () => fn(orgId!), refetchInterval,
     ...(keep ? { placeholderData: ((prev: T | undefined, q: any) => (q?.queryKey?.[q.queryKey.length - 1] === orgId ? prev : undefined)) as any } : {}) });
@@ -126,6 +154,11 @@ export const useOverview = (enabled = true, from?: string | null, to?: string | 
   (o) => rpc('get_finance_overview', from || to ? { p_org: o, p_from: from || null, p_to: to || null } : { p_org: o }), enabled, undefined, true);
 export const useMessages = (sale: string | null = null) => useOrgQuery<any>(['messages', sale], (o) => rpc('get_messages', { p_org: o, p_sale: sale }));
 export const useChart = (enabled = true) => useOrgQuery<any>(['chart'], (o) => rpc('get_chart', { p_org: o }), enabled);
+// POS terminals (Payments, POS terminals): the connections, the terminals a till can send to, and sales still waiting at one.
+export const usePos = (enabled = true) => useOrgQuery<PosOverview>(['pos_overview'], (o) => rpc('pos_overview', { p_org: o }), enabled);
+export const useTillTerminals = (loc: string | null) => useOrgQuery<TillTerminal[]>(['pos_till', loc], (o) => rpc('pos_till_terminals', { p_org: o, p_location: loc }), !!loc);
+export const usePosWaiting = (loc: string | null) => useOrgQuery<PosRequest[]>(['pos_waiting', loc], (o) => rpc('pos_waiting', { p_org: o, p_location: loc }), !!loc, 30_000);
+export const usePosToMatch = (enabled = true) => useOrgQuery<PosTxn[]>(['pos_match'], (o) => rpc('pos_unassigned', { p_org: o }), enabled, 60_000);
 export function useReport(report: string, from: string | null, to: string | null, options: Record<string, unknown> = {}, enabled = true) {
   return useOrgQuery<Report>(['report', report, from, to, JSON.stringify(options)],
     (o) => rpc('accounting_report', { p_org: o, p_report: report, p_from: from, p_to: to, p_options: options }), enabled);

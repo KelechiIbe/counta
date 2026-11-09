@@ -15,7 +15,7 @@ Counta collects money for a business by bank transfer, payment link and QR code,
 6. A cron job every five minutes re-checks unpaid requests, retries failed sweeps and re-checks payouts in progress, so a missed webhook only delays the answer.
 7. Every night at 00:40 Counta reads each wallet's statement from Flutterwave, records credits the books are missing and compares the balance with the books. A difference becomes a question in the Books inbox.
 
-At the till the screen waits for the transfer, checks every four seconds and says the payment out loud when it lands ("Payment received. Five thousand naira from Ada Obi."). Payments by another channel (cash, POS, a transfer into another bank account) are recorded by the cashier and confirmed by a manager or the bookkeeper once they show in the bank.
+At the till the screen waits for the transfer, checks every four seconds and says the payment out loud when it lands ("Payment received. Five thousand naira from Ada Obi."). Payments by another channel (cash, POS, a transfer into another bank account) are recorded by the cashier and confirmed by a manager or the bookkeeper once they show in the bank. Moniepoint terminals are the exception once connected: the till sends them the amount and Moniepoint's answer confirms the payment (see [pos-terminals.md](pos-terminals.md)).
 
 ### How fast a transfer is confirmed
 
