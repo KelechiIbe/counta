@@ -12,18 +12,19 @@
 
 ## Global Constraints
 
-- Migrations: new files named `YYYYMMDDNNNNNN_slug.sql` with timestamps after `20261123000100`; this plan uses `supabase/migrations/202611240001NN_<slug>.sql`, increasing, one per SQL task.
+- Migrations: new files named `YYYYMMDDNNNNNN_slug.sql` with timestamps after `20261123000100`; this plan uses `supabase/migrations/2026112400NN00_<slug>.sql` (`20261124000100` … `20261124001100`), increasing, one per SQL task.
 - Tables: `enable row level security` + `revoke all … from anon, authenticated`, no policies (the only policies added are the documents-bucket ones in Task 8).
 - Access through `public` security-definer RPCs with `set search_path = public, private`; helpers in `private`; plain, readable SQL (no obfuscation).
 - Grants block pattern of `practices.sql:1828-1865`: `revoke execute on function public.x(...) from public, anon;` then `grant execute on function public.x(...) to authenticated;`; `svc_*` revoked from `public, anon, authenticated` and granted to `service_role`; anon-callable previews granted `to anon, authenticated`.
-- `core.sql:599` grants execute on every `private` function to `authenticated`: every new private helper gets `revoke all on function private.x(...) from public, anon, authenticated;` in its migration (Task 1's `00_harness.sql` and each task's test assert it).
+- `core.sql:599` grants execute on every `private` function to `authenticated`: every new private helper, and every existing private function a migration of this plan redefines, gets `revoke all on function private.x(...) from public, anon, authenticated;` in its migration. Task 1's `00_harness.sql` test `harness_new_private_revoked` asserts it generically for every `private` function created or redefined by a `20261124…` migration, except the policy helpers `private.is_owner(uuid)`, `private.practice_file_ok(text)` and `private.document_may_delete(text)` (security definer, `revoke … from public, anon; grant execute … to authenticated`, because RLS and storage policies call them as the signed-in person; `document_may_delete` is redefined by the Task 3 sweep); each task's test also names its own helpers.
 - `create or replace` keeps grants; a signature change (`private.org_brand`) is `drop function` + `create` + re-grant/revoke.
 - Frontend: RPCs via `rpc()` (`src/lib/supabase.ts`), edge functions via `edge()`/`edgeOk()` (`src/lib/api.ts`), errors via `cleanError`; React Query; UI from `src/components/ui.tsx` and `src/admin/ui.tsx`; global `src/styles.css`; `data-testid` attributes; `useToast`.
 - Edge functions in `supabase/functions/*` (Deno); email via Resend in `messaging/index.ts` with words in `messaging/wording.ts`.
 - Frontend verification: `./node_modules/.bin/tsc -b --noEmit && ./node_modules/.bin/vite build`, then `git checkout -- tsconfig.tsbuildinfo` before committing.
 - Deno verification: `deno test --node-modules-dir=none --allow-read <files>` and `deno check --node-modules-dir=none <entry>`.
 - SQL must be proven on the local Postgres 16 harness before any SQL file goes to the owner: every SQL task ends with `bash supabase/tests/run_tests.sh` printing `ALL PASS`. No live DDL; Supabase MCP `execute_sql` read-only only.
-- Rewrites of existing functions must be proven behaviour-identical for ordinary (non-managed) businesses: `bash supabase/tests/golden/run.sh check` prints `golden OK (136 cases)` after every task that redefines an existing function (Tasks 2, 3, 4, 6, 8, 10, 11, 13, 14). Expected outputs are recorded once, in Task 1, and never re-recorded. A task that adds a column to an existing table or a key to an existing function's output appends each new name to `supabase/tests/golden/added_keys.txt` in the same commit; the golden check ignores those keys at any depth and nothing else.
+- Rewrites of existing functions must be proven behaviour-identical for ordinary (non-managed) businesses: `bash supabase/tests/golden/run.sh check` prints `golden OK (145 cases)` after every task that redefines an existing function (Tasks 2, 3, 4, 6, 8, 10, 11, 13, 14). Expected outputs are recorded once, in Task 1, and never re-recorded. A task that adds a column to an existing table or a key to an existing function's output appends each new name to `supabase/tests/golden/added_keys.txt` in the same commit, one entry per line: `parent.key` (ignored only in an object that is the value of key `parent`), `parent[].key` (ignored only in the elements of an array under key `parent`), or a bare `key` (ignored at any depth, allowed only when that name appears in no expected output recorded in Task 1; `record` and `check` fail naming it otherwise). Nothing else is ignored.
+- Every function whose latest definition matches the owner enumeration regexes must have each match in `supabase/tests/golden/sweep_manifest.tsv` (Task 3). A later SQL task that adds or changes an inline owner comparison (Tasks 4, 10, 11, 14) appends its classified lines to the manifest, commits it with the task, and runs `bash supabase/tests/golden/run.sh sweep` in its verification.
 - Privacy: CAC directors' data in `kyc_profiles` stays owner-only (never copied into intake, activity log or export); NIN kept as outcome + last 4 digits only; intake ID numbers last 4 only (`^[A-Za-z0-9]{4}$`); no real-person data in committed files; fixtures use fake names and `@example.test` addresses only.
 - No real emails, WhatsApp, calls, wallet openings or paid lookups during build/testing (edge calls are asserted through `net._requests`, never sent).
 - Harness scripts are run as root from `/home/claude/counta-pm` and call `runuser -u postgres --` internally (initdb refuses root); data and socket live in `/var/tmp/counta-pgh`, port `54329`.
@@ -54,22 +55,23 @@
 
 **Interfaces:**
 - Produces (commands, used by every later task):
-  - `bash supabase/tests/harness/run.sh [migrations_dir]` → fresh cluster, stubs, every migration in order; prints `OK: <n> migrations applied` or `FAIL: <file>` + first 5 error lines; leaves the cluster running.
+  - `bash supabase/tests/harness/run.sh [migrations_dir]` → fresh cluster, stubs, every migration in order; prints `OK: <n> migrations applied` or `FAIL: <file>` + first 5 error lines; leaves the cluster running. Just before the first migration whose name is `>= 20261124` (or after the last one, when there is none) it snapshots every `private` function into `harness.private_baseline(sig text primary key, def_md5 text)` (`p.oid::regprocedure::text`, `md5(pg_get_functiondef(p.oid))`), so `00_harness.sql` can tell which private functions this plan's migrations created or redefined.
   - `bash supabase/tests/run_tests.sh [pattern]` → run.sh, then `helpers.sql`, then each `supabase/tests/sql/*<pattern>*.sql` sorted; prints `PASS <file>` / `FAIL <file>: <first ERROR line>`; last line `ALL PASS (<n> files)` (exit 0) or exit 1.
   - `bash supabase/tests/harness/fn_dump.sh <schema.name>...` → latest `pg_get_functiondef` of each, each followed by `;` and a blank line (running cluster required). `fn_dump.sh --owner-list` → the owner enumeration below, one `schema.name` per line.
-  - `bash supabase/tests/golden/run.sh record|check|coverage [pattern]` → `record` writes `expected/<case>.out`; `check` prints `golden OK (<n> cases)` or a unified diff and exits 1; `coverage` prints `coverage OK (<n> functions)` when every line of `owner_functions.txt` has `cases/<line>.sql`.
+  - `bash supabase/tests/golden/run.sh record|check|coverage [pattern]` → `record` writes `expected/<case>.out`; `check` prints `golden OK (<n> cases)` or a unified diff and exits 1; `coverage` prints `coverage OK (<n> functions)` when every line of `owner_functions.txt` has `cases/<line>.sql` and no case is vacuous: it runs every case (owner-list and extra) and fails, naming the case, when every caller's output for it is the same permission-denied error (`ERROR 42501: permission denied…`) or empty (`[]`, `null`, `""` or only null/empty values). `record` and `check` also fail when a bare entry of `added_keys.txt` names a key that occurs in any `expected/*.out`.
 - Produces (SQL helpers in schema `tests`, usage + execute granted to `anon, authenticated, service_role`):
   - `tests.ids(name text primary key, id uuid not null)`; `tests.remember(p_name text, p_id uuid) returns uuid`; `tests.id(p_name text) returns uuid`
   - `tests.user(p_email text, p_name text default null) returns uuid` (inserts `auth.users` with `raw_user_meta_data.full_name`)
   - `tests.as_user(p_user uuid, p_aal text default 'aal1') returns void` (sets `request.jwt.claims` `{sub, role:'authenticated', email, aal}`, `request.jwt.claim.sub`, `request.jwt.claim.role`, then `set local role authenticated`)
   - `tests.as_service() returns void`, `tests.as_anon() returns void`, `tests.as_postgres() returns void` (`reset role`, claims cleared)
-  - `tests.error_of(p_sql text) returns text` (null when `p_sql` runs; else `SQLSTATE || ': ' || SQLERRM`), `tests.throws(p_sql text, p_like text) returns void` (raises `expected error like <p_like>, got <error_of or 'no error'>` unless `error_of(p_sql) ilike p_like`), `tests.capture(p_sql text) returns text` (runs the SELECT `p_sql` as `select coalesce(jsonb_agg(to_jsonb(q)), '[]') from (p_sql) q`, strips the keys in `tests.golden_ignore(key text primary key)` with `tests.strip_keys(p jsonb, p_keys text[]) returns jsonb` at any depth, returns the jsonb text or `ERROR <sqlstate>: <message>`)
+  - `tests.as_definer(p_user uuid, p_aal text default 'aal1') returns void` (sets the same claims as `tests.as_user` but stays `postgres`: used to call `private.*` functions, which are revoked from `authenticated`, with a caller's identity)
+  - `tests.error_of(p_sql text) returns text` (null when `p_sql` runs; else `SQLSTATE || ': ' || SQLERRM`), `tests.throws(p_sql text, p_like text) returns void` (raises `expected error like <p_like>, got <error_of or 'no error'>` unless `error_of(p_sql) ilike p_like`), `tests.capture(p_sql text) returns text` (runs the SELECT `p_sql` as `select coalesce(jsonb_agg(to_jsonb(q)), '[]') from (p_sql) q`, strips the entries of `tests.golden_ignore(path text primary key)` with `tests.strip_keys(p jsonb, p_paths text[]) returns jsonb` — a bare `key` at any depth, `parent.key` only in an object that is the value of key `parent`, `parent[].key` only in the elements of an array under key `parent` — and returns the jsonb text or `ERROR <sqlstate>: <message>`)
   - `tests.hooks_on() returns void` (`private.config` `functions_url = 'http://functions.test'`, vault secret `PUSH_HOOK_SECRET = 'test-hook'`)
   - `tests.org(p_owner uuid, p_name text) returns uuid` (`public.create_org` as the owner), `tests.member(p_org uuid, p_user uuid, p_role text) returns uuid` (active member, perms via `private.apply_member_perms`)
   - `tests.admin_user(p_email text) returns uuid` (adds `platform_admins`; use with `tests.as_user(u, 'aal2')`)
   - `tests.practice(p_partner uuid, p_name text, p_verified boolean default true) returns uuid` (`public.create_practice` as the partner, licence ICAN `TEST/0001`, `verified` when asked), `tests.practice_member(p_practice uuid, p_user uuid, p_role text) returns uuid` (active), `tests.involved_client(p_practice uuid, p_org uuid) returns uuid` (active `practice_clients` row + `private.practice_sync_seats`)
 - Test file convention (every later test file): `begin;` … `rollback;`; each test is `-- test: <name>` followed by one `do $$ … $$;` block that starts as postgres, ends with `perform tests.as_postgres();`, and whose `assert` messages start with `<name>:`. In the test sketches below, `<x>` inside a `$q$…$q$` string stands for the fixture value, interpolated with `format()`, and a parenthesised note describes setup.
-- Golden fixture ids (`tests.id(...)`): `org` ("Golden Foods Ltd"), users `owner`, `admin`, `accountant`, `staff`, `partner` (`<role>@example.test`), members `m_owner`, `m_admin`, `m_accountant`, `m_staff`, `m_partner` (the partner's practice seat), `practice` ("Golden Partners", verified), `client` (involved link), `customer`, `invoice_draft`, `invoice`, `vendor`, `bill`, `wallet`, `tax_wallet`.
+- Golden fixture ids (`tests.id(...)`): `org` ("Golden Foods Ltd"), users `owner`, `admin`, `accountant`, `staff`, `partner` (`<role>@example.test`), `platform` (`platform@example.test`, a TaxStreem admin through `tests.admin_user`; acts with `aal2`), members `m_owner`, `m_admin`, `m_accountant`, `m_staff`, `m_partner` (the partner's practice seat), `practice` ("Golden Partners", verified), `client` (involved link), `customer`, `invoice_draft`, `invoice`, `vendor`, `bill`, `wallet`, `tax_wallet`.
 
 - [ ] **Step 1: Write the failing test** — `supabase/tests/sql/00_harness.sql`
 
@@ -97,6 +99,14 @@ o := tests.org(tests.user('o@example.test'), 'Fixture Ltd');
 assert (select role from members where org_id = o) = 'owner', 'harness_fixtures: create_org owner';
 p := tests.practice(tests.user('p@example.test'), 'Fixture Partners', true);
 assert private.partner_verified(p), 'harness_fixtures: verified partner';
+-- test: harness_new_private_revoked   (every private function created or redefined by a 20261124… migration; trivially true until Task 2)
+assert to_regclass('harness.private_baseline') is not null, 'harness_new_private_revoked: baseline taken';
+assert not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private' and p.prokind = 'f'
+    and p.oid::regprocedure::text not in ('private.is_owner(uuid)', 'private.practice_file_ok(text)', 'private.document_may_delete(text)')
+    and not exists (select 1 from harness.private_baseline b where b.sig = p.oid::regprocedure::text and b.def_md5 = md5(pg_get_functiondef(p.oid)))
+    and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))),
+  'harness_new_private_revoked: new and redefined private functions are revoked from anon and authenticated';
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -106,7 +116,7 @@ Expected: FAIL — `bash: supabase/tests/run_tests.sh: No such file or directory
 
 - [ ] **Step 3: Implement the harness**
 
-`run.sh`: as `up.sh`, plus: `PGH_DIR=${PGH_DIR:-/var/tmp/counta-pgh}`; migrations dir defaults to `supabase/migrations`; `initdb -D "$PGH_DIR/data" -U postgres -A trust -E UTF8 --locale=C.UTF-8`; every `initdb`/`pg_ctl`/`psql` through `runuser -u postgres --`.
+`run.sh`: as `up.sh`, plus: `PGH_DIR=${PGH_DIR:-/var/tmp/counta-pgh}`; migrations dir defaults to `supabase/migrations`; `initdb -D "$PGH_DIR/data" -U postgres -A trust -E UTF8 --locale=C.UTF-8`; every `initdb`/`pg_ctl`/`psql` through `runuser -u postgres --`; the `harness.private_baseline` snapshot (Interfaces) taken before the first migration named `>= 20261124`.
 `stubs.sql`: the spike file plus — `auth.uid()` returns `coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''), nullif(current_setting('request.jwt.claims', true), '')::jsonb->>'sub')::uuid` (same pattern for `auth.role()`); `auth.sessions (id uuid primary key default gen_random_uuid(), user_id uuid references auth.users(id) on delete cascade, created_at timestamptz default now(), updated_at timestamptz default now(), ip inet, user_agent text)`; `net._requests (id bigserial primary key, url text, body jsonb, headers jsonb, created_at timestamptz default now())` with `net.http_post` inserting its arguments and returning the id; and Supabase default privileges:
 
 ```sql
@@ -133,22 +143,24 @@ Expected: `OK: 84 migrations applied`, `PASS 00_harness.sql`, `ALL PASS (1 files
 
 - [ ] **Step 5: Write the golden baseline**
 
-`owner_functions.txt` = output of `bash supabase/tests/harness/fn_dump.sh --owner-list` now (117 lines). One case file per line, plus 19 cases for functions that later tasks rewrite but that are not on the list: `public.create_org`, `public.kyc_draft`, `public.kyc_submit`, `private.payments_open`, `private.require_payments_open`, `public.practice_assign` (runs `practice_sync_seats`), `public.practice_end`, `public.practice_update_member`, `public.send_document`, `public.send_reminder`, `public.send_statement`, `public.return_bill`, `public.reject_supplier_invoice`, `public.prepare_vendor_call`, `public.practice_invite_check`, `public.practice_invite_preview`, `public.svc_practice_invite_link`, `public.issue_invoice`, `public.void_bill` — 136 cases. `run.sh` loads `added_keys.txt` into `tests.golden_ignore` before the cases. Case format:
+`owner_functions.txt` = output of `bash supabase/tests/harness/fn_dump.sh --owner-list` now (117 lines). One case file per line, plus 28 cases for functions that later tasks rewrite but that are not on the list: `public.create_org`, `public.kyc_draft`, `public.kyc_submit`, `private.payments_open`, `private.require_payments_open`, `public.practice_assign` (runs `practice_sync_seats`), `public.practice_end`, `public.practice_update_member`, `public.send_document`, `public.send_reminder`, `public.send_statement`, `public.return_bill`, `public.reject_supplier_invoice`, `public.prepare_vendor_call`, `public.practice_invite_check`, `public.practice_invite_preview`, `public.svc_practice_invite_link`, `public.issue_invoice`, `public.void_bill`, `private.alert_prefs`, `private.queue_message`, `public.public_document` (covers `private.sale_json` and `private.org_brand`, whose signature Task 6 changes), `public.shop_catalog`, `public.svc_message` (caller `service`), `public.practice_home` (caller `partner`), `public.admin_business_delete` and `public.admin_business_delete_preview` (caller `platform` plus the defaults), and the trigger `private.orgs_guard` (fired by `-- exec` updates of `orgs`) — 145 cases. `run.sh` loads `added_keys.txt` into `tests.golden_ignore` before the cases. Case format:
 
 ```
 -- callers: owner admin accountant staff
 -- setup
 <optional SQL run as postgres, adding rows the call needs>
+-- exec
+<optional non-SELECT statement run as the caller (fires a trigger, writes rows); recorded as `ok` or `ERROR <sqlstate>: <message>`>
 -- call
 select public.get_team(tests.id('org'));
 ```
 
-Rules: `fixture.sql` builds the fixture ids listed in Interfaces with the `tests` helpers and registers each with `tests.remember`; callers from `owner admin accountant staff partner service anon` (default the first four; `svc_*` use `service`); one SELECT per `-- call` line, void results cast `::text`; each case reaches the line holding its owner comparison (setup inserts what the function needs first). `run.sh` loads `fixture.sql` once per case inside one transaction and, per caller, does `savepoint` → setup → switch (`tests.as_user(tests.id('<caller>'))`, or `tests.as_service()` / `tests.as_anon()`) → `tests.capture()` per call → `tests.as_postgres()` → `rollback to savepoint`. Output `== <caller>` then one line per call, normalised with: UUIDs → `<uuid>`; `\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}(:\d{2})?|Z)?` → `<ts>`; `\d{4}-\d{2}-\d{2}` → `<date>`; `[0-9a-f]{48,}` → `<hex>`.
+Rules: `fixture.sql` builds the fixture ids listed in Interfaces with the `tests` helpers and registers each with `tests.remember`; callers from `owner admin accountant staff partner platform service anon` and `definer:<caller>` (default the first four; `svc_*` use `service`; `private.*` use `definer:owner definer:admin definer:accountant definer:staff`, because those functions are revoked from `authenticated` and would otherwise record only `permission denied`); one SELECT per `-- call` line, void results cast `::text`; each case reaches the line holding its owner comparison (setup inserts what the function needs first). A case for a function that returns void, is a trigger, or writes rows adds `-- call` SELECTs, run as the same caller after it, that read back what it wrote: recipients and status of `messages` (`to_address`, `status`, `template`), `notifications` (`user_id`, `kind`), `net._requests` bodies, and members' `role`, `status`, `acts_as_owner`, `p_*` (e.g. `practice_assign` and `practice_sync_seats` read back every seat of the client org; `alert_send`, `instruction_alert`, `vat_threshold_tick`, `einvoice_issue_held` read back the messages and notifications they queued). `run.sh` loads `fixture.sql` once per case inside one transaction and, per caller, does `savepoint` → setup → switch (`tests.as_user(tests.id('<caller>'))` (`aal2` for `platform`), `tests.as_definer(tests.id('<caller>'))` for `definer:<caller>`, or `tests.as_service()` / `tests.as_anon()`) → each `-- exec` through `tests.error_of()` → `tests.capture()` per call → `tests.as_postgres()` → `rollback to savepoint`. Output `== <caller>` then one line per `-- exec` and per `-- call`, normalised with: UUIDs → `<uuid>`; `\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}(:\d{2})?|Z)?` → `<ts>`; `\d{4}-\d{2}-\d{2}` → `<date>`; `[0-9a-f]{48,}` → `<hex>`.
 
 - [ ] **Step 6: Record and prove the baseline is deterministic**
 
 Run: `bash supabase/tests/golden/run.sh coverage && bash supabase/tests/golden/run.sh record && bash supabase/tests/golden/run.sh check && bash supabase/tests/golden/run.sh check`
-Expected: `coverage OK (117 functions)`, then `golden OK (136 cases)` twice (fix any case whose output is unordered by ordering inside its call).
+Expected: `coverage OK (117 functions)` (no vacuous case among the 145), then `golden OK (145 cases)` twice (fix any case whose output is unordered by ordering inside its call; fix a vacuous case by giving it a caller that gets through, a `definer:` caller, or read-back calls).
 
 - [ ] **Step 7: Commit**
 
@@ -165,7 +177,7 @@ git commit -m "Test harness: local Postgres 16, helpers and golden baseline of o
 - Create: `supabase/migrations/20261124000100_owner_resolver.sql`
 - Create: `supabase/tests/sql/01_owner_resolver.sql`
 - Modify: `supabase/tests/harness/helpers.sql` (add `tests.managed_org`)
-- Modify: `supabase/tests/golden/added_keys.txt` (append `acts_as_owner managed_by director_confirmed_at read_only_at retain_until send_mode mode engagement_partner_id intake_id alert_email retention_years end_kind fee_customer_id fee_vendor_id`, one per line)
+- Modify: `supabase/tests/golden/added_keys.txt` (append `acts_as_owner managed_by director_confirmed_at read_only_at retain_until send_mode client.mode clients[].mode engagement_partner_id intake_id alert_email retention_years end_kind fee_customer_id fee_vendor_id`, one per line; `mode` is scoped to `client.mode`/`clients[].mode` because payout-batch outputs recorded in Task 1 already carry a `mode` key)
 - Modify: `src/state/session.tsx:122-128`, `src/lib/types.ts:26-31` (`Org`), `src/lib/types.ts:58-63` (`MeRow`)
 - Modify: `src/shell/AppShell.tsx:250-251`, `src/pages/settings/Accountant.tsx:34`, `src/pages/accounting/MoveBooks.tsx:41,75`, `src/pages/accounting/tax/PitTab.tsx:75`, `src/pages/accounting/Statements.tsx:46`, `src/pages/inventory/Locations.tsx:38,126`, `src/pages/inventory/Insights.tsx:53,75`, `src/pages/home/GuideChecklist.tsx:34`, `src/pages/Settings.tsx:237`, `src/pages/sell/Orders.tsx:84`, `src/pages/sell/Shop.tsx:39`, `src/pages/payments/BulkPay.tsx:192`, `src/pages/onboarding/Identity.tsx:150`
 
@@ -175,7 +187,7 @@ git commit -m "Test harness: local Postgres 16, helpers and golden baseline of o
   - `members.acts_as_owner boolean not null default false`, constraint `members_acts_as_owner_check check (not acts_as_owner or (practice_id is not null and role = 'admin'))`
   - `orgs.managed_by uuid references practices(id) on delete restrict`, `orgs.director_confirmed_at timestamptz`, `orgs.read_only_at timestamptz`, `orgs.retain_until date`, `orgs.send_mode text not null default 'send' check (send_mode in ('send','download_only'))`
   - `practice_clients.mode text not null default 'involved' check (mode in ('involved','full'))`, `engagement_partner_id uuid references practice_members(id) on delete set null`, `intake_id uuid` (FK added in Task 8), `alert_email text` (email regex check), `retention_years int check (retention_years is null or retention_years >= 5)`, `end_kind text check (end_kind in ('handover','ended'))`, `fee_customer_id uuid references customers(id) on delete set null`, `fee_vendor_id uuid references vendors(id) on delete set null`; `practice_clients_full_billing check (mode = 'involved' or billing = 'practice')`; `create unique index practice_clients_one_full on practice_clients(org_id) where mode = 'full' and status = 'active'`
-  - `private.perm_of(m members, p_perm text) returns boolean` (first branch `m.role = 'owner' or m.acts_as_owner`)
+  - `private.perm_of(m members, p_perm text) returns boolean` (first branch `m.role = 'owner' or m.acts_as_owner`; now revoked from `public, anon, authenticated` like every private function this plan redefines — its callers, `has_perm` and the policy helpers, are security definer)
   - `private.acts_as_owner(p_org uuid, p_user uuid) returns boolean`; `private.is_owner(p_org uuid) returns boolean` = `acts_as_owner(p_org, auth.uid())` (stays security definer, keeps its grant)
   - `private.mandate(p_org uuid) returns practice_clients` (row with `org_id = p_org`, `practice_id = orgs.managed_by`, `mode = 'full'`, ordered `status = 'active' desc, started_at desc`, limit 1 — still found after an end without handover)
   - `private.is_managed(p_org uuid) returns boolean` (`orgs.managed_by is not null`)
@@ -188,8 +200,10 @@ git commit -m "Test harness: local Postgres 16, helpers and golden baseline of o
 - [ ] **Step 1: Write the failing test** — `supabase/tests/sql/01_owner_resolver.sql`
 
 ```sql
--- test: acts_as_owner_check
+-- test: acts_as_owner_check     (inside counta.seat_sync = 'on', so once Task 4's members_mandate_guard exists the CHECK constraint is still what fires)
+perform set_config('counta.seat_sync', 'on', true);
 perform tests.throws($q$insert into members (org_id, email, display_name, role, status, practice_id, acts_as_owner) values (...,'accountant','active',...,true)$q$, '23514%');
+perform set_config('counta.seat_sync', '', true);
 -- test: perm_of_acting_owner      (o := tests.managed_org(tests.practice(partner,'Firm',true)); seat := the partner's seat)
 assert private.perm_of(seat, 'owner') and private.perm_of(seat, 'make_payments'), 'perm_of_acting_owner: owner and all flags';
 -- test: is_owner_acting
@@ -225,12 +239,12 @@ Expected: `FAIL 01_owner_resolver.sql: ERROR:  expected error like 23514%, got 4
 - [ ] **Step 4: Run the SQL tests and the golden check**
 
 Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check`
-Expected: `ALL PASS (2 files)`, `golden OK (136 cases)`
+Expected: `ALL PASS (2 files)`, `golden OK (145 cases)`
 
 - [ ] **Step 5: Write the failing frontend check**
 
 Run: `grep -rnoE "role\s*(===|!==|==|!=)\s*'owner'" src | cut -d: -f1 | sort | uniq -c`
-Expected after the change (exactly these 5 lines; today it lists 15 files):
+Expected after the change (exactly these 5 lines; today it lists 18 files):
 ```
       2 src/pages/inventory/Counts.tsx
       1 src/pages/settings/Partners.tsx
@@ -294,12 +308,12 @@ Expected: `FAIL 02_owner_sweep.sql: ERROR:  sweep_user_facing: get_team is_owner
   - a `svc_*` check on `p_user`/`p_member` → `acts_as_owner`: `private.acts_as_owner(p_org, p_user)` (or `perm_of` on the fetched member row);
   - choosing who receives or acts (`select … from members where … role = 'owner' … limit 1`) → `org_contact`: `private.org_contact(p_org)`;
   - another member's role, a role parameter, listing order, admin-portal display, the real owner's identity (`practice_client` owner display, `perm_of`/`acts_as_owner`/`org_contact`/`role_perms`/`practice_sync_seats` themselves, `invite_member` refusing `p_role = 'owner'`) → `keep`.
-  Put only functions with at least one non-`keep` change in the migration, each as its full latest definition with the substitutions and nothing else.
+  Put only functions with at least one non-`keep` change in the migration, each as its full latest definition with the substitutions and nothing else, plus `revoke all on function private.x(...) from public, anon, authenticated;` for each redefined `private` function except the policy helper `private.document_may_delete(text)`, which keeps `grant execute … to authenticated` (`00_harness.sql` checks this).
 
 - [ ] **Step 4: Run tests, golden and sweep checks**
 
 Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check && bash supabase/tests/golden/run.sh sweep`
-Expected: `ALL PASS (3 files)`, `golden OK (136 cases)`, `sweep OK (<n> kept)`
+Expected: `ALL PASS (3 files)`, `golden OK (145 cases)`, `sweep OK (<n> kept)`
 
 - [ ] **Step 5: Commit**
 
@@ -317,6 +331,7 @@ git commit -m "Owner sweep: every owner comparison goes through perm_of, acts_as
 - Create: `supabase/tests/sql/03_seats_guards.sql`
 - Modify: `supabase/tests/harness/helpers.sql` (`tests.managed_org` calls `private.practice_sync_seats` instead of inserting seats)
 - Modify: `supabase/tests/golden/added_keys.txt` (append `mandate_suspended_at`)
+- Modify: `supabase/tests/golden/sweep_manifest.tsv` (replace the `private.practice_sync_seats` lines with the rewritten body's matches)
 - Modify: `supabase/functions/mono/index.ts:472-494` (`cacSearch`), `:496-528` (`cacSelect`), `:668-674` (actions)
 
 **Interfaces:**
@@ -324,8 +339,8 @@ git commit -m "Owner sweep: every owner comparison goes through perm_of, acts_as
 - Produces:
   - `private.practice_sync_seats(p_client uuid) returns void` — sets `counta.seat_sync` to `'on'` and back to `''` before every return; active full → wanted seats `role 'admin'`, `acts_as_owner true`, `perm_overrides = private.role_template('admin')`; active involved → `role 'accountant'`, `acts_as_owner false`; every sync calls `private.apply_member_perms` on each wanted seat; unwanted practice seats disabled whatever their role; not active → disable all practice seats except, when `end_kind = 'ended'`, the engagement partner's seat (stays active).
   - `public.practice_update_member` resyncs clients where `status = 'active' or end_kind = 'ended'`.
-  - trigger `members_mandate_guard` (BEFORE INSERT OR UPDATE on `members`) → `private.members_mandate_guard()`: when `current_setting('counta.seat_sync', true) = 'on'` allow; setting or changing `acts_as_owner` raises `Only the practice link sets that.` (42501) in any org; in a managed org an active/invited row whose `practice_id` is not `managed_by` raises `Under full mandate only the firm's people work in this business.` (42501), and any insert or change to `role, status, user_id, practice_id, perm_overrides, p_*` raises `Under full mandate the firm's places change from the accountant portal.` (42501).
-  - trigger `practice_clients_guard` (BEFORE INSERT OR UPDATE OF `org_id, practice_id, status`) → `private.practice_clients_guard()`: a managed org linked to a practice other than `managed_by` with status `invited|requested|active` raises `This business is run by its accountant under full mandate and cannot connect to another practice.` (42501).
+  - trigger `members_mandate_guard` (BEFORE INSERT OR UPDATE on `members`) → `private.members_mandate_guard()`: when `current_setting('counta.seat_sync', true) = 'on'` allow; setting or changing `acts_as_owner` raises `Only the practice link sets that.` (42501) in any org; in a managed org an active/invited row whose `practice_id is distinct from managed_by` (a null `practice_id` counts) raises `Under full mandate only the firm's people work in this business.` (42501), and any insert or change to `role, status, user_id, practice_id, perm_overrides, p_*` raises `Under full mandate the firm's places change from the accountant portal.` (42501).
+  - trigger `practice_clients_guard` (BEFORE INSERT OR UPDATE OF `org_id, practice_id, status`) → `private.practice_clients_guard()`: a managed org's row whose `practice_id is distinct from managed_by` (a null `practice_id`, as `business_invite_accountant` inserts, counts as another practice) with status `invited|requested|active` raises `This business is run by its accountant under full mandate and cannot connect to another practice.` (42501).
   - trigger `practice_requests_guard` (BEFORE INSERT on `practice_requests`): client `mode = 'full'` raises `Requests are not sent to a full-mandate client.`
   - trigger `subscription_charges_guard` (BEFORE INSERT): managed org with `practice_id is null` raises `Under full mandate the practice pays for Counta.`
   - `private.require_not_managed(p_org uuid) returns void` raising `Under full mandate this is done from the accountant portal.` (42501); called first in `public.invite_member`, `public.subscription_start`, `public.subscription_method`; `public.practice_end` raises `Use handover or end the mandate for a full-mandate client.` when `mode = 'full'`.
@@ -377,15 +392,17 @@ Expected: `FAIL 03_seats_guards.sql: ERROR:  new row for relation "members" viol
 
 - [ ] **Step 3: Implement** the migration as in Interfaces (redefine from `fn_dump.sh`), the helper change and the mono change.
 
-- [ ] **Step 4: Verify**
+- [ ] **Step 4: Record this task's owner comparisons in the sweep manifest.** Run `bash supabase/tests/golden/run.sh sweep`; it reports the matches of the rewritten `private.practice_sync_seats` (e.g. the `role <> 'owner'` that keeps the real owner's seat out of the disable statements) as missing. Replace Task 3's `private.practice_sync_seats` lines in `supabase/tests/golden/sweep_manifest.tsv` with one `private.practice_sync_seats\tkeep\t<matched snippet>` line per new match (the real owner's identity, so `keep`), and add a `keep` line for any match in another function this task adds or redefines.
 
-Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check && deno check --node-modules-dir=none supabase/functions/mono/index.ts`
-Expected: `ALL PASS (4 files)`, `golden OK (136 cases)`, `Check supabase/functions/mono/index.ts`
+- [ ] **Step 5: Verify**
 
-- [ ] **Step 5: Commit**
+Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check && bash supabase/tests/golden/run.sh sweep && deno check --node-modules-dir=none supabase/functions/mono/index.ts`
+Expected: `ALL PASS (4 files)`, `golden OK (145 cases)`, `sweep OK (<n> kept)`, `Check supabase/functions/mono/index.ts`
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/20261124000300_seats_guards.sql supabase/tests/sql/03_seats_guards.sql supabase/tests/harness/helpers.sql supabase/tests/golden/added_keys.txt supabase/functions/mono/index.ts
+git add supabase/migrations/20261124000300_seats_guards.sql supabase/tests/sql/03_seats_guards.sql supabase/tests/harness/helpers.sql supabase/tests/golden/added_keys.txt supabase/tests/golden/sweep_manifest.tsv supabase/functions/mono/index.ts
 git commit -m "Full-mandate seats and guards: admin acting-owner seats, departed staff, kill switch, KYC for managed businesses" -m "$TRAILER"
 ```
 
@@ -406,7 +423,7 @@ git commit -m "Full-mandate seats and guards: admin acting-owner seats, departed
   - `private.redact_key(p_key text) returns boolean` — `p_key ~* '(^|_)(token|secret|hash|password|otp|nin|api_key)(_|$)'`.
   - `private.redact(p jsonb) returns jsonb` — top-level keys: `redact_key` → `"[redacted]"`; values whose text exceeds 4096 chars → `left(text, 4096) || '…[truncated]'`.
   - `private.set_actor(p_user uuid) returns void` — `set_config('counta.actor', p_user::text, true)`.
-  - `private.activity_row()` AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW, trigger name `activity_row`: org id = `row.org_id` (`row.id` for `orgs`); return at once unless the org is managed or read-only (PK lookup; an org row not found — deleted by this statement's cascade — also returns at once; for `orgs` itself use `OLD.read_only_at` on update so the statement that sets it is not blocked). Read-only and `auth.uid() is not null` → raise `This business is read-only: its engagement has ended. Its records are kept until <retain_until>.` (42501). Actor = `coalesce(auth.uid(), nullif(current_setting('counta.actor', true), '')::uuid)`; `actor_name` = the member's `display_name`, else the practice member's, else `Counta`. Insert: `after = redact(row)`; delete: `before = redact(row)`; update: only keys whose values differ (ignoring `updated_at`) in `before`/`after`/`changed`, no row when none. `label = coalesce(number, name, display_name, title, description)` truncated to 120; `entity = TG_TABLE_NAME`, `entity_id = row->>'id'`.
+  - `private.activity_row()` (`security definer set search_path = public, private`, because signed-in users write `orgs`, `locations`, `vendors`, `receipts`, `receipt_lines` and `ocr_corrections` directly and must not need rights on `activity_log` or `redact`; `orgs_guard` stays invoker) AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW, trigger name `activity_row`: org id = `row.org_id` (`row.id` for `orgs`); return at once unless the org is managed or read-only (PK lookup; an org row not found — deleted by this statement's cascade — also returns at once; for `orgs` itself use `OLD.read_only_at` on update so the statement that sets it is not blocked). Read-only and `auth.uid() is not null` → raise `This business is read-only: its engagement has ended. Its records are kept until <retain_until>.` (42501). Actor = `coalesce(auth.uid(), nullif(current_setting('counta.actor', true), '')::uuid)`; `actor_name` = the member's `display_name`, else the practice member's, else `Counta`. Insert: `after = redact(row)`; delete: `before = redact(row)`; update: only keys whose values differ (ignoring `updated_at`) in `before`/`after`/`changed`, no row when none. `label = coalesce(number, name, display_name, title, description)` truncated to 120; `entity = TG_TABLE_NAME`, `entity_id = row->>'id'`.
   - `private.activity_attach(p_table regclass) returns void` (drop + create the `activity_row` trigger); the migration's DO loop attaches it to `orgs`, `members` and every public base table with an `org_id` column not in `activity_exempt()`.
   - `private.activity_event(p_org uuid, p_action text, p_label text, p_meta jsonb default '{}') returns bigint` (source `event`, `after = p_meta`, practice from `managed_by` or `p_meta->>'practice_id'`).
   - `public.practice_activity(p_client uuid, p jsonb default '{}') returns jsonb` (`private.practice_client_require(p_client)`) and `public.org_activity(p_org uuid, p jsonb default '{}') returns jsonb` (`perm_of(me,'owner')` or `manage_team`): `p = {before?: bigint, limit?: 1..200 default 50, entity?: text}` → `{"rows":[{id, at, actor_name, source, action, entity, entity_id, label, before, after, changed}], "next_before": bigint|null}`.
@@ -420,11 +437,15 @@ assert not exists (select 1 from information_schema.columns c join information_s
     and c.table_name <> all (private.activity_exempt())
     and not exists (select 1 from pg_trigger g where g.tgrelid = ('public.' || c.table_name)::regclass and g.tgname = 'activity_row')),
   'activity_trigger_coverage: every org table has the trigger or is exempt';
--- test: activity_ordinary_silent
+-- test: activity_ordinary_silent   (as the ordinary owner: insert a customer in the ordinary org, then rename it)
 assert (select count(*) from activity_log where org_id = ordinary) = 0, 'activity_ordinary_silent';
 -- test: activity_row_changes      (acting owner inserts then renames a customer in o)
 assert (select count(*) from activity_log where org_id = o and entity = 'customers' and action = 'insert' and actor_user = partner) = 1, 'activity_row_changes: insert';
 assert (select changed = '{name}' and before ? 'name' and not before ? 'phone' from activity_log where org_id = o and action = 'update'), 'activity_row_changes: changed keys only';
+-- test: activity_direct_write      (as the acting owner, authenticated: a direct table write, not an RPC)
+perform tests.as_user(partner); update vendors set name = 'Renamed Supplies Ltd' where id = <vendor in o>; perform tests.as_postgres();
+assert (select count(*) from activity_log where org_id = o and entity = 'vendors' and action = 'update' and actor_user = partner) = 1, 'activity_direct_write: logged through the definer trigger';
+(read_only_at set on o) perform tests.as_user(partner); perform tests.throws($q$update vendors set name = 'After Ltd' where id = <vendor in o>$q$, '42501%');
 -- test: activity_redaction
 assert private.redact_key('token_hash') and private.redact_key('nin_last4') and private.redact_key('api_key_secret') and private.redact_key('otp_hash') and private.redact_key('password'), 'activity_redaction: secrets';
 assert not private.redact_key('opening_balance') and not private.redact_key('margin_threshold') and not private.redact_key('pinned'), 'activity_redaction: no over-match';
@@ -454,7 +475,7 @@ Expected: `FAIL 04_activity_log.sql: ERROR:  function private.activity_exempt() 
 - [ ] **Step 4: Verify**
 
 Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check`
-Expected: `ALL PASS (5 files)`, `golden OK (136 cases)`
+Expected: `ALL PASS (5 files)`, `golden OK (145 cases)`
 
 - [ ] **Step 5: Commit**
 
@@ -470,7 +491,8 @@ git commit -m "Activity log: every write in a managed or read-only business, eve
 **Files:**
 - Create: `supabase/migrations/20261124000500_outbound_branding.sql`
 - Create: `supabase/tests/sql/05_outbound_branding.sql`
-- Modify: `supabase/tests/golden/added_keys.txt` (append `firm_org_id white_label pay_online`)
+- Modify: `supabase/tests/golden/added_keys.txt` (append `firm_org_id white_label pay_online managed alert_to_allowed`, one per line)
+- (Golden cases `private.alert_prefs`, `private.queue_message`, `public.public_document` (`sale_json`, `org_brand`), `public.shop_catalog`, `public.svc_message`, recorded in Task 1, prove the rewrites unchanged for ordinary businesses.)
 
 **Interfaces:**
 - Consumes: `private.mandate`, `private.org_contact`, `private.activity_event`, `private.wa_number(p_user, p_org)`, `private.clean_phone`.
@@ -532,7 +554,7 @@ Expected: `FAIL 05_outbound_branding.sql: ERROR:  outbound_alert_readdressed`
 - [ ] **Step 4: Verify**
 
 Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check`
-Expected: `ALL PASS (6 files)`, `golden OK (136 cases)`
+Expected: `ALL PASS (6 files)`, `golden OK (145 cases)`
 
 - [ ] **Step 5: Commit**
 
@@ -564,12 +586,12 @@ git commit -m "Outbound gate and branding resolver: silence, download-only, whit
 
 ```ts
 // supabase/functions/messaging/wording_test.ts
+const m = { id: '1', channel: 'email', to_address: 'c@example.test', template: 'document', params: { doc_label: 'Invoice', number: 'INV-1', total: 100 }, org: { name: 'Ada Foods Ltd', white_label: true } } as Msg;   // module scope: both tests below use it
 Deno.test('display_name_white_label', () => {
   assertEquals(displayName('Ada Foods Ltd', true), 'Ada Foods Ltd');
   assertEquals(displayName('Ada Foods Ltd', false), 'Ada Foods Ltd via Counta');
 });
 Deno.test('email_white_label_has_no_counta', () => {
-  const m = { id: '1', channel: 'email', to_address: 'c@example.test', template: 'document', params: { doc_label: 'Invoice', number: 'INV-1', total: 100 }, org: { name: 'Ada Foods Ltd', white_label: true } } as Msg;
   assert(!emailHtml(m).includes('Counta') && !emailText(m).includes('Counta') && !waText(m).includes('Counta'));
 });
 Deno.test('email_branded_by_default', () => { assert(emailHtml({ ...m, org: { name: 'Ada Foods Ltd' } }).includes('Sent for Ada Foods Ltd by Counta')); });
@@ -608,14 +630,15 @@ git commit -m "White label: no Counta sender name, footers or pay buttons for ma
 **Interfaces:**
 - Consumes: `private.practice_require`, `private.practice_client_require`, `private.name_match`, `private.name_score`, `private.identity_match`, `private.activity_exempt` (Task 5).
 - Produces:
-  - `practice_intakes` (`id`, `practice_id` not null, `status` `draft|engaged|declined` default `draft`, `mode_requested` `involved|full`, `legal_name` 2..160, `entity_type` `company|business_name|incorporated_trustees|partnership|individual`, `rc_number`, `tax_id`, `address` ≤300, `industry` ≤80, `risk_rating` `low|medium|high`, `risk_reason` ≤1000, `pep_present boolean default false`, `dd_incomplete boolean default false`, `conflict_status` `pending|none|hits|cleared|refused` default `pending`, `conflict_note`, `conflict_decided_by`, `conflict_decided_at`, `checked_at`, `authority_declared_by`, `authority_declared_at`, `authority_statement`, `authority_doc_path`, `client_id` → `practice_clients` on delete set null, `org_id` → `orgs` on delete set null, `retain_until date`, `created_by`, `created_at`, `updated_at`); `practice_intake_people` (`intake_id`, `practice_id`, `kind` `director|beneficial_owner|related`, `name` 2..120, `role` ≤80, `ownership_pct numeric(5,2)` 0..100, `nationality` ≤60, `is_pep`, `id_type` `nin|bvn|passport|drivers_licence|voters_card|cac|other`, `id_last4` check `^[A-Za-z0-9]{4}$`); `practice_intake_docs` (`kind` `cac|id|address|other`, `name`, `path` like `practice/<pid>/intake/<iid>/%`, `sha256` `^[0-9a-f]{64}$`, `added_by`); `practice_opposing_parties` (`practice_id`, `client_id`, `name`, `rc_number`, `note` ≤500); `practice_conflict_hits` (`intake_id`, `practice_id`, `kind` `client|prospect|related_party|opposing_party|books`, `matched_on` `rc_number|tax_id|name|person`, `subject`, `match_name`, `score numeric(4,2)`, `source_client_id`, `source_intake_id`, `source_opposing_id`); `practices.conflict_scan_books boolean not null default false`; FK `practice_clients.intake_id` → `practice_intakes(id)` on delete set null; `activity_exempt()` gains `practice_intakes`.
+  - `practice_intakes` (`id`, `practice_id` not null, `status` `draft|engaged|declined` default `draft`, `mode_requested` `involved|full`, `legal_name` 2..160, `entity_type` `company|business_name|incorporated_trustees|partnership|individual`, `rc_number`, `tax_id`, `address` ≤300, `industry` ≤80, `risk_rating` `low|medium|high`, `risk_reason` ≤1000, `pep_present boolean default false`, `dd_incomplete boolean default false`, `conflict_status` `pending|none|hits|cleared|refused` default `pending`, `conflict_note`, `conflict_decided_by`, `conflict_decided_at`, `checked_at`, `edited_at timestamptz not null default now()` (set only by substantive edits in `practice_intake_save`), `authority_declared_by`, `authority_declared_at`, `authority_statement`, `authority_doc_path`, `client_id` → `practice_clients` on delete set null, `org_id` → `orgs` on delete set null, `retain_until date`, `created_by`, `created_at`, `updated_at`); `practice_intake_people` (`intake_id`, `practice_id`, `kind` `director|beneficial_owner|related`, `name` 2..120, `role` ≤80, `ownership_pct numeric(5,2)` 0..100, `nationality` ≤60, `is_pep`, `id_type` `nin|bvn|passport|drivers_licence|voters_card|cac|other`, `id_last4` check `^[A-Za-z0-9]{4}$`); `practice_intake_docs` (`kind` `cac|id|address|other`, `name`, `path` like `practice/<pid>/intake/<iid>/%`, `sha256` `^[0-9a-f]{64}$`, `added_by`); `practice_opposing_parties` (`practice_id`, `client_id`, `name`, `rc_number`, `note` ≤500); `practice_conflict_hits` (`intake_id`, `practice_id`, `kind` `client|prospect|related_party|opposing_party|books`, `matched_on` `rc_number|tax_id|name|person`, `subject`, `match_name`, `score numeric(4,2)`, `source_client_id`, `source_intake_id`, `source_opposing_id`); `practices.conflict_scan_books boolean not null default false`; FK `practice_clients.intake_id` → `practice_intakes(id)` on delete set null; `activity_exempt()` gains `practice_intakes`.
   - `private.fold_name(p text) returns text` = `regexp_replace(normalize(coalesce(p,''), NFD), '[̀-ͯ]', '', 'g')`; `private.norm_id(p text) returns text` = upper, non-alphanumerics removed, leading `RC|BN|IT` removed, null when empty; `private.has_id_number(p text) returns boolean` = `p ~ '[0-9]{5,}'`.
-  - `private.intake_cleared(i practice_intakes) returns boolean` = `risk_rating is not null and conflict_status in ('none','cleared') and checked_at >= updated_at`.
-  - `private.conflict_scan(p_intake uuid) returns integer` — replaces the intake's hits; every predicate filtered to the intake's `practice_id`: against this practice's current and former clients (`practice_clients` any status, via `orgs.name/business_name/rc_number/tin`), its other intakes, their people (`related_party`), its opposing parties, and — only when `conflict_scan_books` — `customers`/`vendors` of its active clients; RC/Tax ID by `norm_id` equality; company names by `name_match(fold_name(a), fold_name(b)) or name_score(fold_name(a), fold_name(b)) >= 0.75`; people by `identity_match(first token, middle tokens, last token of fold_name(person), jsonb_build_array(jsonb_build_object('name', fold_name(other))))`.
+  - `private.intake_cleared(i practice_intakes) returns boolean` = `risk_rating is not null and conflict_status in ('none','cleared') and checked_at >= edited_at` (`edited_at`, not `updated_at`, so the declaration and the `practice_clients_intake` trigger do not close the gate).
+  - `private.retain_date(p_years int) returns date` = `current_date + make_interval(years => greatest(coalesce(p_years, 5), 5))` — the one retention-date rule, used for intakes here and for `orgs.retain_until` in Task 11.
+  - `private.conflict_scan(p_intake uuid) returns integer` — replaces the intake's hits; every predicate filtered to the intake's `practice_id`: against this practice's current and former clients (`practice_clients` any status, via `orgs.name`, `practice_clients.business_name`, `orgs.rc_number`, `orgs.tin`), its other intakes, their people (`related_party`), its opposing parties, and — only when `conflict_scan_books` — `customers`/`vendors` of its active clients; RC/Tax ID by `norm_id` equality; company names by `name_match(fold_name(a), fold_name(b)) or name_score(fold_name(a), fold_name(b)) >= 0.75`; people by `identity_match(first token, middle tokens, last token of fold_name(person), jsonb_build_array(jsonb_build_object('name', fold_name(other))))`.
   - `private.intake_json(i practice_intakes, p_full boolean) returns jsonb`; trigger `practice_intakes_retention` (BEFORE DELETE on the three intake tables) raising `Due-diligence records are kept until <retain_until>.` while `retain_until is null or retain_until > current_date`.
-  - trigger `practice_clients_intake` (AFTER INSERT OR UPDATE OF status on `practice_clients`): becomes `active` with no `intake_id` → insert a `draft` intake (`dd_incomplete true`, `legal_name/rc_number/tax_id` from the org, `client_id`, `org_id`) and set `intake_id`; with `intake_id` → intake `status 'engaged'`, `org_id`, `client_id`; becomes `ended|declined` → intake `retain_until = current_date + greatest(coalesce(retention_years,5),5) years`.
-  - `private.practice_file_ok(p_name text) returns boolean` (`practice/<pid>/intake|letters/…`: any active member of `<pid>`; `practice/<pid>/exports/…`: partners only); documents-bucket policies `practice files read by practice members` (select) and `practice files upload by practice members` (insert) on `bucket_id = 'documents' and (storage.foldername(name))[1] = 'practice' and private.practice_file_ok(name)`; no delete policy.
-  - RPCs (lead = partner or manager unless stated): `public.practice_intake_save(p_practice uuid, p jsonb) returns jsonb` (`p`: `id?`, the columns above, `people[]` replacing all; raises `Record only the last 4 characters of an ID number.` when a person has key `id_number`/`nin`/`bvn`, `id_last4` of another length, or `has_id_number` in `name`, `role` or `nationality`; any PEP → `pep_present true`, `risk_rating 'high'`; any change to name, RC, Tax ID or people → `conflict_status 'pending'`, decision cleared, `updated_at = now()`); `public.practice_intake(p_intake uuid) returns jsonb` (intake, people, docs, hits, letters); `public.practice_intakes(p_practice uuid, p jsonb default '{}') returns jsonb` (`p.status`); `public.practice_intake_doc_add(p_intake uuid, p jsonb) returns jsonb` (`{path, name, sha256, kind}`); `public.practice_opposing_save(p_practice uuid, p jsonb) returns jsonb` (`{id?, client_id?, name, rc_number?, note?, remove?}`); `public.practice_conflict_run(p_intake uuid) returns jsonb` (sets `checked_at`, `none|hits`); `public.practice_conflict_decide(p_intake uuid, p jsonb) returns jsonb` (partner only; `{outcome: 'cleared'|'refused', note}`, note ≥ 10 chars, needs `hits` and a run after the last edit; refused → `status 'declined'`, `retain_until = current_date + 5 years`); `public.practice_set_conflict_scan(p_practice uuid, p_on boolean) returns jsonb` (partner); `public.practice_intake_declare(p_intake uuid, p jsonb) returns jsonb` (partner; `{doc_path?}`; stores `authority_statement` = `I confirm that <firm> holds the written authority of <client> to set up and run its accounting records and tax affairs on its behalf under full mandate, as set out in the engagement letter, and that I am a partner of <firm>.`).
+  - trigger `practice_clients_intake` (AFTER INSERT OR UPDATE OF status on `practice_clients`): becomes `active` with no `intake_id` → insert a `draft` intake (`dd_incomplete true`, `legal_name/rc_number/tax_id` from the org, `client_id`, `org_id`) and set `intake_id`; with `intake_id` → intake `status 'engaged'`, `org_id`, `client_id`; becomes `ended|declined` → intake `retain_until = private.retain_date(retention_years)` (Task 11's end of mandate relies on this trigger for the intake).
+  - `private.practice_file_ok(p_name text) returns boolean` — `security definer set search_path = public, private`, `revoke execute … from public, anon; grant execute … to authenticated` (the storage policies call it as the signed-in person; precedent `private.reviewer_may_read`) — (`practice/<pid>/intake|letters/…`: any active member of `<pid>`; `practice/<pid>/exports/…`: partners only); documents-bucket policies `practice files read by practice members` (select) and `practice files upload by practice members` (insert) on `bucket_id = 'documents' and (storage.foldername(name))[1] = 'practice' and private.practice_file_ok(name)`; no delete policy.
+  - RPCs (lead = partner or manager unless stated): `public.practice_intake_save(p_practice uuid, p jsonb) returns jsonb` (`p`: `id?`, the columns above, `people[]` replacing all; raises `Record only the last 4 characters of an ID number.` when a person has key `id_number`/`nin`/`bvn`, `id_last4` of another length, or `has_id_number` in `name`, `role` or `nationality`; any PEP → `pep_present true`, `risk_rating 'high'`; any change to name, RC, Tax ID or people → `conflict_status 'pending'`, decision cleared, `edited_at = now()`); `public.practice_intake(p_intake uuid) returns jsonb` (intake, people, docs, hits, `letters: []` — the letters table arrives in Task 9, which rewrites this function to fill it); `public.practice_intakes(p_practice uuid, p jsonb default '{}') returns jsonb` (`p.status`); `public.practice_intake_doc_add(p_intake uuid, p jsonb) returns jsonb` (`{path, name, sha256, kind}`); `public.practice_opposing_save(p_practice uuid, p jsonb) returns jsonb` (`{id?, client_id?, name, rc_number?, note?, remove?}`); `public.practice_conflict_run(p_intake uuid) returns jsonb` (sets `checked_at`, `none|hits`); `public.practice_conflict_decide(p_intake uuid, p jsonb) returns jsonb` (partner only; `{outcome: 'cleared'|'refused', note}`, note ≥ 10 chars, needs `hits` and a run after the last edit (`checked_at >= edited_at`); refused → `status 'declined'`, `retain_until = private.retain_date(5)`); `public.practice_set_conflict_scan(p_practice uuid, p_on boolean) returns jsonb` (partner); `public.practice_intake_declare(p_intake uuid, p jsonb) returns jsonb` (partner; `{doc_path?}`; stores `authority_statement` = `I confirm that <firm> holds the written authority of <client> to set up and run its accounting records and tax affairs on its behalf under full mandate, as set out in the engagement letter, and that I am a partner of <firm>.`).
   - `public.practice_invite_client(p_practice uuid, p jsonb)`: requires `p->>'intake_id'` of this practice with `intake_cleared` and `mode_requested 'involved'` (`Finish the due diligence and conflicts check first.`), stores `intake_id`.
   - `tests.cleared_intake(p_practice uuid, p_name text, p_mode text default 'involved') returns uuid` (risk low, run, no hits).
 
@@ -625,6 +648,7 @@ git commit -m "White label: no Counta sender name, footers or pay buttons for ma
 -- test: intake_pep_forces_high
 i := public.practice_intake_save(pr, '{"legal_name":"Kola Ventures Ltd","risk_rating":"low","people":[{"kind":"director","name":"Kola Ade","is_pep":true}]}')->>'id';
 assert (select risk_rating = 'high' and pep_present from practice_intakes where id = i), 'intake_pep_forces_high';
+assert public.practice_intake(i)->'letters' = '[]'::jsonb, 'intake_pep_forces_high: no letters before Task 9';
 -- test: intake_rejects_full_id_numbers          (Review Focus 4)
 perform tests.throws($q$select public.practice_intake_save(<pr>, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada 12345678901"}]}')$q$, '%last 4 characters%');
 perform tests.throws($q$... "people":[{"kind":"director","name":"Ada Eze","id_last4":"12345678901"}] ...$q$, '%last 4 characters%');
@@ -648,28 +672,36 @@ perform tests.as_user(partner); perform tests.throws($q$... '{"outcome":"cleared
 -- test: intake_reedit_needs_rerun
 perform public.practice_intake_save(pr, jsonb_build_object('id', i, 'legal_name', 'Kola Ventures Nigeria Ltd'));
 assert (select conflict_status from practice_intakes where id = i) = 'pending' and not private.intake_cleared((select x from practice_intakes x where id = i)), 'intake_reedit_needs_rerun';
+-- test: declaration_keeps_clearance       (k := tests.cleared_intake(pr, 'Clear Ventures Ltd', 'full'))
+perform tests.as_user(partner); perform public.practice_intake_declare(k, '{}'); perform tests.as_postgres();
+assert private.intake_cleared((select x from practice_intakes x where id = k)), 'declaration_keeps_clearance: only substantive edits move edited_at';
 -- test: invite_needs_cleared_intake
 perform tests.throws($q$select public.practice_invite_client(<pr>, '{"email":"o@example.test","intake_id":"<uncleared>"}')$q$, '%due diligence%');
 -- test: business_link_creates_draft_intake      (business_invite_accountant then practice_accept by the practice)
 assert (select dd_incomplete and status = 'engaged' from practice_intakes where client_id = c), 'business_link_creates_draft_intake';
 -- test: intake_retention
 perform tests.throws($q$delete from practice_intakes where id = <i>$q$, '%kept until%');
+assert private.retain_date(3) = (current_date + interval '5 years')::date and private.retain_date(7) = (current_date + interval '7 years')::date, 'intake_retention: at least 5 years';
 -- test: practice_files
 assert private.practice_file_ok('practice/' || pr || '/intake/' || i || '/cac.pdf') (as partner) and not (as another practice's partner), 'practice_files';
--- test: intake_helpers_revoked (fold_name, norm_id, has_id_number, intake_cleared, conflict_scan, intake_json, practice_file_ok)
+perform tests.as_user(partner);
+assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', 'practice/%s/intake/%s/cac.pdf')$q$, pr, i)) is null, 'practice_files: partner uploads as authenticated through the policy';
+perform tests.as_postgres();
+assert has_function_privilege('authenticated', 'private.practice_file_ok(text)', 'execute') and not has_function_privilege('anon', 'private.practice_file_ok(text)', 'execute'), 'practice_files: policy helper granted to authenticated only';
+-- test: intake_helpers_revoked (fold_name, norm_id, has_id_number, intake_cleared, retain_date, conflict_scan, intake_json)
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `bash supabase/tests/run_tests.sh 06_intake`
-Expected: `FAIL 06_intake_conflicts.sql: ERROR:  function public.practice_intake_save(uuid, jsonb) does not exist`
+Expected (either form is the expected red): `FAIL 06_intake_conflicts.sql: ERROR:  function public.practice_intake_save(uuid, unknown) does not exist` (an untyped literal argument) or the same with `(uuid, jsonb)`
 
 - [ ] **Step 3: Implement `20261124000600_intake_conflicts.sql`** and `tests.cleared_intake` as in Interfaces.
 
 - [ ] **Step 4: Verify**
 
 Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check`
-Expected: `ALL PASS (7 files)`, `golden OK (136 cases)`
+Expected: `ALL PASS (7 files)`, `golden OK (145 cases)`
 
 - [ ] **Step 5: Commit**
 
@@ -688,20 +720,26 @@ git commit -m "Due-diligence intake and conflicts check: people with last-4 IDs,
 - Modify: `supabase/tests/harness/helpers.sql` (add `tests.completed_letter`)
 
 **Interfaces:**
-- Consumes: intakes (Task 8), `private.call_function`, `private.activity_event`.
+- Consumes: intakes and `public.practice_intake` (Task 8), `private.call_function`, `private.activity_event`, `private.sha256_hex` (existing, `20261115000100_security_signing.sql`).
 - Produces:
   - Tables `practice_letter_templates` (`practice_id`, `name` 2..80, `kind` `blocks|pdf`, `body jsonb`, `pdf_path`, `is_default`, `archived`, partial unique default per practice), `engagement_letters` (`practice_id`, `intake_id`, `client_id`, `template_id`, `variant` `full|involved`, `source` `template|pdf|signed_upload`, `status` `draft|partner_signed|sent|completed|uploaded|void`, `title`, `blocks jsonb`, `merge jsonb not null default '{}'`, `doc_path`, `doc_sha256`, `final_path`, `final_sha256`, `retention_years int not null default 6 check (retention_years >= 5)`, `partner_id`, `partner_signature`, `partner_signed_at`, `partner_ip`, `partner_ua`, `white_label boolean not null default false` (= `variant = 'full'`), `void_reason`), `engagement_letter_signers` (`letter_id`, `name`, `email`, `title`, `token_hash`, `token_expires`, `sends_today`, `sends_day`, `otp_hash`, `otp_expires`, `otp_tries`, `otp_failures`, `locked_at`, `code_verified_at`, `signature_path`, `typed_name`, `ip`, `ua`, `signed_at`), `engagement_letter_events` (`id bigint identity`, `letter_id`, `at`, `kind`, `actor`, `ip`, `ua`, `detail jsonb`).
   - trigger `engagement_letters_freeze` (BEFORE UPDATE): once `OLD.status <> 'draft'`, `blocks, merge, variant, source, doc_path, doc_sha256, template_id, intake_id` cannot change (`A signed letter cannot be edited. Void it and start again.`).
   - `private.letter_fields() returns text[]` — exactly the 50 fields of the draft: `letter.date contact.title contact.name contact.salutation client.name client.address client.name_upper client.reg_label client.rc_number client.description engagement.title_upper engagement.title_lower engagement.start_date proposal.date firm.name firm.email firm.phone firm.city fees.frequency fees.amount fees.amount_words fees.deposit fees.deposit_words fees.billing_day fees.billing_period fees.payment_days fees.suspend_days service.advisory service.bookkeeping service.monthly service.annual service.other service.other_text service.days partner.name partner.title partner.email team.assistant conflicts.note liability.cap_basis retention.years termination.notice_days termination.handover_days arbitration.seat signer.name signer.title signer.date mode.full_mandate signature.firm signature.client`.
   - `private.letter_body_ok(p_body jsonb) returns text` (null = valid, else the reason): `octet_length(p_body::text) <= 204800`; `version = 1`; 1..600 blocks; `id ~ '^[a-z0-9_-]{1,40}$'` unique; `kind in ('heading','clause','paragraph','list','signature')`; `level` 1..4; `text` ≤ 4000 and `text !~ '<[A-Za-z/!]'`; `variant in (null,'full','involved')`; `optional` null or a field; every `{{x}}`, `{{#x}}`, `{{/x}}` names a field; every `{{ref:id}}` names a block; signature text `firm|client`.
-  - `private.letter_default_body() returns jsonb` — the draft converted: one block per paragraph; written-out numbers removed; heading/clause/list levels 1/2/3/4 for `1.`/`1.1`/`(a)`/`(i)`; whole-paragraph `{{#x}}…{{/x}}` → `optional: 'x'` on each block inside; `{{#mode.full_mandate}}` → `variant: 'full'`; inline `{{#x}}…{{/x}}` kept in text; `paragraph 1.1`, `1.1(b)`, `6.3`, `13` → `{{ref:scope_services}}`, `{{ref:svc_bookkeeping}}`, `{{ref:conf_other_clients}}`, `{{ref:term}}` with those block ids; clause 2.1(d) gets `optional: 'service.bookkeeping'`; `{{signature.firm}}`/`{{signature.client}}` → signature blocks.
+  - `private.letter_default_body() returns jsonb` — the draft converted: one block per paragraph; written-out numbers removed; heading/clause/list levels 1/2/3/4 for `1.`/`1.1`/`(a)`/`(i)`; whole-paragraph `{{#x}}…{{/x}}` → `optional: 'x'` on each block inside; `{{#mode.full_mandate}}` → `variant: 'full'`; inline `{{#x}}…{{/x}}` kept in text; `paragraph 1.1`, `1.1(b)`, `6.3`, `13` → `{{ref:scope_services}}`, `{{ref:svc_bookkeeping}}`, `{{ref:conf_other_clients}}`, `{{ref:term}}` with those block ids; clause 2.1(d) gets `optional: 'service.bookkeeping'`; `{{signature.firm}}`/`{{signature.client}}` → signature blocks. Every level-1 heading has a fixed id, in order: `scope, authority, responsibilities, team, fees, confidentiality, conflicts, aml, personal_data, liability, copyright, retention, term, problems, governing_law, signing` (Task 12's tests look up `scope`, `svc_bookkeeping` and `term`); other blocks get stable ids of the same form.
   - `private.letter_defaults() returns jsonb` — `{"liability.cap_basis":"lower","retention.years":6,"termination.notice_days":30,"termination.handover_days":14,"fees.payment_days":14,"fees.suspend_days":30,"fees.frequency":"monthly","fees.billing_day":1,"fees.billing_period":"month","service.days":10,"arbitration.seat":"Lagos","contact.salutation":"Sir/Madam","client.reg_label":"RC"}`.
   - `private.letter_event(p_letter uuid, p_kind text, p_actor text, p_ip text, p_ua text, p_detail jsonb default '{}') returns void` (also `activity_event(org, 'letter_' || p_kind, …)` on the client's org when there is one); kinds `drafted, partner_signed, sent, opened, code_sent, code_failed, signed, uploaded, voided`.
   - `private.practice_mail(p_kind text, p_id uuid) returns void` → `private.call_function('messaging', jsonb_build_object('action','practice_mail','kind',p_kind,'id',p_id))`.
+  - Token and one-time-code helpers, shared with Task 10's director confirmations (no other task re-implements these rules):
+    - `private.token_new(p_prefix text) returns jsonb` → `{"token": "<p_prefix>_<48 hex from gen_random_bytes(24)>", "hash": private.sha256_hex(token)}`; callers store `hash` and `token_expires = now() + 14 days`, and look a presented token up by `private.sha256_hex(p_token)`.
+    - `private.otp_send_ok(p_sends_day date, p_sends_today int) returns jsonb` → `{"ok": false, "reason": "too_many_today"}` when `p_sends_day` is today's Lagos day and `p_sends_today >= 5`; else `{"ok": true, "sends_day": <Lagos today>, "sends_today": <1, or p_sends_today + 1 on the same day>}` (the caller stores the counters).
+    - `private.otp_new(p_id uuid) returns jsonb` → `{"code": <6 digits from gen_random_bytes>, "otp_hash": private.sha256_hex(p_id || ':' || code), "otp_expires": now() + 10 minutes}` (the caller stores hash and expiry and sets `otp_tries = 0`).
+    - `private.otp_check(p_id uuid, p_code text, p_otp_hash text, p_otp_expires timestamptz, p_otp_tries int, p_otp_failures int, p_locked_at timestamptz) returns jsonb` → `{"ok", "reason": null|'locked'|'expired'|'used_up'|'wrong_code', "otp_tries", "otp_failures", "locked", "tries_left"}` with the new counters (5 tries per code, `locked` true once failures reach 15); the caller writes the counters back (and `locked_at = now()` when `locked`) and never raises, so counters persist.
   - RPCs: `public.practice_letter_templates(p_practice uuid) returns jsonb` (inserts `Counta standard letter` from `letter_default_body()` as default when the practice has none); `public.practice_letter_template_save(p_practice uuid, p jsonb) returns jsonb` (partner; `{id?, name, kind, body?, pdf_path?, is_default?, archived?}`, body validated); `public.practice_letter_draft(p_intake uuid, p jsonb) returns jsonb` (lead; `{template_id?, variant?, merge?, retention_years?}`; variant defaults to `mode_requested`; merge = `letter_defaults()` ‖ intake/practice/partner values ‖ `p.merge`); `public.practice_letter_save(p_letter uuid, p jsonb) returns jsonb` (draft only; `blocks` partner only, `merge` lead); `public.practice_letter(p_letter uuid) returns jsonb` (letter, signers without hashes, events); `public.practice_letter_prepare(p_letter uuid) returns jsonb` (partner; draft; `{letter_id, practice_id, source, doc_path, title, variant, blocks, merge, firm, partner}`); `public.svc_letter_frozen(p_letter uuid, p jsonb) returns jsonb` (`{doc_path, doc_sha256, by_user, signature_name, ip, ua}` → `partner_signed`); `public.practice_letter_send(p_letter uuid, p jsonb) returns jsonb` (partner; `partner_signed`; `{name, email, title}` → signer row, `sent`, `practice_mail('letter_sign', signer_id)`); `public.practice_letter_upload_signed(p_letter uuid, p jsonb) returns jsonb` (partner; `{path, sha256}` → `uploaded`); `public.practice_letter_void(p_letter uuid, p_reason text) returns jsonb` (partner).
-  - Signer service RPCs (service_role; never raise for a wrong code, so counters persist): `public.svc_sign_open(p_token text, p_ip text, p_ua text) returns jsonb` (`{ok, reason?, letter_id, title, firm_name, signer_name, doc_path, status, white_label}`); `public.svc_sign_code(p_token text, p_ip text, p_ua text) returns jsonb` (`{ok, reason: 'too_many_today'|'locked'|'expired'}`; ≤5 per Lagos day; queues `letter_code`); `public.svc_sign_verify(p_token text, p_code text, p_ip text, p_ua text) returns jsonb` (`{ok, reason: 'wrong_code'|'expired'|'used_up'|'locked', tries_left, letter: {letter_id, signer_id, doc_path, doc_sha256, title, practice_id, partner_name, partner_email, partner_signed_at, partner_ip, partner_ua, signer_name, signer_email, signer_title}}`; 5 tries per code, lock after 15 failures; success sets `code_verified_at`); `public.svc_sign_complete(p_token text, p jsonb) returns jsonb` (`{signature_path, final_path, final_sha256, typed_name, ip, ua}`; needs `code_verified_at > now() - 15 minutes`; → `completed`, `practice_mail('letter_done', letter_id)`). Tokens `es_` + 48 hex, sha256-hashed, 14 days.
-  - `public.svc_practice_mail(p_kind text, p_id uuid) returns jsonb` — `{to, cc?, reply_to, from_name, subject, heading, greet, lines[], button, link, code?, white_label}` or null when not sendable; `letter_sign` (signer id): new token replacing the hash, `link = app_url || '/sign/' || token`; `letter_code` (signer id): 6 digits from `gen_random_bytes`, `otp_hash = sha256(signer_id || ':' || code)`, 10 minutes, `otp_tries = 0`, `code` returned; `letter_done` (letter id): to the signer, cc the partner. `from_name` is the firm's name.
-  - `tests.completed_letter(p_intake uuid) returns uuid` (draft → `svc_letter_frozen` with a fake path/hash → send → `svc_practice_mail('letter_code')` → `svc_sign_verify` → `svc_sign_complete`).
+  - Signer service RPCs (service_role; never raise for a wrong code, so counters persist): `public.svc_sign_open(p_token text, p_ip text, p_ua text) returns jsonb` (`{ok, reason?, letter_id, title, firm_name, signer_name, doc_path, status, white_label}`); `public.svc_sign_code(p_token text, p_ip text, p_ua text) returns jsonb` (`{ok, reason: 'too_many_today'|'locked'|'expired'}`; `private.otp_send_ok` for ≤5 per Lagos day; queues `letter_code`); `public.svc_sign_verify(p_token text, p_code text, p_ip text, p_ua text) returns jsonb` (`{ok, reason: 'wrong_code'|'expired'|'used_up'|'locked', tries_left, letter: {letter_id, signer_id, doc_path, doc_sha256, title, practice_id, partner_name, partner_email, partner_signed_at, partner_ip, partner_ua, signer_name, signer_email, signer_title}}`; `private.otp_check` (5 tries per code, lock after 15 failures); success sets `code_verified_at`); `public.svc_sign_complete(p_token text, p jsonb) returns jsonb` (`{signature_path, final_path, final_sha256, typed_name, ip, ua}`; needs `code_verified_at > now() - 15 minutes`; → `completed`, `practice_mail('letter_done', letter_id)`). Tokens from `private.token_new('es')` (`es_` + 48 hex, sha256-hashed, 14 days).
+  - `public.svc_practice_mail(p_kind text, p_id uuid) returns jsonb` — `{to, cc?, reply_to, from_name, subject, heading, greet, lines[], button, link, code?, white_label}` or null when not sendable; `letter_sign` (signer id): `private.token_new('es')` replacing the stored hash, `link = app_url || '/sign/' || token`; `letter_code` (signer id): `private.otp_new(signer_id)` stored, `otp_tries = 0`, `code` returned; `letter_done` (letter id): to the signer, cc the partner. `from_name` is the firm's name.
+  - `public.practice_intake(p_intake uuid)` (Task 8) redefined: `letters` = `[{id, status, variant}]` of the intake's `engagement_letters`, newest first (consumed by Task 15's `IntakeDetail.letters`).
+  - `tests.completed_letter(p_intake uuid) returns uuid` (draft → `svc_letter_frozen` with a fake path/hash → `practice_letter_send` → `tok :=` the `es_…` tail of `svc_practice_mail('letter_sign', signer_id)->>'link'` (this mints the token; `practice_letter_send` only queues the hook) → `code := svc_practice_mail('letter_code', signer_id)->>'code'` → `svc_sign_verify(tok, code, …)` → `svc_sign_complete(tok, …)`).
 
 - [ ] **Step 1: Write the failing test** — `supabase/tests/sql/07_engagement_letters.sql`
 
@@ -710,6 +748,9 @@ git commit -m "Due-diligence intake and conflicts check: people with last-4 IDs,
 b := private.letter_default_body();
 assert private.letter_body_ok(b) is null, 'default_template_valid: validates';
 assert (select count(*) from jsonb_array_elements(b->'blocks') x where x->>'kind' = 'heading' and (x->>'level')::int = 1) = 16, 'default_template_valid: 16 headings';
+assert (select array_agg(x->>'id' order by n) from jsonb_array_elements(b->'blocks') with ordinality t(x, n) where x->>'kind' = 'heading' and (x->>'level')::int = 1)
+  = '{scope,authority,responsibilities,team,fees,confidentiality,conflicts,aml,personal_data,liability,copyright,retention,term,problems,governing_law,signing}', 'default_template_valid: fixed heading ids';
+assert (select count(distinct x->>'id') from jsonb_array_elements(b->'blocks') x where x->>'id' in ('scope','scope_services','svc_bookkeeping','conf_other_clients','term')) = 5, 'default_template_valid: pinned ids';
 assert (select bool_and(b::text like '%{{' || f || '}}%' or b::text like '%{{#' || f || '}}%' or b->'blocks' @> jsonb_build_array(jsonb_build_object('optional', f))
   or f in ('mode.full_mandate','signature.firm','signature.client')) from unnest(private.letter_fields()) f), 'default_template_valid: every field maps';
 assert (select count(*) from jsonb_array_elements(b->'blocks') x where x->>'variant' = 'full') = 1, 'default_template_valid: one full-mandate clause';
@@ -724,6 +765,7 @@ perform tests.as_user(manager); perform tests.throws($q$select public.practice_l
 -- test: letter_draft_defaults
 l := public.practice_letter_draft(i, '{}')->>'id';
 assert (select merge->>'liability.cap_basis' = 'lower' and retention_years = 6 from engagement_letters where id = l), 'letter_draft_defaults';
+assert public.practice_intake(i)->'letters'->0 = jsonb_build_object('id', l, 'status', 'draft', 'variant', (select variant from engagement_letters where id = l)), 'letter_draft_defaults: practice_intake lists the letter';
 perform tests.throws($q$select public.practice_letter_draft(<i>, '{"retention_years":4}')$q$, '23514%');
 -- test: letter_freeze
 perform public.svc_letter_frozen(l, '{"doc_path":"practice/<pr>/letters/<l>/letter.pdf","doc_sha256":"<64 hex>","signature_name":"Bisi Partner"}');
@@ -736,14 +778,18 @@ r := public.svc_practice_mail('letter_sign', s); assert r->>'link' ~ '/sign/es_[
 c := public.svc_practice_mail('letter_code', s)->>'code'; assert c ~ '^[0-9]{6}$', 'sign_token_and_code: 6 digits';
 -- test: sign_limits
 -- five svc_sign_code calls succeed, the sixth returns reason 'too_many_today'; five wrong codes → 'used_up'; fifteen failures → 'locked' and locked_at set
--- test: sign_complete                 (svc_sign_open, svc_sign_code, svc_practice_mail('letter_code') first)
+-- test: sign_complete                 (tok := substring(public.svc_practice_mail('letter_sign', s)->>'link' from 'es_[0-9a-f]{48}$'); then svc_sign_open, svc_sign_code, c := svc_practice_mail('letter_code', s)->>'code')
 assert (public.svc_sign_verify(tok, c, '203.0.113.9', 'UA')->>'ok')::boolean, 'sign_complete: verify';
 perform public.svc_sign_complete(tok, '{"signature_path":"…/signature.png","final_path":"…/final.pdf","final_sha256":"<64 hex>","typed_name":"Dayo Client","ip":"203.0.113.9","ua":"UA"}');
 assert (select status from engagement_letters where id = l) = 'completed'
    and (select array_agg(kind order by id) from engagement_letter_events where letter_id = l) @> '{partner_signed,sent,opened,code_sent,signed}', 'sign_complete';
 -- test: upload_signed_copy
 assert public.practice_letter_upload_signed(l2, '{"path":"practice/<pr>/letters/<l2>/signed.pdf","sha256":"<64 hex>"}')->>'status' = 'uploaded', 'upload_signed_copy';
--- test: letter_helpers_revoked (letter_fields, letter_body_ok, letter_default_body, letter_defaults, letter_event, practice_mail; svc_* not executable by authenticated)
+-- test: otp_helpers
+assert (private.token_new('es')->>'token') ~ '^es_[0-9a-f]{48}$' and private.token_new('es')->>'hash' ~ '^[0-9a-f]{64}$', 'otp_helpers: token';
+assert not (private.otp_send_ok((now() at time zone 'Africa/Lagos')::date, 5)->>'ok')::boolean and (private.otp_send_ok((now() at time zone 'Africa/Lagos')::date - 1, 5)->>'sends_today')::int = 1, 'otp_helpers: five sends a Lagos day';
+assert private.otp_check(s, '000000', 'x', now() + interval '1 minute', 0, 14, null)->>'reason' = 'wrong_code' and (private.otp_check(s, '000000', 'x', now() + interval '1 minute', 0, 14, null)->>'locked')::boolean, 'otp_helpers: fifteenth failure locks';
+-- test: letter_helpers_revoked (letter_fields, letter_body_ok, letter_default_body, letter_defaults, letter_event, practice_mail, token_new, otp_send_ok, otp_new, otp_check; svc_* not executable by authenticated)
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -756,7 +802,7 @@ Expected: `FAIL 07_engagement_letters.sql: ERROR:  function private.letter_defau
 - [ ] **Step 4: Verify**
 
 Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check`
-Expected: `ALL PASS (8 files)`, `golden OK (136 cases)`
+Expected: `ALL PASS (8 files)`, `golden OK (145 cases)`
 
 - [ ] **Step 5: Commit**
 
@@ -773,18 +819,20 @@ git commit -m "Engagement letters: templates as blocks, default letter, freeze, 
 - Create: `supabase/migrations/20261124000800_mandate_gate.sql`
 - Create: `supabase/tests/sql/08_mandate_gate.sql`
 - Modify: `supabase/tests/harness/helpers.sql` (add `tests.full_client`)
+- Modify: `supabase/tests/golden/sweep_manifest.tsv` (append the owner comparison in `public.practice_create_business`)
 
 **Interfaces:**
-- Consumes: `private.practice_can_full`, `private.create_org_core`, `private.practice_sync_seats`, `private.intake_cleared`, `private.identity_people`, `private.identity_match`, `private.fold_name`, `private.norm_id`, `private.practice_mail`, `svc_practice_mail` (Task 9 body).
+- Consumes: `private.practice_can_full`, `private.create_org_core`, `private.practice_sync_seats`, `private.intake_cleared`, `private.identity_people`, `private.identity_match`, `private.fold_name`, `private.norm_id`, `private.practice_mail`, `svc_practice_mail` (Task 9 body), `private.token_new`, `private.otp_send_ok`, `private.otp_new`, `private.otp_check` (Task 9), `private.practice_notify` (existing: tells a practice's partners and managers), `public.svc_review_recipients()` (existing, `20261029000100_kyc_review_email.sql`: the review address and every TaxStreem reviewer, the recipients of the NIN-slip review email).
 - Produces:
   - `practice_director_confirmations` (`practice_id`, `client_id`, `name`, `email`, `phone`, `token_hash`, `token_expires`, `sends_today`, `sends_day`, `otp_hash`, `otp_expires`, `otp_tries`, `otp_failures`, `locked_at`, `status` `pending|review|confirmed|declined|cancelled`, `ip`, `ua`, `flags jsonb not null default '{}'`, `decline_reason`, `decided_by`, `decided_at`, `requested_by`, `created_at`, `confirmed_at`); `practice_mandate_flags` (`practice_id`, `intake_id`, `client_id`, `kind` `duplicate_company|director_declined|director_review`, `detail jsonb`, `created_at`, `resolved_at`, `resolved_by`, `resolution_note`).
   - `private.mandate_gate(p_intake uuid) returns jsonb` → `{"partner_verified","practice_can_full","risk_rated","conflicts_cleared","letter_completed","authority_declared","ok"}` (caller is an active partner with `licence_status 'verified'`; `practice_can_full`; `risk_rating` set; `intake_cleared`; a `variant 'full'` letter for the intake with status `completed|uploaded`; `authority_declared_at` set); `public.practice_mandate_gate(p_intake uuid) returns jsonb` (lead wrapper).
   - `public.practice_create_business(p_intake uuid, p jsonb) returns jsonb` — `p = {email (required), phone?, vat_registered? default true, bank_details? ≤500, engagement_partner_id? default the caller, alert_email?}`; gate not ok → raises `Full mandate needs: <comma-separated false keys>`; another org with the same `norm_id` RC or Tax ID that has an active owner with a user or is managed by another practice → inserts a `duplicate_company` flag and returns `{"ok": false, "reason": "duplicate"}`; else `create_org_core(intake.legal_name, p.email, …)`, `orgs.managed_by`, `identity_status 'pending'`, `invoice_note = bank_details`, `rc_number`, `tin`, `address`; `practice_clients` (`mode 'full'`, `billing 'practice'`, `status 'active'`, `initiated_by 'practice'`, `intake_id`, `engagement_partner_id`, `alert_email`, `retention_years` from the letter, `started_at`); sync seats; `activity_event(org, 'mandate_started', …)`; returns `{"ok": true, "org_id", "client_id"}`.
   - `private.payments_open(p_org)` and `private.require_payments_open(p_org)`: existing checks AND (`managed_by is null` OR (`director_confirmed_at is not null` AND `practice_can_full(managed_by)`)); new message for the managed case `Payments open once a director of the business confirms, and while the firm may run full mandates.`; `public.get_inventory` `org.payments_open` = `private.payments_open(o.id)`.
   - `private.free_mail_domains() returns text[]` = `{gmail.com, googlemail.com, yahoo.com, yahoo.co.uk, ymail.com, outlook.com, hotmail.com, live.com, msn.com, icloud.com, me.com, aol.com, proton.me, protonmail.com, gmx.com, zoho.com, mail.com}` plus the domains in `coalesce(private.setting('mandates'), '{}')->'free_mail_domains'` (a jsonb array in `platform_settings` key `mandates`).
-  - `public.practice_director_request(p_client uuid, p jsonb) returns jsonb` (lead; `{name, email, phone?}`; full, active; `identity_status in ('verified','approved')` else `Verify the business's identity first.`; `identity_match` of `fold_name(name)` against `identity_people(org)` else `That name is not a director on the CAC record.`; `lower(trim(email))` not any practice member's or `practices.email`, and its domain not the domain of any of those unless in `free_mail_domains()` → else `Use the director's own email address, not the firm's.`; cancels earlier pending rows; `practice_mail('director_confirm', id)`).
-  - Service RPCs (never raise on a wrong code): `public.svc_director_open(p_token text, p_ip text, p_ua text) returns jsonb` (`{ok, firm_name, business_name, director_name, status}`), `public.svc_director_code(p_token text, p_ip text, p_ua text) returns jsonb`, `public.svc_director_confirm(p_token text, p_code text, p_ip text, p_ua text) returns jsonb` (same code rules as letters; on success: an `auth.sessions` row of any member of the practice with `ip = p_ip::inet` updated within 30 days, or an unparsable IP → `status 'review'` + `director_review` flag; else `confirmed`, `orgs.director_confirmed_at = now()`, `activity_event(org, 'director_confirmed', …)`; returns `{ok, status}`), `public.svc_director_decline(p_token text, p_reason text, p_ip text, p_ua text) returns jsonb` (`declined`, `director_declined` flag, `practice_notify`). Tokens `dc_` + 48 hex, 14 days.
-  - `public.svc_practice_mail` adds `director_confirm` (link `app_url || '/confirm/' || token`) and `director_code`; both `white_label true`.
+  - `private.firm_email(p_practice uuid, p_email text) returns text` — the one "is this the firm's address" predicate, on `lower(trim(p_email))`: `'member'` when it is any practice member's email, `'practice'` when it is `practices.email`, `'domain'` when its domain is the domain of any of those and not in `free_mail_domains()`, else null (consumed by Task 11's `practice_set_alert_email`; Task 6's `firm_addresses` stays for exact matching in the outbound gate).
+  - `public.practice_director_request(p_client uuid, p jsonb) returns jsonb` (lead; `{name, email, phone?}`; full, active; `identity_status in ('verified','approved')` else `Verify the business's identity first.`; `identity_match` of `fold_name(name)` against `identity_people(org)` else `That name is not a director on the CAC record.`; `private.firm_email(practice, email) is not null` → `Use the director's own email address, not the firm's.`; cancels earlier pending rows; `practice_mail('director_confirm', id)`).
+  - Service RPCs (never raise on a wrong code): `public.svc_director_open(p_token text, p_ip text, p_ua text) returns jsonb` (`{ok, firm_name, business_name, director_name, status}`), `public.svc_director_code(p_token text, p_ip text, p_ua text) returns jsonb` (`private.otp_send_ok`; queues `director_code`), `public.svc_director_confirm(p_token text, p_code text, p_ip text, p_ua text) returns jsonb` (`private.otp_check`, writing back its counters; on success: an `auth.sessions` row of any member of the practice with `ip = p_ip::inet` updated within 30 days, or an unparsable IP → `status 'review'` + `director_review` flag + `private.practice_mail('director_admin', id)`; else `confirmed`, `orgs.director_confirmed_at = now()`, `activity_event(org, 'director_confirmed', …)`; returns `{ok, status}`), `public.svc_director_decline(p_token text, p_reason text, p_ip text, p_ua text) returns jsonb` (`declined`, `director_declined` flag, `practice_notify` to the firm, and `private.practice_mail('director_admin', id)` to TaxStreem's reviewers). Tokens from `private.token_new('dc')` (`dc_` + 48 hex, 14 days).
+  - `public.svc_practice_mail` adds `director_confirm` (`private.token_new('dc')` replacing the stored hash, link `app_url || '/confirm/' || token`) and `director_code` (`private.otp_new(id)` stored, `otp_tries = 0`, `code` returned); both `white_label true`; and `director_admin` (confirmation id, status `review` or `declined`): `to` = `public.svc_review_recipients()` as a JSON array, `from_name 'Counta'`, `white_label false`, subject `Director confirmation to review: <business>` or `A director declined: <business>`, lines naming the firm, the business, the status and (declined) the reason, `link = app_url || '/admin/mandates'`; it carries no director email or phone.
   - `public.admin_director_decide(p_id uuid, p_approve boolean, p_note text) returns jsonb` (`require_staff(false)`; `review` → `confirmed` (sets `director_confirmed_at`) or `declined`; `private.audit('director_confirmed'|'director_declined', …)`); `public.admin_practice_suspend(p_practice uuid, p_on boolean, p_note text) returns jsonb` (`require_staff(true)`, note ≥ 5 chars, `mandate_suspended_at`, `private.audit('mandates_suspended'|'mandates_resumed', …)`, `practice_notify`).
   - `tests.full_client(p_practice uuid, p_partner uuid) returns uuid` (cleared full intake → declaration → completed letter → `practice_create_business` as the partner; returns the `practice_clients` id).
 
@@ -812,24 +860,32 @@ perform tests.as_service(); perform tests.throws($q$select public.svc_wallet_to_
 perform tests.throws($q$select public.svc_tax_wallet_to_open(<o>, <seat>)$q$, '%director of the business confirms%');
 -- after director confirmation (identity verified, director confirms from a fresh IP):
 assert private.payments_open(o), 'money_locked_until_director: open';
-perform public.admin_practice_suspend(pr, true, 'Licence lapsed'); assert not private.payments_open(o), 'money_locked_until_director: kill switch';
+perform tests.as_user(tests.admin_user('admin2@example.test'), 'aal2'); perform public.admin_practice_suspend(pr, true, 'Licence lapsed');
+perform tests.as_postgres(); assert not private.payments_open(o), 'money_locked_until_director: kill switch';
 -- test: director_email_free_mail_and_case   (Review Focus 3; platform_settings ('mandates', '{"free_mail_domains":["freemail.example.test"]}'); practice members ada@freemail.example.test and partner@firm.example.test)
 assert tests.error_of($q$select public.practice_director_request(<c>, '{"name":"Tunde Bello","email":"tunde.bello@freemail.example.test"}')$q$) is null, 'director_email_free_mail_and_case: shared free-mail domain allowed';
 perform tests.throws($q$… "email":" Ada@FreeMail.example.test " …$q$, '%director''s own email%');
 perform tests.throws($q$… "email":"tunde@FIRM.example.test" …$q$, '%director''s own email%');
+perform tests.as_postgres();
+assert private.firm_email(pr, ' Partner@Firm.example.test ') = 'member' and private.firm_email(pr, 'x@firm.example.test') = 'domain' and private.firm_email(pr, 'tunde.bello@freemail.example.test') is null, 'director_email_free_mail_and_case: firm_email';
 -- test: director_name_and_identity
 perform tests.throws($q$… "name":"Someone Else" …$q$, '%not a director on the CAC record%');
 assert tests.error_of($q$… "name":"Túndé Bello" …$q$) is null, 'director_name_and_identity: diacritics folded';
 -- test: director_confirm_flow
 assert (public.svc_director_confirm(tok, code, '198.51.100.7', 'UA')->>'status') = 'confirmed' and (select director_confirmed_at is not null from orgs where id = o), 'director_confirm_flow';
--- test: director_ip_review              (auth.sessions row for the partner with ip 198.51.100.8)
+-- test: director_ip_review              (auth.sessions row for the partner with ip 198.51.100.8; tests.hooks_on())
 assert public.svc_director_confirm(tok2, code2, '198.51.100.8', 'UA')->>'status' = 'review' and (select director_confirmed_at is null from orgs where id = o2), 'director_ip_review';
+assert exists (select 1 from net._requests where url = 'http://functions.test/messaging' and body->>'action' = 'practice_mail' and body->>'kind' = 'director_admin' and body->>'id' = dc2::text), 'director_ip_review: TaxStreem reviewers told';
 perform tests.as_user(tests.admin_user('admin1@example.test'), 'aal2'); perform public.admin_director_decide(dc2, true, 'Checked by phone');
 assert (select director_confirmed_at is not null from orgs where id = o2), 'director_ip_review: admin approves';
--- test: director_decline
-perform public.svc_director_decline(tok3, 'I did not agree to this', '198.51.100.9', 'UA');
+-- test: director_decline                (tests.hooks_on(); a TaxStreem reviewer: insert into platform_reviewers (user_id) values (tests.user('reviewer1@example.test')))
+perform tests.as_service(); perform public.svc_director_decline(tok3, 'I did not agree to this', '198.51.100.9', 'UA'); perform tests.as_postgres();
 assert exists (select 1 from practice_mandate_flags where kind = 'director_declined' and client_id = c3), 'director_decline';
--- test: mandate_helpers_revoked (mandate_gate, free_mail_domains; svc_director_* not executable by authenticated)
+assert exists (select 1 from notifications where kind = 'practice' and user_id = partner), 'director_decline: firm told';
+assert exists (select 1 from net._requests where url = 'http://functions.test/messaging' and body->>'action' = 'practice_mail' and body->>'kind' = 'director_admin' and body->>'id' = dc3::text), 'director_decline: TaxStreem reviewers told';
+perform tests.as_service(); r := public.svc_practice_mail('director_admin', dc3); perform tests.as_postgres();
+assert r->'to' = to_jsonb(public.svc_review_recipients()) and r->'to' ? 'reviewer1@example.test' and not (r->>'white_label')::boolean, 'director_decline: sent to the review recipients';
+-- test: mandate_helpers_revoked (mandate_gate, free_mail_domains, firm_email; svc_director_* not executable by authenticated)
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -839,15 +895,17 @@ Expected: `FAIL 08_mandate_gate.sql: ERROR:  function private.mandate_gate(uuid)
 
 - [ ] **Step 3: Implement `20261124000800_mandate_gate.sql`** and `tests.full_client` as in Interfaces (redefine `payments_open`, `require_payments_open`, `get_inventory`, `svc_practice_mail` from `fn_dump.sh`).
 
-- [ ] **Step 4: Verify**
+- [ ] **Step 4: Record this task's owner comparisons in the sweep manifest.** Run `bash supabase/tests/golden/run.sh sweep`; it reports the duplicate-company check in `public.practice_create_business` (another org's active `role = 'owner'` member with a user: the real owner's identity) as missing. Append one `public.practice_create_business\tkeep\t<matched snippet>` line per match to `supabase/tests/golden/sweep_manifest.tsv`, and a `keep` line for any match in another function this task adds or redefines.
 
-Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check`
-Expected: `ALL PASS (9 files)`, `golden OK (136 cases)`
+- [ ] **Step 5: Verify**
 
-- [ ] **Step 5: Commit**
+Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check && bash supabase/tests/golden/run.sh sweep`
+Expected: `ALL PASS (9 files)`, `golden OK (145 cases)`, `sweep OK (<n> kept)`
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/20261124000800_mandate_gate.sql supabase/tests/sql/08_mandate_gate.sql supabase/tests/harness/helpers.sql
+git add supabase/migrations/20261124000800_mandate_gate.sql supabase/tests/sql/08_mandate_gate.sql supabase/tests/harness/helpers.sql supabase/tests/golden/sweep_manifest.tsv
 git commit -m "Full mandate gate: verified partner, cleared intake, signed letter, declaration; director confirmation unlocks money" -m "$TRAILER"
 ```
 
@@ -858,10 +916,12 @@ git commit -m "Full mandate gate: verified partner, cleared intake, signed lette
 **Files:**
 - Create: `supabase/migrations/20261124000900_mandate_end_handover.sql`
 - Create: `supabase/tests/sql/09_mandate_end_handover.sql`
-- Modify: `supabase/tests/golden/added_keys.txt` (append `mandate can_full dd_incomplete read_only opposing_parties`)
+- Modify: `supabase/tests/golden/added_keys.txt` (append `mandate can_full dd_incomplete read_only opposing_parties`; the `mode` keys are already covered by Task 2's `client.mode` and `clients[].mode`)
+- Modify: `supabase/tests/golden/sweep_manifest.tsv` (append the owner comparisons of the functions this task adds or redefines)
+- (Golden cases `public.practice_home`, `public.admin_business_delete`, `public.admin_business_delete_preview`, `public.practice_invite_check`, `public.practice_invite_preview`, `public.svc_practice_invite_link`, recorded in Task 1, prove the rewrites unchanged for ordinary businesses.)
 
 **Interfaces:**
-- Consumes: Task 10 tables, `tests.full_client`, `private.redact`, `private.activity_event`, `private.practice_sync_seats`, `private.wallet_ledger`, `private.tax_wallet_ledger`.
+- Consumes: Task 10 tables, `tests.full_client`, `private.firm_email` (Task 10), `private.retain_date` and the `practice_clients_intake` trigger (Task 8), `private.redact`, `private.activity_event`, `private.practice_sync_seats`, `private.wallet_ledger`, `private.tax_wallet_ledger`.
 - Produces:
   - `practice_handovers` (`practice_id`, `client_id`, `email`, `name`, `status` `pending|accepted|cancelled`, `token_hash`, `token_expires`, `sent_count int default 0`, `sent_at`, `created_by`, `accepted_by`, `accepted_at`, `created_at`; one pending per client).
   - `public.practice_handover_start(p_client uuid, p jsonb) returns jsonb` (partner; `{email, name}`; full, active; refuses `That person is on the practice.` when `lower(trim(email))` is any practice member's; cancels older pending; returns `{"id"}`).
@@ -869,10 +929,10 @@ git commit -m "Full mandate gate: verified partner, cleared intake, signed lette
   - `public.practice_handover_accept(p_token text) returns jsonb` — signed-in email equals the handover email (case-insensitive) else `This handover is for <email>. Sign in with that email address.`; caller not an active member of the practice; in order: `orgs.managed_by = null`; insert the owner member (`role 'owner'`, `status 'active'`) with `counta.seat_sync` on; `mode 'involved'`, `end_kind 'handover'` on the client row; sync seats (accountant, not acting owner); handover `accepted`; `activity_event(org, 'handover', …)`; returns `{"org_id"}`.
   - `private.outbound_check` also allows an alert/invite/practice email to a pending handover's address.
   - `private.org_pause_all(p_org uuid) returns void` — `integrations.status 'paused'` where active; `pos_connections.status 'removed'` where live; Mono feeds unlinked (`bank_accounts.provider_ref = null`, `provider_meta.unlinked_reason = 'engagement ended'`); subscriptions `cancel_at_period_end = true`. (Task 13 adds recurring schedules.)
-  - `public.practice_end_mandate(p_client uuid, p jsonb) returns jsonb` (partner; `{reason}` ≥ 10 chars) — refuses `Move the money out of the business wallet and the tax wallet first.` when any `wallet_ledger(wallet) > 0.004` or `tax_wallet_ledger(tax_wallet) > 0.004`; refuses `Wait for the payouts in progress to finish first.` when payouts `pending_approval|approved|processing`, tax transfers `pending|sent` or tax payments `approved|processing` exist; then `org_pause_all`; client `status 'ended'`, `end_kind 'ended'`, `ended_at`; sync seats (engagement partner seat stays, others disabled); intake `retain_until`; event `mandate_ended`; last, `orgs.read_only_at = now()`, `retain_until = current_date + greatest(coalesce(retention_years,5),5) years`; `managed_by` stays.
+  - `public.practice_end_mandate(p_client uuid, p jsonb) returns jsonb` (partner; `{reason}` ≥ 10 chars) — refuses `Move the money out of the business wallet and the tax wallet first.` when any `wallet_ledger(wallet) > 0.004` or `tax_wallet_ledger(tax_wallet) > 0.004`; refuses `Wait for the payouts in progress to finish first.` when payouts `pending_approval|approved|processing`, tax transfers `pending|sent` or tax payments `approved|processing` exist; then `org_pause_all`; client `status 'ended'`, `end_kind 'ended'`, `ended_at` (Task 8's `practice_clients_intake` trigger then sets the intake's `retain_until`; this function does not set it again); sync seats (engagement partner seat stays, others disabled); event `mandate_ended`; last, `orgs.read_only_at = now()`, `retain_until = private.retain_date(retention_years)`; `managed_by` stays.
   - trigger `orgs_retention_guard` (BEFORE DELETE on `orgs`) raising `This business is kept until <retain_until> (engagement records).`; `public.admin_business_delete` and `public.admin_business_delete_preview` say the same before anything else.
-  - `private.export_tables() returns text[]` (public base tables with `org_id` minus `{activity_log, kyc_profiles, usage_events, ai_logs, shop_hits, sso_logins, chat_links, whatsapp_sessions, portal_logins, pit_etax_logins}`); `public.practice_export_begin(p_client uuid) returns jsonb` (partner; full or ended-kept client; `{org_id, client_id, practice_id, tables}`); `public.svc_export_rows(p_org uuid, p_table text, p_after text, p_limit int) returns jsonb` (`{rows (each private.redact), next}` ordered by `id::text`, ≤1000); `public.svc_export_ledger(p_org uuid) returns jsonb` (rows `{date, journal_ref, account_code, account_name, debit, credit, memo}`); `public.svc_export_activity(p_org uuid) returns jsonb`; `public.svc_export_done(p_client uuid, p jsonb) returns jsonb` (`{path, sha256, bytes}` → event `export`).
-  - `public.practice_set_send_mode(p_client uuid, p_mode text) returns jsonb` (lead, `send|download_only`); `public.practice_set_alert_email(p_client uuid, p_email text) returns jsonb` (lead; must be a firm address: a practice member's, `practices.email`, or on the practice's own non-free-mail domain).
+  - `private.export_tables() returns text[]` (public base tables with `org_id` minus `{activity_log, kyc_profiles, usage_events, ai_logs, shop_hits, sso_logins, chat_links, whatsapp_sessions, portal_logins, pit_etax_logins}`); `public.practice_export_begin(p_client uuid) returns jsonb` (partner; full or ended-kept client; `{org_id, client_id, practice_id, tables}`); `public.svc_export_rows(p_org uuid, p_table text, p_after text, p_limit int) returns jsonb` (`{rows (each private.redact), next}`, ≤1000, paged by the table's primary key read from `pg_index` (`indisprimary`), not by `id` — 32 org tables such as `subscriptions`, `role_permissions`, `vendor_nins`, `tax_settings`, `einvoice_docs` and `pit_years` have no `id` column: rows ordered by the key columns, `p_after` is the last row's key as text (a JSON array of the key values, compared as a row value), `next` is that text for the last row returned or null); `public.svc_export_ledger(p_org uuid) returns jsonb` (rows `{date, journal_ref, account_code, account_name, debit, credit, memo}`); `public.svc_export_activity(p_org uuid) returns jsonb`; `public.svc_export_done(p_client uuid, p jsonb) returns jsonb` (`{path, sha256, bytes}` → event `export`).
+  - `public.practice_set_send_mode(p_client uuid, p_mode text) returns jsonb` (lead, `send|download_only`); `public.practice_set_alert_email(p_client uuid, p_email text) returns jsonb` (lead; must be a firm address: `private.firm_email(practice, p_email) is not null`, else `Use an address of the firm.`).
   - `public.practice_home`: each client row adds `mode`, `intake_id`, `dd_incomplete`, `read_only`, `retain_until`; ended clients with `end_kind 'ended'` are listed (status `ended`); top-level `can_full` = `practice_can_full(p_practice)`.
   - `public.practice_client`: `client` adds `mode`, `end_kind`, `intake_id`; new key `opposing_parties` (`[{id, name, rc_number, note}]` recorded for this client, any mode); new key `mandate` (full or ended-kept only) = `{send_mode, alert_email, engagement_partner_id, director_confirmed_at, read_only_at, retain_until, payments_open, director: {status, name, email, sent_at, confirmed_at} | null, handover: {id, email, status, sent_at} | null, letter: {id, status} | null}`.
   - `public.admin_mandates() returns jsonb` (`require_staff(false)`; `{reviews:[…review confirmations with practice/business/director/ip…], practices:[{id, name, full_clients, suspended_at, partner_verified}], flags:[unresolved]}`); `public.admin_mandate_flag_resolve(p_id uuid, p_note text) returns jsonb` (`require_staff(false)`, audit).
@@ -898,6 +958,7 @@ assert (select to_address from messages where org_id = o and template = 'alert' 
 -- test: end_mandate
 perform public.practice_end_mandate(c, '{"reason":"Client moved firms"}');
 assert (select read_only_at is not null and retain_until = (current_date + interval '6 years')::date and managed_by = pr from orgs where id = o), 'end_mandate: kept 6 years (letter default)';
+assert (select retain_until from practice_intakes where client_id = c) = (select retain_until from orgs where id = o), 'end_mandate: intake kept as long, set by the Task 8 trigger';
 assert (select status from integrations where org_id = o) = 'paused' and (select status from pos_connections where org_id = o) = 'removed', 'end_mandate: paused';
 assert (select status from members where org_id = o and user_id = partner) = 'active' and (select status from members where org_id = o and user_id = manager) = 'disabled', 'end_mandate: seats';
 perform tests.as_user(partner); perform tests.throws($q$select public.save_customer(<o>, '{"name":"After"}')$q$, '42501%');
@@ -909,6 +970,10 @@ perform tests.as_user(admin, 'aal2'); perform tests.throws($q$select public.admi
 -- test: export_rows
 perform tests.as_user(partner); assert public.practice_export_begin(c)->'tables' ? 'customers' and not public.practice_export_begin(c)->'tables' ? 'kyc_profiles', 'export_rows: tables';
 perform tests.as_service(); assert (select bool_and(x->>'hook_token_hash' = '[redacted]') from jsonb_array_elements(public.svc_export_rows(o, 'integrations', null, 1000)->'rows') x), 'export_rows: redacted';
+(as postgres, two role_permissions rows for o, e.g. roles 'manager' and 'staff')
+assert jsonb_array_length(public.svc_export_rows(o, 'role_permissions', null, 1000)->'rows') >= 2 and public.svc_export_rows(o, 'subscriptions', null, 1000) ? 'rows', 'export_rows: tables without an id column page by their primary key';
+r := public.svc_export_rows(o, 'role_permissions', null, 1);
+assert r->>'next' is not null and public.svc_export_rows(o, 'role_permissions', r->>'next', 1)->'rows'->0 <> r->'rows'->0, 'export_rows: next page starts after the last key';
 perform public.svc_export_done(c, '{"path":"practice/<pr>/exports/<c>/x.zip","sha256":"<64 hex>","bytes":10}');
 assert exists (select 1 from activity_log where org_id = o and action = 'export'), 'export_rows: logged';
 -- test: portal_reads
@@ -927,19 +992,21 @@ perform tests.as_user(partner); perform tests.throws($q$select public.admin_mand
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `bash supabase/tests/run_tests.sh 09_mandate`
-Expected: `FAIL 09_mandate_end_handover.sql: ERROR:  function public.practice_handover_start(uuid, jsonb) does not exist`
+Expected (either form is the expected red; the first call fails inside `tests.throws`): `FAIL 09_mandate_end_handover.sql: ERROR:  expected error like %on the practice%, got 42883: function public.practice_handover_start(uuid, unknown) does not exist`, or `ERROR:  function public.practice_handover_start(uuid, jsonb) does not exist`
 
 - [ ] **Step 3: Implement `20261124000900_mandate_end_handover.sql`** as in Interfaces (redefine existing functions from `fn_dump.sh`).
 
-- [ ] **Step 4: Verify**
+- [ ] **Step 4: Record this task's owner comparisons in the sweep manifest.** Run `bash supabase/tests/golden/run.sh sweep`; for each match it reports missing in a function this task adds or redefines (e.g. an owner check in `public.practice_handover_accept`, or the owner display in the rewritten `public.practice_client` if its text changed), append `<schema.function>\tkeep\t<matched snippet>` to `supabase/tests/golden/sweep_manifest.tsv` (the real owner's identity), replacing a line whose snippet the rewrite changed.
 
-Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check`
-Expected: `ALL PASS (10 files)`, `golden OK (136 cases)`
+- [ ] **Step 5: Verify**
 
-- [ ] **Step 5: Commit**
+Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check && bash supabase/tests/golden/run.sh sweep`
+Expected: `ALL PASS (10 files)`, `golden OK (145 cases)`, `sweep OK (<n> kept)`
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/20261124000900_mandate_end_handover.sql supabase/tests/sql/09_mandate_end_handover.sql supabase/tests/golden/added_keys.txt
+git add supabase/migrations/20261124000900_mandate_end_handover.sql supabase/tests/sql/09_mandate_end_handover.sql supabase/tests/golden/added_keys.txt supabase/tests/golden/sweep_manifest.tsv
 git commit -m "Full mandate handover, end without handover, export records, retention block on deletion, portal and admin reads" -m "$TRAILER"
 ```
 
@@ -948,19 +1015,19 @@ git commit -m "Full mandate handover, end without handover, export records, rete
 ### Task 12: `practice` edge function — letter PDFs, e-signing, director confirmation, export, firm emails
 
 **Files:**
-- Create: `supabase/functions/_shared/letter.ts`, `supabase/functions/_shared/letter_test.ts`, `supabase/functions/_shared/default_letter.json` (generated in Step 3)
+- Create: `supabase/functions/_shared/letter.ts`, `supabase/functions/_shared/letter_test.ts`, `supabase/functions/_shared/default_letter.json` (a test fixture generated in Step 3 from `private.letter_default_body()`; Task 20 regenerates it and diffs it against the SQL so it cannot drift)
 - Create: `supabase/functions/practice/index.ts`, `supabase/functions/practice/pdf.ts`, `supabase/functions/practice/pdf_test.ts`, `supabase/functions/practice/util.ts`, `supabase/functions/practice/util_test.ts`, `supabase/functions/practice/export.ts`
-- Modify: `supabase/functions/messaging/index.ts:337-357` (`practiceEmail` kinds add `'handover'`), `:370-381` (hook action `practice_mail`)
+- Modify: `supabase/functions/messaging/index.ts` — locate by name, not line number (Task 7 moved code out of this file): function `practiceEmail` (kinds add `'handover'`) and the `x-counta-hook` branch of the `Deno.serve` entry (new hook action `practice_mail`)
 
 **Interfaces:**
 - Consumes: `practice_letter_prepare`, `svc_letter_frozen`, `svc_sign_open|code|verify|complete`, `svc_director_open|code|confirm|decline`, `svc_practice_mail`, `practice_export_begin`, `svc_export_rows|ledger|activity|done`.
 - Produces:
   - `_shared/letter.ts` (pure TS, no Deno or npm imports; also imported by the browser in Task 16): types `LetterBlock = { id: string; kind: 'heading'|'clause'|'paragraph'|'list'|'signature'; level: number; text: string; variant?: 'full'|'involved'|null; optional?: string|null }`, `LetterBody = { version: 1; blocks: LetterBlock[] }`, `MergeValues = Record<string, string | number | boolean | null>`, `RenderedBlock = { id: string; kind: LetterBlock['kind']; level: number; number: string | null; ref: string | null; text: string }` (`number` is the printed label — `1.`, `1.1`, `(a)`, `(i)`; `ref` is the full reference — `1`, `1.1`, `1.1(a)`, `1.1(a)(i)`); `export const LETTER_FIELDS: string[]` (the 50 of Task 9); `export function deriveMerge(raw: MergeValues): MergeValues` (fills `client.name_upper`, `engagement.title_upper`, `fees.amount` as `nairaText`, `fees.amount_words`, `fees.deposit`, `fees.deposit_words`); `export function nairaText(n: number): string` (`NGN 250,000.00`); `export function amountWords(n: number): string` (`two hundred and fifty thousand naira only`); `export function renderModel(body: LetterBody, merge: MergeValues, variant: 'full'|'involved'): RenderedBlock[]` — drops blocks whose `variant` differs or whose `optional` field is falsy; numbers the rest: heading level 1 `1.`, `2.` …; clause `<h>.<n>` under the last heading; list level 3 `(a)` … under the last clause; level 4 `(i)` … under the last list item; counters restart under each new parent and dropped blocks consume none; then resolves `{{ref:id}}` to that block's `ref` (throws `Reference to a paragraph that is not in this letter: <id>`), inline `{{#x}}…{{/x}}` (kept when `x` is truthy) and `{{x}}`.
-  - `practice/util.ts`: `clientIp(req: Request): string` (first `x-forwarded-for` entry, else `x-real-ip`, else `''`), `userAgent(req: Request): string` (≤300 chars), `sha256Hex(b: Uint8Array): Promise<string>`, `tokenOk(t: string, prefix: 'es'|'dc'): boolean` (`^<prefix>_[0-9a-f]{48}$`), `pngFromDataUrl(s: string): Uint8Array | null` (`data:image/png;base64,`, ≤300 KB, PNG signature).
+  - `practice/util.ts`: `clientIp(req: Request): string` (first `x-forwarded-for` entry, else `x-real-ip`, else `''`), `userAgent(req: Request): string` (≤300 chars), `sha256Hex(b: Uint8Array): Promise<string>`, `tokenOk(t: string, prefix: 'es'|'dc'): boolean` (`^<prefix>_[0-9a-f]{48}$`), `pngFromDataUrl(s: string): Uint8Array | null` (`data:image/png;base64,`, ≤300 KB, PNG signature), `exportable(path: string, orgId: string): boolean` (true for a `documents` object under `<orgId>/`, false under `<orgId>/kyc/` — CAC documents and NIN slips stay owner-only and never leave in an export).
   - `practice/pdf.ts` (`npm:pdf-lib@1.17.1`, `StandardFonts.Helvetica`/`HelveticaBold`): `pdfSafe(s: string): string` (`₦` → `NGN `, curly quotes → straight, dashes → `-`, `…` → `...`, other non-ASCII letters NFD-folded with combining marks dropped, anything left outside WinAnsi → `?`); `renderLetterPdf(blocks: RenderedBlock[], meta: { title: string; firmName: string; partnerName: string; partnerTitle: string; partnerSignature?: string }): Promise<Uint8Array>` (A4, 50 pt margins, wrapped text, page numbers); `appendCompletion(pdf: Uint8Array, c: Completion): Promise<Uint8Array>` where `Completion = { title; originalSha256; firm: { name; partnerName; partnerEmail; signedAt; ip; ua }; client: { name; email; title; signedAt; ip; ua; typedName; signaturePng: Uint8Array } }` — adds a signature page and a page titled `Completion certificate` listing both parties' names, emails, times as `dd Mon yyyy, HH:mm (Africa/Lagos)`, IPs, user agents, `Email verified by a one-time code` for the client, and `Original document SHA-256: <hex>`.
   - `practice/index.ts` actions (`POST`, JSON `{action, …}` → `{ok: true, …}` or `{ok: false, error}`): signed-in `letter_freeze {letter_id, signature_name}` (prepare as the user → `renderModel` + `deriveMerge` → PDF → upload `practice/<pid>/letters/<lid>/letter.pdf` with `upsert: false` → `svc_letter_frozen`; a `source 'pdf'` letter hashes its uploaded file instead), signed-in `export {client_id}` (`practice_export_begin` as the user → `buildExport` → `{url}` signed for 600 s); public `sign_open {token}` (→ `{…svc_sign_open, doc_url}` signed for 300 s), `sign_code {token}`, `sign_submit {token, code, typed_name, signature_png}` (verify → download `doc_path`, re-hash, refuse `The letter has changed since it was signed by the firm.` on mismatch → upload `signature-<signer>.png` → `appendCompletion` → upload `final.pdf` → `svc_sign_complete`), `director_open {token}`, `director_code {token}`, `director_confirm {token, code}`, `director_decline {token, reason}`. Public actions check `tokenOk` first and pass `clientIp`/`userAgent`.
-  - `practice/export.ts`: `buildExport(admin: SupabaseClient, b: { org_id: string; client_id: string; practice_id: string; tables: string[] }): Promise<{ path: string; sha256: string; bytes: number }>` — zip (`npm:fflate@0.8.3` `zipSync`) of `tables/<table>.json`, `ledger.csv`, `activity_log.json`, `files/<path>` for every `documents` object under `<org_id>/`; stored at `practice/<pid>/exports/<client_id>/<yyyyMMdd-HHmmss>.zip`; then `svc_export_done`.
-  - messaging hook `{action: 'practice_mail', kind, id}` (header `x-counta-hook`) → `svc_practice_mail` → `sendEmail` with template `'practice'`, `from` display name = `displayName(from_name, true)`, `params.white_label` from the result; returns `{ok, sent_to}` or `{ok: true, skipped: true}` when null.
+  - `practice/export.ts`: `buildExport(admin: SupabaseClient, b: { org_id: string; client_id: string; practice_id: string; tables: string[] }): Promise<{ path: string; sha256: string; bytes: number }>` — zip (`npm:fflate@0.8.3` `zipSync`) of `tables/<table>.json`, `ledger.csv`, `activity_log.json`, `files/<path>` for every `documents` object under `<org_id>/` for which `exportable(path, org_id)` holds (the `<org_id>/kyc/` prefix is skipped); stored at `practice/<pid>/exports/<client_id>/<yyyyMMdd-HHmmss>.zip`; then `svc_export_done`.
+  - messaging hook `{action: 'practice_mail', kind, id}` (header `x-counta-hook`; kinds `letter_sign letter_code letter_done director_confirm director_code director_admin`) → `svc_practice_mail` → `sendEmail` with template `'practice'`, `from` display name = `displayName(from_name, true)`, `params.white_label` from the result; when `to` is an array (`director_admin`: `svc_review_recipients()`), one email per address, at most 20; returns `{ok, sent_to}` or `{ok: true, skipped: true}` when null.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -997,7 +1064,8 @@ Deno.test('pdf_diacritics_do_not_throw', async () => {            // Review Focu
   assertEquals(pdfSafe('Ọlá Àdé ₦5'), 'Ola Ade NGN 5');
 });
 Deno.test('pdf_completion_certificate', async () => {
-  const out = await appendCompletion(await renderLetterPdf(blocks, meta), completion);   // completion.originalSha256 = 'ab'.repeat(32)
+  const base = await renderLetterPdf(blocks, meta);
+  const out = await appendCompletion(base, completion);   // completion.originalSha256 = 'ab'.repeat(32)
   assertEquals((await PDFDocument.load(out)).getPageCount(), (await PDFDocument.load(base)).getPageCount() + 2);
 });
 // supabase/functions/practice/util_test.ts
@@ -1005,6 +1073,12 @@ Deno.test('client_ip', () => assertEquals(clientIp(new Request('http://x', { hea
 Deno.test('sha256_vector', async () => assertEquals(await sha256Hex(new TextEncoder().encode('abc')), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'));
 Deno.test('token_ok', () => { assert(tokenOk('es_' + 'a'.repeat(48), 'es')); assert(!tokenOk('es_' + 'a'.repeat(47), 'es')); assert(!tokenOk('dc_' + 'a'.repeat(48), 'es')); });
 Deno.test('png_data_url', () => assertEquals(pngFromDataUrl('data:image/jpeg;base64,AAAA'), null));
+Deno.test('export_skips_kyc', () => {
+  const org = '11111111-1111-4111-8111-111111111111';
+  assert(exportable(`${org}/documents/receipt.pdf`, org));
+  assert(!exportable(`${org}/kyc/nin-slip-1.pdf`, org) && !exportable(`${org}/kyc/cac.pdf`, org));
+  assert(!exportable(`22222222-2222-4222-8222-222222222222/documents/x.pdf`, org));
+});
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
@@ -1017,7 +1091,7 @@ Expected: FAIL — `Module not found "file:///…/supabase/functions/_shared/let
 - [ ] **Step 4: Verify**
 
 Run: `deno test --node-modules-dir=none --allow-read supabase/functions/_shared/letter_test.ts supabase/functions/practice/ && deno check --node-modules-dir=none supabase/functions/practice/index.ts supabase/functions/messaging/index.ts`
-Expected: `ok | 10 passed`, both files `Check …`
+Expected: `ok | 11 passed` (letter_test 4, pdf_test 2, util_test 5), both files `Check …`
 
 - [ ] **Step 5: Commit**
 
@@ -1038,7 +1112,7 @@ git commit -m "Practice edge function: letter PDFs with completion certificate, 
 **Interfaces:**
 - Consumes: `private.create_sale(p_org uuid, p_doc jsonb, m members)`, `private.local_day`, `private.org_contact`, `private.set_actor`, `private.activity_attach`, `practices.firm_org_id` (Task 6), `private.org_pause_all` (Task 11).
 - Produces:
-  - `recurring_invoices` (`org_id` → orgs on delete cascade, `customer_id` not null, `status` `active|paused|ended` default `active`, `frequency` `monthly|quarterly|annually`, `day_of_month int` 1..28, `start_date`, `end_date` (≥ start), `next_run date not null`, `due_days int default 14` 0..365, `lines jsonb not null` (1..50 of `{description, qty > 0, unit_price >= 0, vat_treatment 'standard'|'zero'|'exempt'|'none' default 'standard', once boolean default false}`), `auto_send boolean default true`, `send_channel` `email|whatsapp` default `email`, `notes`, `created_by` → members, `failures int default 0`, `last_error`, `last_run_at`, `practice_client_id` → practice_clients on delete set null, `created_at`, `updated_at`), activity trigger attached; `recurring_invoice_runs` (`schedule_id` → recurring_invoices on delete cascade, `run_date`, `sale_id`, `status` `issued|waiting_nrs|sent|failed`, `error`, `send_error`, `created_at`, unique `(schedule_id, run_date)`); `sales_channel_check` adds `'recurring'`.
+  - `recurring_invoices` (`org_id` → orgs on delete cascade, `customer_id` not null, `status` `active|paused|ended` default `active`, `frequency` `monthly|quarterly|annually`, `day_of_month int` 1..28, `start_date`, `end_date` (≥ start), `next_run date not null`, `due_days int default 14` 0..365, `lines jsonb not null` (1..50 of `{description, qty > 0, unit_price >= 0, vat_treatment 'standard'|'zero'|'exempt' default 'standard', once boolean default false}` — the three treatments `private.write_lines` accepts; anything else is refused on save), `auto_send boolean default true`, `send_channel` `email|whatsapp` default `email`, `notes`, `created_by` → members, `failures int default 0`, `last_error`, `last_run_at`, `practice_client_id` → practice_clients on delete set null, `created_at`, `updated_at`), activity trigger attached; `recurring_invoice_runs` (`schedule_id` → recurring_invoices on delete cascade, `run_date`, `sale_id`, `status` `issued|waiting_nrs|sent|failed`, `error`, `send_error`, `created_at`, unique `(schedule_id, run_date)`); `sales_channel_check` adds `'recurring'`.
   - `private.issue_invoice_as(p_sale uuid, p_issue_date date, m members) returns jsonb` and `private.send_document_as(p_sale uuid, p_channel text, p_to text, m members) returns jsonb` (today's bodies after the permission check); `public.issue_invoice`/`public.send_document` = row lookup + `private.require(...)` + the `_as` function.
   - `private.recurring_first(p_freq text, p_day int, p_start date) returns date` (first date ≥ `p_start` falling on `p_day`) and `private.recurring_next(p_freq text, p_day int, p_after date) returns date` (`p_after` + 1/3/12 months on `p_day`).
   - `private.recurring_run(p_id uuid, p_run_date date) returns uuid` — actor = `created_by` member if active else `org_contact`; `set_actor`; `create_sale` with `doc_type 'invoice'`, `status 'draft'`, `channel 'recurring'`, `customer_id`, `issue_date = p_run_date`, `due_date = p_run_date + due_days`, lines mapped to `{description, kind:'service', qty, unit_price, vat_treatment}` with `once` lines only while the schedule has no `issued|waiting_nrs|sent` run; `issue_invoice_as`; still draft with an e-invoice `waiting|sending` → run `waiting_nrs`; else `auto_send` → `send_document_as(sale, send_channel, null, m)` (an error goes to `send_error`, run stays `issued`) → `sent`.
@@ -1060,8 +1134,9 @@ assert (select count(*) from recurring_invoice_runs where schedule_id = r and ru
 assert (select s.status = 'open' and s.channel = 'recurring' and s.due_date = s.issue_date + 14 from sales s join recurring_invoice_runs x on x.sale_id = s.id where x.schedule_id = r), 'recurring_issue_and_send: issued';
 assert (select status from recurring_invoice_runs where schedule_id = r) = 'sent' and exists (select 1 from messages m join recurring_invoice_runs x on m.sale_id = x.sale_id where x.schedule_id = r), 'recurring_issue_and_send: sent';
 assert (select next_run from recurring_invoices where id = r) = '2026-02-28', 'recurring_issue_and_send: rolled forward';
--- test: recurring_vat_and_once_lines     (lines: fee 100000 'standard'; expenses deposit 20000 'none', once)
+-- test: recurring_vat_and_once_lines     (lines: fee 100000 'standard'; expenses deposit 20000 'exempt', once)
 assert (select total from sales where id = first_sale) = 127500 and (select total from sales where id = second_sale) = 107500, 'recurring_vat_and_once_lines: 7.5% VAT, deposit once';
+perform tests.as_user(owner); perform tests.throws($q$select public.recurring_save(<org>, '{… "lines":[{"description":"Deposit","qty":1,"unit_price":20000,"vat_treatment":"none"}] …}')$q$, '%VAT treatment%');
 -- test: recurring_no_double_run
 perform private.recurring_tick('2026-01-27 23:45:00+00'); assert (select count(*) from recurring_invoice_runs where schedule_id = r) = 1, 'recurring_no_double_run';
 -- test: recurring_catch_up_once          (next_run three months behind)
@@ -1085,7 +1160,7 @@ Expected: `FAIL 10_recurring_invoices.sql: ERROR:  function private.recurring_ne
 - [ ] **Step 4: Verify**
 
 Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check`
-Expected: `ALL PASS (11 files)`, `golden OK (136 cases)`
+Expected: `ALL PASS (11 files)`, `golden OK (145 cases)`
 
 - [ ] **Step 5: Commit**
 
@@ -1101,13 +1176,14 @@ git commit -m "Recurring invoices: schedules, hourly issue and send in the busin
 **Files:**
 - Create: `supabase/migrations/20261124001100_practice_fees.sql`
 - Create: `supabase/tests/sql/11_practice_fees.sql`
+- Modify: `supabase/tests/golden/sweep_manifest.tsv` (append the owner comparison in `public.practice_firm_business`)
 - (Golden case `public.void_bill`, recorded in Task 1, proves the wrapper unchanged.)
 
 **Interfaces:**
-- Consumes: `practices.firm_org_id` (Task 6), `private.upsert_customer(p_org uuid, p_customer jsonb, m members)`, `private.write_bill(p_org uuid, p jsonb, m members)`, `private.post_bill(p_bill uuid, m members)`, `private.org_contact`, `private.set_actor`, `private.activity_event`, `private.wallet_ledger`, `private.tax_wallet_ledger`, recurring tables (Task 13).
+- Consumes: `practices.firm_org_id` (Task 6), `private.upsert_customer(p_org uuid, p_customer jsonb, m members)`, `private.write_bill(p_org uuid, p jsonb, m members)`, `private.post_bill(p_bill uuid, m members)`, `private.org_contact`, `private.set_actor`, `private.activity_event`, `private.wallet_ledger`, `private.tax_wallet_ledger`, `private.payments_open` (Task 10), recurring tables (Task 13).
 - Produces:
   - `practice_fee_bills` (`practice_id`, `client_id`, `sale_id` (fee invoice, unique), `bill_id`, `status` `posted|failed|voided`, `error`, `attempts int default 0`, `created_at`, `updated_at`); `bills_source_check` adds `'practice_fee'`.
-  - `public.practice_firm_business(p_practice uuid, p jsonb) returns jsonb` (partner; `{org_id}` links an unmanaged, non-sample business whose real owner is the caller; or `{name, email?, phone?}` creates one with `public.create_org`; sets `firm_org_id`; returns `{"firm_org_id"}`).
+  - `public.practice_firm_business(p_practice uuid, p jsonb) returns jsonb` (partner; `{org_id}` links an unmanaged, non-sample business whose real owner (`role = 'owner'` member) is the caller; or `{name, email?, phone?}` creates one with `public.create_org` and then sets its `identity_status = 'pending'` (the default `'not_required'` would open payments with no identity check; the partner verifies identity the usual way); sets `firm_org_id`; returns `{"firm_org_id"}`).
   - `public.practice_fee_customer(p_client uuid, p jsonb default '{}') returns jsonb` (lead; needs `firm_org_id`; upserts the customer in the firm business as `org_contact(firm)` with `name` = the client business name, `email`/`phone`/`address` from `p` or, for involved clients, the business's own; stores `fee_customer_id`; returns `{"customer_id"}`).
   - `private.void_bill_as(p_bill uuid, p_reason text, m members) returns jsonb`; `public.void_bill` = lookup + `require(…,'keep_books')` + `_as`.
   - `private.fee_mirror(p_sale uuid) returns practice_fee_bills` — for an invoice of `firm_org_id` whose customer is an active full client's `fee_customer_id`: `m := org_contact(client org)`, `set_actor(m.user_id)`; vendor = `fee_vendor_id`, else `write_bill`'s inline `vendor` `{name: practice name, tin: firm org tin, email: practices.email, wht_category: 'professional'}` (stored back as `fee_vendor_id`); bill `{bill_date: issue_date, due_date, vendor_ref: sale number, source: 'practice_fee', vat_charged: vat_total > 0, prices_include_vat: false}` with one line per sale line `{description, qty: 1, unit_cost: line net, account_code: '6502' (else '6507' when the org has no 6502), vat_treatment: 'standard' when line VAT > 0 else 'none'}`; `post_bill`; row `posted`; `activity_event(client org, 'fee_bill_posted', …)`. Errors are caught: row `failed` with `error`, `attempts + 1`.
@@ -1123,6 +1199,10 @@ perform tests.as_user(manager); perform tests.throws($q$select public.practice_f
 perform tests.as_user(partner); f := (public.practice_firm_business(pr, '{"name":"Firm Books Ltd"}')->>'firm_org_id')::uuid;
 assert (select role from members where org_id = f and user_id = partner) = 'owner', 'firm_business: partner owns it';
 perform tests.throws($q$select public.practice_firm_business(<pr>, '{"org_id":"<managed org>"}')$q$, '%own%');
+-- test: firm_business_identity_pending  (f created above; as postgres)
+assert (select identity_status from orgs where id = f) = 'pending' and not private.payments_open(f), 'firm_business_identity_pending: payments stay locked until identity is verified';
+update orgs set identity_status = 'verified' where id = f;
+assert private.payments_open(f), 'firm_business_identity_pending: open once verified';
 -- test: fee_customer_idempotent
 assert public.practice_fee_customer(c, '{"email":"accounts@client.example.test"}') = public.practice_fee_customer(c, '{}'), 'fee_customer_idempotent';
 -- test: fee_mirror_posts_bill            (firm issues 100000 + VAT to the fee customer)
@@ -1145,19 +1225,21 @@ assert public.practice_fees(pr) ? 'wallets' (as partner) and not public.practice
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `bash supabase/tests/run_tests.sh 11_practice_fees`
-Expected: `FAIL 11_practice_fees.sql: ERROR:  function public.practice_firm_business(uuid, unknown) does not exist`
+Expected (either form is the expected red; the first call fails inside `tests.throws`): `FAIL 11_practice_fees.sql: ERROR:  expected error like %partner%, got 42883: function public.practice_firm_business(uuid, unknown) does not exist`, or `ERROR:  function public.practice_firm_business(uuid, unknown) does not exist`
 
 - [ ] **Step 3: Implement `20261124001100_practice_fees.sql`** as in Interfaces (redefine `void_bill` from `fn_dump.sh`).
 
-- [ ] **Step 4: Verify**
+- [ ] **Step 4: Record this task's owner comparisons in the sweep manifest.** Run `bash supabase/tests/golden/run.sh sweep`; it reports the "real owner is the caller" check in `public.practice_firm_business` as missing. Append one `public.practice_firm_business\tkeep\t<matched snippet>` line per match to `supabase/tests/golden/sweep_manifest.tsv` (the real owner's identity: an acting owner may not make a managed business the firm's own), and a `keep` line for any match in another function this task adds or redefines.
 
-Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check`
-Expected: `ALL PASS (12 files)`, `golden OK (136 cases)`
+- [ ] **Step 5: Verify**
 
-- [ ] **Step 5: Commit**
+Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check && bash supabase/tests/golden/run.sh sweep`
+Expected: `ALL PASS (12 files)`, `golden OK (145 cases)`, `sweep OK (<n> kept)`
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/20261124001100_practice_fees.sql supabase/tests/sql/11_practice_fees.sql
+git add supabase/migrations/20261124001100_practice_fees.sql supabase/tests/sql/11_practice_fees.sql supabase/tests/golden/sweep_manifest.tsv
 git commit -m "Fee billing: firm business, fee customers, fee invoices mirrored as bills in full-mandate books, fees overview" -m "$TRAILER"
 ```
 
@@ -1202,7 +1284,7 @@ git commit -m "Portal: add-client wizard with due diligence, conflicts, declarat
 **Files:**
 - Create: `src/practice/pages/Letters.tsx`, `src/practice/LetterEditor.tsx`, `src/practice/letterDocx.ts`, `src/pages/public/Sign.tsx`, `src/pages/public/DirectorConfirm.tsx`
 - Modify: `supabase/functions/_shared/letter.ts` (add `docxXmlToBlocks`), `supabase/functions/_shared/letter_test.ts`
-- Modify: `src/practice/api.ts`, `src/practice/PracticeApp.tsx:22-25` (NAV `['letters','Letters','file']` for leads), `:85-96` (routes `letters`, `letters/:lid`), `src/App.tsx:59-64,159-163` (lazy routes `/sign/:token`, `/sign`, `/confirm/:token`, `/confirm`)
+- Modify: `src/practice/api.ts`, `src/practice/PracticeApp.tsx:22-25` (NAV tuples gain a 4th field `leadOnly: boolean`; `Layout` filters `NAV.filter(([, , , leadOnly]) => lead || !leadOnly)` with `lead` from `home.data?.me.role` (`partner` or `manager`), replacing today's hard-coded `['billing', 'earnings']` list, which become `leadOnly: true`; add `['letters','Letters','file', true]`), `:85-96` (routes `letters`, `letters/:lid`), `src/App.tsx:59-64,159-163` (lazy routes `/sign/:token`, `/sign`, `/confirm/:token`, `/confirm`)
 
 **Interfaces:**
 - Consumes: Task 9 RPCs (`practice_letter_templates`, `practice_letter_template_save`, `practice_letter_draft`, `practice_letter_save`, `practice_letter`, `practice_letter_send`, `practice_letter_upload_signed`, `practice_letter_void`), Task 12 edge actions (`letter_freeze`, `sign_*`, `director_*`), `renderModel`, `deriveMerge`, `LETTER_FIELDS`, `LetterBody` from `../../supabase/functions/_shared/letter.ts`.
@@ -1211,6 +1293,7 @@ git commit -m "Portal: add-client wizard with due diligence, conflicts, declarat
   - `export async function docxToBlocks(file: File): Promise<LetterBody>` in `src/practice/letterDocx.ts` — refuses `file.size > 2 * 1024 * 1024`, total uncompressed entries `> 20 MB` or `word/document.xml > 8 MB` (checked through `fflate` `unzipSync` `filter` on `originalSize`) with `That Word file is too large to import.`.
   - `export function LetterEditor(props: { body: LetterBody; merge: MergeValues; variant: 'full'|'involved'; editable: boolean; onChange: (b: LetterBody) => void })` (add, edit, move, remove blocks; live numbered preview).
   - api hooks `useLetterTemplates(pid: string)`, `useLetter(lid: string | null)`; types `LetterTemplate`, `LetterDetail`.
+  - `PracticeApp.tsx`: `const NAV: [path: string, label: string, icon: string, leadOnly: boolean][]` (reused by Task 18 for `fees`).
   - Sign/Confirm token hygiene: on mount insert `<meta name="referrer" content="no-referrer">`, store the token in `sessionStorage` (`counta.sign` / `counta.confirm`), `history.replaceState(null, '', '/sign' | '/confirm')`; documents only through the 5-minute `doc_url`.
   - Director page copy (`director-provider`): `<firm> asks you, as a director of <business>, to confirm that it may open a business wallet and a tax wallet for <business>. The wallets are provided by TaxStreem through Flutterwave and hold the company's money.`; review result (`director-review`): `Thank you. TaxStreem will check this confirmation and tell <firm>.`
   - testids: Letters.tsx `letter-template-row`, `letter-template-new`, `letter-import-docx`, `letter-import-pdf`, `letter-merge-form`, `letter-save`, `letter-partner-sign`, `letter-send`, `letter-signer-name`, `letter-signer-email`, `letter-signer-title`, `letter-upload-signed`, `letter-void`, `letter-status`, `letter-events`; LetterEditor.tsx `letter-block`, `letter-block-text`, `letter-block-add`, `letter-preview`; Sign.tsx `sign-firm`, `sign-doc`, `sign-read`, `sign-mode-type`, `sign-mode-draw`, `sign-typed`, `sign-canvas`, `sign-send-code`, `sign-code`, `sign-submit`, `sign-done`, `sign-powered-by` (only when `!white_label`); DirectorConfirm.tsx `director-firm`, `director-provider`, `director-send-code`, `director-code`, `director-confirm`, `director-decline`, `director-decline-reason`, `director-done`, `director-review`.
@@ -1255,7 +1338,7 @@ git commit -m "Portal letters with Word import, public e-signing page and direct
 
 **Files:**
 - Create: `src/practice/MandatePanel.tsx`
-- Modify: `src/practice/pages/Client.tsx:19-47` (panel and Activity tab when `mode === 'full'` or ended-kept; an "Opposing parties" card for every client), `:212` (`end()` hidden for full mandate), `src/practice/api.ts` (`ClientDetail.client.mode`, `end_kind`, `ClientDetail.mandate`, `usePracticeActivity(cid)`), `src/practice/Join.tsx:22-24,37-50,57-60` (`ph_` tokens), `src/shell/AppShell.tsx` (banners), `src/pages/settings/Accountant.tsx` (managed notice and the owner's activity list)
+- Modify: `src/practice/pages/Client.tsx:19-47` (panel and Activity tab when `mode === 'full'` or ended-kept; an "Opposing parties" card for every client), `:212` (`end()` hidden for full mandate), `src/practice/api.ts` (`ClientDetail.client.mode`, `end_kind`, `ClientDetail.mandate`, `usePracticeActivity(cid)`), `src/practice/Join.tsx:22-24,37-50,57-60` (`ph_` tokens), `src/shell/AppShell.tsx` (banners), `src/pages/settings/Accountant.tsx` (managed notice and the owner's activity list), `src/lib/api.ts` (`useOrgActivity(orgId)`)
 
 **Interfaces:**
 - Consumes: `practice_client.mandate`, `practice_client.opposing_parties`, `practice_opposing_save`, `practice_activity`, `org_activity`, `practice_director_request`, `practice_set_send_mode`, `practice_set_alert_email`, `practice_handover_start` + `sendInvite('handover', id)`, `practice_end_mandate`, edge `practice` `export`, `practice_invite_preview` (kind `handover`), `practice_handover_accept`.
@@ -1290,16 +1373,16 @@ git commit -m "Portal mandate panel (director, send mode, handover, end, export,
 
 **Files:**
 - Create: `src/practice/pages/Fees.tsx`, `src/pages/sell/Recurring.tsx`
-- Modify: `src/practice/PracticeApp.tsx:22-25` (NAV: `['fees','Fees','receipt']` for leads; `['billing','Counta plans','card']`), `:85-96` (route `fees`), `:126` (`ToPage` list adds `fees`), `src/practice/pages/Billing.tsx:86` (`PageHead title="Counta plans"`), `src/practice/api.ts` (`PracticeFees`, `usePracticeFees(pid)`), `src/App.tsx:40-45,171-176` (`/sell/recurring`), `src/shell/AppShell.tsx:26,183-185` (title `Recurring invoices`, nav item `['/sell/recurring', 'Recurring invoices']` in both lists), `src/lib/api.ts` (`RecurringSchedule`, `useRecurring(orgId)`)
+- Modify: `src/practice/PracticeApp.tsx:22-25` (NAV, with Task 16's `leadOnly` field: `['fees','Fees','receipt', true]`; `['billing','Counta plans','card', true]`), `:85-96` (route `fees`), `:126` (`ToPage` list adds `fees`), `src/practice/pages/Billing.tsx:86` (`PageHead title="Counta plans"`), `src/practice/api.ts` (`PracticeFees`, `usePracticeFees(pid)`), `src/App.tsx:40-45,171-176` (`/sell/recurring`), `src/shell/AppShell.tsx:26,183-185` (title `Recurring invoices`, nav item `['/sell/recurring', 'Recurring invoices']` in both lists), `src/lib/api.ts` (`RecurringSchedule`, `useRecurring(orgId)`)
 
 **Interfaces:**
 - Consumes: `practice_fees`, `practice_firm_business`, `practice_fee_customer`, `practice_fee_bill_retry`, `recurring_save`, `recurring_list`, `recurring_set_status`, `recurring_run_now`, `save_customer` lookups via existing customer hooks.
-- Produces: `usePracticeFees(pid: string)` (key `['practice-fees', pid]`); `useRecurring(orgId: string | null)` (key `['recurring', orgId]`); `RecurringSchedule = { id; customer_id; customer_name; status: 'active'|'paused'|'ended'; frequency: 'monthly'|'quarterly'|'annually'; day_of_month: number; start_date; end_date: string|null; next_run: string; due_days: number; lines: { description: string; qty: number; unit_price: number; vat_treatment: string; once: boolean }[]; auto_send: boolean; send_channel: 'email'|'whatsapp'; failures: number; last_error: string|null; runs: { run_date; status; sale_id; number?; error?; send_error? }[] }`. Recurring screen opens with `?customer=<id>` preselected (the Fees page links there after `setOrgId(firm_org_id)`).
-- testids: Fees.tsx `fees-firm-setup`, `fees-firm-create`, `fees-firm-link`, `fees-client-row`, `fees-customer`, `fees-outstanding`, `fees-schedule-row`, `fees-schedule-new`, `fee-bill-status`, `fee-bill-retry`, `fees-wallets`; Recurring.tsx `recurring-new`, `recurring-row`, `recurring-customer`, `recurring-frequency`, `recurring-day`, `recurring-start`, `recurring-end`, `recurring-due-days`, `recurring-line`, `recurring-line-once`, `recurring-auto-send`, `recurring-save`, `recurring-pause`, `recurring-resume`, `recurring-run-now`, `recurring-runs`. `recurring-day` offers 1–28 only.
+- Produces: `usePracticeFees(pid: string)` (key `['practice-fees', pid]`); `useRecurring(orgId: string | null)` (key `['recurring', orgId]`); `RecurringSchedule = { id; customer_id; customer_name; status: 'active'|'paused'|'ended'; frequency: 'monthly'|'quarterly'|'annually'; day_of_month: number; start_date; end_date: string|null; next_run: string; due_days: number; lines: { description: string; qty: number; unit_price: number; vat_treatment: 'standard'|'zero'|'exempt'; once: boolean }[]; auto_send: boolean; send_channel: 'email'|'whatsapp'; failures: number; last_error: string|null; runs: { run_date; status; sale_id; number?; error?; send_error? }[] }`. Recurring screen opens with `?customer=<id>` preselected (the Fees page links there after `setOrgId(firm_org_id)`). Each line's VAT select (`recurring-line-vat`) offers exactly `standard` (7.5%), `zero` and `exempt`, the treatments `recurring_save` accepts. The Fees page shows `fees-firm-identity` while `firm_org.identity_status` is not `verified`/`approved`: `Verify the firm business's identity before fee invoices can be paid online.` with a button that does `setOrgId(firm_org.id)` and opens `/settings` (Business identity).
+- testids: Fees.tsx `fees-firm-setup`, `fees-firm-create`, `fees-firm-link`, `fees-firm-identity`, `fees-client-row`, `fees-customer`, `fees-outstanding`, `fees-schedule-row`, `fees-schedule-new`, `fee-bill-status`, `fee-bill-retry`, `fees-wallets`; Recurring.tsx `recurring-new`, `recurring-row`, `recurring-customer`, `recurring-frequency`, `recurring-day`, `recurring-start`, `recurring-end`, `recurring-due-days`, `recurring-line`, `recurring-line-vat`, `recurring-line-once`, `recurring-auto-send`, `recurring-save`, `recurring-pause`, `recurring-resume`, `recurring-run-now`, `recurring-runs`. `recurring-day` offers 1–28 only.
 
 - [ ] **Step 1: Write the failing check**
 
-Run: `node scripts/ui-check.mjs src/practice/pages/Fees.tsx fees-firm-setup fees-client-row fees-outstanding fees-schedule-row fee-bill-retry fees-wallets && node scripts/ui-check.mjs src/pages/sell/Recurring.tsx recurring-new recurring-day recurring-line-once recurring-save recurring-run-now && grep -c "Counta plans" src/practice/PracticeApp.tsx src/practice/pages/Billing.tsx`
+Run: `node scripts/ui-check.mjs src/practice/pages/Fees.tsx fees-firm-setup fees-firm-identity fees-client-row fees-outstanding fees-schedule-row fee-bill-retry fees-wallets && node scripts/ui-check.mjs src/pages/sell/Recurring.tsx recurring-new recurring-day recurring-line-vat recurring-line-once recurring-save recurring-run-now && grep -c "Counta plans" src/practice/PracticeApp.tsx src/practice/pages/Billing.tsx`
 Expected: FAIL — `missing in src/practice/pages/Fees.tsx: …`; grep counts `0`
 
 - [ ] **Step 2: Implement** as pinned.
@@ -1353,7 +1436,7 @@ git commit -m "Admin Mandates page: director confirmations under review, suspend
 
 **Files:**
 - Create: `supabase/tests/sql/99_full_mandate_e2e.sql`
-- Modify: `docs/accountant-portal.md` (modes, intake and conflicts, letters and e-sign, full-mandate rules and gate, director confirmation, activity log, handover, end and export, fees, harness commands), `docs/messaging.md` (outbound gate and `suppressed`, white label, `practice_mail` kinds `letter_sign letter_code letter_done director_confirm director_code`, Meta templates end "Sent with Counta" so unbranded WhatsApp waits for `_nb` variants), `docs/selling.md` (recurring invoices), `docs/deleting-a-business.md` (retention block)
+- Modify: `docs/accountant-portal.md` (modes, intake and conflicts, letters and e-sign, full-mandate rules and gate, director confirmation, activity log, handover, end and export, fees, harness commands), `docs/messaging.md` (outbound gate and `suppressed`, white label, `practice_mail` kinds `letter_sign letter_code letter_done director_confirm director_code director_admin` (the last to `svc_review_recipients()`), Meta templates end "Sent with Counta" so unbranded WhatsApp waits for `_nb` variants), `docs/selling.md` (recurring invoices), `docs/deleting-a-business.md` (retention block)
 
 **Interfaces:**
 - Consumes: every earlier task's RPCs and helpers.
@@ -1364,7 +1447,9 @@ git commit -m "Admin Mandates page: director confirmations under review, suspend
 ```sql
 -- test: e2e_full_mandate
 -- verified practice + firm business (practice_firm_business) → intake with a director and a BO, risk low → practice_conflict_run = none
--- → practice_letter_draft(variant full) → svc_letter_frozen → practice_letter_send → svc_practice_mail('letter_code') → svc_sign_verify → svc_sign_complete
+-- → practice_letter_draft(variant full) → svc_letter_frozen → practice_letter_send (queues the hook only)
+-- → tok := the es_… tail of svc_practice_mail('letter_sign', signer)->>'link' (mints the token) → code := svc_practice_mail('letter_code', signer)->>'code'
+-- → svc_sign_verify(tok, code, …) → svc_sign_complete(tok, …)
 -- → practice_intake_declare → practice_mandate_gate ok → practice_create_business
 assert (select role = 'admin' and acts_as_owner from members where org_id = o and user_id = partner), 'e2e_full_mandate: acting seat';
 -- silence: alert to the client is re-addressed to the firm; customer email white-labelled
@@ -1387,12 +1472,12 @@ Expected: `PASS 99_full_mandate_e2e.sql` (if it fails, fix the owning task's cod
 
 - [ ] **Step 4: Final verification**
 
-Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check && bash supabase/tests/golden/run.sh sweep && deno test --node-modules-dir=none --allow-read supabase/functions/_shared/letter_test.ts supabase/functions/practice/ supabase/functions/messaging/wording_test.ts && deno check --node-modules-dir=none supabase/functions/practice/index.ts supabase/functions/messaging/index.ts supabase/functions/mono/index.ts && ./node_modules/.bin/tsc -b --noEmit && ./node_modules/.bin/vite build && git checkout -- tsconfig.tsbuildinfo && grep -rnoE "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}" supabase/tests supabase/functions/_shared supabase/functions/practice | grep -vE "@([a-z0-9-]+\.)*example\.test$"`
-Expected: `ALL PASS (13 files)`, `golden OK (136 cases)`, `sweep OK (…)`, `ok | 14 passed` across the deno files, three `Check` lines, tsc silent, `✓ built`, and the final grep prints nothing (every address in tests and new function code is `@…example.test`).
+Run: `bash supabase/tests/run_tests.sh && bash supabase/tests/golden/run.sh check && bash supabase/tests/golden/run.sh sweep && runuser -u postgres -- psql -h /var/tmp/counta-pgh -p 54329 -U postgres -AtXc "select jsonb_pretty(private.letter_default_body())" | diff - supabase/functions/_shared/default_letter.json && deno test --node-modules-dir=none --allow-read supabase/functions/_shared/letter_test.ts supabase/functions/practice/ supabase/functions/messaging/wording_test.ts && deno check --node-modules-dir=none supabase/functions/practice/index.ts supabase/functions/messaging/index.ts supabase/functions/mono/index.ts && ./node_modules/.bin/tsc -b --noEmit && ./node_modules/.bin/vite build && git checkout -- tsconfig.tsbuildinfo && ! (grep -rnoE "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}" supabase/tests supabase/functions/_shared supabase/functions/practice | grep -vE "@([a-z0-9-]+\.)*example\.test$")`
+Expected: `ALL PASS (13 files)`, `golden OK (145 cases)`, `sweep OK (…)`, the `diff` prints nothing (the committed `default_letter.json` fixture still equals `private.letter_default_body()`; if it differs, regenerate it with the Task 12 Step 3 command and commit it), `ok | 15 passed` across the deno files (letter_test 5, practice/ 7, wording_test 3), three `Check` lines, tsc silent, `✓ built`, and the final grep prints nothing (every address in tests and new function code is `@…example.test`; the `! ( … )` makes "nothing found" the success case).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add supabase/tests/sql/99_full_mandate_e2e.sql docs/accountant-portal.md docs/messaging.md docs/selling.md docs/deleting-a-business.md
+git add supabase/tests/sql/99_full_mandate_e2e.sql docs/accountant-portal.md docs/messaging.md docs/selling.md docs/deleting-a-business.md supabase/functions/_shared/default_letter.json
 git commit -m "Practice management release 1: end-to-end full-mandate scenario and documentation" -m "$TRAILER"
 ```
