@@ -1,0 +1,10 @@
+== platform
+[{"identity_reviews": [{"slip": {"path": "x", "read": true}, "owner": {"name": "Golden Owner", "email": "owner@example.test"}, "org_id": "<uuid>", "people": [], "review": null, "status": "review", "attempts": 0, "business": "Golden Foods Ltd", "rc_number": "RC 123456", "legal_form": "company"}]}]
+== owner
+ERROR 42501: Only TaxStreem reviewers see this.
+== admin
+ERROR 42501: Only TaxStreem reviewers see this.
+== accountant
+ERROR 42501: Only TaxStreem reviewers see this.
+== staff
+ERROR 42501: Only TaxStreem reviewers see this.

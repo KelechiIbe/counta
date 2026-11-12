@@ -1,0 +1,8 @@
+== definer:owner
+[{"check_grantable": ""}]
+== definer:admin
+[{"check_grantable": ""}]
+== definer:accountant
+ERROR 42501: You cannot give a permission you do not have yourself (make payments).
+== definer:staff
+ERROR 42501: You cannot give a permission you do not have yourself (make payments).

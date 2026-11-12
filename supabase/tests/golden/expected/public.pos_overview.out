@@ -1,0 +1,8 @@
+== owner
+[{"pos_overview": {"can": {"assign": true, "manage": true, "connect": true}, "recent": [], "sample": false, "accounts": [{"id": "<uuid>", "name": "Golden Bank", "bank_name": "Test Bank", "account_number": "0123456782"}], "locations": [{"id": "<uuid>", "name": "Main store"}], "unassigned": [], "connections": []}}]
+== admin
+[{"pos_overview": {"can": {"assign": true, "manage": true, "connect": false}, "recent": [], "sample": false, "accounts": [], "locations": [{"id": "<uuid>", "name": "Main store"}], "unassigned": [], "connections": []}}]
+== accountant
+[{"pos_overview": {"can": {"assign": true, "manage": false, "connect": false}, "recent": [], "sample": false, "accounts": [], "locations": [{"id": "<uuid>", "name": "Main store"}], "unassigned": [], "connections": []}}]
+== staff
+[{"pos_overview": {"can": {"assign": false, "manage": false, "connect": false}, "recent": [], "sample": false, "accounts": [], "locations": [{"id": "<uuid>", "name": "Main store"}], "unassigned": [], "connections": []}}]

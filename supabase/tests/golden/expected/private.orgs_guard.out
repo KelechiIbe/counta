@@ -1,0 +1,20 @@
+== owner
+ok
+ok
+ERROR 42501: That cannot be changed here.
+[{"name": "Golden Foods Renamed", "invoice_note": "Pay within 14 days", "identity_status": "not_required"}]
+== admin
+ok
+ERROR 42501: Only the owner changes that here.
+ERROR 42501: That cannot be changed here.
+[{"name": "Golden Foods Renamed", "invoice_note": null, "identity_status": "not_required"}]
+== accountant
+ok
+ok
+ok
+[{"name": "Golden Foods Ltd", "invoice_note": null, "identity_status": "not_required"}]
+== staff
+ok
+ok
+ok
+[{"name": "Golden Foods Ltd", "invoice_note": null, "identity_status": "not_required"}]

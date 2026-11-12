@@ -1,0 +1,8 @@
+== definer:owner
+[{"display_name": "Golden Owner"}]
+== definer:admin
+[{"display_name": "Golden Admin"}]
+== definer:accountant
+ERROR 42501: Only the owner or someone who manages settings looks after POS terminals.
+== definer:staff
+ERROR 42501: Only the owner or someone who manages settings looks after POS terminals.

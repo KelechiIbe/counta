@@ -1,0 +1,8 @@
+== owner
+[{"get_flux_tax": {"can": {"send": true, "renew": true, "record": true, "approve": true, "autopay": true}, "autopay": true, "returns": [], "tax_wallet": {"bank_name": "Test Bank", "spendable": 0, "account_number": "0123456780"}, "instructions": [], "autopay_penalties": true}}]
+== admin
+[{"get_flux_tax": {"can": {"send": true, "renew": true, "record": true, "approve": true, "autopay": true}, "autopay": true, "returns": [], "tax_wallet": {"bank_name": "Test Bank", "spendable": 0, "account_number": "0123456780"}, "instructions": [], "autopay_penalties": true}}]
+== accountant
+[{"get_flux_tax": {"can": {"send": true, "renew": true, "record": true, "approve": false, "autopay": false}, "autopay": true, "returns": [], "tax_wallet": {"bank_name": "Test Bank", "spendable": 0, "account_number": "0123456780"}, "instructions": [], "autopay_penalties": true}}]
+== staff
+ERROR 42501: Tax payments need See margins, Keep the books, Make payments or File tax.

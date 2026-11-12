@@ -1,0 +1,8 @@
+== owner
+[{"?column?": {"offer": {"percent": 20, "payments": 1, "practice": "Golden Partners"}, "practice": {"id": "<uuid>", "code": "GOLD-0001", "kind": "firm", "name": "Other Partners", "tier": {"code": "bronze", "name": "Bronze"}, "blurb": null, "state": null, "licences": ["ICAN"], "verified": true}}}]
+== admin
+ERROR 42501: Only the owner of the business connects it to an accountant.
+== accountant
+ERROR 42501: Only the owner of the business connects it to an accountant.
+== staff
+ERROR 42501: Only the owner of the business connects it to an accountant.

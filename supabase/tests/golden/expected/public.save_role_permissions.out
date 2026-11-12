@@ -1,0 +1,12 @@
+== owner
+[{"save_role_permissions": {"role": "admin", "perms": {"file_tax": true, "add_items": true, "keep_books": true, "approve_pos": true, "count_stock": true, "edit_prices": true, "issue_stock": true, "manage_team": true, "see_margins": true, "record_sales": true, "make_payments": true, "receive_stock": true, "transfer_stock": true, "manage_settings": false, "approve_payments": true, "approve_adjustments": true}, "people": 1}}]
+[{"save_role_permissions": {"role": "accountant", "perms": {"file_tax": true, "add_items": false, "keep_books": true, "approve_pos": false, "count_stock": false, "edit_prices": false, "issue_stock": false, "manage_team": false, "see_margins": true, "record_sales": false, "make_payments": true, "receive_stock": false, "transfer_stock": false, "manage_settings": false, "approve_payments": false, "approve_adjustments": true}, "people": 2}}]
+== admin
+ERROR 42501: Only the owner changes what admins can do.
+[{"save_role_permissions": {"role": "accountant", "perms": {"file_tax": true, "add_items": false, "keep_books": true, "approve_pos": false, "count_stock": false, "edit_prices": false, "issue_stock": false, "manage_team": false, "see_margins": true, "record_sales": false, "make_payments": true, "receive_stock": false, "transfer_stock": false, "manage_settings": false, "approve_payments": false, "approve_adjustments": true}, "people": 2}}]
+== accountant
+ERROR 42501: Your role does not allow this (manage team).
+ERROR 42501: Your role does not allow this (manage team).
+== staff
+ERROR 42501: Your role does not allow this (manage team).
+ERROR 42501: Your role does not allow this (manage team).

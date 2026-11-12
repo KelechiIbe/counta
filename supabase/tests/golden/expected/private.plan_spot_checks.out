@@ -1,0 +1,4 @@
+== definer:owner
+[{"plan_spot_checks": 1}]
+[{"area": "Spot check · 1 item", "assignee": "Golden Staff"}]
+[{"kind": "spot_check", "email": "staff@example.test"}]

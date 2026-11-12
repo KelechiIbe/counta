@@ -1,0 +1,4 @@
+== anon
+[{"practice_invite_preview": {"kind": "client", "note": null, "email": "new.client@example.test", "status": "open", "billing": "business", "business": "New Client Ltd", "partners": [{"name": "Golden Partner", "licence": "ICAN TEST/0001 (verified by TaxStreem)"}], "practice": "Golden Partners", "services": ["bookkeeping", "vat", "wht", "cit", "statements"], "practice_verified": true}}]
+[{"practice_invite_preview": {"kind": "member", "name": "Golden Joiner", "role": "staff", "email": "joiner@example.test", "status": "open", "practice": "Golden Partners"}}]
+[{"practice_invite_preview": {"status": "invalid"}}]

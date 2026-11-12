@@ -1,0 +1,8 @@
+== owner
+[{"?column?": {"email": "owner@example.test", "label": "TaxStreem Golden Foods", "phone": "08030000001", "org_name": "Golden Foods Ltd"}}]
+== admin
+ERROR 42501: Only the owner changes payment settings.
+== accountant
+ERROR 42501: Only the owner changes payment settings.
+== staff
+ERROR 42501: Only the owner changes payment settings.

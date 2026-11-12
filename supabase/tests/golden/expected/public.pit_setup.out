@@ -1,0 +1,12 @@
+== definer:owner
+[{"pit_setup": {"added": 1}}]
+[{"name": "Golden Owner", "source": "owner", "is_owner": true}]
+== definer:admin
+[{"pit_setup": {"added": 1}}]
+[{"name": "Golden Owner", "source": "owner", "is_owner": true}]
+== definer:accountant
+[{"pit_setup": {"added": 1}}]
+[{"name": "Golden Owner", "source": "owner", "is_owner": true}]
+== definer:staff
+ERROR 42501: Your role does not allow this (file tax).
+[]

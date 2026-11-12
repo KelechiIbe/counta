@@ -1,0 +1,8 @@
+== owner
+[{"?column?": {"to_number": "+2348030000003", "variables": {"po_ref": "PO-GOLD-1", "order_lines": "no lines", "order_total": "₦20,000", "vendor_name": "Golden Supplier Ltd", "contact_name": "Golden Owner", "business_name": "Golden Foods Ltd", "contact_phone": "08030000001", "lead_time_days": 2, "delivery_branch": "Main store"}}}]
+== admin
+[{"?column?": {"to_number": "+2348030000003", "variables": {"po_ref": "PO-GOLD-1", "order_lines": "no lines", "order_total": "₦20,000", "vendor_name": "Golden Supplier Ltd", "contact_name": "Golden Admin", "business_name": "Golden Foods Ltd", "contact_phone": "08030000001", "lead_time_days": 2, "delivery_branch": "Main store"}}}]
+== accountant
+ERROR 42501: Your role does not allow this (approve pos).
+== staff
+ERROR 42501: Your role does not allow this (approve pos).

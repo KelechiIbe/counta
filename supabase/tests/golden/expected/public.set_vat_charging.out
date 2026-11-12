@@ -1,0 +1,8 @@
+== owner
+[{"set_vat_charging": {"to": "<date>", "from": "<date>", "basis": "this_year", "small": true, "advice": "ok", "opt_in": false, "crossed": false, "charging": false, "turnover": 46511.63, "year_from": "<date>", "can_change": true, "fixed_assets": 0.00, "year_to_date": 46511.63, "professional_services": false}}]
+== admin
+ERROR 42501: Only the owner turns VAT on or off.
+== accountant
+ERROR 42501: Only the owner turns VAT on or off.
+== staff
+ERROR 42501: Only the owner turns VAT on or off.

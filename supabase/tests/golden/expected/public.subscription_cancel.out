@@ -1,0 +1,8 @@
+== owner
+ERROR P0001: The business is on the standard plan; there is nothing to cancel.
+== admin
+ERROR P0001: The business is on the standard plan; there is nothing to cancel.
+== accountant
+ERROR 42501: Your role does not allow this (manage settings).
+== staff
+ERROR 42501: Your role does not allow this (manage settings).

@@ -1,0 +1,12 @@
+== owner
+[{"?column?": "approved"}]
+[{"?column?": "approved"}]
+== admin
+[{"?column?": "approved"}]
+ERROR P0001: Someone other than the person who asked must approve it.
+== accountant
+ERROR 42501: Your role does not allow this (approve payments).
+ERROR 42501: Your role does not allow this (approve payments).
+== staff
+ERROR 42501: Your role does not allow this (approve payments).
+ERROR 42501: Your role does not allow this (approve payments).

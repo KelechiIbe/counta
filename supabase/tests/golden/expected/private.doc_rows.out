@@ -1,0 +1,8 @@
+== definer:owner
+[{"cat": "company", "kind": "file", "name": "cac-golden.pdf", "folder": "Registration", "source": "counta"}, {"cat": "sales", "kind": "sale", "name": "INV-0002 · Golden Customer Ltd", "folder": "Invoices", "source": "counta"}]
+== definer:admin
+[{"cat": "sales", "kind": "sale", "name": "INV-0002 · Golden Customer Ltd", "folder": "Invoices", "source": "counta"}]
+== definer:accountant
+[{"cat": "sales", "kind": "sale", "name": "INV-0002 · Golden Customer Ltd", "folder": "Invoices", "source": "counta"}]
+== definer:staff
+[{"cat": "sales", "kind": "sale", "name": "INV-0002 · Golden Customer Ltd", "folder": "Invoices", "source": "counta"}]

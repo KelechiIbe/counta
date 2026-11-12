@@ -1,0 +1,8 @@
+== definer:owner
+[{"display_name": "Golden Owner"}]
+== definer:admin
+ERROR 42501: Only the owner connects a POS provider or changes its key.
+== definer:accountant
+ERROR 42501: Only the owner connects a POS provider or changes its key.
+== definer:staff
+ERROR 42501: Only the owner connects a POS provider or changes its key.

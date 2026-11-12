@@ -1,0 +1,25 @@
+== definer:owner
+[{"?column?": "withdrawn"}]
+[{"?column?": "withdrawn"}]
+[{"status": "withdrawn", "file_name": "golden-v1.xlsx"}, {"status": "withdrawn", "file_name": "golden-wht-v1.xlsx"}]
+[{"kind": "practice", "email": "partner@example.test", "title": "Golden Foods Ltd withdrew your VAT return for September 2026"}]
+== definer:admin
+ERROR 42501: The owner or an accountant of the business withdraws a changed version.
+ERROR 42501: The owner or an accountant of the business withdraws a changed version.
+[{"status": "review", "file_name": "golden-v1.xlsx"}, {"status": "in_use", "file_name": "golden-wht-v1.xlsx"}]
+[]
+== definer:accountant
+[{"?column?": "withdrawn"}]
+[{"?column?": "withdrawn"}]
+[{"status": "withdrawn", "file_name": "golden-v1.xlsx"}, {"status": "withdrawn", "file_name": "golden-wht-v1.xlsx"}]
+[{"kind": "practice", "email": "owner@example.test", "title": "Counta's own WHT schedule for September 2026 ( state revenue service) is back in use"}]
+== definer:staff
+ERROR 42501: The owner or an accountant of the business withdraws a changed version.
+ERROR 42501: The owner or an accountant of the business withdraws a changed version.
+[{"status": "review", "file_name": "golden-v1.xlsx"}, {"status": "in_use", "file_name": "golden-wht-v1.xlsx"}]
+[]
+== definer:partner
+[{"?column?": "withdrawn"}]
+[{"?column?": "withdrawn"}]
+[{"status": "withdrawn", "file_name": "golden-v1.xlsx"}, {"status": "withdrawn", "file_name": "golden-wht-v1.xlsx"}]
+[{"kind": "practice", "email": "owner@example.test", "title": "Counta's own WHT schedule for September 2026 ( state revenue service) is back in use"}]

@@ -1,0 +1,8 @@
+== owner
+[{"vat_status": {"to": "<date>", "from": "<date>", "basis": "this_year", "small": true, "advice": "may_stop", "opt_in": false, "crossed": false, "charging": true, "turnover": 46511.63, "year_from": "<date>", "can_change": true, "fixed_assets": 0.00, "year_to_date": 46511.63, "professional_services": false}}]
+== admin
+[{"vat_status": {"to": "<date>", "from": "<date>", "basis": "this_year", "small": true, "advice": "may_stop", "opt_in": false, "crossed": false, "charging": true, "turnover": 46511.63, "year_from": "<date>", "can_change": false, "fixed_assets": 0.00, "year_to_date": 46511.63, "professional_services": false}}]
+== accountant
+[{"vat_status": {"to": "<date>", "from": "<date>", "basis": "this_year", "small": true, "advice": "may_stop", "opt_in": false, "crossed": false, "charging": true, "turnover": 46511.63, "year_from": "<date>", "can_change": false, "fixed_assets": 0.00, "year_to_date": 46511.63, "professional_services": false}}]
+== staff
+[{"vat_status": {"to": "<date>", "from": "<date>", "basis": "this_year", "small": true, "advice": "may_stop", "opt_in": false, "crossed": false, "charging": true, "turnover": 46511.63, "year_from": "<date>", "can_change": false, "fixed_assets": 0.00, "year_to_date": 46511.63, "professional_services": false}}]

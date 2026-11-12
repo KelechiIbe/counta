@@ -1,0 +1,4 @@
+== definer:owner
+[{"?column?": true}]
+[{"status": "queued", "channel": "email", "template": "alert", "to_address": "owner@example.test"}]
+[{"kind": "invoices", "email": "admin@example.test"}, {"kind": "invoices", "email": "owner@example.test"}, {"kind": "invoices", "email": "staff@example.test"}]

@@ -1,0 +1,8 @@
+== owner
+[{"leak_radar": {"ira": null, "cogs": 0, "days": 90, "found": 0, "items": [], "today": "<date>", "weeks": [], "damage": 0, "people": [], "revenue": 0, "cash_days": 0, "locations": [{"ira": null, "cogs": 0, "name": "Main store", "found": 0, "damage": 0, "cash_short": 0, "shrink_pct": null, "location_id": "<uuid>", "unexplained": 0}], "cash_short": 0, "shrink_pct": null, "loss_events": 0, "spot_checks": [], "unexplained": 0, "monthly_leak": 0.00, "lines_counted": 0, "can_see_people": true, "net_unexplained": 0, "spot_check_last": null, "spot_checks_per_day": 0}}]
+== admin
+[{"leak_radar": {"ira": null, "cogs": 0, "days": 90, "found": 0, "items": [], "today": "<date>", "weeks": [], "damage": 0, "revenue": 0, "cash_days": 0, "locations": [{"ira": null, "cogs": 0, "name": "Main store", "found": 0, "damage": 0, "cash_short": 0, "shrink_pct": null, "location_id": "<uuid>", "unexplained": 0}], "cash_short": 0, "shrink_pct": null, "spot_checks": [], "unexplained": 0, "monthly_leak": 0.00, "lines_counted": 0, "can_see_people": false, "net_unexplained": 0, "spot_check_last": null, "spot_checks_per_day": 0}}]
+== accountant
+[{"leak_radar": {"ira": null, "cogs": 0, "days": 90, "found": 0, "items": [], "today": "<date>", "weeks": [], "damage": 0, "revenue": 0, "cash_days": 0, "locations": [{"ira": null, "cogs": 0, "name": "Main store", "found": 0, "damage": 0, "cash_short": 0, "shrink_pct": null, "location_id": "<uuid>", "unexplained": 0}], "cash_short": 0, "shrink_pct": null, "spot_checks": [], "unexplained": 0, "monthly_leak": 0.00, "lines_counted": 0, "can_see_people": false, "net_unexplained": 0, "spot_check_last": null, "spot_checks_per_day": 0}}]
+== staff
+ERROR 42501: Your role does not allow this (see margins).

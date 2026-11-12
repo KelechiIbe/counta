@@ -1,0 +1,8 @@
+== owner
+ERROR P0001: The customer has 0.00 of credit to refund.
+== admin
+ERROR P0001: The customer has 0.00 of credit to refund.
+== accountant
+ERROR 42501: Your role does not allow this (make payments).
+== staff
+ERROR 42501: Your role does not allow this (make payments).

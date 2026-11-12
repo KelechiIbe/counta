@@ -1,0 +1,20 @@
+== owner
+[{"update_member": ""}]
+ERROR 23514: new row for relation "members" violates check constraint "sales_cannot_edit"
+ERROR P0001: The owner keeps every permission.
+[{"role": "accountant", "title": null, "status": "active", "display_name": "Golden Accountant"}, {"role": "admin", "title": "Head of finance", "status": "active", "display_name": "Golden Admin"}, {"role": "owner", "title": "Owner", "status": "active", "display_name": "Golden Owner"}, {"role": "accountant", "title": "Accountant, Golden Partners", "status": "active", "display_name": "Golden Partner"}, {"role": "staff", "title": null, "status": "active", "display_name": "Golden Staff"}]
+== admin
+[{"update_member": ""}]
+ERROR 42501: Ask the owner to change your own role or permissions.
+ERROR P0001: The owner keeps every permission.
+[{"role": "accountant", "title": null, "status": "active", "display_name": "Golden Accountant"}, {"role": "admin", "title": "Head of finance", "status": "active", "display_name": "Golden Admin"}, {"role": "owner", "title": "Owner", "status": "active", "display_name": "Golden Owner"}, {"role": "accountant", "title": "Accountant, Golden Partners", "status": "active", "display_name": "Golden Partner"}, {"role": "staff", "title": null, "status": "active", "display_name": "Golden Staff"}]
+== accountant
+ERROR 42501: Your role does not allow this (manage team).
+ERROR 42501: Your role does not allow this (manage team).
+ERROR 42501: Your role does not allow this (manage team).
+[{"role": "accountant", "title": null, "status": "active", "display_name": "Golden Accountant"}, {"role": "admin", "title": null, "status": "active", "display_name": "Golden Admin"}, {"role": "owner", "title": "Owner", "status": "active", "display_name": "Golden Owner"}, {"role": "accountant", "title": "Accountant, Golden Partners", "status": "active", "display_name": "Golden Partner"}, {"role": "staff", "title": null, "status": "active", "display_name": "Golden Staff"}]
+== staff
+ERROR 42501: Your role does not allow this (manage team).
+ERROR 42501: Your role does not allow this (manage team).
+ERROR 42501: Your role does not allow this (manage team).
+[{"role": "accountant", "title": null, "status": "active", "display_name": "Golden Accountant"}, {"role": "admin", "title": null, "status": "active", "display_name": "Golden Admin"}, {"role": "owner", "title": "Owner", "status": "active", "display_name": "Golden Owner"}, {"role": "accountant", "title": "Accountant, Golden Partners", "status": "active", "display_name": "Golden Partner"}, {"role": "staff", "title": null, "status": "active", "display_name": "Golden Staff"}]

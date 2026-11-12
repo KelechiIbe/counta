@@ -1,0 +1,8 @@
+== definer:owner
+[{"owner": true, "file_tax": true, "manage_team": true}]
+== definer:admin
+[{"owner": false, "file_tax": true, "manage_team": true}]
+== definer:accountant
+[{"owner": false, "file_tax": true, "manage_team": false}]
+== definer:staff
+[{"owner": false, "file_tax": false, "manage_team": false}]

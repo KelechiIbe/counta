@@ -1,0 +1,8 @@
+== owner
+[{"is_owner": true}]
+== admin
+[{"is_owner": false}]
+== accountant
+[{"is_owner": false}]
+== staff
+[{"is_owner": false}]

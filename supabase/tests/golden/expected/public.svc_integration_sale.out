@@ -1,0 +1,3 @@
+== service
+[{"?column?": {"total": 2500.00, "number": "RCT-000001", "status": "recorded", "customer_id": "<uuid>"}}]
+[{"total": 2500.00, "status": "paid", "created_by": "Golden Owner"}]

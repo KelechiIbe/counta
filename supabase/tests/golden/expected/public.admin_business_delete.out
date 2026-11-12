@@ -1,0 +1,15 @@
+== platform
+[{"admin_business_delete": {"ok": true, "name": "Golden Foods Ltd", "logins": 4, "audit_id": 1}}]
+[{"error_of": "P0001: This business is no longer on Counta."}]
+== owner
+ERROR 42501: This is only for TaxStreem's admins.
+[{"error_of": "42501: This is only for TaxStreem's admins."}]
+== admin
+ERROR 42501: This is only for TaxStreem's admins.
+[{"error_of": "42501: This is only for TaxStreem's admins."}]
+== accountant
+ERROR 42501: This is only for TaxStreem's admins.
+[{"error_of": "42501: This is only for TaxStreem's admins."}]
+== staff
+ERROR 42501: This is only for TaxStreem's admins.
+[{"error_of": "42501: This is only for TaxStreem's admins."}]

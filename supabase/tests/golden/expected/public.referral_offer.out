@@ -1,0 +1,8 @@
+== owner
+[{"referral_offer": {"offer": null, "practice": {"id": "<uuid>", "code": "GOLD-0001", "kind": "firm", "name": "Other Partners", "tier": {"code": "bronze", "name": "Bronze"}, "blurb": null, "state": null, "licences": ["ICAN"], "verified": true}, "connected": false}}]
+== admin
+[{"referral_offer": null}]
+== accountant
+[{"referral_offer": null}]
+== staff
+[{"referral_offer": null}]

@@ -1,0 +1,4 @@
+== definer:owner
+[{"alert_send": ["push", "email"]}]
+[{"status": "queued", "channel": "email", "template": "alert", "to_address": "owner@example.test"}]
+[{"kind": "golden", "email": "accountant@example.test"}, {"kind": "golden", "email": "admin@example.test"}, {"kind": "golden", "email": "owner@example.test"}, {"kind": "golden", "email": "partner@example.test"}]

@@ -1,0 +1,8 @@
+== owner
+ERROR P0001: The books close at a month end.
+== admin
+ERROR 42501: Only the owner closes the books.
+== accountant
+ERROR 42501: Only the owner closes the books.
+== staff
+ERROR 42501: Only the owner closes the books.

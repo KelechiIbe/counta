@@ -1,0 +1,8 @@
+== owner
+[{"voice_settings": {"events": {"sale_recorded": true, "payment_received": true}, "voices": [], "can_edit": true, "voice_id": null, "voice_lang": "en"}}]
+== admin
+[{"voice_settings": {"events": {"sale_recorded": true, "payment_received": true}, "voices": [], "can_edit": false, "voice_id": null, "voice_lang": "en"}}]
+== accountant
+[{"voice_settings": {"events": {"sale_recorded": true, "payment_received": true}, "voices": [], "can_edit": false, "voice_id": null, "voice_lang": "en"}}]
+== staff
+[{"voice_settings": {"events": {"sale_recorded": true, "payment_received": true}, "voices": [], "can_edit": false, "voice_id": null, "voice_lang": "en"}}]

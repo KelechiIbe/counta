@@ -1,0 +1,5 @@
+== definer:owner
+[{"params": {"x": 1, "cc": ["accounts@example.test"]}, "status": "queued", "channel": "email", "subject": "Golden subject", "template": "document", "to_address": "customer@example.test"}]
+[{"status": "queued", "channel": "whatsapp", "template": "reminder", "to_address": "+2348030000002"}]
+[{"error_of": "P0001: Send by email or WhatsApp."}]
+[{"url": "http://functions.test/messaging", "has_message": true}, {"url": "http://functions.test/messaging", "has_message": true}]

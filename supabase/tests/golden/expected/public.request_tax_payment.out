@@ -1,0 +1,8 @@
+== owner
+ERROR P0001: Choose an account TaxStreem lists for this tax.
+== admin
+ERROR P0001: Choose an account TaxStreem lists for this tax.
+== accountant
+ERROR 42501: Your role does not allow this (make payments).
+== staff
+ERROR 42501: Your role does not allow this (make payments).

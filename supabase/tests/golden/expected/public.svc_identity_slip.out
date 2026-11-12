@@ -1,0 +1,4 @@
+== service
+ERROR 42501: Only the owner adds the NIN slip.
+[{"svc_identity_slip": {"at": "<ts>", "slip": {"name": "Golden Owner", "path": "<uuid>/kyc/nin-slip-golden.jpg", "read": true, "last4": "1234", "read_at": "<ts>", "warnings": [], "is_nin_document": true}, "last4": "1234", "method": "slip", "people": [], "review": null, "status": "verified", "matched": "Golden Owner", "attempts": 0, "can_check": true, "registered": false, "matched_role": "owner", "payments_open": true}}]
+[{"matched": "Golden Owner", "identity_status": "verified"}]

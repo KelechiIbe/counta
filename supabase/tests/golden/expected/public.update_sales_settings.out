@@ -1,0 +1,8 @@
+== owner
+[{"update_sales_settings": {"shop_note": null, "shop_slug": null, "shop_title": null, "shop_pickup": true, "shop_enabled": false, "shop_delivery": true, "shop_whatsapp": null, "receipt_footer": null, "shop_categories": null, "shop_show_stock": false, "shop_location_id": null, "shop_delivery_fee": 0.00, "max_cashier_discount_pct": 0.00}}]
+== admin
+ERROR 42501: Only the owner changes these settings.
+== accountant
+ERROR 42501: Only the owner changes these settings.
+== staff
+ERROR 42501: Only the owner changes these settings.

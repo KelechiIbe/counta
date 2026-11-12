@@ -1,0 +1,8 @@
+== owner
+ERROR P0001: No counts are waiting for approval.
+== admin
+ERROR 42501: Only owners and managers can send reminder calls.
+== accountant
+ERROR 42501: Only owners and managers can send reminder calls.
+== staff
+ERROR P0001: No counts are waiting for approval.

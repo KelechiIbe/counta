@@ -1,0 +1,12 @@
+== owner
+[{"record_takings": ""}]
+[{"pos": 200.00, "cash": 1000.00, "source": "manual", "transfers": 300.00}]
+== admin
+ERROR P0001: Only the owner or a manager records takings.
+[]
+== accountant
+ERROR P0001: Only the owner or a manager records takings.
+[]
+== staff
+ERROR 42501: Your role does not allow this (see margins).
+[]

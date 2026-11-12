@@ -1,0 +1,8 @@
+== owner
+[{"save_income_tax_setup": {"kind": "company", "cit_profile": {"limited_by_guarantee": false}}}]
+== admin
+ERROR 42501: Only the owner changes how the business is taxed.
+== accountant
+ERROR 42501: Only the owner changes how the business is taxed.
+== staff
+ERROR 42501: Only the owner changes how the business is taxed.

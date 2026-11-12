@@ -1,0 +1,8 @@
+== owner
+[{"?column?": {"kind": "client", "org_id": "<uuid>"}}]
+== admin
+ERROR 42501: Only the owner of the business connects it to an accountant.
+== accountant
+ERROR 42501: Only the owner of the business connects it to an accountant.
+== staff
+ERROR 42501: Only the owner of the business connects it to an accountant.

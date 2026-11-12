@@ -1,0 +1,4 @@
+== definer:owner
+[{"check_split": ""}]
+[{"check_split": ""}]
+ERROR P0001: Staff: someone who records sales cannot also edit prices or approve adjustments. Turn one of them off.

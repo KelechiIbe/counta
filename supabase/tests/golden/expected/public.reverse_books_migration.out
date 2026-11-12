@@ -1,0 +1,8 @@
+== owner
+ERROR P0001: Only a posted migration can be undone.
+== admin
+ERROR 42501: Only the owner undoes a migration.
+== accountant
+ERROR 42501: Only the owner undoes a migration.
+== staff
+ERROR 42501: Only the owner undoes a migration.

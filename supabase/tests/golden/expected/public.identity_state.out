@@ -1,0 +1,8 @@
+== owner
+[{"identity_state": {"at": null, "slip": null, "last4": null, "method": null, "people": [], "review": null, "status": "pending", "matched": null, "attempts": 0, "can_check": true, "registered": false, "matched_role": null, "payments_open": false}}]
+== admin
+[{"identity_state": {"at": null, "slip": null, "last4": null, "method": null, "people": [], "review": null, "status": "pending", "matched": null, "attempts": 0, "can_check": false, "registered": false, "matched_role": null, "payments_open": false}}]
+== accountant
+[{"identity_state": {"at": null, "slip": null, "last4": null, "method": null, "people": [], "review": null, "status": "pending", "matched": null, "attempts": 0, "can_check": false, "registered": false, "matched_role": null, "payments_open": false}}]
+== staff
+[{"identity_state": {"at": null, "slip": null, "last4": null, "method": null, "people": [], "review": null, "status": "pending", "matched": null, "attempts": 0, "can_check": false, "registered": false, "matched_role": null, "payments_open": false}}]

@@ -1,0 +1,6 @@
+== service
+[{"?column?": {"status": "paying", "decision": "pay"}}]
+[{"svc_tax_instruction_decide": {"reason": "Counta has no filed VAT return for August 2026 to check the amount against.", "status": "needs_approval", "decision": "wait"}}]
+[{"kind": "vat", "amount": 7500.00, "status": "approved", "requested_by": "Golden Owner"}]
+[{"status": "queued", "channel": "email", "template": "alert", "to_address": "owner@example.test"}]
+[{"kind": "tax_payment", "email": "admin@example.test"}, {"kind": "tax_payment", "email": "owner@example.test"}]

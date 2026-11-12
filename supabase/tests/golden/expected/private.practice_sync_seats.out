@@ -1,0 +1,5 @@
+== definer:owner
+ok
+ok
+ok
+[{"role": "accountant", "status": "active", "display_name": "Golden Accountant", "p_keep_books": true, "p_manage_team": false, "practice_seat": false, "p_make_payments": false}, {"role": "admin", "status": "active", "display_name": "Golden Admin", "p_keep_books": true, "p_manage_team": true, "practice_seat": false, "p_make_payments": true}, {"role": "owner", "status": "active", "display_name": "Golden Owner", "p_keep_books": true, "p_manage_team": true, "practice_seat": false, "p_make_payments": true}, {"role": "accountant", "status": "disabled", "display_name": "Golden Partner", "p_keep_books": true, "p_manage_team": false, "practice_seat": true, "p_make_payments": false}, {"role": "staff", "status": "active", "display_name": "Golden Staff", "p_keep_books": false, "p_manage_team": false, "practice_seat": false, "p_make_payments": false}]

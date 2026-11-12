@@ -1,0 +1,8 @@
+== owner
+ERROR PX403: Enter the code from your authenticator app first: tax portal logins need two-step sign-in.
+== admin
+ERROR 42501: Only the owner saves or removes the business's tax portal logins.
+== accountant
+ERROR 42501: Only the owner saves or removes the business's tax portal logins.
+== staff
+ERROR 42501: Only the owner saves or removes the business's tax portal logins.

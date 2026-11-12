@@ -1,0 +1,3 @@
+== service
+[{"svc_tax_transfer_update": {"ok": true, "status": "sent", "reference": "TT-GOLDEN-1"}}]
+[{"status": "sent", "posted_by": "Golden Owner"}]
