@@ -89,8 +89,10 @@ begin
   assert (public.leak_radar(o, 90)->>'can_see_people')::boolean, 'sweep_user_facing_flags: leak_radar can_see_people';
   assert (public.pos_overview(o)->'can'->>'connect')::boolean, 'sweep_user_facing_flags: pos_overview can connect';
   assert (public.guide_state(o)->'org'->>'is_owner')::boolean, 'sweep_user_facing_flags: guide_state is_owner';
+  assert (public.identity_state(o)->>'can_check')::boolean, 'sweep_user_facing_flags: identity_state can_check';
   perform tests.as_definer(tests.id('partner'));
   assert (private.pit_access(o)->>'owner')::boolean, 'sweep_user_facing_flags: pit_access owner';
+  assert (private.pos_require_owner(o)).id = tests.id('partner_seat'), 'sweep_user_facing_flags: pos_require_owner';
   perform tests.as_postgres();
 end $$;
 
