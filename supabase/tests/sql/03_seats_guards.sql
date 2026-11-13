@@ -109,6 +109,7 @@ begin
   perform tests.throws(format('update members set user_id = %L where id = %L', tests.id('pstaff'), tests.id('partner_seat')), '%change from the accountant portal%');
   perform tests.throws(format('update members set acts_as_owner = true where id = %L', tests.id('admin_seat')), '42501: Only the practice link sets that.');
   perform tests.throws(format('update members set acts_as_owner = false where id = %L', tests.id('partner_seat')), '%Only the practice link sets that.%');
+  -- Inside the seat sync the same changes go through.
   perform set_config('counta.seat_sync', 'on', true);
   update members set status = 'disabled' where id = tests.id('manager_seat');
   update members set status = 'active' where id = tests.id('manager_seat');
@@ -120,7 +121,6 @@ begin
   assert (select status = 'disabled' from members where id = tests.id('admin_seat')), 'guard_blocks_seat_edits: an ordinary business is untouched';
   perform tests.as_user(tests.id('owner'));
   perform public.update_member(tests.id('admin_seat'), '{"status": "active"}');
-  perform tests.as_postgres();
   perform tests.as_postgres();
 end $$;
 
