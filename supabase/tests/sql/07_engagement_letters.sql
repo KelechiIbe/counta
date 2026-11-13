@@ -379,7 +379,7 @@ end $$;
 -- test: letter_freeze
 -- A partner signs: the rendered letter's path and fingerprint are recorded and the letter is frozen.
 do $$
-declare pr uuid := tests.id('pr'); l uuid := tests.id('l'); r jsonb; v_path text;
+declare pr uuid := tests.id('pr'); l uuid := tests.id('l'); r jsonb; v_path text; v_fp text; v_fp2 text;
 begin
   v_path := 'practice/' || pr || '/letters/' || l || '/letter.pdf';
   perform tests.as_service();
@@ -398,8 +398,29 @@ begin
     l, v_path, tests.id('partner')), '%SHA-256%');
   perform tests.throws(format($q$select public.svc_letter_frozen(%L, jsonb_build_object('doc_path', %L, 'doc_sha256', repeat('ab', 32), 'by_user', %L::uuid))$q$,
     tests.id('u_letter'), 'practice/' || pr || '/letters/' || tests.id('u_letter') || '/letter.pdf', tests.id('partner')), '%conflicts check%');
+  -- The letter as it was prepared: without its fingerprint, or with one from before a change, it is not signed.
+  perform tests.throws(format($q$select public.svc_letter_frozen(%L, jsonb_build_object('doc_path', %L, 'doc_sha256', repeat('ab', 32), 'by_user', %L::uuid))$q$,
+    l, v_path, tests.id('partner')), '%changed while it was being signed%');
+  perform tests.as_user(tests.id('partner'));
+  v_fp := public.practice_letter_prepare(l)->>'fingerprint';
+  perform tests.as_postgres();
+  assert v_fp = private.letter_fingerprint(l) and v_fp ~ '^[0-9a-f]{64}$', 'letter_freeze: prepare gives the fingerprint';
+  update engagement_letters set title = title || ' (changed)' where id = l;
+  assert private.letter_fingerprint(l) <> v_fp, 'letter_freeze: a change changes the fingerprint';
+  update engagement_letters set title = replace(title, ' (changed)', ''), updated_at = updated_at + interval '1 second' where id = l;
+  assert private.letter_fingerprint(l) <> v_fp, 'letter_freeze: so does the time it last changed';
+  perform tests.as_service();
+  perform tests.throws(format($q$select public.svc_letter_frozen(%L, jsonb_build_object('doc_path', %L, 'doc_sha256', repeat('ab', 32), 'by_user', %L::uuid,
+    'fingerprint', %L))$q$, l, v_path, tests.id('partner'), v_fp), '%changed while it was being signed%');
+  perform tests.as_postgres();
+  update practices set name = name || ' (renamed)' where id = pr;
+  v_fp2 := private.letter_fingerprint(l);
+  update practices set name = replace(name, ' (renamed)', '') where id = pr;
+  assert v_fp2 <> private.letter_fingerprint(l), 'letter_freeze: the firm''s details are in it';
+  v_fp := private.letter_fingerprint(l);
+  perform tests.as_service();
   r := public.svc_letter_frozen(l, jsonb_build_object('doc_path', v_path, 'doc_sha256', repeat('ab', 32), 'by_user', tests.id('partner'),
-    'signature_name', 'Bisi Partner', 'ip', '203.0.113.5', 'ua', 'Test browser'));
+    'signature_name', 'Bisi Partner', 'ip', '203.0.113.5', 'ua', 'Test browser', 'fingerprint', v_fp));
   perform tests.as_postgres();
   assert r->>'status' = 'partner_signed', 'letter_freeze: signed by the firm';
   assert (select status = 'partner_signed' and doc_path = v_path and doc_sha256 = repeat('ab', 32) and partner_id = tests.id('partner_pm')
@@ -596,9 +617,11 @@ begin
   perform tests.hooks_on();
   perform tests.as_user(tests.id('partner'));
   l := public.practice_letter_draft(tests.id('i'), '{"merge":{"contact.name":"Dayo Client"}}')->>'id';
+  perform tests.as_postgres();
+  tok := private.letter_fingerprint(l);
   perform tests.as_service();
   perform public.svc_letter_frozen(l, jsonb_build_object('doc_path', 'practice/' || pr || '/letters/' || l || '/letter.pdf', 'doc_sha256', repeat('ab', 32),
-    'by_user', tests.id('partner'), 'signature_name', 'Bisi Partner', 'ip', '203.0.113.5', 'ua', 'Test browser'));
+    'by_user', tests.id('partner'), 'signature_name', 'Bisi Partner', 'ip', '203.0.113.5', 'ua', 'Test browser', 'fingerprint', tok));
   perform tests.as_user(tests.id('partner'));
   s := public.practice_letter_send(l, '{"name":"Dayo Client","email":"dayo@client.example.test","title":"Director"}')->'signers'->0->>'id';
   perform tests.as_service();
@@ -731,9 +754,11 @@ declare pr uuid := tests.id('pr'); l uuid; s uuid; tok text; r jsonb;
 begin
   perform tests.as_user(tests.id('partner'));
   l := public.practice_letter_draft(tests.id('i'), '{}')->>'id';
+  perform tests.as_postgres();
+  tok := private.letter_fingerprint(l);
   perform tests.as_service();
   perform public.svc_letter_frozen(l, jsonb_build_object('doc_path', 'practice/' || pr || '/letters/' || l || '/letter.pdf', 'doc_sha256', repeat('ab', 32),
-    'by_user', tests.id('partner2')));
+    'by_user', tests.id('partner2'), 'fingerprint', tok));
   perform tests.as_user(tests.id('partner'));
   s := public.practice_letter_send(l, '{"name":"Dayo Client","email":"dayo@client.example.test"}')->'signers'->0->>'id';
   perform tests.as_service();

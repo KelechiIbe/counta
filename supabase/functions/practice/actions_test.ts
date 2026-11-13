@@ -203,7 +203,7 @@ Deno.test('letter_freeze_renders_stores_once_and_freezes', async () => {
   const admin = new Fake(), user = new Fake();
   user.rpcs.practice_letter_prepare = () => ({ letter_id: LID, practice_id: PID, source: 'template', doc_path: null, title: 'Letter of engagement: Ọlá Àdé Foods Ltd',
     variant: 'full', blocks: bodyJson, merge: { 'client.name': 'Ọlá Àdé Foods Ltd', 'fees.amount': 250000, 'service.bookkeeping': true },
-    firm: { name: 'Ṣọlá & Co' }, partner: { id: USER, name: 'Ṣọlá Ìyá', email: 'sola@firm.example.test', title: 'Partner' } });
+    firm: { name: 'Ṣọlá & Co' }, partner: { id: USER, name: 'Ṣọlá Ìyá', email: 'sola@firm.example.test', title: 'Partner' }, fingerprint: 'f'.repeat(64) });
   admin.rpcs.svc_letter_frozen = (a) => ({ id: LID, status: 'partner_signed', doc_sha256: a.p.doc_sha256 });
   const r = await call(deps(admin, user), { action: 'letter_freeze', letter_id: LID, signature_name: 'Ṣọlá Ìyá' });
   assertEquals(r.body.ok, true);
@@ -211,7 +211,7 @@ Deno.test('letter_freeze_renders_stores_once_and_freezes', async () => {
   assertEquals(admin.uploads.map((u) => [u.path, u.upsert, u.contentType]), [[path, false, 'application/pdf']]);
   const frozen = admin.calls.find((c) => c.fn === 'svc_letter_frozen')!;
   assertEquals(frozen.args.p, { doc_path: path, doc_sha256: await sha256Hex(admin.files.get(path)!), by_user: USER, signature_name: 'Ṣọlá Ìyá',
-    ip: '203.0.113.9', ua: 'TestBrowser/1.0' });
+    ip: '203.0.113.9', ua: 'TestBrowser/1.0', fingerprint: 'f'.repeat(64) });
   assertEquals(user.calls.map((c) => c.fn), ['practice_letter_prepare']);
 });
 
@@ -222,6 +222,12 @@ Deno.test('letter_freeze_removes_the_file_when_refused', async () => {
   admin.rpcs.svc_letter_frozen = () => { throw new Error('Only a partner of the practice signs its letters.'); };
   const r = await call(deps(admin, user), { action: 'letter_freeze', letter_id: LID });
   assertEquals(r.body, { ok: false, error: 'Only a partner of the practice signs its letters.' });
+  assertEquals(admin.files.size, 0);
+  // No fingerprint in the answer: none is passed on (the database refuses the letter as changed), and the file goes.
+  assertEquals(admin.calls.find((c) => c.fn === 'svc_letter_frozen')!.args.p.fingerprint, null);
+  admin.rpcs.svc_letter_frozen = () => { throw new Error('The letter changed while it was being signed. Sign it again.'); };
+  const changed = await call(deps(admin, user), { action: 'letter_freeze', letter_id: LID });
+  assertEquals(changed.body, { ok: false, error: 'The letter changed while it was being signed. Sign it again.' });
   assertEquals(admin.files.size, 0);
   user.user = null;
   assertEquals((await call(deps(admin, user), { action: 'letter_freeze', letter_id: LID })).status, 401);
@@ -421,6 +427,8 @@ Deno.test('mono_already_unlinked_counts_and_other_writes_stay', async () => {
     for (const r of admin.tables.bank_accounts) r.provider_meta = { ...r.provider_meta, note: 'kept' };
     return String(url).includes('mono_gone')
       ? new Response(JSON.stringify({ status: 'failed', message: 'Account not found' }), { status: 404 })
+      : String(url).includes('mono_lost')
+      ? new Response('<html><body>404 Not Found</body></html>', { status: 404 })
       : new Response('upstream error', { status: 502 });
   }) as typeof fetch;
   const { value: r } = await quietly(() => call(deps(admin, new Fake(), { fetch: fakeFetch }), { action: 'unlink_feeds', client_id: CLIENT }));
@@ -432,6 +440,12 @@ Deno.test('mono_already_unlinked_counts_and_other_writes_stay', async () => {
   const [b1, b2] = admin.tables.bank_accounts.map((x) => x.provider_meta);
   assert(b1.mono_unlinked_at && b1.note === 'kept' && b1.former_feed === 'mono_gone');
   assert(!b2.mono_unlinked_at && b2.mono_unlink_error === 'Mono: upstream error' && b2.mono_unlink_tried_at && b2.note === 'kept');
+  // A 404 that is not Mono's own answer (a page from something in between) is a failure, not an account gone.
+  admin.tables.bank_accounts.push({ id: 'b3', org_id: ORG, provider: 'manual', provider_meta: { unlinked_reason: 'engagement ended', former_feed: 'mono_lost' } });
+  const lost = await call(deps(admin, user, { fetch: fakeFetch }), { action: 'unlink_feeds', client_id: CLIENT });
+  const b3 = admin.tables.bank_accounts[2].provider_meta;
+  assertEquals(lost.body.feeds.failed >= 1, true);
+  assert(!b3.mono_unlinked_at && String(b3.mono_unlink_error).startsWith('Mono: <html>'));
 });
 
 Deno.test('export_limits_and_formula_guard', async () => {
@@ -447,6 +461,12 @@ Deno.test('export_limits_and_formula_guard', async () => {
   const b = { org_id: ORG, client_id: CLIENT, practice_id: PID, tables: ['orgs'] };
   // The file alone fits 1,100 bytes; with the records it does not: the records count.
   await assertRejects(() => buildExport(setup() as unknown as SupabaseClient, b, new Date(), 1100), Error, 'Ask TaxStreem for a full copy.');
+  // A table too large is refused while its pages come in, before the next page is asked for.
+  const big = setup();
+  let pages = 0;
+  big.rpcs.svc_export_rows = () => { pages++; return { rows: [{ note: 'y'.repeat(600) }], next: `p${pages}` }; };
+  await assertRejects(() => buildExport(big as unknown as SupabaseClient, b, new Date(), 2000), Error, 'Ask TaxStreem for a full copy.');
+  assertEquals(pages, 4);
   // A file whose size is not listed is refused.
   const unknown = setup();
   unknown.sizes.set(`${ORG}/documents/a.pdf`, undefined);

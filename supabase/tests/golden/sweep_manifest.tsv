@@ -147,6 +147,7 @@ public.update_member	keep	if v_role = 'owner' and t.role <> 'owner' then raise e
 public.update_member	perm_of	if v_role = 'admin' and t.role <> 'admin' and m.role <> 'owner' then raise exception 'Only the owner makes someone an admin.' using errcode = '42501'; end if;
 public.update_member	keep	if v_role <> 'owner' then
 public.update_member	keep	if v_role <> 'owner' then perform private.apply_member_perms(p_member); end if;
+public.update_member	keep	v_set := v_role <> 'owner';
 public.update_payment_settings	perm_of	if m.role <> 'owner' then raise exception 'Only the owner changes payment settings.' using errcode = '42501'; end if;
 public.update_sales_settings	perm_of	if m.role <> 'owner' then raise exception 'Only the owner changes these settings.' using errcode = '42501'; end if;
 public.vat_status	perm_of	'can_change', m.role = 'owner');

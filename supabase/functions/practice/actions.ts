@@ -111,7 +111,8 @@ async function signedUrl(d: Deps, path: string, seconds: number, download = fals
 // ------------------------------------------------------------------ signed in: the firm
 // A partner signs a draft letter for the firm: the letter as prepared for them (practice_letter_prepare, as themselves)
 // rendered to a PDF and stored write-once in the letter's folder, or a PDF letter's own file as it stands; its SHA-256;
-// then svc_letter_frozen records the signature (the partner's name and email as they are now, IP, browser).
+// then svc_letter_frozen records the signature (the partner's name and email as they are now, IP, browser), given the
+// fingerprint the letter had when it was prepared, so a letter changed in between is not signed.
 async function letterFreeze(req: Request, b: Body, d: Deps, sb: SupabaseClient, user: User): Promise<Result> {
   const letterId = uuid(b.letter_id, 'letter');
   const signature = String(b.signature_name ?? '').replace(/\s+/g, ' ').trim();
@@ -149,7 +150,8 @@ async function letterFreeze(req: Request, b: Body, d: Deps, sb: SupabaseClient, 
   }
   try {
     const letter = await rpc(d.admin, 'svc_letter_frozen', { p_letter: letterId,
-      p: { doc_path: path, doc_sha256: await sha256Hex(bytes), by_user: user.id, signature_name: signature || null, ip, ua } });
+      p: { doc_path: path, doc_sha256: await sha256Hex(bytes), by_user: user.id, signature_name: signature || null, ip, ua,
+        fingerprint: typeof prep.fingerprint === 'string' ? prep.fingerprint : null } });
     return { ok: true, letter };
   } catch (e) {
     // Refused for certain: the file goes, so the partner can sign again. An answer lost on the way may mean the letter
@@ -196,7 +198,9 @@ export async function unlinkFormerFeeds(d: Deps, orgId: string): Promise<{ unlin
         let body: any = null;
         try { body = JSON.parse(text); } catch { /* not json */ }
         const msg = String(body?.message || text || res.status);
-        const gone = res.status === 404 || /not\s+found|already\s+unlinked|does\s+not\s+exist|no\s+such\s+account/i.test(msg);
+        // Gone only on Mono's own answer (JSON): a 404 or an HTML error page from something in between is a failure.
+        const gone = !!body && typeof body === 'object'
+          && (res.status === 404 || /not\s+found|already\s+unlinked|does\s+not\s+exist|no\s+such\s+account/i.test(String(body.message || '')));
         if (!gone && (!res.ok || body?.status === 'failed' || body?.status === 'error')) err = `Mono: ${msg.slice(0, 200)}`;
       } catch (e) {
         err = `Mono: ${(e as Error).message}`.slice(0, 200);

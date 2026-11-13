@@ -69,7 +69,15 @@ export type IntakeDetail = Omit<IntakeRow, 'authority_declared'> & {
   authority_declared_by: string | null; authority_declared_at: string | null; authority_statement: string | null; authority_doc_path: string | null;
   authority_declared_by_name: string | null;
   people: IntakePerson[]; docs: IntakeDoc[]; hits: ConflictHit[]; letters: { id: string; status: LetterStatus; variant: IntakeMode }[];
+  history?: IntakeHistory[];
 };
+// A client's intake as it was before a change (ongoing due diligence), newest first.
+export type IntakeSnapshot = {
+  legal_name: string; mode_requested: IntakeMode; entity_type: EntityType | null; rc_number: string | null; tax_id: string | null; address: string | null;
+  industry: string | null; risk_rating: 'low' | 'medium' | 'high' | null; risk_reason: string | null; pep_present: boolean; conflict_status: ConflictStatus;
+  conflict_note: string | null; checked_at: string | null; people: Omit<IntakePerson, 'id'>[];
+};
+export type IntakeHistory = { id: string; created_at: string; changed_by_name: string | null; snapshot: IntakeSnapshot };
 // Each condition for setting a business up under full mandate, for the signed-in person; ok when all hold.
 export type GateKey = 'partner_verified' | 'practice_can_full' | 'risk_rated' | 'rc_or_tax_id' | 'conflicts_cleared' | 'letter_completed' | 'authority_declared';
 export type MandateGate = Record<GateKey | 'ok', boolean>;
@@ -178,6 +186,12 @@ export const useLetter = (lid: string | null) => useQuery({ queryKey: ['letter',
 // fee invoices, its recurring schedules and, for a full-mandate client, the bills posted in its own books (the fee mirror).
 // Wallet balances for partners only.
 export type FeeBillStatus = 'posted' | 'failed' | 'voided' | 'skipped' | 'dismissed';
+// A credit note on a fee invoice whose bill is in a full-mandate client's books: waiting for a lead to confirm it (pending),
+// recorded against the bill (posted), or left out of the books by a partner (dismissed, note: why).
+export type FeeCredit = {
+  id: string; fee_bill_id: string; sale_id: string; invoice: string; credit_sale_id: string; credit_note: string; issue_date: string; amount: number;
+  status: 'pending' | 'posted' | 'dismissed'; error: string | null; note: string | null; decided_at: string | null; decided_by_name: string | null; created_at: string;
+};
 export type PracticeFees = {
   firm_org: { id: string; name: string; identity_status: string } | null;
   clients: {
@@ -185,6 +199,7 @@ export type PracticeFees = {
     invoices: { id: string; number: string; issue_date: string; total: number; credited: number; balance: number; status: string }[];
     schedules: { id: string; frequency: 'monthly' | 'quarterly' | 'annually'; day_of_month: number; next_run: string; status: 'active' | 'paused' | 'ended'; total: number }[];
     fee_bills: { id: string; sale_id: string; status: FeeBillStatus; error: string | null; bill_id: string | null; dismiss_reason: string | null; credited: number; note: string | null }[];
+    fee_credits?: FeeCredit[];
   }[];
   wallets?: { wallet: { status: string | null; balance: number }; tax_wallet: { status: string | null; balance: number } };
 };

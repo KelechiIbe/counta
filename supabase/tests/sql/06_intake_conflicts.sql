@@ -452,7 +452,8 @@ end $$;
 
 -- test: invite_needs_cleared_intake
 -- Inviting a business owner needs a cleared involved intake of the practice; the link then carries the intake, which the
--- owner's acceptance engages and the end of the work dates. An engaged, cleared intake is kept as it is.
+-- owner's acceptance engages and the end of the work dates. An engaged intake is kept up to date (ongoing due diligence,
+-- with its history); once the work ends it is kept as it is.
 do $$
 declare pr uuid := tests.id('pr'); u uuid; f uuid; e uuid; c uuid; o uuid; v_owner uuid; r jsonb;
 begin
@@ -493,11 +494,38 @@ begin
   assert (select intake_id = u from practice_clients where id = c) and (select count(*) from practice_intakes where client_id = c) = 1,
     'invite_needs_cleared_intake: no second intake';
   assert private.intake_cleared((select x from practice_intakes x where id = u)), 'invite_needs_cleared_intake: still cleared';
-  -- The record of the engagement is kept as it is: no changes, no new check.
+  -- Ongoing due diligence: a lead keeps the client's intake up to date. The intake as it was goes into its history.
+  perform tests.as_user(tests.id('manager'));
+  r := public.practice_intake_save(pr, jsonb_build_object('id', u, 'risk_reason', 'Reviewed at the year end'));
+  assert r->>'risk_reason' = 'Reviewed at the year end' and not (r->>'dd_incomplete')::boolean and (r->>'cleared')::boolean
+     and jsonb_array_length(r->'history') = 1 and r->'history'->0->>'changed_by_name' = 'Tunde Manager'
+     and r->'history'->0->'snapshot'->>'risk_reason' is null and r->'history'->0->'snapshot'->>'risk_rating' = 'low'
+     and r->'history'->0->'snapshot'->'people'->0->>'name' = 'Ife Adeyemi', format('invite_needs_cleared_intake: kept up to date, got %s', r);
+  -- Saved as it is: nothing new in the history.
+  r := public.practice_intake_save(pr, jsonb_build_object('id', u, 'risk_reason', 'Reviewed at the year end'));
+  assert jsonb_array_length(r->'history') = 1, 'invite_needs_cleared_intake: no change, no history';
+  -- Not the way the firm works with it, and not by staff.
+  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'mode_requested', 'full'))$q$, pr, u),
+    '%already your client%');
+  perform tests.as_user(tests.id('staff'));
+  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'risk_reason', 'Staff edit'))$q$, pr, u),
+    '42501: Only partners and managers%');
+  -- A new director needs the conflicts check again: due diligence incomplete until it is clear.
   perform tests.as_user(tests.id('partner'));
-  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'people', '[]'::jsonb))$q$, pr, u), '%kept as the record%');
-  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'risk_reason', 'Changed later'))$q$, pr, u), '%kept as the record%');
-  perform tests.throws(format('select public.practice_conflict_run(%L)', u), '%kept as the record%');
+  r := public.practice_intake_save(pr, jsonb_build_object('id', u, 'people',
+    '[{"kind":"director","name":"Ife Adeyemi"},{"kind":"director","name":"Gbenga Newman"}]'::jsonb));
+  assert (r->>'dd_incomplete')::boolean and r->>'conflict_status' = 'pending' and jsonb_array_length(r->'history') = 2
+     and jsonb_array_length(r->'history'->0->'snapshot'->'people') = 1 and r->'history'->0->>'changed_by_name' = 'Ngozi Partner',
+    format('invite_needs_cleared_intake: a new director, got %s', r);
+  r := public.practice_conflict_run(u);
+  assert r->>'conflict_status' = 'none' and not (r->>'dd_incomplete')::boolean, 'invite_needs_cleared_intake: checked again';
+  -- Not invited again, nor declared for.
+  perform tests.throws(format($q$select public.practice_invite_client(%L, '{"email":"im3.owner@example.test","intake_id":"%s"}')$q$, pr, u),
+    '%already your client%');
+  perform tests.as_postgres();
+  assert (select count(*) from practice_intake_history where intake_id = u) = 2, 'invite_needs_cleared_intake: the history';
+  -- The history is kept as long as the intake.
+  perform tests.throws(format('delete from practice_intake_history where intake_id = %L', u), '%kept until%');
   -- The work ends: kept for five years from today, still as it is.
   perform tests.as_user(v_owner);
   perform public.practice_end(c);
@@ -506,7 +534,7 @@ begin
   perform tests.as_postgres();
   assert (select retain_until = private.retain_date(null) and retain_until = (current_date + interval '5 years')::date from practice_intakes where id = u),
     'invite_needs_cleared_intake: kept five years after the end';
-  assert (select count(*) = 1 and bool_and(name = 'Ife Adeyemi') from practice_intake_people where intake_id = u), 'invite_needs_cleared_intake: the people survive';
+  assert (select count(*) = 2 and bool_or(name = 'Ife Adeyemi') from practice_intake_people where intake_id = u), 'invite_needs_cleared_intake: the people survive';
   -- Nor is it sent out again.
   perform tests.as_user(tests.id('partner'));
   perform tests.throws(format($q$select public.practice_invite_client(%L, '{"email":"im.owner@example.test","intake_id":"%s"}')$q$, pr, u), '%kept as the record%');
@@ -629,9 +657,14 @@ begin
   r := public.practice_conflict_run(x.id);
   perform tests.as_postgres();
   assert r->>'conflict_status' = 'none' and not (r->>'dd_incomplete')::boolean, 'business_link_creates_draft_intake: complete once cleared';
-  -- From then on it is the record of the engagement.
+  -- From then on it is kept up to date: a new risk rating needs no new check.
   perform tests.as_user(tests.id('partner'));
-  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'risk_rating', 'high'))$q$, pr, x.id), '%kept as the record%');
+  r := public.practice_intake_save(pr, jsonb_build_object('id', x.id, 'risk_rating', 'high', 'risk_reason', 'Cash-heavy sector'));
+  -- (Its history: as it was before each change, the first rating included.)
+  assert r->>'risk_rating' = 'high' and not (r->>'dd_incomplete')::boolean and jsonb_array_length(r->'history') = 2
+     and r->'history'->0->'snapshot'->>'risk_rating' = 'low' and r->'history'->1->'snapshot'->>'risk_rating' is null,
+    format('business_link_creates_draft_intake: rated again, got %s', r);
+  perform tests.throws(format($q$select public.practice_intake_declare(%L, '{}')$q$, x.id), '%already your client%');
   perform tests.as_postgres();
 end $$;
 

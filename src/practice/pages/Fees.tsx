@@ -2,7 +2,8 @@
 // identity check, business wallet and tax wallet. Each client gets a customer there; fee invoices and retainers on a
 // schedule are made in the firm business (the buttons switch Counta to it). For a client the firm runs under full mandate,
 // each fee invoice is also posted as a bill in the client's own books: this page shows each such bill and lets a lead try a
-// failed one again, or a partner give up on one that can never be posted.
+// failed one again, or a partner give up on one that can never be posted. A credit note on such an invoice waits here
+// until a lead confirms it into the client's books (as the firm's credit note against the bill), or a partner leaves it out.
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -12,7 +13,7 @@ import { useSession, useToast } from '../../state/session';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, SkeletonRows, Spinner } from '../../components/ui';
 import { Card, PageHead } from '../../admin/ui';
-import { type FeeBillStatus, type PracticeFees, usePracticeFees, usePracticeHome } from '../api';
+import { type FeeBillStatus, type FeeCredit, type PracticeFees, usePracticeFees, usePracticeHome } from '../api';
 
 type Client = PracticeFees['clients'][number];
 const FREQ = { monthly: 'Monthly', quarterly: 'Every three months', annually: 'Every year' } as const;
@@ -20,6 +21,9 @@ const ord = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2
 const BILL: Record<FeeBillStatus, [string, string]> = {
   posted: ['Posted in the client\'s books', 't-green'], failed: ['Not posted', 't-red'], voided: ['Voided with the invoice', 't-grey'],
   skipped: ['Not posted: the engagement had ended', 't-grey'], dismissed: ['Dismissed', 't-grey'],
+};
+const CREDIT: Record<FeeCredit['status'], [string, string]> = {
+  pending: ['Waiting to be confirmed', 't-amber'], posted: ['In the client\'s books', 't-green'], dismissed: ['Left out of the books', 't-grey'],
 };
 const INV: Record<string, [string, string]> = {
   open: ['Unpaid', 't-amber'], partially_paid: ['Part paid', 't-amber'], paid: ['Paid', 't-green'], void: ['Void', 't-grey'], draft: ['Draft', 't-grey'], credited: ['Credited', 't-grey'],
@@ -37,11 +41,20 @@ export default function Fees({ pid }: { pid: string }) {
   // Raising invoices happens inside the firm business, so only its own people can go there.
   const inFirm = !!firm && memberships.some((m) => m.org_id === firm.id);
   const owed = d.clients.reduce((t, c) => t + Number(c.outstanding || 0), 0);
+  const waiting = d.clients.reduce((t, c) => t + (c.fee_credits || []).filter((k) => k.status === 'pending').length, 0);
   return (
     <>
       <PageHead title="Fees" sub="Bill clients from the firm's own Counta business: fee invoices, retainers on a schedule, and the money they pay into its wallet." />
       {!firm ? <FirmSetup pid={pid} partner={partner} practiceName={home.data?.practice.name || ''} /> : (
         <>
+          {waiting > 0 && (
+            <div data-testid="fees-credits-waiting">
+              <Alert kind="amber" icon="alert">
+                {waiting === 1 ? 'A credit note on a fee invoice waits' : `${waiting} credit notes on fee invoices wait`} to be confirmed before {waiting === 1 ? 'it goes' : 'they go'} into
+                your client's books. Open the client below to confirm or dismiss {waiting === 1 ? 'it' : 'them'}.
+              </Alert>
+            </div>
+          )}
           {!['verified', 'approved', 'not_required'].includes(firm.identity_status) && (
             <div data-testid="fees-firm-identity">
               <Alert kind="amber" icon="lock">
@@ -160,7 +173,11 @@ function ClientFees({ pid, c, firmId, inFirm, partner }: { pid: string; c: Clien
   const [dismiss, setDismiss] = useState<{ id: string; reason: string } | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ['practice-fees', pid] });
   const failed = c.fee_bills.filter((b) => b.status === 'failed').length;
+  const credits = c.fee_credits || [];
+  const waiting = credits.filter((k) => k.status === 'pending').length;
   const number = (sale: string) => c.invoices.find((i) => i.id === sale)?.number || 'Fee invoice';
+  // What was credited on a bill's invoice beyond the credit notes posted against the bill.
+  const unposted = (bill: string, credited: number) => credited - credits.filter((k) => k.fee_bill_id === bill && k.status === 'posted').reduce((t, k) => t + Number(k.amount), 0);
   async function customer(): Promise<string | null> {
     if (c.fee_customer_id) return c.fee_customer_id;
     setBusy('customer');
@@ -193,7 +210,7 @@ function ClientFees({ pid, c, firmId, inFirm, partner }: { pid: string; c: Clien
     setBusy(null);
   }
   return (
-    <details className="fee-row" data-testid="fees-client-row">
+    <details className="fee-row" data-testid="fees-client-row" open={waiting > 0 || undefined}>
       <summary className="fee-sum">
         <span style={{ minWidth: 0 }}>
           <b>{c.business_name}</b>
@@ -204,6 +221,7 @@ function ClientFees({ pid, c, firmId, inFirm, partner }: { pid: string; c: Clien
         </span>
         <span className="row wrap" style={{ gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
           {failed > 0 && <span className="chip t-red">{failed} bill{failed === 1 ? '' : 's'} not posted</span>}
+          {waiting > 0 && <span className="chip t-amber" data-testid="fees-credits-chip">{waiting} credit note{waiting === 1 ? '' : 's'} to confirm</span>}
           <span className="num" data-testid="fees-outstanding">{Number(c.outstanding) > 0 ? <b>{N2(Number(c.outstanding))}</b> : <span className="faint">Nothing owed</span>}</span>
           <span className="fee-chev" aria-hidden="true" style={{ display: 'inline-flex' }}><Icon name="chevron" size={14} /></span>
         </span>
@@ -257,7 +275,9 @@ function ClientFees({ pid, c, firmId, inFirm, partner }: { pid: string; c: Clien
                   </div>
                   {b.status === 'failed' && b.error && <div className="faint" style={{ fontSize: 12 }}>{b.error}</div>}
                   {b.status === 'dismissed' && b.dismiss_reason && <div className="faint" style={{ fontSize: 12 }}>Dismissed: {b.dismiss_reason}</div>}
-                  {b.note && <div className="faint" style={{ fontSize: 12 }}>{N2(Number(b.credited))} {b.note}. Adjust the client's bill by hand.</div>}
+                  {b.note === 'a credit note waits to be confirmed for the bill'
+                    ? <div className="faint" style={{ fontSize: 12 }}>A credit note on this invoice waits to be confirmed (below).</div>
+                    : b.note && <div className="faint" style={{ fontSize: 12 }}>{N2(unposted(b.id, Number(b.credited)))} credited on the invoice, not on the bill. Adjust the client's bill by hand.</div>}
                   {b.status === 'failed' && (
                     dismiss?.id === b.id ? (
                       <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
@@ -281,7 +301,73 @@ function ClientFees({ pid, c, firmId, inFirm, partner }: { pid: string; c: Clien
             })}
           </div>
         )}
+        {credits.length > 0 && <Credits pid={pid} credits={credits} partner={partner} />}
       </div>
     </details>
+  );
+}
+
+// Credit notes on the client's fee invoices whose bills are in its books: waiting first. A lead confirms one into the
+// client's books (the firm's credit note against the bill); a partner can leave one out, with a reason.
+function Credits({ pid, credits, partner }: { pid: string; credits: FeeCredit[]; partner: boolean }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [dismiss, setDismiss] = useState<{ id: string; reason: string } | null>(null);
+  const refresh = () => qc.invalidateQueries({ queryKey: ['practice-fees', pid] });
+  async function confirm(id: string) {
+    setBusy(id);
+    try {
+      const r = await rpc<{ ok: boolean; error?: string }>('practice_fee_credit_confirm', { p_id: id, p_note: null });
+      await refresh();
+      if (r.ok) toast('Recorded in the client\'s books');
+      else toast(`Not recorded: ${r.error || 'try again later.'}`, 'err');
+    } catch (e) { toast(cleanError(e), 'err'); }
+    setBusy(null);
+  }
+  async function dismissIt() {
+    if (!dismiss) return;
+    setBusy(dismiss.id);
+    try { await rpc('practice_fee_credit_dismiss', { p_id: dismiss.id, p_reason: dismiss.reason.trim() }); setDismiss(null); await refresh(); toast('Left out of the books'); }
+    catch (e) { toast(cleanError(e), 'err'); }
+    setBusy(null);
+  }
+  return (
+    <div className="stack" style={{ gap: 6 }} data-testid="fee-credits">
+      <div className="label">Credit notes on fee invoices</div>
+      <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>Each waits for you before it goes into the client's books, where it is recorded as your firm's credit note against the bill.</div>
+      {credits.map((k) => {
+        const [label, tone] = CREDIT[k.status];
+        return (
+          <div key={k.id} className="stack" style={{ gap: 4, fontSize: 14, borderTop: '1px solid var(--row)', paddingTop: 8 }} data-testid="fee-credit-row">
+            <div className="row wrap" style={{ gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>{k.credit_note} <span className="faint">on {k.invoice} · {fmtDay(k.issue_date)}</span></span>
+              <span className="row" style={{ gap: 8 }}><b className="num">{N2(Number(k.amount))}</b><span className={'chip ' + tone} data-testid="fee-credit-status">{label}</span></span>
+            </div>
+            {k.status === 'pending' && k.error && <div className="faint" style={{ fontSize: 12 }}>Last try: {k.error}</div>}
+            {k.status === 'posted' && <div className="faint" style={{ fontSize: 12 }}>Confirmed{k.decided_by_name ? ` by ${k.decided_by_name}` : ''}{k.decided_at ? ` on ${fmtDay(k.decided_at)}` : ''}.</div>}
+            {k.status === 'dismissed' && <div className="faint" style={{ fontSize: 12 }}>Left out{k.decided_by_name ? ` by ${k.decided_by_name}` : ''}: {k.note}</div>}
+            {k.status === 'pending' && (
+              dismiss?.id === k.id ? (
+                <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
+                  <Field label="Why it stays out of the client's books" style={{ flex: '1 1 260px' }}>
+                    <input className="input input-sm" data-testid="fee-credit-reason" value={dismiss.reason} maxLength={500} onChange={(e) => setDismiss({ id: k.id, reason: e.target.value })} />
+                  </Field>
+                  <button type="button" className="btn btn-danger btn-sm" disabled={busy !== null || dismiss.reason.trim().length < 5} onClick={dismissIt}>Leave it out</button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDismiss(null)}>Cancel</button>
+                </div>
+              ) : (
+                <div className="row wrap" style={{ gap: 8 }}>
+                  <button type="button" className="btn btn-primary btn-sm" style={{ minHeight: 40 }} disabled={busy !== null} onClick={() => confirm(k.id)} data-testid="fee-credit-confirm">
+                    {busy === k.id ? <Spinner small /> : <Icon name="check" size={14} color="#fff" />}Confirm into their books
+                  </button>
+                  {partner && <button type="button" className="btn btn-ghost btn-sm" style={{ minHeight: 40 }} disabled={busy !== null} onClick={() => setDismiss({ id: k.id, reason: '' })} data-testid="fee-credit-dismiss">Dismiss</button>}
+                </div>
+              )
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }

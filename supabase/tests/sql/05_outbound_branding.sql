@@ -413,8 +413,8 @@ begin
 end $$;
 
 -- test: outbound_suppress_after_plan
--- The gate runs after the plan's limits: a message not sent stays suppressed (not failed over the limit), logged once,
--- and is never picked up again. A message that may go is still held to the limit.
+-- The gate runs before the plan's limits: a message not sent stays suppressed (not failed over the limit), logged once,
+-- never picked up again, and raises no usage notice. A message that may go is still held to the limit.
 do $$
 declare o uuid := tests.id('o'); n bigint; v uuid;
 begin
@@ -428,7 +428,16 @@ begin
   assert public.svc_message(v) is null and not (public.svc_messages_retry() @> to_jsonb(v)), 'outbound_suppress_after_plan: not picked up';
   perform tests.as_postgres();
   assert (select count(*) from activity_log where org_id = o and action = 'message_suppressed') = n + 1, 'outbound_suppress_after_plan: one event';
+  -- Over a limit that only warns: a message kept back raises no notice; one that goes does.
+  update org_entitlement_overrides set enforce = 'warn' where org_id = o and module_key = 'emails';
+  delete from entitlement_notices where org_id = o and module_key = 'emails';
+  insert into messages (org_id, channel, to_address, template, subject, params) values (o, 'email', 'bola@example.test', 'document', 'Over, kept back', '{}');
+  assert (select status from messages where org_id = o and subject = 'Over, kept back') = 'suppressed'
+     and not exists (select 1 from entitlement_notices where org_id = o and module_key = 'emails'), 'outbound_suppress_after_plan: no notice';
   update orgs set send_mode = 'send' where id = o;
+  insert into messages (org_id, channel, to_address, template, subject, params) values (o, 'email', 'bola@example.test', 'document', 'Over, warned', '{}');
+  assert exists (select 1 from entitlement_notices where org_id = o and module_key = 'emails' and level = 'over'), 'outbound_suppress_after_plan: a message sent is counted';
+  update org_entitlement_overrides set enforce = 'block' where org_id = o and module_key = 'emails';
   insert into messages (org_id, channel, to_address, template, subject, params) values (o, 'email', 'bola@example.test', 'document', 'Over quota, sending', '{}');
   assert (select status = 'failed' and error like 'Your plan%' from messages where org_id = o and subject = 'Over quota, sending'),
     'outbound_suppress_after_plan: the limit still holds';
@@ -446,6 +455,11 @@ begin
   perform private.queue_message(o, 'whatsapp', '08031234567', 'document', 'Meter WhatsApp', '{}', null, null, null);
   assert (select count(*) from messages where org_id = o and subject like 'Meter %' and status = 'suppressed') = 2, 'outbound_meter: suppressed';
   assert private.meter_usage(o, 'emails') = e and private.meter_usage(o, 'whatsapp') = w, 'outbound_meter';
+  -- Nor in the admin average across businesses.
+  assert private.meter_average('emails') = round((select count(*) from messages m join orgs x on x.id = m.org_id where not x.is_sample and m.channel = 'email'
+      and m.status not in ('failed', 'suppressed') and m.created_at >= now() - interval '30 days')::numeric
+    / (select count(*) from orgs x where not x.is_sample and exists (select 1 from members mb where mb.org_id = x.id and mb.status = 'active')), 2)
+     and (select count(*) from messages where status = 'suppressed' and channel = 'email') > 0, 'outbound_meter: the admin average';
   update orgs set send_mode = 'send' where id = o;
   perform private.queue_message(o, 'email', 'bola@example.test', 'document', 'Meter sent', '{}', null, null, null);
   assert private.meter_usage(o, 'emails') = e + 1, 'outbound_meter: a message that goes counts';
@@ -518,11 +532,11 @@ begin
   -- The triggers record events (activity_event is revoked from users) whoever writes, so they run as their owner.
   assert (select bool_and(prosecdef) from pg_proc where oid in ('private.messages_outbound()'::regprocedure, 'private.voice_calls_mandate()'::regprocedure)),
     'outbound_helpers_revoked: the trigger functions are security definer';
-  -- Same-event triggers fire in name order: the gate after the plan's limits (messages_plan).
-  assert exists (select 1 from pg_trigger where tgrelid = 'public.messages'::regclass and tgname = 'messages_suppress'
+  -- Same-event triggers fire in name order: the gate before the plan's limits (messages_plan).
+  assert exists (select 1 from pg_trigger where tgrelid = 'public.messages'::regclass and tgname = 'messages_gate'
                  and tgfoid = 'private.messages_outbound()'::regprocedure)
-     and 'messages_plan' < 'messages_suppress'::text collate "C"
-     and not exists (select 1 from pg_trigger where tgrelid = 'public.messages'::regclass and tgname = 'messages_outbound')
+     and 'messages_gate' < 'messages_plan'::text collate "C"
+     and not exists (select 1 from pg_trigger where tgrelid = 'public.messages'::regclass and tgname in ('messages_outbound', 'messages_suppress'))
      and exists (select 1 from pg_trigger where tgrelid = 'public.voice_calls'::regclass and tgname = 'voice_calls_mandate'
                  and tgfoid = 'private.voice_calls_mandate()'::regprocedure),
     'outbound_helpers_revoked: the triggers';

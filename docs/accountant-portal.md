@@ -94,9 +94,13 @@ Clients, Add a client opens a step-by-step intake (`practice_intakes`, partners 
 
 An intake that is risk-rated and cleared is ready. The letter comes next. For a client the firm already has, the client's page records its **opposing parties**: the other side of a dispute, a deal or a tax matter, so that later checks find them.
 
-A full mandate is refused when the company (by RC number or Tax ID) is already on Counta under someone else: the business already has an owner who signs in, or another practice runs it. TaxStreem is told (a `duplicate_company` flag) and decides what happens.
+A full mandate is refused when the company (by RC number or Tax ID) is already on Counta under someone else: the business already has an owner who signs in, or another practice runs it. TaxStreem is told (a `duplicate_company` flag) and decides what happens. It works the other way too: an owner who tries to set up a company a practice already runs under full mandate is told to ask the firm to hand it over, nothing is set up, and TaxStreem gets the same flag (marked as coming from an owner). RC and BN numbers with the same digits are different businesses; a number with no prefix matches either.
 
-Intakes are kept for as long as the engagement's records are, at least five years after it ends (`retain_until`).
+A prospect a partner refused after the conflicts check stays refused. It cannot come back as a client through the firm's referral link or a link the business starts: Counta matches it on the business itself, its RC number or its Tax ID.
+
+**Ongoing due diligence.** Once a business is the firm's client, its intake stays open for partners and managers to keep up to date (a new director, a change of address, a fresh risk rating). The way the firm works with it does not change there, and the partner's declaration of authority stays. Each change keeps the intake as it stood before in its history (`practice_intake_history`), shown on the intake as earlier versions. A new name, number or person needs the conflicts check again, and the client is marked "due diligence incomplete" until it is clear.
+
+Intakes are kept for as long as the engagement's records are (`retain_until`): the longest of five years after the work ends and the years its letters promise (six by default). From then on an intake is kept exactly as it was.
 
 ## Engagement letters
 
@@ -108,7 +112,7 @@ Every practice starts with Counta's default letter: a full engagement letter for
 
 For one client the firm drafts a letter from a template (`practice_letter_draft`), fills in the fields (fees, dates, the services, the addressee), and changes the clauses if it needs to. Then:
 
-1. **A partner signs it for the firm** (the `practice` function's `letter_freeze`): the PDF is made, stored write-once with its SHA-256, and the letter is frozen.
+1. **A partner signs it for the firm** (the `practice` function's `letter_freeze`): the PDF is made, stored write-once with its SHA-256, and the letter is frozen. The letter's fingerprint is taken when it is prepared for signing; if anyone changes the draft (or the firm's details printed on it) before the signature is recorded, the signature is refused and the partner signs again.
 2. **It goes to the client's signer** (`practice_letter_send`). The email carries a one-time link to `/sign`, good for 14 days. The signer reads the letter, types or draws a signature, and enters a 6-digit code sent to the same email (good for 10 minutes; five wrong tries lock the link until the firm sends it again).
 3. **Signing** (`sign_submit`): the stored letter is read again and refused if its SHA-256 no longer matches the one the firm signed (recorded on the letter as `document_changed`, and the firm's leads are told). Otherwise a signature page and a completion certificate (both sides' names, times, addresses, browsers and the letter's fingerprint) are added and the result is stored write-once.
 4. **Or a signed copy is uploaded** when the client signed on paper (`practice_letter_upload_signed`), with its SHA-256.
@@ -173,7 +177,7 @@ A firm bills its clients from its own Counta business, the **firm business** (`p
 
 Each client gets a customer in the firm business (`practice_clients.fee_customer_id`): a business customer with the client's name and TIN. Fee invoices are ordinary invoices of the firm business, by hand or on a schedule (Recurring invoices). Those to a full-mandate client carry no Counta branding.
 
-For a full-mandate client, each fee invoice is also posted as an approved bill in the client's own books (the fee mirror): the practice as the vendor, professional fees (6502) and the invoice's VAT to the kobo, entered in the name of the client's contact. The Fees page shows each such bill: posted, not posted (with why, and **Try again**), dismissed by a partner with a reason, voided with its invoice, or skipped because the engagement had ended. A credit note on a fee invoice is not posted to the bill; the page shows it so the firm adjusts the bill. Partners also see the firm business's wallet balances there.
+For a full-mandate client, each fee invoice is also posted as an approved bill in the client's own books (the fee mirror): the practice as the vendor, professional fees (6502) and the invoice's VAT to the kobo, entered in the name of the client's contact. The Fees page shows each such bill: posted, not posted (with why, and **Try again**), dismissed by a partner with a reason, voided with its invoice, or skipped because the engagement had ended. A credit note on a fee invoice waits on the Fees page (the leads are told) until a partner or manager confirms it: it then goes into the client's books as the firm's credit note against the bill, credited invoice line by bill line, which takes it off what the bill still owes. A partner can leave one out with a reason, for example when the client's accountant entered it by hand; the bill is then flagged as credited on the invoice only. A credit note that the books refuse (a closed period) keeps waiting with the reason. Partners also see the firm business's wallet balances there.
 
 ## Paying for clients' plans
 
@@ -191,6 +195,7 @@ A partner or manager can pay for a client's Counta plan with the practice's card
 | `practice_notes` | The practice's notes on a client |
 | `filing_versions` | Changed returns and statements, their figures, the journal and the statement |
 | `practice_intakes`, `practice_intake_people`, `practice_intake_docs` | Due diligence on a prospect |
+| `practice_intake_history` | A client's intake as it stood before each change |
 | `practice_conflict_hits`, `practice_opposing_parties` | What the conflicts check found, and the other side of clients' matters |
 | `practice_letter_templates`, `engagement_letters`, `engagement_letter_signers`, `engagement_letter_events` | Templates, letters, their signers and their record |
 | `practice_director_confirmations` | A director's confirmation of the wallets |
@@ -198,9 +203,10 @@ A partner or manager can pay for a client's Counta plan with the practice's card
 | `practice_mandate_flags` | What TaxStreem is told to look at |
 | `activity_log` | What was done in a business a practice runs, or keeps read-only |
 | `practice_fee_bills` | Fee invoices posted as bills in full-mandate clients' books |
+| `practice_fee_credits` | Credit notes on those invoices, waiting, confirmed into the books or left out |
 | `recurring_invoices`, `recurring_invoice_runs` | Invoices on a schedule (any business) |
 
-Nobody reads these tables directly; the functions check who may do what. The practice management migrations are `20261124000100` to `20261124001200`.
+Nobody reads these tables directly; the functions check who may do what. The practice management migrations are `20261124000100` to `20261124001300`.
 
 ## Checking it
 

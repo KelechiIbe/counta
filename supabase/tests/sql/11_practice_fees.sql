@@ -524,26 +524,158 @@ begin
 end $$;
 
 -- test: fee_credit_visible
--- A credit note on a fee invoice is not posted to the client's bill (a deferral, shown): the fees overview gives what was
--- credited on each invoice, and flags its posted bill. The invoice can no longer be voided.
+-- A credit note on a fee invoice whose bill is posted waits for a lead to confirm it before it goes into the client's
+-- books: the leads are told, the fees overview lists it and flags the bill, and the bill is unchanged. The invoice can
+-- no longer be voided.
 do $$
-declare pr uuid := tests.id('pr'); s2 uuid := tests.id('sale2'); r jsonb; cl jsonb; i jsonb; b jsonb;
+declare pr uuid := tests.id('pr'); s2 uuid := tests.id('sale2'); r jsonb; cl jsonb; i jsonb; b jsonb; k jsonb; v_cn uuid; n bigint;
 begin
+  n := (select count(*) from notifications where kind = 'practice' and title = 'A fee credit note to confirm');
   perform tests.as_user(tests.id('partner'));
-  perform public.credit_sale(s2, '{"amount": 10000, "reason": "Discount agreed"}');
+  v_cn := (public.credit_sale(s2, '{"amount": 10000, "reason": "Discount agreed"}')->'credit_note'->>'id')::uuid;
   perform tests.throws(format($q$select public.void_sale(%L, 'Raised in error')$q$, s2), '%credit note%');
   perform tests.as_user(tests.id('manager'));
   r := public.practice_fees(pr);
   perform tests.as_postgres();
+  perform tests.remember('cn2', v_cn);
   select x into cl from jsonb_array_elements(r->'clients') x where x->>'client_id' = tests.id('c1')::text;
   select x into i from jsonb_array_elements(cl->'invoices') x where x->>'id' = s2::text;
   select x into b from jsonb_array_elements(cl->'fee_bills') x where x->>'sale_id' = s2::text;
   assert (i->>'credited')::numeric = 10000 and (i->>'balance')::numeric = 54500, format('fee_credit_visible: the invoice, got %s', i);
-  assert b->>'status' = 'posted' and (b->>'credited')::numeric = 10000 and b->>'note' = 'credited on the invoice, not on the bill',
+  assert b->>'status' = 'posted' and (b->>'credited')::numeric = 10000 and b->>'note' = 'a credit note waits to be confirmed for the bill',
     format('fee_credit_visible: the bill flagged, got %s', b);
-  assert (select total from bills where id = (b->>'bill_id')::uuid) = 64500, 'fee_credit_visible: the bill unchanged';
+  assert (select total from bills where id = (b->>'bill_id')::uuid) = 64500 and not exists (select 1 from vendor_credits where org_id = tests.id('o1')),
+    'fee_credit_visible: the bill unchanged';
+  assert jsonb_array_length(cl->'fee_credits') = 1, format('fee_credit_visible: one waiting, got %s', cl->'fee_credits');
+  k := cl->'fee_credits'->0;
+  assert k->>'status' = 'pending' and (k->>'amount')::numeric = 10000 and k->>'credit_sale_id' = v_cn::text and k->>'sale_id' = s2::text
+     and k->>'invoice' = (select number from sales where id = s2) and k->>'credit_note' = (select number from sales where id = v_cn)
+     and k->>'fee_bill_id' = b->>'id' and k->>'decided_at' is null, format('fee_credit_visible: the credit note, got %s', k);
+  perform tests.remember('fc2', (k->>'id')::uuid);
+  -- The leads are told, staff are not.
+  assert (select count(*) from notifications where kind = 'practice' and title = 'A fee credit note to confirm') = n + 2
+     and exists (select 1 from notifications where user_id = tests.id('manager') and title = 'A fee credit note to confirm' and url = '/practice/fees'
+                 and body like '%10,000.00%')
+     and not exists (select 1 from notifications where user_id = tests.id('staff') and title = 'A fee credit note to confirm'),
+    'fee_credit_visible: the leads told';
   assert not exists (select 1 from jsonb_array_elements(cl->'fee_bills') x where x->>'sale_id' <> s2::text and (x->>'note' is not null or (x->>'credited')::numeric <> 0)),
     'fee_credit_visible: no other bill flagged';
+  -- Once per credit note.
+  assert (private.fee_credit_note(v_cn)).id = (k->>'id')::uuid and (select count(*) from practice_fee_credits where credit_sale_id = v_cn) = 1,
+    'fee_credit_visible: once';
+end $$;
+
+-- test: fee_credit_confirm
+-- Staff cannot confirm, nor someone outside the practice. A manager confirms: the client's books get the supplier's
+-- credit note against the bill (the credit note's number as the supplier's reference, dated its day), which takes it off
+-- what the bill still owes; it is logged and the bill's flag goes. Once only.
+do $$
+declare pr uuid := tests.id('pr'); fc uuid := tests.id('fc2'); o uuid := tests.id('o1'); r jsonb; cl jsonb; b jsonb; k jsonb; v_bill public.bills;
+  vc public.vendor_credits; v_cn public.sales;
+begin
+  perform tests.as_user(tests.id('staff'));
+  perform tests.throws(format('select public.practice_fee_credit_confirm(%L)', fc), '42501: Only partners and managers%');
+  perform tests.as_user(tests.id('kemi'));
+  perform tests.throws(format('select public.practice_fee_credit_confirm(%L)', fc), '%not on this practice%');
+  perform tests.as_user(tests.id('manager'));
+  perform tests.throws(format('select public.practice_fee_credit_confirm(%L, %L)', fc, repeat('x', 501)), '%under 500%');
+  r := public.practice_fee_credit_confirm(fc);
+  assert (r->>'ok')::boolean and r->'credit'->>'status' = 'posted' and r->'credit'->>'decided_by' = tests.id('manager')::text,
+    format('fee_credit_confirm, got %s', r);
+  perform tests.throws(format('select public.practice_fee_credit_confirm(%L)', fc), '%posted already%');
+  r := public.practice_fees(pr);
+  perform tests.as_postgres();
+  select * into v_cn from sales where id = tests.id('cn2');
+  select * into vc from vendor_credits where id = (select vendor_credit_id from practice_fee_credits where id = fc);
+  select * into v_bill from bills where id = vc.bill_id;
+  assert vc.org_id = o and vc.vendor_ref = v_cn.number and vc.credit_date = v_cn.issue_date and vc.total = 10000 and vc.reason like '%' || v_cn.number || '%'
+     and vc.bill_id = (select bill_id from practice_fee_bills where sale_id = tests.id('sale2')) and vc.vendor_id = v_bill.vendor_id,
+    format('fee_credit_confirm: the supplier''s credit note, got %s', to_jsonb(vc));
+  assert v_bill.total = 64500 and v_bill.amount_paid = 10000 and v_bill.status = 'partially_paid' and vc.applied = 10000,
+    format('fee_credit_confirm: taken off the bill, got %s', to_jsonb(v_bill));
+  assert (select (practice_id, source, actor_user) = (pr, 'event', tests.id('manager')) and after->>'credit_note' = v_cn.number
+          from activity_log where org_id = o and action = 'fee_credit_posted'), 'fee_credit_confirm: logged';
+  select x into cl from jsonb_array_elements(r->'clients') x where x->>'client_id' = tests.id('c1')::text;
+  select x into b from jsonb_array_elements(cl->'fee_bills') x where x->>'sale_id' = tests.id('sale2')::text;
+  k := cl->'fee_credits'->0;
+  assert b->>'note' is null and (b->>'credited')::numeric = 10000, format('fee_credit_confirm: the flag goes, got %s', b);
+  assert k->>'status' = 'posted' and k->>'decided_by_name' = 'Tola Manager' and k->>'decided_at' is not null, format('fee_credit_confirm: the record, got %s', k);
+end $$;
+
+-- test: fee_credit_lines_and_dismiss
+-- A credit note on a two-line invoice goes against the bill lines made from the lines it credits. A partner dismisses
+-- one (staff and managers cannot; a reason is needed): the books are left alone and the bill is flagged as credited on
+-- the invoice only. A credit note that cannot go into the books (the client's engagement ended) waits until dismissed.
+do $$
+declare pr uuid := tests.id('pr'); f uuid := tests.id('f'); o uuid := tests.id('o1'); v_sale uuid; v_cn uuid; fc uuid; r jsonb; cl jsonb; b jsonb;
+  vc public.vendor_credits; v_bill uuid; v_l1 uuid; v_l2 uuid;
+begin
+  perform tests.as_user(tests.id('partner'));
+  v_sale := (public.save_sale_doc(f, jsonb_build_object('customer_id', tests.id('cu1'), 'status', 'issue', 'prices_include_vat', false,
+    'lines', '[{"description": "Bookkeeping", "qty": 1, "unit_price": 30000, "vat_treatment": "standard"},
+               {"description": "Tax filing", "qty": 1, "unit_price": 20000, "vat_treatment": "standard"}]'::jsonb))->>'id')::uuid;
+  v_cn := (public.credit_sale(v_sale, jsonb_build_object('reason', 'Tax filing not needed', 'lines', jsonb_build_array(jsonb_build_object(
+    'sale_line_id', (select id from sale_lines where sale_id = v_sale and description = 'Tax filing'), 'amount', 21500))))->'credit_note'->>'id')::uuid;
+  perform tests.as_postgres();
+  fc := (select id from practice_fee_credits where credit_sale_id = v_cn);
+  assert (select amount from practice_fee_credits where id = fc) = 21500, 'fee_credit_lines_and_dismiss: waiting';
+  perform tests.as_user(tests.id('partner'));
+  r := public.practice_fee_credit_confirm(fc, 'Tax filing dropped from the engagement');
+  perform tests.as_postgres();
+  assert (r->>'ok')::boolean, format('fee_credit_lines_and_dismiss: confirmed, got %s', r);
+  select * into vc from vendor_credits where id = (r->'credit'->>'vendor_credit_id')::uuid;
+  v_bill := (select bill_id from practice_fee_bills where sale_id = v_sale);
+  v_l2 := (select id from bill_lines where bill_id = v_bill and description = 'Tax filing');
+  assert vc.reason = 'Tax filing dropped from the engagement' and (select count(*) from vendor_credit_lines where credit_id = vc.id) = 1
+     and (select bill_line_id = v_l2 and gross = 21500 and vat = 1500 from vendor_credit_lines where credit_id = vc.id),
+    format('fee_credit_lines_and_dismiss: against the line it credits, got %s', (select jsonb_agg(to_jsonb(x)) from vendor_credit_lines x where credit_id = vc.id));
+
+  -- Dismissed by a partner, with a reason.
+  perform tests.as_user(tests.id('partner'));
+  v_cn := (public.credit_sale(v_sale, '{"amount": 5000, "reason": "Goodwill"}')->'credit_note'->>'id')::uuid;
+  perform tests.as_postgres();
+  fc := (select id from practice_fee_credits where credit_sale_id = v_cn);
+  perform tests.as_user(tests.id('manager'));
+  perform tests.throws(format($q$select public.practice_fee_credit_dismiss(%L, 'Entered by hand')$q$, fc), '42501: Only a partner%');
+  perform tests.as_user(tests.id('staff'));
+  perform tests.throws(format($q$select public.practice_fee_credit_dismiss(%L, 'Entered by hand')$q$, fc), '42501: Only partners and managers%');
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.practice_fee_credit_dismiss(%L, 'no')$q$, fc), '%reason%');
+  r := public.practice_fee_credit_dismiss(fc, 'Entered by hand in their books');
+  assert r->>'status' = 'dismissed' and r->>'note' = 'Entered by hand in their books' and r->>'decided_by' = tests.id('partner')::text,
+    format('fee_credit_lines_and_dismiss: dismissed, got %s', r);
+  perform tests.throws(format('select public.practice_fee_credit_confirm(%L)', fc), '%dismissed already%');
+  perform tests.throws(format($q$select public.practice_fee_credit_dismiss(%L, 'Again please')$q$, fc), '%dismissed already%');
+  r := public.practice_fees(pr);
+  perform tests.as_postgres();
+  select x into cl from jsonb_array_elements(r->'clients') x where x->>'client_id' = tests.id('c1')::text;
+  select x into b from jsonb_array_elements(cl->'fee_bills') x where x->>'sale_id' = v_sale::text;
+  assert b->>'note' = 'credited on the invoice, not on the bill' and (b->>'credited')::numeric = 26500, format('fee_credit_lines_and_dismiss: flagged, got %s', b);
+  assert (select count(*) from vendor_credits where bill_id = v_bill) = 1, 'fee_credit_lines_and_dismiss: the books left alone';
+end $$;
+
+-- test: fee_credit_after_end
+-- A credit note on a fee invoice of a client whose engagement has since ended cannot go into its read-only books: it
+-- waits, and a partner dismisses it.
+do $$
+declare pr uuid := tests.id('pr'); f uuid := tests.id('f'); c5 uuid; o5 uuid; cu5 uuid; v_sale uuid; v_cn uuid; fc uuid;
+begin
+  c5 := tests.full_client(pr, tests.id('partner'), 'Echo Farms Ltd');
+  o5 := (select org_id from practice_clients where id = c5);
+  perform tests.as_user(tests.id('partner'));
+  cu5 := (public.practice_fee_customer(c5, '{}')->>'customer_id')::uuid;
+  v_sale := pg_temp.fee_invoice(f, cu5, 30000);
+  perform public.practice_end_mandate(c5, '{"reason": "The client moved to another firm"}');
+  v_cn := (public.credit_sale(v_sale, '{"amount": 3000, "reason": "Last month pro rata"}')->'credit_note'->>'id')::uuid;
+  perform tests.as_postgres();
+  fc := (select id from practice_fee_credits where credit_sale_id = v_cn);
+  assert fc is not null and (pg_temp.fb(v_sale)).status = 'posted', 'fee_credit_after_end: waiting';
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format('select public.practice_fee_credit_confirm(%L)', fc), '%no longer keep%');
+  perform public.practice_fee_credit_dismiss(fc, 'Engagement ended');
+  perform tests.as_postgres();
+  assert (select status from practice_fee_credits where id = fc) = 'dismissed' and not exists (select 1 from vendor_credits where org_id = o5),
+    'fee_credit_after_end: dismissed, books untouched';
 end $$;
 
 -- test: fee_void_after_handover_leaves_bill
@@ -627,17 +759,21 @@ do $$
 declare v_fn text;
 begin
   foreach v_fn in array array['private.fee_mirror(uuid)', 'private.fee_mirror_on_post()', 'private.fee_mirror_on_void()',
-    'private.void_bill_as(uuid, text, public.members)', 'private.white_label(uuid, uuid)'] loop
+    'private.void_bill_as(uuid, text, public.members)', 'private.white_label(uuid, uuid)', 'private.fee_credit_note(uuid)', 'private.fee_credit_on_post()'] loop
     assert not has_function_privilege('anon', v_fn, 'execute') and not has_function_privilege('authenticated', v_fn, 'execute'), 'fees_helpers_revoked: ' || v_fn;
   end loop;
   foreach v_fn in array array['public.practice_firm_business(uuid, jsonb)', 'public.practice_fee_customer(uuid, jsonb)',
-    'public.practice_fee_bill_retry(uuid)', 'public.practice_fee_bill_dismiss(uuid, text)', 'public.practice_fees(uuid)', 'public.void_bill(uuid, text)'] loop
+    'public.practice_fee_bill_retry(uuid)', 'public.practice_fee_bill_dismiss(uuid, text)', 'public.practice_fees(uuid)', 'public.void_bill(uuid, text)',
+    'public.practice_fee_credit_confirm(uuid, text)', 'public.practice_fee_credit_dismiss(uuid, text)'] loop
     assert has_function_privilege('authenticated', v_fn, 'execute') and not has_function_privilege('anon', v_fn, 'execute'), 'fees_helpers_revoked: rpc ' || v_fn;
   end loop;
   assert (select relrowsecurity from pg_class where oid = 'public.practice_fee_bills'::regclass)
      and not has_table_privilege('authenticated', 'public.practice_fee_bills', 'select')
      and not has_table_privilege('anon', 'public.practice_fee_bills', 'select'), 'fees_helpers_revoked: table';
-  assert (select count(*) from pg_trigger where tgrelid = 'public.sales'::regclass and tgname in ('sales_fee_mirror', 'sales_fee_mirror_void')) = 2,
+  assert (select relrowsecurity from pg_class where oid = 'public.practice_fee_credits'::regclass)
+     and not has_table_privilege('authenticated', 'public.practice_fee_credits', 'select')
+     and not has_table_privilege('anon', 'public.practice_fee_credits', 'select'), 'fees_helpers_revoked: credits table';
+  assert (select count(*) from pg_trigger where tgrelid = 'public.sales'::regclass and tgname in ('sales_fee_mirror', 'sales_fee_mirror_void', 'sales_fee_credit')) = 3,
     'fees_helpers_revoked: triggers';
   assert pg_get_constraintdef((select oid from pg_constraint where conname = 'bills_source_check')) like '%practice_fee%', 'fees_helpers_revoked: bill source';
 end $$;

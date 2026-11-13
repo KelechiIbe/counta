@@ -179,7 +179,7 @@ A business a practice runs under full mandate (`orgs.managed_by`), or keeps read
 - **Calls** never go.
 - **A read-only business** sends nothing at all.
 
-A message the gate stops keeps its row with status `suppressed` and error `Not sent: <reason>` (`not_firm_address`, `download_only`, `calls_off`, `read_only`), and the business's activity log records it (`message_suppressed`). The messaging hook is not called for it.
+A message the gate stops keeps its row with status `suppressed` and error `Not sent: <reason>` (`not_firm_address`, `download_only`, `calls_off`, `read_only`), and the business's activity log records it (`message_suppressed`). The messaging hook is not called for it. The gate (`messages_gate`) runs before the plan's limits (`messages_plan`), so a message that is not sent uses none of the plan's emails or WhatsApp messages and raises no usage notice.
 
 Such a business is **white-labelled** (`private.white_label`, the `white_label` flag in what `svc_message` gives the function): its emails go out in its own name with no "Sent by Counta" line, and the invoice portal and the signing page show no Counta mark. The same holds for the firm's fee invoices to a full-mandate client, and for the closing ones after the mandate ended without a handover. Every approved Meta template ends "Sent with Counta", so a white-labelled business's WhatsApp messages to customers wait for unbranded `_nb` variants of the templates; until Meta approves them, the function refuses them with "Unbranded WhatsApp is not available yet. Send it by email."
 

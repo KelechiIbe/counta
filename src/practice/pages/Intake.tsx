@@ -157,7 +157,10 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
 
   const partner = h.me.role === 'partner';
   const declined = d?.status === 'declined';
-  const kept = !!d && (d.retain_until != null || (d.status === 'engaged' && d.cleared));
+  // Kept as it is once it has a retention date (the work ended, refused, or the business deleted). A current client's
+  // intake stays up to date (ongoing due diligence), with its history.
+  const kept = !!d && d.retain_until != null;
+  const client = d?.status === 'engaged' && !kept;
   const invitation = d ? h.clients.find((c) => c.intake_id === d.id && c.status === 'invited') : undefined;
   const editable = !declined && !kept && !invitation;
   const dirty = !d || !same(f, toForm(d));
@@ -225,6 +228,11 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
         ? <Alert kind="grey" icon="history">The engagement with this business ended. Its due-diligence record is kept until {fmtDay(d!.retain_until)} and cannot be changed.</Alert>
         : <Alert kind="grey" icon="lock">This intake is the record of the engagement{d?.retain_until ? `, kept until ${fmtDay(d.retain_until)}` : ''}, so it cannot be changed. Start a new intake to record changes.</Alert>)}
       {!declined && !kept && d?.dd_incomplete && <Alert kind="amber" icon="alert">Due diligence incomplete: this business is already your client. Complete the details, rate the risk and run the conflicts check.</Alert>}
+      {client && !d?.dd_incomplete && (
+        <div data-testid="intake-ongoing">
+          <Alert kind="blue" icon="info">This business is your client. Keep its due diligence up to date here: the intake as it was before each change stays in its history, and a new name, number or person means running the conflicts check again.</Alert>
+        </div>
+      )}
       {invitation && <InvitationNotice pid={pid} id={invitation.id} email={invitation.invite_email} sentAt={invitation.sent_at} />}
 
       <nav aria-label="Steps">
@@ -290,7 +298,7 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
               <Field label="Registered address">
                 <textarea className="input" data-testid="intake-address" rows={2} value={f.address} maxLength={300} disabled={!editable} onChange={(e) => up('address', e.target.value)} />
               </Field>
-              {editable && d?.checked_at && <div className="muted" style={{ fontSize: 13 }}>A change to the name or numbers means running the conflicts check again{d.authority_declared_at ? ', and a new name withdraws the partner\'s declaration' : ''}.</div>}
+              {editable && d?.checked_at && <div className="muted" style={{ fontSize: 13 }}>A change to the name or numbers means running the conflicts check again{d.authority_declared_at && !client ? ', and a new name withdraws the partner\'s declaration' : ''}.</div>}
             </div>
           )}
 
@@ -342,6 +350,7 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
             : <span />}
         </div>
       </section>
+      {d && (d.history?.length || 0) > 0 && <History d={d} />}
     </div>
   );
 }
@@ -564,7 +573,7 @@ function Conflicts({ pid, h, d, partner, guard }: { pid: string; h: Home; d: Int
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [refusing, setRefusing] = useState(false);
-  const closed = d.status === 'declined' || d.retain_until != null || (d.status === 'engaged' && d.cleared);
+  const closed = d.status === 'declined' || d.retain_until != null;
   async function act(kind: 'run' | 'cleared' | 'refused') {
     setBusy(kind); setErr(null);
     try {
@@ -676,6 +685,40 @@ function OpposingParties({ pid, clientId }: { pid: string; clientId: string }) {
         <OpposingList pid={pid} clientId={clientId} list={c.data?.opposing_parties || []} />
       </div>
     </details>
+  );
+}
+
+// A client's intake as it was before each change (ongoing due diligence), newest first: who changed it and when, and
+// what it held then.
+const CHECK_WORD: Record<string, string> = { pending: 'not checked since the last change', none: 'nothing found', hits: 'possible conflicts', cleared: 'cleared by a partner', refused: 'refused' };
+function History({ d }: { d: IntakeDetail }) {
+  const list = d.history || [];
+  return (
+    <section className="card" aria-labelledby="intake-history-title" data-testid="intake-history">
+      <div className="card-hd"><h2 id="intake-history-title" style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Earlier versions</h2></div>
+      <div className="card-pad stack" style={{ gap: 0, paddingTop: 12 }}>
+        <div className="muted" style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 6 }}>The intake as it stood before each change. They are kept as long as the intake is.</div>
+        {list.map((x, i) => {
+          const v = x.snapshot;
+          return (
+            <details key={x.id} className="hist-row" data-testid="intake-history-row" style={{ borderTop: i ? '1px solid var(--row)' : undefined }}>
+              <summary style={{ cursor: 'pointer', padding: '10px 0', fontSize: 14, minHeight: 44, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <b style={{ fontWeight: 600 }}>{when(x.created_at)}</b>
+                <span className="muted">changed by {x.changed_by_name || 'someone no longer at the practice'}</span>
+              </summary>
+              <dl className="stack" style={{ gap: 4, margin: '0 0 12px', fontSize: 13, lineHeight: 1.5 }}>
+                <div><dt className="faint" style={{ display: 'inline' }}>Name: </dt><dd style={{ display: 'inline', margin: 0 }}>{v.legal_name}</dd></div>
+                {(v.rc_number || v.tax_id) && <div><dt className="faint" style={{ display: 'inline' }}>Numbers: </dt><dd style={{ display: 'inline', margin: 0 }}>{[v.rc_number, v.tax_id && `TIN ${v.tax_id}`].filter(Boolean).join(' · ')}</dd></div>}
+                {v.address && <div><dt className="faint" style={{ display: 'inline' }}>Address: </dt><dd style={{ display: 'inline', margin: 0 }}>{v.address}</dd></div>}
+                <div><dt className="faint" style={{ display: 'inline' }}>Risk: </dt><dd style={{ display: 'inline', margin: 0 }}>{v.risk_rating ? RISK_WORD[v.risk_rating] : 'not rated'}{v.risk_reason ? `, “${v.risk_reason}”` : ''}</dd></div>
+                <div><dt className="faint" style={{ display: 'inline' }}>Conflicts check: </dt><dd style={{ display: 'inline', margin: 0 }}>{CHECK_WORD[v.conflict_status] || v.conflict_status}{v.checked_at ? ` (${when(v.checked_at)})` : ''}</dd></div>
+                <div><dt className="faint" style={{ display: 'inline' }}>People: </dt><dd style={{ display: 'inline', margin: 0 }}>{v.people.length ? v.people.map((p) => `${p.name}${p.is_pep ? ' (politically exposed)' : ''}`).join(', ') : 'none recorded'}</dd></div>
+              </dl>
+            </details>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

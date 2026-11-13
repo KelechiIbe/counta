@@ -24,15 +24,19 @@ const UNKNOWN_SIZE = 'The size of one of the business\'s stored files could not 
 type Begin = { org_id: string; client_id: string; practice_id: string; tables: string[] };
 type Page = { rows: unknown[]; next: string | null };
 
-// Every row of a paged export call ({rows, next}), following next until the last page.
-async function allPages(admin: SupabaseClient, fn: string, args: Record<string, unknown>): Promise<unknown[]> {
+// Every row of a paged export call ({rows, next}), following next until the last page. room(bytes) is told the rows'
+// size so far after each page, so an export too large is refused before all of it is held in memory.
+async function allPages(admin: SupabaseClient, fn: string, args: Record<string, unknown>, room: (bytes: number) => void = () => {})
+  : Promise<unknown[]> {
   const rows: unknown[] = [];
-  let after: string | null = null;
+  let after: string | null = null, size = 0;
   for (;;) {
     const { data, error } = await admin.rpc(fn, { ...args, p_after: after, p_limit: PAGE });
     if (error) throw dbFailure(fn, error);
     const page = data as Page;
     if (!page || !Array.isArray(page.rows)) throw new Error(`${fn}: no rows`);
+    size += JSON.stringify(page.rows).length;
+    room(size);
     rows.push(...page.rows);
     if (!page.next) return rows;
     if (page.next === after) throw new Error(`${fn}: the next page is the same page`);
@@ -108,12 +112,15 @@ export async function buildExport(admin: SupabaseClient, b: Begin, now: Date = n
     zip[name] = bytes;
   };
 
+  // While the pages of one part come in: what is held already, and that part so far.
+  const room = (bytes: number) => { if (total + bytes > maxBytes) throw new UserError(TOO_BIG(total + bytes, maxBytes)); };
+
   for (const table of b.tables) {
     if (typeof table !== 'string' || !/^[a-z_][a-z0-9_]*$/.test(table)) throw new Error(`Not a table name: ${String(table)}`);
-    add(`tables/${table}.json`, enc.encode(JSON.stringify(await allPages(admin, 'svc_export_rows', { p_org: b.org_id, p_table: table }), null, 1)));
+    add(`tables/${table}.json`, enc.encode(JSON.stringify(await allPages(admin, 'svc_export_rows', { p_org: b.org_id, p_table: table }, room), null, 1)));
   }
-  add('ledger.csv', enc.encode(ledgerCsv(await allPages(admin, 'svc_export_ledger', { p_org: b.org_id }))));
-  add('activity_log.json', enc.encode(JSON.stringify(await allPages(admin, 'svc_export_activity', { p_org: b.org_id }), null, 1)));
+  add('ledger.csv', enc.encode(ledgerCsv(await allPages(admin, 'svc_export_ledger', { p_org: b.org_id }, room))));
+  add('activity_log.json', enc.encode(JSON.stringify(await allPages(admin, 'svc_export_activity', { p_org: b.org_id }, room), null, 1)));
 
   // The stored files are counted, by the sizes listed, before any is read.
   const files = await storedFiles(admin, b.org_id);

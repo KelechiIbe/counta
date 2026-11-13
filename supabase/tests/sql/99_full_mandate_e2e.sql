@@ -35,9 +35,11 @@ begin
 
   -- 2. The engagement letter for a full mandate: drafted, signed by the firm, sent, e-signed by the client with the code.
   l := (public.practice_letter_draft(i, '{"variant": "full"}')->>'id')::uuid;
+  perform tests.as_postgres();
+  tok := private.letter_fingerprint(l);
   perform tests.as_service();
   perform public.svc_letter_frozen(l, jsonb_build_object('doc_path', 'practice/' || pr || '/letters/' || l || '/letter.pdf', 'doc_sha256', repeat('ab', 32),
-    'by_user', partner, 'signature_name', 'Bisi Partner', 'ip', '203.0.113.5', 'ua', 'Test browser'));
+    'by_user', partner, 'signature_name', 'Bisi Partner', 'ip', '203.0.113.5', 'ua', 'Test browser', 'fingerprint', tok));
   perform tests.as_user(partner);
   s := (public.practice_letter_send(l, '{"name":"Tunde Bello","email":"tunde.bello@director.example.test","title":"Managing Director"}')->'signers'->0->>'id')::uuid;
   perform tests.as_postgres();

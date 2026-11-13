@@ -278,7 +278,7 @@ end $$;
 -- practice_letter_send only queues the email). The intake must be cleared. Returns the letter's id.
 create function tests.completed_letter(p_intake uuid) returns uuid
 language plpgsql as $$
-declare v_practice uuid; v_partner uuid; v_name text; l uuid; s uuid; v_tok text; v_code text; r jsonb;
+declare v_practice uuid; v_partner uuid; v_name text; l uuid; s uuid; v_tok text; v_code text; r jsonb; v_fp text;
 begin
   perform tests.as_postgres();
   select practice_id into v_practice from public.practice_intakes where id = p_intake;
@@ -287,9 +287,11 @@ begin
   if v_partner is null then raise exception 'tests.completed_letter: no active partner for intake %', p_intake; end if;
   perform tests.as_user(v_partner);
   l := (public.practice_letter_draft(p_intake, '{}')->>'id')::uuid;
+  perform tests.as_postgres();
+  v_fp := private.letter_fingerprint(l);
   perform tests.as_service();
   perform public.svc_letter_frozen(l, jsonb_build_object('doc_path', 'practice/' || v_practice || '/letters/' || l || '/letter.pdf',
-    'doc_sha256', repeat('ab', 32), 'by_user', v_partner, 'signature_name', v_name, 'ip', '203.0.113.5', 'ua', 'Test browser'));
+    'doc_sha256', repeat('ab', 32), 'by_user', v_partner, 'signature_name', v_name, 'ip', '203.0.113.5', 'ua', 'Test browser', 'fingerprint', v_fp));
   perform tests.as_user(v_partner);
   s := (public.practice_letter_send(l, '{"name":"Dayo Client","email":"dayo.client@client.example.test","title":"Director"}')->'signers'->0->>'id')::uuid;
   perform tests.as_service();

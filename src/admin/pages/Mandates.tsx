@@ -121,6 +121,9 @@ function DirectorReview({ r }: { r: AdminMandates['reviews'][number] }) {
 
 function detailLines(f: AdminMandates['flags'][number]): string[] {
   const x = f.detail || {};
+  if (f.kind === 'duplicate_company' && x.source === 'owner') return [
+    `${x.email || 'Someone'} tried to set up this company as its owner${x.name ? ` (as ${x.name})` : ''}, matched on the ${x.matched_on === 'tax_id' ? 'Tax ID' : 'RC number'}. They were told to ask the firm to hand it over, and nothing was set up.`,
+  ];
   if (f.kind === 'duplicate_company') return [
     `Matched on the ${x.matched_on === 'tax_id' ? 'Tax ID' : 'RC number'}${f.intake?.rc_number ? ` (${f.intake.rc_number})` : f.intake?.tax_id ? ` (${f.intake.tax_id})` : ''}${x.source === 'cac' ? ', when the firm chose the CAC record' : ', at intake'}.`,
   ];
@@ -155,8 +158,8 @@ function Flag({ f, admin }: { f: AdminMandates['flags'][number]; admin: boolean 
       <div className="stack" style={{ gap: 2, fontSize: 14, lineHeight: 1.6 }}>
         {detailLines(f).map((l) => <div key={l}>{l}</div>)}
         {f.kind === 'duplicate_company' && f.detail?.org_id && (admin
-          ? <div><Link to={`/admin/businesses/${f.detail.org_id}`}>Open the business already on Counta</Link></div>
-          : <div className="faint">The business already on Counta: {String(f.detail.org_id)}</div>)}
+          ? <div><Link to={`/admin/businesses/${f.detail.org_id}`}>{f.detail.source === 'owner' ? 'Open the owner\'s own business' : 'Open the business already on Counta'}</Link></div>
+          : <div className="faint">{f.detail.source === 'owner' ? 'The owner\'s own business' : 'The business already on Counta'}: {String(f.detail.org_id)}</div>)}
         {f.kind === 'handover' && f.identity && (
           <div className="faint">Identity before the handover: {STATUS_WORD[f.identity.status_before || ''] || 'unknown'}; now {STATUS_WORD[f.identity.status] || f.identity.status}.</div>
         )}

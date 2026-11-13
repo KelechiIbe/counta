@@ -194,11 +194,14 @@ export const kycManual = (p: { name: string; kind: string; address?: string; sta
   rpc<Kyc>('kyc_manual', { p: { ...p, ...forOrg(org) } });
 export const kycAnswer = (p: Partial<Answers>, org?: string | null) => rpc<Kyc>('kyc_answer', { p: { ...p, ...forOrg(org) } });
 // A business a practice runs is refused, without an error, when the company is already someone else's on Counta: TaxStreem
-// is told and nothing is submitted.
+// is told and nothing is submitted. So is an owner's own profile of a company an accounting firm already runs for its owner.
 export const DUPLICATE_COMPANY = 'This company is already on Counta under someone else, so the profile was not submitted. TaxStreem has been told and will contact the firm.';
+export const MANAGED_ELSEWHERE = 'This company is already on Counta: an accounting firm runs it for its owner. Ask the firm to hand it over to you. TaxStreem has been told.';
 export async function kycSubmit(p: Record<string, unknown>, org?: string | null) {
   const r = await rpc<{ ok?: boolean; reason?: string; org_id: string; name: string; compliance: Score }>('kyc_submit', { p: { ...p, ...forOrg(org) } });
-  if (r && r.ok === false) throw new Error(r.reason === 'duplicate' ? DUPLICATE_COMPANY : 'The profile could not be submitted just now.');
+  if (r && r.ok === false) {
+    throw new Error(r.reason === 'duplicate' ? DUPLICATE_COMPANY : r.reason === 'managed_elsewhere' ? MANAGED_ELSEWHERE : 'The profile could not be submitted just now.');
+  }
   return r;
 }
 export const kycDoc = (org: string, path: string, kind: string, fileName?: string) => rpc<Kyc>('kyc_doc', { p_org: org, p_path: path, p_kind: kind, p_file_name: fileName ?? null });
