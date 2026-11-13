@@ -773,11 +773,30 @@ begin
      and private.otp_check(s, r->>'code', r->>'otp_hash', now() - interval '1 second', 0, 0, null)->>'reason' = 'expired'
      and private.otp_check(s, r->>'code', null, null, 0, 0, null)->>'reason' = 'expired'
      and private.otp_check(s, r->>'code', r->>'otp_hash', now() + interval '1 minute', 0, 0, now())->>'reason' = 'locked'
-     and (private.otp_check(s, r->>'code', r->>'otp_hash', now() + interval '1 minute', 0, 15, null)->>'locked')::boolean, 'otp_helpers: refused before comparing';
+     and (private.otp_check(s, r->>'code', r->>'otp_hash', now() + interval '1 minute', 0, 15, null)->>'locked')::boolean
+     and private.otp_check(s, r->>'code', r->>'otp_hash', now() + interval '1 minute', 0, 15, null)->>'reason' = 'locked', 'otp_helpers: refused before comparing';
   assert private.otp_check(s, r->>'code', r->>'otp_hash', now() + interval '1 minute', 5, 5, null)->>'otp_tries' = '5'
      and private.otp_check(s, r->>'code', r->>'otp_hash', now() + interval '1 minute', 5, 5, null)->>'otp_failures' = '5', 'otp_helpers: counters unchanged when refused';
   assert private.otp_check(gen_random_uuid(), r->>'code', r->>'otp_hash', now() + interval '1 minute', 0, 0, null)->>'reason' = 'wrong_code',
     'otp_helpers: a code is for its holder only';
+end $$;
+
+-- test: letters_go_with_their_records
+-- Letters, signers and events go only with the records they belong to: a practice deleted once its due-diligence records
+-- are past their retention date takes its templates and letters with it, signed ones included.
+do $$
+declare pr uuid := tests.id('pr'); l uuid := tests.id('l_done');
+begin
+  -- A template removed leaves the letters made from it, signed ones too, as they are (they hold their own copy).
+  assert tests.error_of(format('delete from practice_letter_templates where id = (select template_id from engagement_letters where id = %L)', l)) is null,
+    'letters_go_with_their_records: a template removed';
+  assert (select template_id is null and status = 'completed' and blocks = private.letter_default_body() from engagement_letters where id = l),
+    'letters_go_with_their_records: the signed letter unchanged';
+  update practice_intakes set retain_until = current_date where practice_id = pr;
+  assert tests.error_of(format('delete from practices where id = %L', pr)) is null, 'letters_go_with_their_records: the practice deleted';
+  assert not exists (select 1 from engagement_letters where practice_id = pr) and not exists (select 1 from engagement_letter_events where letter_id = l)
+     and not exists (select 1 from engagement_letter_signers where letter_id = l) and not exists (select 1 from practice_letter_templates where practice_id = pr),
+    'letters_go_with_their_records: letters, signers, events and templates with it';
 end $$;
 
 -- test: letter_helpers_revoked
