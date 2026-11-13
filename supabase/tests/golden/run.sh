@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# Usage: bash supabase/tests/golden/run.sh record|check|coverage [pattern]
+# Usage: bash supabase/tests/golden/run.sh record|check|coverage|sweep [pattern]
 #   record    runs every cases/*<pattern>*.sql and writes expected/<case>.out
 #   check     runs them and compares with expected/<case>.out: "golden OK (<n> cases)" or a unified diff and exit 1
 #   coverage  every line of owner_functions.txt has cases/<line>.sql, and no case is vacuous (every caller's output only
 #             "ERROR 42501: permission denied..." or empty): "coverage OK (<n> functions)"
+#   sweep     every owner comparison (the owner enumeration regexes) in the latest definition of a public or private
+#             function is listed in sweep_manifest.tsv as keep, unless it already counts acting owners (it is immediately
+#             followed by `or [alias.]acts_as_owner`); no keep line is stale; every owner_functions.txt function has a
+#             line: "sweep OK (<n> kept)". A manifest line is <schema.function> TAB <perm_of|acts_as_owner|org_contact|keep>
+#             TAB <the line holding the comparison, whitespace collapsed>; '#' starts a comment line.
 # Each run starts a fresh harness cluster. Each case runs in one transaction: sequences reset, fixture.sql, then per caller
 # savepoint -> setup (as postgres) -> act as the caller -> each "-- exec" through tests.error_of -> tests.capture per
 # "-- call" -> back to postgres -> rollback to savepoint. Case format:
@@ -19,9 +24,74 @@ G="$(cd "$(dirname "$0")" && pwd)"
 T="$(cd "$G/.." && pwd)"
 PGH_DIR=${PGH_DIR:-/var/tmp/counta-pgh}
 mode=${1:-}; pattern=${2:-}
-case "$mode" in record|check|coverage) ;; *) echo "usage: golden/run.sh record|check|coverage [pattern]" >&2; exit 2;; esac
+case "$mode" in record|check|coverage|sweep) ;; *) echo "usage: golden/run.sh record|check|coverage|sweep [pattern]" >&2; exit 2;; esac
 pg() { runuser -u postgres -- env PGOPTIONS='-c client_min_messages=error' /usr/lib/postgresql/16/bin/psql \
   -h "$PGH_DIR" -p 54329 -U postgres -qAtX -v ON_ERROR_STOP=1 -d postgres "$@"; }
+
+if [ "$mode" = sweep ]; then
+  M="$G/sweep_manifest.tsv"
+  bad=$(awk -F'\t' '/^#/ || /^[[:space:]]*$/ { next }
+    !(NF == 3 && $1 ~ /^(public|private)\.[a-z0-9_]+$/ && $2 ~ /^(perm_of|acts_as_owner|org_contact|keep)$/ && $3 != "") { print NR ": " $0 }' "$M")
+  [ -z "$bad" ] || { echo "sweep_manifest.tsv: malformed lines (want <schema.function> TAB <perm_of|acts_as_owner|org_contact|keep> TAB <line>):"; echo "$bad"; exit 1; }
+  out=$(bash "$T/harness/run.sh" 2>&1) || { echo "$out"; exit 1; }
+  # Each result line is "<kind> TAB <manifest line>"; kind "kept" is a comparison the manifest keeps.
+  res=$( {
+    echo "create temp table manifest (fn text, category text, snippet text); create temp table owner_list (fn text);"
+    echo "copy manifest from stdin with (format csv, delimiter E'\t', quote E'\x01');"
+    grep -v -e '^#' -e '^[[:space:]]*$' "$M"; echo '\.'
+    echo "copy owner_list from stdin with (format csv, quote E'\x01');"
+    cat "$G/owner_functions.txt"; echo '\.'
+    cat <<'SQL'
+create temp table hits_now as
+with defs as (
+  select n.nspname || '.' || p.proname as fn, pg_get_functiondef(p.oid) as src
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname in ('public', 'private') and p.prokind = 'f'),
+hits as (
+  select d.fn, d.src, regexp_instr(d.src, x.pat, 1, k) as a, regexp_instr(d.src, x.pat, 1, k, 1) as b
+  from defs d
+  cross join (select $r$role\s*(<>|!=|=)\s*'owner'|role\s+(not\s+)?in\s*\([^)]*'owner'[^)]*\)$r$ as pat) x
+  cross join lateral generate_series(1, regexp_count(d.src, x.pat)) k),
+spans as (
+  select fn, src, b,
+    case when strpos(reverse(substr(src, 1, a - 1)), E'\n') = 0 then 1 else a - strpos(reverse(substr(src, 1, a - 1)), E'\n') + 1 end as s,
+    case when strpos(substr(src, b), E'\n') = 0 then length(src) + 1 else b + strpos(substr(src, b), E'\n') - 1 end as e
+  from hits)
+select fn, btrim(regexp_replace(substr(src, s, e - s), '\s+', ' ', 'g')) as snippet,
+  substr(src, b) ~ $r$^\s*or\s+(\w+\.)?acts_as_owner\M$r$ as resolved
+from spans;
+with keyed as (
+  select fn, snippet, bool_or(category = 'keep') as kept, string_agg(distinct category, ',') as categories, count(distinct category) as n
+  from manifest group by fn, snippet)
+select 'kept' || E'\t' || f.fn || E'\tkeep\t' || f.snippet from hits_now f join keyed k using (fn, snippet) where not f.resolved and k.kept
+union all
+select 'missing' || E'\t' || f.fn || E'\tkeep\t' || f.snippet from hits_now f left join keyed k using (fn, snippet) where not f.resolved and k.fn is null
+union all
+select 'swept' || E'\t' || f.fn || E'\t' || k.categories || E'\t' || f.snippet from hits_now f join keyed k using (fn, snippet) where not f.resolved and not k.kept
+union all
+select 'conflict' || E'\t' || fn || E'\t' || categories || E'\t' || snippet from keyed where n > 1
+union all
+select 'stale' || E'\t' || m.fn || E'\tkeep\t' || m.snippet from manifest m
+where m.category = 'keep' and not exists (select 1 from hits_now f where f.fn = m.fn and f.snippet = m.snippet)
+union all
+select 'unlisted' || E'\t' || o.fn from owner_list o where not exists (select 1 from manifest m where m.fn = o.fn);
+SQL
+  } | pg 2>&1) || { echo "$res"; exit 1; }
+  failed=0
+  report() {
+    local lines; lines=$(printf '%s\n' "$res" | awk -F'\t' -v k="$1" '$1 == k' | cut -f2-)
+    [ -n "$lines" ] || return 0
+    echo "$2"; printf '%s\n' "$lines"; failed=1
+  }
+  report missing "Owner comparisons not in sweep_manifest.tsv (sweep each onto the resolver, or append it as it stands here if it stays):"
+  report swept "Owner comparisons the manifest lists as swept that are still in place (sweep them, or list them as keep):"
+  report stale "Keep lines whose comparison is no longer there (remove or replace them):"
+  report conflict "Manifest lines listed under more than one category:"
+  report unlisted "owner_functions.txt functions with no line in sweep_manifest.tsv:"
+  [ $failed = 0 ] || exit 1
+  echo "sweep OK ($(printf '%s\n' "$res" | awk -F'\t' '$1 == "kept"' | grep -c .) kept)"
+  exit 0
+fi
 
 # The entries of added_keys.txt, one per line ('#' starts a comment).
 added_keys() { sed -e 's/#.*//' -e 's/[[:space:]]//g' "$G/added_keys.txt" | { grep -v '^$' || true; } | sort -u; }
