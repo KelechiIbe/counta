@@ -27,9 +27,12 @@ Either side can end the work at any time. The practice's notes stay with the pra
 
 - **Clients**: every client with what needs doing, the most urgent first: tax deadlines passed or due within 14 days, changed files waiting to be booked, answers from the client, questions in the books, bank lines to match, an unpaid Counta plan.
 - **A client**: its deadlines and books, the returns and statements, requests to the business, the practice's own notes, and who works on it. *Open the books* switches Counta to the business through the accountant's own place in it.
+- **Letters** (partners and managers): the practice's engagement letter templates and every letter, with its signing record.
 - **Deadlines**: every client's returns and payments in one list.
 - **Team**: the practice's people, their roles and their licence numbers.
-- **Billing**: clients' plans the practice pays for, its card and payments.
+- **Fees** (partners and managers): billing clients from the firm's own business, and the bills posted in full-mandate clients' books.
+- **Earnings** (partners and managers): the Counta Partner programme.
+- **Counta plans** (partners and managers): clients' plans the practice pays for, its card and payments. The route is still `billing`.
 - **Practice**: the practice's details and the person's own licence number.
 
 ### Requests
@@ -70,9 +73,111 @@ From then on:
 
 Only someone with the Accountant role uploads and accepts. The owner, or an accountant, can withdraw a version: its journal is reversed and Counta's own file is used again. Once a return has gone to Flux or been filed, a changed version can no longer replace it, and the version filed cannot be withdrawn.
 
+## Two ways to work for a client
+
+A firm takes each client on in one of two modes (`practice_clients.mode`):
+
+- **Involved** (`involved`): the owner runs the business on Counta and invites the firm, or accepts its invitation, as described above. The firm's people get Accountant's places and never move money.
+- **Full mandate** (`full`): the firm runs the business for its owner, who is not involved at all. The firm sets the business up itself, its partners and managers act as the owner, and the client only sees what comes out of it (its invoices, receipts, returns and statements, sent in the firm's name).
+
+Both start the same way, with due diligence on the prospect and an engagement letter. Only a firm with a partner whose licence TaxStreem verified, and that TaxStreem has not paused, may run full mandates (`private.practice_can_full`).
+
+## Taking a client on: due diligence and the conflicts check
+
+Clients, Add a client opens a step-by-step intake (`practice_intakes`, partners and managers):
+
+1. **The business**: its legal name, kind of entity, RC or BN number, Tax ID, address and industry, and which mode the firm wants.
+2. **Its people**: directors, beneficial owners (with their share) and related parties, each with a nationality, whether they are a politically exposed person, and the type of ID seen. Only the last four characters of an ID number are ever kept; a full NIN, BVN or other number typed anywhere is refused.
+3. **Documents**: the CAC record, IDs, proof of address and others, kept with their SHA-256 (`practice_intake_docs`).
+4. **Risk**: low, medium or high, with the reason. A politically exposed person among the people makes it high.
+5. **Conflicts check** (`practice_conflict_run`): Counta compares the business, its numbers and its people with the firm's current and former clients, its other intakes and the people on them, and the opposing parties it recorded for its clients (and, when the practice switches it on, the names in its clients' books). Anything found must be cleared or refused by a partner with a note before the client can be taken on. A check counts only if it ran after the intake's last change.
+
+An intake that is risk-rated and cleared is ready. The letter comes next. For a client the firm already has, the client's page records its **opposing parties**: the other side of a dispute, a deal or a tax matter, so that later checks find them.
+
+A full mandate is refused when the company (by RC number or Tax ID) is already on Counta under someone else: the business already has an owner who signs in, or another practice runs it. TaxStreem is told (a `duplicate_company` flag) and decides what happens.
+
+Intakes are kept for as long as the engagement's records are, at least five years after it ends (`retain_until`).
+
+## Engagement letters
+
+Every practice starts with Counta's default letter: a full engagement letter for Nigerian accountants with variants for an involved client and a full mandate. Partners and managers keep their own templates under Letters:
+
+- **Edit the default** or make a new one from it. A letter is a list of blocks (headings, numbered clauses, list items, paragraphs, signature blocks), numbered for you as the PDF will be, so moving a clause never leaves a gap. A block can be for one variant only, or only while a field (such as an expenses deposit) is filled in. Fields go in double braces: `{{client.name}}`.
+- **Import the firm's own letter from Word** (.docx). The paragraphs become blocks: headings, clauses and list items from Word's styles and numbering. It is read in the browser, and a file that unpacks too large is refused.
+- **Upload a PDF** when the firm's letter must stay exactly as it is.
+
+For one client the firm drafts a letter from a template (`practice_letter_draft`), fills in the fields (fees, dates, the services, the addressee), and changes the clauses if it needs to. Then:
+
+1. **A partner signs it for the firm** (the `practice` function's `letter_freeze`): the PDF is made, stored write-once with its SHA-256, and the letter is frozen.
+2. **It goes to the client's signer** (`practice_letter_send`). The email carries a one-time link to `/sign`, good for 14 days. The signer reads the letter, types or draws a signature, and enters a 6-digit code sent to the same email (good for 10 minutes; five wrong tries lock the link until the firm sends it again).
+3. **Signing** (`sign_submit`): the stored letter is read again and refused if its SHA-256 no longer matches the one the firm signed (recorded on the letter as `document_changed`, and the firm's leads are told). Otherwise a signature page and a completion certificate (both sides' names, times, addresses, browsers and the letter's fingerprint) are added and the result is stored write-once.
+4. **Or a signed copy is uploaded** when the client signed on paper (`practice_letter_upload_signed`), with its SHA-256.
+
+Every step is in the letter's record (`engagement_letter_events`): drafted, signed by the firm, sent, opened, codes sent and failed, signed, uploaded, voided. A letter can be voided with a reason until it is signed. Letters are kept for the number of years they say (six by default, never fewer than five). A letter to a full-mandate client carries no Counta name, on the page or in the email.
+
+## Full mandate
+
+### The gate
+
+A business is set up under full mandate (`practice_create_business`) only when every condition holds (`practice_mandate_gate`):
+
+- the partner doing it has a verified licence, and TaxStreem lets the firm run full mandates;
+- the intake is risk-rated, has an RC or BN number or a Tax ID, and its conflicts check is clear;
+- a full-mandate engagement letter for the intake, as it now stands, is signed by both sides (or a signed copy is uploaded);
+- a partner has declared, in their own name, that the client gave the firm written authority to act for it.
+
+The business is then made with no owner and its identity check pending, billed to the practice, and with an engagement partner (the partner who set it up, unless another is chosen). Each active partner and manager gets an admin place that **acts as the owner** (`members.acts_as_owner`): they can do everything an owner can, from raising invoices and reconciling payments to managing stock, the team and the settings. Staff get ordinary Accountant's places when they are assigned.
+
+### Silence and branding
+
+Counta says nothing to the client of a full-mandate business (`private.outbound_check`):
+
+- Alerts, invitations and practice emails go only to the firm's own addresses: the mandate's alert address when it has one, else the business's contact (the engagement partner). Anything else is not sent, and the activity log says so (`message_suppressed`).
+- No Counta calls.
+- The business may send its documents to its customers, or be set to **download only**, when nothing is sent at all.
+- Documents, emails, the invoice portal and the signing page carry the firm's name and no Counta branding (`private.white_label`).
+
+The business app shows a banner on every screen saying the person is acting for the owner.
+
+### Money: the business's identity and a director's confirmation
+
+The business wallet and the tax wallet (Flutterwave, through TaxStreem) open only when all of these hold (`private.payments_open`):
+
+1. The business's identity is verified. Its own business profile holds its CAC record, and a partner or manager checks a director's NIN against it (Settings, Business identity). Martina can do it too.
+2. **A director of the company confirms**, from their own email. A partner or manager asks a director named on the CAC record (Full mandate tab, Ask a director). The director opens the link (`/confirm`), reads which firm asks and that TaxStreem provides the wallets through Flutterwave, and confirms with a 6-digit code, or declines with a reason. A confirmation from an address the firm's people signed in from in the last 30 days, or from one that cannot be read, goes to TaxStreem to check (`director_review`); a decline tells TaxStreem (`director_declined`).
+3. TaxStreem has not paused the firm's full mandates (`practices.mandate_suspended_at`).
+
+### What the firm sees
+
+The client's page has a **Full mandate** tab for partners and managers: where the mandate stands (payments, the director's confirmation, the engagement letter), the director's confirmation, how the business sends its documents and where its alerts go, the engagement partner, the handover, the export and the end. Its **activity log** (`activity_log`) records every change made in the business, by whom and when: each write to its tables, and events such as the director's confirmation, fee bills and the handover. People's details from the CAC record are kept out of it.
+
+### Handing the business over
+
+A partner hands the business to the person who will own it (`practice_handover_start`): their name and their own email address, never one of the firm's people or an address on the firm's domain. The email's link (`/practice/join?t=ph_…`, 14 days) opens a page where that person, signed in with that address, takes the business over (`practice_handover_accept`). They become its owner, Counta's silence and the white label lift, and the firm stays on with ordinary Accountant's places. The owner sees everything the firm did in Settings, Your accountant.
+
+If the new owner is not the director who confirmed the wallets, TaxStreem checks the handover before payments open again: the business's identity goes into review with the reason `handover` and a `handover` flag is raised, recording whether the accepting address is one the firm's people use. Approved, payments open (or, for a business never verified before, the new owner does the ordinary NIN check); rejected, they stay shut until TaxStreem decides again.
+
+### Ending without a handover
+
+A partner can end a full mandate with a reason (the `practice` function's `end_mandate`), once both wallets are empty and no payment is moving. The business's connections pause, its bank feeds are unlinked at Mono (with **Unlink them again** if Mono did not answer), its plan stops at the end of its period, its recurring invoices pause, and only the engagement partner keeps a place. The business becomes **read-only** and its records are kept until the date the letter sets, at least five years (`orgs.read_only_at`, `orgs.retain_until`). Nothing can be written or deleted in it meanwhile, and it cannot be deleted in the admin portal.
+
+A partner can **export** the business's records at any time while the firm runs it or keeps it (the `practice` function's `export`): every table, the ledger and the activity log in one ZIP, with private details left out, through a link that works for 10 minutes.
+
+### TaxStreem's side
+
+The admin portal's **Mandates** page (admins and reviewers) holds the director confirmations to check, the open flags (a company already on Counta, a director who declined, a handover to someone else) and the practices that run or may run full mandates. Every decision takes a note. Admins can pause a practice's full mandates, which shuts the payments of every business it runs that way until resumed, and set the free-mail domains that never count as a firm's own address. Handovers waiting for TaxStreem are decided in **Identity reviews**.
+
+## Fees
+
+A firm bills its clients from its own Counta business, the **firm business** (`practices.firm_org_id`): an ordinary business with its own identity check, business wallet and tax wallet. A partner creates one on the Fees page, or links a business they really own. A business created there starts with its identity pending, so its payments open only once a director's identity is verified.
+
+Each client gets a customer in the firm business (`practice_clients.fee_customer_id`): a business customer with the client's name and TIN. Fee invoices are ordinary invoices of the firm business, by hand or on a schedule (Recurring invoices). Those to a full-mandate client carry no Counta branding.
+
+For a full-mandate client, each fee invoice is also posted as an approved bill in the client's own books (the fee mirror): the practice as the vendor, professional fees (6502) and the invoice's VAT to the kobo, entered in the name of the client's contact. The Fees page shows each such bill: posted, not posted (with why, and **Try again**), dismissed by a partner with a reason, voided with its invoice, or skipped because the engagement had ended. A credit note on a fee invoice is not posted to the bill; the page shows it so the firm adjusts the bill. Partners also see the firm business's wallet balances there.
+
 ## Paying for clients' plans
 
-A partner or manager can pay for a client's Counta plan with the practice's card (Billing, or the client's *Team and billing* tab). The first payment goes through Flutterwave's page and comes back to the portal; the card is kept for the practice (never shown to the business) and used for renewals. The business sees that the practice pays, and can take it back by choosing a plan in Settings, Subscription. When the practice stops paying, or the work ends, the plan runs to the end of the period the practice paid for.
+A partner or manager can pay for a client's Counta plan with the practice's card (Counta plans, or the client's *Team and billing* tab). The first payment goes through Flutterwave's page and comes back to the portal; the card is kept for the practice (never shown to the business) and used for renewals. The business sees that the practice pays, and can take it back by choosing a plan in Settings, Subscription. When the practice stops paying, or the work ends, the plan runs to the end of the period the practice paid for.
 
 ## Database
 
@@ -85,5 +190,26 @@ A partner or manager can pay for a client's Counta plan with the practice's card
 | `practice_requests` | Requests to a business and the answers |
 | `practice_notes` | The practice's notes on a client |
 | `filing_versions` | Changed returns and statements, their figures, the journal and the statement |
+| `practice_intakes`, `practice_intake_people`, `practice_intake_docs` | Due diligence on a prospect |
+| `practice_conflict_hits`, `practice_opposing_parties` | What the conflicts check found, and the other side of clients' matters |
+| `practice_letter_templates`, `engagement_letters`, `engagement_letter_signers`, `engagement_letter_events` | Templates, letters, their signers and their record |
+| `practice_director_confirmations` | A director's confirmation of the wallets |
+| `practice_handovers` | Handovers to the owner |
+| `practice_mandate_flags` | What TaxStreem is told to look at |
+| `activity_log` | What was done in a business a practice runs, or keeps read-only |
+| `practice_fee_bills` | Fee invoices posted as bills in full-mandate clients' books |
+| `recurring_invoices`, `recurring_invoice_runs` | Invoices on a schedule (any business) |
 
-Nobody reads these tables directly; the functions in `20261031000300_practices.sql` check who may do what.
+Nobody reads these tables directly; the functions check who may do what. The practice management migrations are `20261124000100` to `20261124001200`.
+
+## Checking it
+
+On a local Postgres 16 (the harness in `supabase/tests`):
+
+```
+bash supabase/tests/run_tests.sh              # every scenario, ends "ALL PASS"
+bash supabase/tests/run_tests.sh 99_full      # the full mandate from intake to handover
+bash supabase/tests/golden/run.sh check       # the owner functions answer as before
+bash supabase/tests/golden/run.sh sweep
+deno test --node-modules-dir=none --allow-read supabase/functions/practice/ supabase/functions/_shared/letter_test.ts supabase/functions/messaging/
+```

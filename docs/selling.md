@@ -47,6 +47,22 @@ A sale logged with Later waits in Sales, To settle, for someone who keeps the bo
 - Credit notes reverse revenue, VAT and stock for returned goods.
 - A credit note for an amount (Return or credit, then Credit an amount) covers a price reduction, a discount agreed after the sale or a service not delivered. Nothing comes back into stock. The amount is spread over the lines by what each can still be credited, or entered line by line; the VAT inside it comes off output VAT at each line's own rate, and the rest comes off revenue (4131 Sales Returns for goods, the line's own revenue account for services). A line cannot be credited twice, whether by a return or a credit note. The credit clears what is still owed on the sale first, then is refunded or kept as the customer's credit (`credit_sale`).
 
+## Recurring invoices
+
+Sell, Recurring invoices bills a customer the same way on a schedule: a retainer, a rent, a subscription. Anyone who records sales sets one up (`recurring_save`):
+
+- **When.** Monthly on a day from 1 to 28 (so every month has it), every three months, or every year, from a start date to an optional end date.
+- **What.** One to fifty lines. Prices are before VAT. In a VAT-registered business a standard line carries VAT at the rate of the invoice's date; zero-rated and exempt lines carry none, and a business not registered for VAT charges none. A line marked **first invoice only** (a deposit, a set-up fee) goes on the first invoice, and cannot be added once the schedule has issued one.
+- **Sending.** Each invoice can be sent to the customer by email or WhatsApp, or issued for you to send. A download-only business never sends. The note on the schedule is printed on each invoice, so the customer sees it.
+
+Every hour (`private.recurring_tick`, the `counta-recurring` cron job) Counta issues each schedule's invoice on its day in the business's own time zone (Lagos by default), dated that day, then moves the schedule on. One invoice per schedule and day, however far behind it was, and no backfill. When e-invoicing has NRS sign an invoice first, it is held and sent once signed. A failure keeps the day, records why, and pauses the schedule after three in a row.
+
+Invoices are issued on the authority of whoever saved the schedule last: their place must still be active and record sales. Saving a schedule is how someone else takes it over. Under full mandate the business's contact issues it if that place has gone.
+
+**Issue the next invoice now** (`recurring_run_now`) issues it at once as the person pressing it, with their own limits (a customer's credit limit, for example). Resuming a paused schedule skips the days missed while it was paused; the screen offers to issue a missed invoice first. Editing the timing of a schedule that has issued an invoice keeps the period of the next one, so no period is billed twice. Ending a full mandate pauses the business's schedules.
+
+Migration `20261124001000_recurring_invoices.sql`.
+
 ## What a customer keeps back
 
 Companies, government bodies and oil and gas operators often pay an invoice less what they deduct for the government: WHT, the 1% Nigerian Content Development (NCD) levy, and VAT when they are withholding VAT agents. When a payment is short by exactly that, the invoice is paid in full and each part is booked against it. Anything else leaves the invoice partly paid, and the person enters what was kept back by hand.

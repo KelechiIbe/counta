@@ -118,19 +118,19 @@ do $$
 declare r jsonb;
 begin
   perform tests.as_user(tests.id('admin'), 'aal2');
-  r := public.admin_mandate_settings_save('{"free_mail_domains":[" @Mail.Example.COM ","mail.example.com","","post.example.ng"]}');
-  assert r->'free_mail_domains' = '["mail.example.com", "post.example.ng"]'::jsonb, format('mandate_settings_save: cleaned, got %s', r);
-  assert public.admin_mandates()->'settings'->'free_mail_domains' = '["mail.example.com", "post.example.ng"]'::jsonb, 'mandate_settings_save: read back';
+  r := public.admin_mandate_settings_save('{"free_mail_domains":[" @Mail.Example.COM ","mail.example.com","","freepost.example.test"]}');
+  assert r->'free_mail_domains' = '["mail.example.com", "freepost.example.test"]'::jsonb, format('mandate_settings_save: cleaned, got %s', r);
+  assert public.admin_mandates()->'settings'->'free_mail_domains' = '["mail.example.com", "freepost.example.test"]'::jsonb, 'mandate_settings_save: read back';
   perform tests.throws($q$select public.admin_mandate_settings_save('{"free_mail_domains":["not a domain"]}')$q$, '%is not a domain name%');
   perform tests.throws($q$select public.admin_mandate_settings_save('{"free_mail_domains":"mail.example.com"}')$q$, '%as a list%');
   perform tests.throws(format('select public.admin_mandate_settings_save(%L)', jsonb_build_object('free_mail_domains', (select jsonb_agg('d' || g || '.example.com') from generate_series(1, 201) g))),
     '%At most 200%');
   perform tests.as_postgres();
-  assert 'post.example.ng' = any (private.free_mail_domains()) and 'gmail.com' = any (private.free_mail_domains()), 'mandate_settings_save: in use';
+  assert 'freepost.example.test' = any (private.free_mail_domains()) and 'gmail.com' = any (private.free_mail_domains()), 'mandate_settings_save: in use';
   assert exists (select 1 from admin_audit where action = 'save_mandates' and user_id = tests.id('admin')), 'mandate_settings_save: audited';
   -- The firm's people on that domain no longer make it the firm's.
-  update practice_members set email = 'femi@post.example.ng' where practice_id = tests.id('pr') and user_id = tests.id('partner');
-  assert private.firm_email(tests.id('pr'), 'someone.else@post.example.ng') is null, 'mandate_settings_save: free-mail is not the firm''s domain';
+  update practice_members set email = 'femi@freepost.example.test' where practice_id = tests.id('pr') and user_id = tests.id('partner');
+  assert private.firm_email(tests.id('pr'), 'someone.else@freepost.example.test') is null, 'mandate_settings_save: free-mail is not the firm''s domain';
   perform tests.as_user(tests.id('reviewer'), 'aal2');
   perform tests.throws($q$select public.admin_mandate_settings_save('{"free_mail_domains":[]}')$q$, '42501: %only for TaxStreem%');
   perform tests.as_user(tests.id('someone'));

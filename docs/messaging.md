@@ -170,6 +170,34 @@ turns it on, a polite follow-up of a customer's invoice that is at least a week 
 
 Meta refuses templates that begin or end with a variable, which is why each one ends with a short line of plain text. If Meta asks for changes, keep the number and order of the variables; the wording around them can change without touching Counta.
 
+## A business run by an accounting firm
+
+A business a practice runs under full mandate (`orgs.managed_by`), or keeps read-only after the mandate ended (`orgs.read_only_at`), goes through an outbound gate before anything is queued (`private.outbound_check`, by triggers on `messages` and `voice_calls`):
+
+- **Alerts, invitations and practice emails** go only to the firm's own addresses: the mandate's alert address (`practice_clients.alert_email`) when it has one, else the business's contact (the engagement partner). An alert to anyone else is re-addressed to the firm (`params.readdressed`); anything else is not sent. The one exception is the email to the person a handover is waiting for.
+- **Documents to customers** go only while the business sends (`orgs.send_mode = 'send'`). A download-only business sends nothing.
+- **Calls** never go.
+- **A read-only business** sends nothing at all.
+
+A message the gate stops keeps its row with status `suppressed` and error `Not sent: <reason>` (`not_firm_address`, `download_only`, `calls_off`, `read_only`), and the business's activity log records it (`message_suppressed`). The messaging hook is not called for it.
+
+Such a business is **white-labelled** (`private.white_label`, the `white_label` flag in what `svc_message` gives the function): its emails go out in its own name with no "Sent by Counta" line, and the invoice portal and the signing page show no Counta mark. The same holds for the firm's fee invoices to a full-mandate client, and for the closing ones after the mandate ended without a handover. Every approved Meta template ends "Sent with Counta", so a white-labelled business's WhatsApp messages to customers wait for unbranded `_nb` variants of the templates; until Meta approves them, the function refuses them with "Unbranded WhatsApp is not available yet. Send it by email."
+
+### The practice's own emails
+
+The database asks the messaging function for these (`private.practice_mail` calls the hook with `{action: 'practice_mail', kind, id}`); the function asks `svc_practice_mail` for the words, the link and the code at the moment it sends, so neither is ever queued in the clear, and nothing is minted while email is paused or not set up.
+
+| Kind | To | What |
+| --- | --- | --- |
+| `letter_sign` | The client's signer | The engagement letter to sign: a one-time `/sign` link, 14 days |
+| `letter_code` | The client's signer | The 6-digit signing code, 10 minutes |
+| `letter_done` | The signer, copied to the partner who signed | The signed letter is ready |
+| `director_confirm` | A director of the company | The request to confirm the wallets: a one-time `/confirm` link |
+| `director_code` | The director | The 6-digit code |
+| `director_admin` | TaxStreem's reviewers (`svc_review_recipients()`, each their own email, at most 20) | A director's confirmation to check |
+
+Letters and director emails go in the firm's name alone. Letters reply to the partner who signed them for the firm, director emails to the engagement partner. The director's email says the wallets are provided by TaxStreem through Flutterwave.
+
 ## Testing
 
 The edge test harness sends every template through mock Resend and Graph servers and checks the sender, reply-to, idempotency key, template name, language and variables, the webhook signature check and the status updates.
