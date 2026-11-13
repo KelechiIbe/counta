@@ -1,12 +1,15 @@
 -- Recurring invoices: schedules (monthly on a day from 1 to 28, quarterly, annually) that the hourly tick turns into invoices
 -- in the business's own (Lagos) day: created, issued, sent to the customer, rolled forward with one catch-up and no backfill;
--- held for NRS when e-invoicing clears them first, then sent once signed; one-off lines on the first invoice only; each
--- schedule on its own, paused after three failures in a row; issued in the name of the person who set the schedule up (or the
--- business's contact when that place is gone), each invoice's log entries carrying its own actor; paused when a full mandate
--- ends; the RPCs need record_sales. Edge-function calls are only recorded in net._requests.
+-- held for NRS when e-invoicing clears them first, then sent once signed (or left to the person when voided or refused);
+-- one-off lines on the first invoice only; each schedule on its own, paused after three failures in a row; issued on the
+-- authority of the person who last saved the schedule (under full mandate the business's contact when that place is gone;
+-- an ordinary business's schedule fails instead), run now as the person pressing it, each invoice's log entries carrying
+-- its own actor; an edit of the timing never bills a period twice; ended at its end date; paused when a full mandate ends;
+-- the RPCs need record_sales. Edge-function calls are only recorded in net._requests.
 begin;
 
--- Fixture: an ordinary business (owner Ada, a cashier who may not record sales), its customers; hooks on.
+-- Fixture: an ordinary business (owner Ada, a cashier who may not record sales, two clerks who record sales but cannot
+-- override a credit limit), its customers; hooks on.
 do $$
 declare v_owner uuid; o uuid;
 begin
@@ -19,6 +22,10 @@ begin
   perform tests.remember('cashier_seat', tests.member(o, tests.id('cashier'), 'cashier'));
   update members set perm_overrides = '{"record_sales": false}' where id = tests.id('cashier_seat');
   perform private.apply_member_perms(tests.id('cashier_seat'));
+  perform tests.remember('clerk', tests.user('clerk@retainer.example.test', 'Kemi Clerk'));
+  perform tests.remember('clerk_seat', tests.member(o, tests.id('clerk'), 'staff'));
+  perform tests.remember('clerk2', tests.user('clerk2@retainer.example.test', 'Femi Clerk'));
+  perform tests.remember('clerk2_seat', tests.member(o, tests.id('clerk2'), 'staff'));
   perform tests.as_user(v_owner);
   perform tests.remember('cust_a', public.save_customer(o, '{"name": "Kola Client", "email": "kola@client.example.test"}'));
   perform tests.remember('cust_b', public.save_customer(o, '{"name": "Bola Client", "email": "bola@client.example.test"}'));
@@ -26,7 +33,9 @@ begin
   perform tests.remember('cust_d', public.save_customer(o, '{"name": "Dayo Client", "email": "dayo@client.example.test"}'));
   perform tests.remember('cust_e', public.save_customer(o, '{"name": "Emeka Client", "email": "emeka@client.example.test"}'));
   perform tests.remember('cust_f', public.save_customer(o, '{"name": "Funke Client", "email": "funke@client.example.test"}'));
+  perform tests.remember('cust_g', public.save_customer(o, '{"name": "Credit Client", "email": "credit@client.example.test"}'));
   perform tests.as_postgres();
+  update customers set credit_limit = 50000 where id = tests.id('cust_g');
   perform tests.hooks_on();
 end $$;
 
@@ -124,9 +133,10 @@ end $$;
 -- test: recurring_vat_and_once_lines
 -- 100,000 with VAT at 7.5% and a 20,000 VAT-exempt deposit on the first invoice only: 127,500 then 107,500. The prices are
 -- before VAT whatever the business's own setting (this one prices with VAT included). VAT treatment 'none' is refused on
--- save, as the invoice lines refuse it; so are other malformed schedules.
+-- save, as the invoice lines refuse it; so are other malformed schedules. Once the schedule has issued an invoice, a new
+-- line marked once is refused (it would never be billed); the deposit already there stays through other edits.
 do $$
-declare o uuid := tests.id('o'); r uuid := tests.id('r'); first_sale uuid; second_sale uuid; v jsonb; p jsonb;
+declare o uuid := tests.id('o'); r uuid := tests.id('r'); first_sale uuid; second_sale uuid; v jsonb; p jsonb; v_lines jsonb;
 begin
   assert (select prices_include_vat and vat_registered from orgs where id = o), 'recurring_vat_and_once_lines: the business prices with VAT included';
   first_sale := pg_temp.run_sale(r, '2026-01-28');
@@ -169,6 +179,17 @@ begin
   perform tests.throws(format('select public.recurring_save(%L, %L)', o, p || '{"send_channel": "sms"}'), '%email or WhatsApp%');
   perform tests.throws(format('select public.recurring_save(%L, %L)', o, p || jsonb_build_object('customer_id', gen_random_uuid())), '%Choose the customer%');
   perform tests.throws(format('select public.recurring_save(%L, %L)', o, p || jsonb_build_object('id', gen_random_uuid())), '%not found%');
+
+  perform tests.as_postgres();
+  v_lines := (select lines from recurring_invoices where id = r);
+  perform tests.as_user(tests.id('owner'));
+  perform tests.throws(format('select public.recurring_save(%L, %L)', o, jsonb_build_object('id', r, 'lines',
+    v_lines || '[{"description": "Set-up fee", "qty": 1, "unit_price": 5000, "once": true}]'::jsonb)), '%new line marked once would never be billed%');
+  perform tests.throws(format('select public.recurring_save(%L, %L)', o, jsonb_build_object('id', r, 'lines',
+    jsonb_set(v_lines, '{1,unit_price}', '25000'))), '%new line marked once%');
+  v := public.recurring_save(o, jsonb_build_object('id', r, 'notes', 'Retainer for 2026', 'lines', v_lines));
+  assert v->>'notes' = 'Retainer for 2026' and v->'lines' = v_lines and v->>'next_run' = '2026-03-28',
+    'recurring_vat_and_once_lines: the deposit already there stays through an edit';
   perform tests.as_postgres();
 end $$;
 
@@ -192,6 +213,56 @@ begin
      and (select count(*) from sales where customer_id = tests.id('cust_b') and channel = 'recurring') = 1 and v = '{"issued": 1, "sent": 1, "failed": 0}',
     'recurring_catch_up_once: one invoice, dated the day it was due';
   update recurring_invoices set status = 'paused' where id = r2;
+end $$;
+
+-- test: recurring_periods_and_end
+-- Through the tick a quarterly schedule moves on three months and an annual one twelve; one that reaches its end date
+-- (day 28, ending 28 February 2026) is issued that day and ends, and is not run again. An edit of the timing of a schedule
+-- that has made an invoice keeps the period of the next one: billed quarterly on 1 October 2026 and moved to the 15th, the
+-- next invoice is 15 January 2027, not a second one for the same quarter (annually the same); with no invoice yet it starts
+-- again from the start date.
+do $$
+declare o uuid := tests.id('o'); q uuid; a uuid; e uuid; q2 uuid; n uuid; v jsonb;
+begin
+  perform tests.as_user(tests.id('owner'));
+  q := (public.recurring_save(o, pg_temp.sched(tests.id('cust_b'), 15, '2026-02-01', '{"frequency": "quarterly"}'))->>'id')::uuid;
+  a := (public.recurring_save(o, pg_temp.sched(tests.id('cust_b'), 1, '2026-03-01', '{"frequency": "annually"}'))->>'id')::uuid;
+  e := (public.recurring_save(o, pg_temp.sched(tests.id('cust_b'), 28, '2026-02-01', '{"end_date": "2026-02-28"}'))->>'id')::uuid;
+  perform tests.as_postgres();
+
+  v := private.recurring_tick('2026-02-15 12:00:00+00');
+  assert v = '{"issued": 1, "sent": 1, "failed": 0}' and pg_temp.run_sale(q, '2026-02-15') is not null
+     and (select next_run from recurring_invoices where id = q) = '2026-05-15', format('recurring_periods_and_end: quarterly, got %s', v);
+  v := private.recurring_tick('2026-02-28 12:00:00+00');
+  assert v = '{"issued": 1, "sent": 1, "failed": 0}' and (select status from recurring_invoice_runs where schedule_id = e and run_date = '2026-02-28') = 'sent'
+     and (select status = 'ended' and next_run = '2026-03-28' from recurring_invoices where id = e), 'recurring_periods_and_end: the end date reached';
+  v := private.recurring_tick('2026-03-01 12:00:00+00');
+  assert v = '{"issued": 1, "sent": 1, "failed": 0}' and pg_temp.run_sale(a, '2026-03-01') is not null
+     and (select next_run from recurring_invoices where id = a) = '2027-03-01', 'recurring_periods_and_end: annual';
+  v := private.recurring_tick('2026-03-28 12:00:00+00');
+  assert v = '{"issued": 0, "sent": 0, "failed": 0}' and (select count(*) from recurring_invoice_runs where schedule_id = e) = 1,
+    'recurring_periods_and_end: an ended schedule is not run again';
+
+  -- Timing edits.
+  update recurring_invoices set status = 'paused' where id = q;
+  perform tests.as_user(tests.id('owner'));
+  q2 := (public.recurring_save(o, pg_temp.sched(tests.id('cust_d'), 1, '2026-10-01', '{"frequency": "quarterly"}'))->>'id')::uuid;
+  perform tests.as_postgres();
+  v := private.recurring_tick('2026-10-01 12:00:00+00');
+  assert pg_temp.run_sale(q2, '2026-10-01') is not null and (select next_run from recurring_invoices where id = q2) = '2027-01-01',
+    'recurring_periods_and_end: quarterly billed on 1 October';
+  perform tests.as_user(tests.id('owner'));
+  v := public.recurring_save(o, jsonb_build_object('id', q2, 'day_of_month', 15));
+  assert v->>'next_run' = '2027-01-15', format('recurring_periods_and_end: a new day keeps the next quarter, got %s', v->>'next_run');
+  v := public.recurring_save(o, jsonb_build_object('id', a, 'day_of_month', 20));
+  assert v->>'next_run' = '2027-03-20', format('recurring_periods_and_end: a new day keeps the next year, got %s', v->>'next_run');
+  v := public.recurring_save(o, jsonb_build_object('id', q2, 'frequency', 'monthly', 'day_of_month', 15));
+  assert v->>'next_run' = '2027-01-15', 'recurring_periods_and_end: quarterly to monthly keeps the next period';
+  n := (public.recurring_save(o, pg_temp.sched(tests.id('cust_d'), 1, '2026-12-01'))->>'id')::uuid;
+  v := public.recurring_save(o, jsonb_build_object('id', n, 'day_of_month', 10));
+  assert v->>'next_run' = '2026-12-10', 'recurring_periods_and_end: with no invoice yet, from the start date';
+  perform tests.as_postgres();
+  update recurring_invoices set status = 'paused' where id in (a, q2, n);
 end $$;
 
 -- test: recurring_pause_after_failures
@@ -249,11 +320,84 @@ begin
   update recurring_invoices set status = 'paused' where id in (r6, r7);
 end $$;
 
+-- test: recurring_issuing_authority
+-- Invoices are issued on the authority of someone who may issue them. Run now issues as the person pressing it: a clerk
+-- (records sales, cannot go past a customer's credit limit) cannot run the owner's schedule past the limit; the owner can.
+-- Whoever saves a schedule becomes its issuer, so after a clerk's edit the tick issues as the clerk and is refused past the
+-- limit. In an ordinary business a schedule whose issuer can no longer record sales, or whose place is gone, fails with the
+-- reason and pauses after three, borrowing no one else's authority. (Under full mandate the business's contact issues it
+-- instead: recurring_actor_per_item.)
+do $$
+declare o uuid := tests.id('o'); sg uuid; sd uuid; se uuid; v jsonb; v_today date := private.local_day(tests.id('o'), now()); v_next_month date;
+begin
+  v_next_month := (date_trunc('month', v_today) + interval '1 month')::date;
+  -- 107,500 a month to a customer with a 50,000 limit.
+  perform tests.as_user(tests.id('owner'));
+  sg := (public.recurring_save(o, pg_temp.sched(tests.id('cust_g'), 1, v_next_month))->>'id')::uuid;
+  perform tests.as_user(tests.id('clerk'));
+  perform tests.throws(format('select public.recurring_run_now(%L)', sg), '%credit limit%');
+  sd := (public.recurring_save(o, pg_temp.sched(tests.id('cust_d'), 1, v_next_month))->>'id')::uuid;
+  v := public.recurring_run_now(sd);
+  perform tests.as_postgres();
+  assert (select created_by from sales where id = (v->>'sale_id')::uuid) = tests.id('clerk_seat') and v->>'status' = 'sent',
+    'recurring_issuing_authority: run now as the clerk';
+  assert not exists (select 1 from recurring_invoice_runs where schedule_id = sg), 'recurring_issuing_authority: nothing kept of the refused run';
+  perform tests.as_user(tests.id('owner'));
+  v := public.recurring_run_now(sg);
+  perform tests.as_postgres();
+  assert (select created_by from sales where id = (v->>'sale_id')::uuid) = tests.id('owner_seat') and v->>'status' = 'sent',
+    'recurring_issuing_authority: the owner can';
+
+  -- The clerk edits the owner's schedule: the clerk is now its issuer, and the tick cannot go past the limit.
+  perform tests.as_user(tests.id('clerk'));
+  v := public.recurring_save(o, jsonb_build_object('id', sg, 'notes', 'Quarterly review included'));
+  perform tests.as_postgres();
+  assert (select created_by from recurring_invoices where id = sg) = tests.id('clerk_seat') and v->>'created_by_name' = 'Kemi Clerk',
+    'recurring_issuing_authority: the editor is the issuer';
+  update recurring_invoices set next_run = v_today - 1 where id = sg;
+  v := private.recurring_tick();
+  assert v = '{"issued": 0, "sent": 0, "failed": 1}' and (select failures = 1 and last_error like '%credit limit%' from recurring_invoices where id = sg),
+    format('recurring_issuing_authority: the tick issues as the clerk, got %s', v);
+  update recurring_invoices set status = 'paused' where id = sg;
+
+  -- The clerk can no longer record sales; the other clerk's place is gone.
+  perform tests.as_user(tests.id('clerk2'));
+  se := (public.recurring_save(o, pg_temp.sched(tests.id('cust_d'), 1, date_trunc('month', v_today)::date))->>'id')::uuid;
+  perform tests.as_postgres();
+  update members set perm_overrides = '{"record_sales": false}' where id = tests.id('clerk_seat');
+  perform private.apply_member_perms(tests.id('clerk_seat'));
+  update members set status = 'disabled' where id = tests.id('clerk2_seat');
+  update recurring_invoices set next_run = v_today - 1 where id = sd;
+  v := private.recurring_tick();
+  assert v = '{"issued": 0, "sent": 0, "failed": 2}' and (select bool_and(failures = 1 and last_error like '%can no longer issue invoices%')
+      from recurring_invoices where id in (sd, se)), format('recurring_issuing_authority: no authority, no invoice, got %s', v);
+  perform private.recurring_tick();
+  perform private.recurring_tick();
+  assert (select bool_and(status = 'paused' and failures = 3) from recurring_invoices where id in (sd, se))
+     and not exists (select 1 from recurring_invoice_runs where schedule_id in (sd, se) and status <> 'failed' and run_date <> v_today)
+     and not exists (select 1 from recurring_invoice_runs where schedule_id = se and status <> 'failed'),
+    'recurring_issuing_authority: paused after three, nothing issued on anyone else''s authority';
+  -- The owner saves it: issued in the owner's name from then on.
+  perform tests.as_user(tests.id('owner'));
+  v := public.recurring_save(o, jsonb_build_object('id', se));
+  v := public.recurring_set_status(se, 'active');
+  perform tests.as_postgres();
+  update recurring_invoices set next_run = v_today - 1 where id = se;
+  v := private.recurring_tick();
+  assert v = '{"issued": 1, "sent": 1, "failed": 0}' and (select created_by from sales where id = pg_temp.run_sale(se, v_today - 1)) = tests.id('owner_seat'),
+    format('recurring_issuing_authority: taken over by the owner, got %s', v);
+  update recurring_invoices set status = 'paused' where id = se;
+end $$;
+
 -- test: recurring_waiting_nrs
 -- With e-invoicing on, an invoice to a business customer waits for NRS: the run waits, nothing is sent; once NRS signs it
--- (and it is issued) the next tick sends it.
+-- (and it is issued) the next tick sends it, and a send that fails then counts as failed. A held invoice voided before
+-- NRS signs it, credited in full after, refused by NRS, or taken back to change is left to the person: its run is void,
+-- with the reason, and is not sent later. (The app voids no draft and NRS's signature rules out voiding, so the void and the
+-- full credit are written directly here: whatever route closes the invoice, the run must not wait for ever.)
 do $$
-declare v_owner uuid; o2 uuid; cu uuid; r8 uuid; v jsonb; s uuid; v_due date;
+declare v_owner uuid; o2 uuid; cu uuid; r8 uuid; r8w uuid; r8v uuid; r8c uuid; r8r uuid; r8t uuid; v jsonb; s uuid; sw uuid; sv uuid; sc uuid; sr uuid; st uuid;
+  v_due date;
 begin
   v_owner := tests.user('owner@signed.example.test', 'Sade Owner');
   o2 := tests.org(v_owner, 'Signed Books Ltd');
@@ -262,25 +406,60 @@ begin
   perform tests.as_user(v_owner);
   cu := public.save_customer(o2, '{"name": "Tinned Client Ltd", "email": "accounts@tinned.example.test", "kind": "business", "tin": "1234567800011"}');
   r8 := (public.recurring_save(o2, pg_temp.sched(cu, 1, v_due))->>'id')::uuid;
+  r8w := (public.recurring_save(o2, pg_temp.sched(cu, 1, v_due, '{"send_channel": "whatsapp"}'))->>'id')::uuid;
+  r8v := (public.recurring_save(o2, pg_temp.sched(cu, 1, v_due))->>'id')::uuid;
+  r8c := (public.recurring_save(o2, pg_temp.sched(cu, 1, v_due))->>'id')::uuid;
+  r8r := (public.recurring_save(o2, pg_temp.sched(cu, 1, v_due))->>'id')::uuid;
+  r8t := (public.recurring_save(o2, pg_temp.sched(cu, 1, v_due))->>'id')::uuid;
   perform tests.as_postgres();
   v := private.recurring_tick();
-  s := pg_temp.run_sale(r8, v_due);
-  assert v = '{"issued": 1, "sent": 0, "failed": 0}' and (select status from recurring_invoice_runs where schedule_id = r8) = 'waiting_nrs'
+  s := pg_temp.run_sale(r8, v_due); sw := pg_temp.run_sale(r8w, v_due); sv := pg_temp.run_sale(r8v, v_due); sc := pg_temp.run_sale(r8c, v_due);
+  sr := pg_temp.run_sale(r8r, v_due); st := pg_temp.run_sale(r8t, v_due);
+  assert v = '{"issued": 6, "sent": 0, "failed": 0}' and (select bool_and(status = 'waiting_nrs') from recurring_invoice_runs where schedule_id in (r8, r8w, r8v, r8c, r8r, r8t))
      and (select status from sales where id = s) = 'draft' and (select state = 'waiting' and held from einvoice_docs where sale_id = s)
-     and not exists (select 1 from messages where sale_id = s), 'recurring_waiting_nrs: waits for NRS';
+     and not exists (select 1 from messages where sale_id in (s, sw, sv, sc, sr, st)), format('recurring_waiting_nrs: waits for NRS, got %s', v);
   v := private.recurring_tick();
   assert v = '{"issued": 0, "sent": 0, "failed": 0}' and (select status from recurring_invoice_runs where schedule_id = r8) = 'waiting_nrs'
      and not exists (select 1 from messages where sale_id = s), 'recurring_waiting_nrs: still waiting';
-  -- NRS signs it: the invoice is issued.
-  update einvoice_docs set state = 'sending', sending_at = now() where sale_id = s;
+  -- One voided before NRS signs it; NRS signs three (one then credited in full) and refuses one; one is taken back.
+  update sales set status = 'void', void_reason = 'Raised in error' where id = sv;
+  update einvoice_docs set state = 'sending', sending_at = now() where sale_id in (s, sw, sc, sr);
   perform tests.as_service();
   perform public.svc_einvoice_done(s, '{"outcome": "signed"}');
+  perform public.svc_einvoice_done(sw, '{"outcome": "signed"}');
+  perform public.svc_einvoice_done(sc, '{"outcome": "signed"}');
+  perform public.svc_einvoice_done(sr, '{"outcome": "refused", "note": "Bad buyer address."}');
+  perform tests.as_user(v_owner);
+  perform public.einvoice_take_back(st);
   perform tests.as_postgres();
-  assert (select status from sales where id = s) = 'open', 'recurring_waiting_nrs: signed and issued';
+  update sales set status = 'credited' where id = sc;
+  assert (select status from sales where id = s) = 'open' and (select status = 'void' and irn_status = 'stopped' from sales where id = sv)
+     and (select status = 'draft' and irn_status = 'refused' from sales where id = sr) and (select state from einvoice_docs where sale_id = st) = 'stopped',
+    'recurring_waiting_nrs: signed and issued, voided, refused, taken back';
   v := private.recurring_tick();
-  assert v = '{"issued": 0, "sent": 1, "failed": 0}' and (select status from recurring_invoice_runs where schedule_id = r8) = 'sent'
+  assert v = '{"issued": 0, "sent": 1, "failed": 1}', format('recurring_waiting_nrs: the next tick, got %s', v);
+  assert (select status from recurring_invoice_runs where schedule_id = r8) = 'sent'
      and (select count(*) from messages where sale_id = s and to_address = 'accounts@tinned.example.test') = 1, 'recurring_waiting_nrs: sent on the next tick';
-  update recurring_invoices set status = 'paused' where id = r8;
+  assert (select status = 'issued' and send_error like '%WhatsApp number%' from recurring_invoice_runs where schedule_id = r8w),
+    'recurring_waiting_nrs: a send that fails counts, the invoice kept';
+  assert (select status = 'void' and error like '%voided%' from recurring_invoice_runs where schedule_id = r8v)
+     and (select status = 'void' and error like '%credited in full%' from recurring_invoice_runs where schedule_id = r8c)
+     and (select status = 'void' and error like 'NRS refused%' from recurring_invoice_runs where schedule_id = r8r)
+     and (select status = 'void' and error like '%taken back%' from recurring_invoice_runs where schedule_id = r8t)
+     and not exists (select 1 from messages where sale_id in (sv, sc, sr, st)), 'recurring_waiting_nrs: voided, credited, refused and taken back left to the person';
+  -- Issued again by hand and signed: the schedule does not send it.
+  perform tests.as_user(v_owner);
+  perform public.issue_invoice(sr);
+  perform tests.as_postgres();
+  update einvoice_docs set state = 'sending', sending_at = now() where sale_id = sr;
+  perform tests.as_service();
+  perform public.svc_einvoice_done(sr, '{"outcome": "signed"}');
+  perform tests.as_postgres();
+  v := private.recurring_tick();
+  assert (select status from sales where id = sr) = 'open' and v = '{"issued": 0, "sent": 0, "failed": 0}'
+     and (select status from recurring_invoice_runs where schedule_id = r8r) = 'void' and not exists (select 1 from messages where sale_id = sr),
+    'recurring_waiting_nrs: a void run stays void';
+  update recurring_invoices set status = 'paused' where id in (r8, r8w, r8v, r8c, r8r, r8t);
 end $$;
 
 -- test: recurring_actor_per_item
@@ -462,9 +641,11 @@ begin
   assert (v->>'next_run')::date = private.recurring_next('monthly', 1, v_next) and v->'lines'->0->>'vat_treatment' = 'standard'
      and v->'lines'->0->>'once' = 'false', 'recurring_rpcs_permission: lines edited, next run kept';
   perform tests.as_user(tests.id('owner'));
+  -- Run now billed next month's invoice today, so the next is the month after: a new day keeps that period (no second
+  -- invoice for next month).
   v := public.recurring_save(o, jsonb_build_object('id', r9, 'day_of_month', 15));
-  assert (v->>'next_run')::date = (date_trunc('month', v_today) + interval '1 month')::date + 14 and v->'lines'->0->>'description' = 'Bigger retainer',
-    'recurring_rpcs_permission: a new day recomputes the next run, the rest kept';
+  assert (v->>'next_run')::date = (date_trunc('month', v_today) + interval '2 months')::date + 14 and v->'lines'->0->>'description' = 'Bigger retainer',
+    'recurring_rpcs_permission: a new day changes only the day of the next invoice, the rest kept';
   v := public.recurring_set_status(r9, 'ended');
   perform tests.throws(format('select public.recurring_run_now(%L)', r9), '%ended%');
 
@@ -486,7 +667,7 @@ do $$
 declare f text;
 begin
   foreach f in array array['private.issue_invoice_as(uuid, date, public.members)', 'private.send_document_as(uuid, text, text, public.members)',
-    'private.recurring_first(text, integer, date)', 'private.recurring_next(text, integer, date)', 'private.recurring_run(uuid, date)',
+    'private.recurring_first(text, integer, date)', 'private.recurring_next(text, integer, date)', 'private.recurring_run(uuid, date, public.members)',
     'private.recurring_tick(timestamp with time zone)', 'private.org_pause_all(uuid)'] loop
     assert not has_function_privilege('authenticated', f, 'execute') and not has_function_privilege('anon', f, 'execute'), format('recurring_helpers_revoked: %s', f);
   end loop;

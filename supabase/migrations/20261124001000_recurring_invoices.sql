@@ -3,22 +3,25 @@
 --
 -- A schedule (recurring_invoices) bills one customer monthly on a day from 1 to 28 (so every month has it, February
 -- included), quarterly or annually, from a start date to an optional end date, with 1 to 50 lines. A line marked once
--- (an expenses deposit, a set-up fee) goes on the schedule's first invoice only. Line prices are before VAT; a standard
--- line carries VAT at the rate of the invoice's date (7.5%), zero-rated and exempt lines none; the three treatments are the
--- ones the invoice lines accept (private.write_lines).
+-- (an expenses deposit, a set-up fee) goes on the schedule's first invoice only, and cannot be added once the schedule has
+-- issued one. Line prices are before VAT. In a VAT-registered business a standard line carries VAT at the rate of the
+-- invoice's date (7.5%), and zero-rated and exempt lines carry none; a business not registered for VAT charges none on any
+-- line. The three treatments are the ones the invoice lines accept (private.write_lines).
 --
 -- The hourly tick (private.recurring_tick, pg_cron job 'counta-recurring') takes each active schedule due on its
 -- business's own day (orgs.timezone, Lagos by default: at 23:30 UTC it is already tomorrow in Lagos). For each, on its
 -- own (one failing schedule never stops the others): one run per schedule and day (recurring_invoice_runs); the invoice
--- made and issued (channel 'recurring') in the name of the person who set the schedule up while their place in the
--- business is active, else of the business's contact (private.org_contact), whose name the activity log records for that
--- schedule alone (private.set_actor, cleared after each); sent to the customer when auto_send, or, when NRS has to sign it
--- first (e-invoicing to a business or government customer), held, and sent by a later tick once it is issued. The
+-- made and issued (channel 'recurring') on the authority of the person who last saved the schedule (created_by): their
+-- place must be active and record sales. Otherwise a business run under full mandate issues it as its contact
+-- (private.org_contact), and an ordinary business's schedule fails until someone who can saves it. The activity log
+-- records that person for that schedule alone (private.set_actor, cleared after each). The invoice is sent to the customer
+-- when auto_send, or, when NRS has to sign it first (e-invoicing to a business or government customer), held, and sent by
+-- a later tick once it is issued (one voided, credited in full, refused by NRS or taken back to change is the person's). The
 -- schedule then moves past today: one invoice, dated the day it was due, however far behind it was, and no backfill; past
 -- its end date it ends. A failure keeps the day, records the error, and pauses the schedule after three in a row. Paused
 -- schedules and read-only businesses are skipped; ending a full mandate pauses the business's schedules
 -- (private.org_pause_all). Sending goes through the outbound gate like a user's send (private.require_outbound): a
--- download-only business never sends.
+-- download-only business never sends. Run now issues on the authority of the person pressing it.
 --
 -- issue_invoice and send_document keep their behaviour: their bodies after the permission check are now
 -- private.issue_invoice_as and private.send_document_as, which the tick calls with the issuing member.
@@ -36,7 +39,8 @@ alter table public.sales add constraint sales_channel_check
 
 -- lines: [{description, qty > 0, unit_price >= 0 (before VAT), vat_treatment standard|zero|exempt, once}], as
 -- private.recurring_clean_lines leaves them. next_run: the day of the next invoice, in the business's time zone.
--- created_by: whose name the invoices are issued in while their place is active. failures: in a row; three pause it.
+-- created_by: the person who last saved the schedule, on whose authority the tick issues its invoices (private.recurring_actor).
+-- failures: in a row; three pause it.
 -- practice_client_id: the practice client a firm bills with this schedule (its firm business is the schedule's).
 create table public.recurring_invoices (
   id uuid primary key default gen_random_uuid(),
@@ -71,13 +75,14 @@ select private.activity_attach('public.recurring_invoices');
 
 -- One run per schedule and day. status: issued (made and issued, not sent: not to be sent, or the send failed with
 -- send_error), waiting_nrs (held until NRS signs it; sent by a later tick once issued), sent, failed (error; the day is
--- tried again by the next tick while the schedule is active).
+-- tried again by the next tick while the schedule is active), void (a held invoice deleted, voided, credited in full,
+-- refused by NRS or taken back to change: the schedule does not send it; error says which).
 create table public.recurring_invoice_runs (
   id uuid primary key default gen_random_uuid(),
   schedule_id uuid not null references public.recurring_invoices(id) on delete cascade,
   run_date date not null,
   sale_id uuid references public.sales(id) on delete set null,
-  status text not null check (status in ('issued', 'waiting_nrs', 'sent', 'failed')),
+  status text not null check (status in ('issued', 'waiting_nrs', 'sent', 'failed', 'void')),
   error text,
   send_error text,
   created_at timestamptz not null default now(),
@@ -245,15 +250,22 @@ begin
   return v_out;
 end $$;
 
--- Who issues a schedule's invoices: the person who set it up while their place in the business is active, else the
--- business's contact (the owner; under full mandate the engagement partner's place). Null when there is no one.
+-- On whose authority the tick issues and sends a schedule's invoices: the person who last saved it (created_by), while
+-- their place in the business is active and records sales. Otherwise a business run under full mandate uses its contact
+-- (the engagement partner's place); an ordinary business's schedule fails, with the reason, until someone who can saves it
+-- (nobody else's authority is borrowed: the owner never agreed to it).
 create or replace function private.recurring_actor(p_org uuid, p_created_by uuid) returns public.members
 language plpgsql stable security definer set search_path = public, private as $$
 declare m public.members;
 begin
   select * into m from members where id = p_created_by and org_id = p_org and status = 'active';
-  if m.id is null then m := private.org_contact(p_org); end if;
-  return m;
+  if m.id is not null and private.perm_of(m, 'record_sales') then return m; end if;
+  if private.is_managed(p_org) then
+    m := private.org_contact(p_org);
+    if m.id is null then raise exception 'No one at the firm can issue this recurring invoice: the business has no contact.'; end if;
+    return m;
+  end if;
+  raise exception 'The person who set up this recurring invoice can no longer issue invoices in this business. Someone who can should open it and save it, to issue it in their name.';
 end $$;
 
 -- Sends an issued invoice through send_document_as. Null when it went, else why not (the send is undone, the invoice kept).
@@ -269,22 +281,27 @@ end $$;
 -- One run of a schedule for the day p_run_date: the run recorded (a day already done, anything but failed, is not done
 -- again: null), the invoice made as a draft dated that day and due due_days later (its lines priced before VAT, the once
 -- lines only while no other run has made an invoice), issued; held while NRS signs it (waiting_nrs), else sent when the
--- schedule says so (sent; a send that fails leaves it issued with send_error). The issuing member's user is the actor
--- of the writes from here on (private.set_actor); the caller clears it. Returns the invoice. Errors are raised.
-create or replace function private.recurring_run(p_id uuid, p_run_date date) returns uuid
+-- schedule says so (sent; a send that fails leaves it issued with send_error). It is issued and sent as p_member when given
+-- (run now: the person pressing it, with their own limits), else as private.recurring_actor says. That member's user is the
+-- actor of the writes from here on (private.set_actor); the caller clears it. Returns the invoice. Errors are raised.
+create or replace function private.recurring_run(p_id uuid, p_run_date date, p_member public.members default null) returns uuid
 language plpgsql security definer set search_path = public, private as $$
 declare r public.recurring_invoices; m public.members; s public.sales; v_run uuid; v_first boolean; v_lines jsonb; v_status text; v_send_error text;
 begin
   select * into r from recurring_invoices where id = p_id for update;
   if r.id is null then raise exception 'Recurring invoice not found.'; end if;
+  if p_member.id is not null and p_member.org_id is distinct from r.org_id then raise exception 'Recurring invoice not found.'; end if;
   insert into recurring_invoice_runs (schedule_id, run_date, status) values (r.id, p_run_date, 'issued')
   on conflict (schedule_id, run_date) do update set status = 'issued', sale_id = null, error = null, send_error = null, created_at = now()
     where recurring_invoice_runs.status = 'failed'
   returning id into v_run;
   if v_run is null then return null; end if;
 
-  m := private.recurring_actor(r.org_id, r.created_by);
-  if m.id is null then raise exception 'No one in the business can issue this invoice.'; end if;
+  if p_member.id is not null then
+    m := p_member;
+  else
+    m := private.recurring_actor(r.org_id, r.created_by);
+  end if;
   perform private.set_actor(m.user_id);
   v_first := not exists (select 1 from recurring_invoice_runs x
     where x.schedule_id = r.id and x.id <> v_run and x.status in ('issued', 'waiting_nrs', 'sent'));
@@ -314,9 +331,11 @@ end $$;
 -- The hourly job. 1. Every active schedule of a business that is not read-only, due on the business's own day at p_now,
 -- each on its own (its own exception block, its own actor, cleared after it): run for its day; then the next day after
 -- today (one invoice however far behind, no backfill), the failures forgotten, ended past its end date. A failure keeps
--- the day, counts, records the error (and a failed run) and pauses the schedule at three. 2. Every held invoice NRS has
--- since signed (issued) of a schedule not paused, in a business not read-only: sent when the schedule says so (sent, or
--- issued with send_error), else issued. Returns {"issued", "sent", "failed"}.
+-- the day, counts, records the error (and a failed run) and pauses the schedule at three. 2. Held invoices: one deleted,
+-- voided, credited in full, refused by NRS or taken back to change is the person's (the run void, with the reason); one NRS
+-- has since signed (issued), of a schedule not paused in a business not read-only, is sent when the schedule says so
+-- (sent, or issued with send_error), else issued. Returns {"issued", "sent", "failed"}: failed counts the schedules that
+-- could not issue and the held invoices that could not be sent.
 create or replace function private.recurring_tick(p_now timestamptz default now()) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare r public.recurring_invoices; x record; m public.members; v_today date; v_next date; v_sale uuid; v_status text; v_err text;
@@ -364,6 +383,24 @@ begin
     perform private.set_actor(null);
   end loop;
 
+  -- Held invoices the schedule no longer sends: deleted; voided, cancelled or credited in full; or still a draft that NRS
+  -- refused or that was taken back to change (the person issues it again, and sends it, themselves).
+  update recurring_invoice_runs ru set status = 'void',
+    error = case when w.sale_id is null then 'The invoice was deleted.'
+                 when w.sale_status = 'credited' then 'The invoice was credited in full, so it is not sent.'
+                 when w.sale_status <> 'draft' then 'The invoice was voided, so it is not sent.'
+                 when w.einvoice_state = 'refused' then 'NRS refused the invoice, so it is not sent automatically. Put it right, issue it again and send it yourself.'
+                 else 'The invoice was taken back to change, so it is not sent automatically. Issue it again and send it yourself.' end
+  from (select h.id, h.sale_id, s.status as sale_status, d.state as einvoice_state
+        from recurring_invoice_runs h
+        left join sales s on s.id = h.sale_id
+        left join einvoice_docs d on d.sale_id = h.sale_id
+        where h.status = 'waiting_nrs'
+          and (s.id is null or s.status in ('void', 'cancelled', 'credited', 'converted', 'expired')
+               or (s.status = 'draft' and d.state in ('refused', 'stopped')))
+        for update of h skip locked) w
+  where ru.id = w.id;
+
   for x in
     select ru.id, ru.sale_id, ri.org_id, ri.created_by, ri.auto_send, ri.send_channel
     from recurring_invoice_runs ru
@@ -378,20 +415,17 @@ begin
     begin
       if x.auto_send then
         m := private.recurring_actor(x.org_id, x.created_by);
-        if m.id is null then
-          v_err := 'No one in the business can send this invoice.';
-        else
-          perform private.set_actor(m.user_id);
-          v_err := private.recurring_send(x.sale_id, x.send_channel, m);
-        end if;
+        perform private.set_actor(m.user_id);
+        v_err := private.recurring_send(x.sale_id, x.send_channel, m);
         update recurring_invoice_runs set status = case when v_err is null then 'sent' else 'issued' end, send_error = v_err where id = x.id;
-        if v_err is null then v_sent := v_sent + 1; end if;
+        if v_err is null then v_sent := v_sent + 1; else v_failed := v_failed + 1; end if;
       else
         update recurring_invoice_runs set status = 'issued' where id = x.id;
       end if;
     exception when others then
       get stacked diagnostics v_err = message_text;
       update recurring_invoice_runs set status = 'issued', send_error = left(v_err, 500) where id = x.id;
+      v_failed := v_failed + 1;
     end;
     perform private.set_actor(null);
   end loop;
@@ -450,14 +484,18 @@ $$;
 
 -- Creates (no id) or edits a schedule of the business. p = {id?, customer_id, frequency, day_of_month, start_date,
 -- end_date?, due_days? (14), lines, auto_send? (true), send_channel? ('email'), notes?, practice_client_id?}; an edit keeps
--- what p leaves out. The next invoice day is the first on or after the start date on creation; an edit that changes the
--- timing (frequency, day or start date) moves it to the first day on the new timing after the last invoice made, not
--- before the start date; other edits keep it. Sending each invoice must be allowed by the outbound gate (a download-only
--- business issues them for download). practice_client_id: a client of the practice whose firm business this is.
+-- what p leaves out. The next invoice day is the first on or after the start date on creation. An edit that changes the
+-- timing (frequency, day or start date) of a schedule that has made an invoice keeps the period of the next invoice and
+-- changes only its day (the first new day from the start of that month, not before the start date), so no period is
+-- billed twice; with no invoice yet it starts again from the start date. Other edits keep it. Whoever saves a schedule
+-- becomes the person on whose authority its invoices are issued (created_by). Once the schedule has issued an invoice, a
+-- new line marked once is refused (it would never be billed). Sending each invoice must be allowed by the outbound gate
+-- (a download-only business issues them for download). practice_client_id: a client of the practice whose firm business
+-- this is.
 create or replace function public.recurring_save(p_org uuid, p jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare m public.members; r public.recurring_invoices; c public.customers; v_new boolean; v_freq text; v_day int; v_start date; v_end date;
-  v_due_days int; v_lines jsonb; v_auto boolean; v_channel text; v_notes text; v_client uuid; v_next date; v_last date;
+  v_due_days int; v_lines jsonb; v_auto boolean; v_channel text; v_notes text; v_client uuid; v_next date; v_issued boolean := false;
 begin
   m := private.require(p_org, 'record_sales');
   if p is null or jsonb_typeof(p) <> 'object' then raise exception 'Send the recurring invoice''s details.'; end if;
@@ -489,6 +527,13 @@ begin
     if v_due_days is null or v_due_days > 365 then raise exception 'Give the days to pay as a whole number from 0 to 365.'; end if;
   end if;
   v_lines := private.recurring_clean_lines(p->'lines');
+  if not v_new then
+    v_issued := exists (select 1 from recurring_invoice_runs where schedule_id = r.id and status in ('issued', 'waiting_nrs', 'sent'));
+    -- A line marked once goes on the first invoice only: added after that, it would never be billed. Those already there stay.
+    if v_issued and exists (select 1 from jsonb_array_elements(v_lines) l where (l->>'once')::boolean and not r.lines @> jsonb_build_array(l)) then
+      raise exception 'This schedule has already issued an invoice, so a new line marked once would never be billed. Bill it on an invoice of its own.';
+    end if;
+  end if;
   if p->'auto_send' is null or jsonb_typeof(p->'auto_send') = 'null' then
     v_auto := true;
   else
@@ -509,8 +554,11 @@ begin
   if v_new then
     v_next := private.recurring_first(v_freq, v_day, v_start);
   elsif v_freq is distinct from r.frequency or v_day is distinct from r.day_of_month or v_start is distinct from r.start_date then
-    select max(run_date) into v_last from recurring_invoice_runs where schedule_id = r.id and status <> 'failed';
-    v_next := private.recurring_first(v_freq, v_day, greatest(v_start, v_last + 1));
+    if exists (select 1 from recurring_invoice_runs where schedule_id = r.id and status <> 'failed') then
+      v_next := private.recurring_first(v_freq, v_day, greatest(v_start, date_trunc('month', r.next_run::timestamp)::date));
+    else
+      v_next := private.recurring_first(v_freq, v_day, v_start);
+    end if;
   else
     v_next := r.next_run;
   end if;
@@ -526,7 +574,7 @@ begin
   else
     update recurring_invoices set customer_id = c.id, frequency = v_freq, day_of_month = v_day, start_date = v_start, end_date = v_end,
       next_run = v_next, due_days = v_due_days, lines = v_lines, auto_send = v_auto, send_channel = v_channel, notes = v_notes,
-      practice_client_id = v_client, updated_at = now()
+      practice_client_id = v_client, created_by = m.id, updated_at = now()
     where id = r.id;
   end if;
   return private.recurring_json(r.id);
@@ -567,20 +615,21 @@ begin
   return private.recurring_json(r.id);
 end $$;
 
--- Issues the schedule's next invoice now: dated its day if that has come, else today; then the next invoice day moves one
--- period on (and past today). Refused for an ended schedule, or when the schedule already has an invoice for that day.
--- A paused schedule stays paused. {sale_id, number, status (the run's), send_error, schedule}.
+-- Issues the schedule's next invoice now, as the person pressing it (their own limits, such as a customer's credit limit,
+-- apply): dated its day if that has come, else today; then the next invoice day moves one period on (and past today).
+-- Refused for an ended schedule, or when the schedule already has an invoice for that day. A paused schedule stays paused.
+-- {sale_id, number, status (the run's), send_error, schedule}.
 create or replace function public.recurring_run_now(p_id uuid) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
-declare r public.recurring_invoices; x public.recurring_invoice_runs; v_today date; v_run date; v_sale uuid; v_next date;
+declare r public.recurring_invoices; m public.members; x public.recurring_invoice_runs; v_today date; v_run date; v_sale uuid; v_next date;
 begin
   select * into r from recurring_invoices where id = p_id for update;
   if r.id is null then raise exception 'Recurring invoice not found.'; end if;
-  perform private.require(r.org_id, 'record_sales');
+  m := private.require(r.org_id, 'record_sales');
   if r.status = 'ended' then raise exception 'This schedule has ended.'; end if;
   v_today := private.local_day(r.org_id, now());
   v_run := least(r.next_run, v_today);
-  v_sale := private.recurring_run(r.id, v_run);
+  v_sale := private.recurring_run(r.id, v_run, m);
   perform private.set_actor(null);
   if v_sale is null then raise exception 'This schedule already has an invoice dated %.', to_char(v_run, 'DD Mon YYYY'); end if;
   v_next := private.recurring_next(r.frequency, r.day_of_month, r.next_run);
@@ -602,7 +651,7 @@ end $$;
 -- callable by the signed-in person.
 revoke all on function private.issue_invoice_as(uuid, date, public.members), private.send_document_as(uuid, text, text, public.members),
   private.recurring_next(text, int, date), private.recurring_first(text, int, date), private.recurring_clean_lines(jsonb),
-  private.recurring_actor(uuid, uuid), private.recurring_send(uuid, text, public.members), private.recurring_run(uuid, date),
+  private.recurring_actor(uuid, uuid), private.recurring_send(uuid, text, public.members), private.recurring_run(uuid, date, public.members),
   private.recurring_tick(timestamptz), private.org_pause_all(uuid), private.recurring_json(uuid)
   from public, anon, authenticated;
 revoke execute on function public.recurring_save(uuid, jsonb), public.recurring_list(uuid), public.recurring_set_status(uuid, text),
