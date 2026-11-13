@@ -1,10 +1,13 @@
 -- Fee billing: the firm's own business (linked when a partner is its real owner, or created with identity pending so payments
--- stay locked until a director's identity is verified), a fee customer per practice client in it, and each fee invoice of a
--- full-mandate client posted as a bill (professional fees) in the client's own books as its contact: the vendor kept, the
--- event logged, the activity log's actor put back. The mirror never blocks issuing: a failure is recorded and tried again by
--- a lead; an involved client gets nothing; a client whose engagement has ended gets no bill (recorded as skipped) and its
--- read-only books are never written. A voided fee invoice voids its unpaid bill. The fees overview shows wallet balances to
--- partners only. Edge-function calls are only recorded in net._requests.
+-- stay locked until a director's identity is verified; one practice each), a business fee customer per practice client in it
+-- (the client's TIN, the firm's own name for it kept), and each fee invoice of a full-mandate client posted as a bill
+-- (professional fees) in the client's own books in its contact's name: the vendor kept, the event logged (naming whoever is
+-- signed in), the activity log's actor put back. The mirror never blocks issuing: a failure is recorded, tried again by a
+-- lead or dismissed by a partner; an involved client, or an opening balance from a books migration, gets nothing; a client
+-- whose engagement has ended gets no bill (recorded as skipped) and its read-only books are never written, its closing fee
+-- invoices staying unbranded; after a handover nothing is written either. A voided fee invoice voids its unpaid bill; a
+-- credited one is flagged. The fees overview shows wallet balances to partners only. Edge-function calls are only recorded
+-- in net._requests.
 begin;
 
 -- Fixture: a verified practice (partner Bisi, manager Tola, staff Ada) that runs Adire Foods Ltd under full mandate and is
@@ -106,6 +109,8 @@ begin
   perform tests.as_postgres();
   assert (select firm_org_id from practices where id = pr2) = k and (select identity_status from orgs where id = k) = 'not_required',
     'firm_business: a linked business keeps its identity status';
+  -- One practice per firm business, whatever the route.
+  perform tests.throws(format('update practices set firm_org_id = %L where id = %L', f, pr2), '23505:%practices_firm_org%');
 end $$;
 
 -- test: firm_business_identity_pending
@@ -121,34 +126,48 @@ begin
 end $$;
 
 -- test: fee_customer_idempotent
--- A lead upserts each client's customer in the firm business, as the firm business's contact: named as the client business,
--- its email, phone and address as given; an involved client's start from the business's own. Called again it keeps the same
--- customer and what was given before. Staff, other practices and clients that are not connected are refused.
+-- A lead upserts each client's customer in the firm business, as the firm business's contact. A new one is a business
+-- customer named as the client's business with the business's TIN; an involved client's starts from the business's own
+-- email and address, never its phone. Called again it keeps the same customer, the name the firm gave it and what was given
+-- before; kind and TIN change only as given. Staff, other practices and clients that are not connected are refused.
 do $$
 declare f uuid := tests.id('f'); c uuid := tests.id('c1'); cu uuid; r jsonb; v_invited uuid;
 begin
+  update orgs set tin = '34567890-0001' where id = tests.id('o1');
+  update orgs set tin = '45678901-0001' where id = tests.id('dayo_org');
   perform tests.as_user(tests.id('manager'));
   r := public.practice_fee_customer(c, '{"email":"accounts@client.example.test"}');
   assert r = public.practice_fee_customer(c, '{}'), 'fee_customer_idempotent';
   cu := tests.remember('cu1', (r->>'customer_id')::uuid);
   perform tests.as_postgres();
   assert (select fee_customer_id from practice_clients where id = c) = cu, 'fee_customer_idempotent: stored';
-  assert (select (org_id, name, email, phone, address, created_by) is not distinct from (f, 'Adire Foods Ltd', 'accounts@client.example.test', null::text, null::text,
-      (private.org_contact(f)).id) from customers where id = cu),
-    'fee_customer_idempotent: named as the client, the email given, as the firm business''s contact';
-  -- A full-mandate client's business email is the firm's own: never taken.
+  assert (select (org_id, name, kind, tin, email, phone, address, created_by) is not distinct from (f, 'Adire Foods Ltd', 'business', '34567890-0001',
+      'accounts@client.example.test', null::text, null::text, (private.org_contact(f)).id) from customers where id = cu),
+    'fee_customer_idempotent: a business named as the client, its TIN, the email given, as the firm business''s contact';
+  -- The firm renames the customer; details added later keep that name and the email. A full-mandate client's business
+  -- email is the firm's own: never taken.
   perform tests.as_user(tests.id('partner'));
+  perform public.save_customer(f, jsonb_build_object('id', cu, 'name', 'Adire Foods Limited (fees)'));
   r := public.practice_fee_customer(c, '{"phone":"0803 111 2222","address":"5 Adire Close, Abeokuta"}');
   perform tests.as_postgres();
-  assert (r->>'customer_id')::uuid = cu and (select (email, phone, address) = ('accounts@client.example.test', '+2348031112222', '5 Adire Close, Abeokuta')
-      from customers where id = cu), 'fee_customer_idempotent: details added, the email kept';
-  -- An involved client: the business's own details.
+  assert (r->>'customer_id')::uuid = cu and (select (name, email, phone, address, kind, tin) = ('Adire Foods Limited (fees)', 'accounts@client.example.test',
+      '+2348031112222', '5 Adire Close, Abeokuta', 'business', '34567890-0001') from customers where id = cu),
+    'fee_customer_idempotent: details added, the name and email kept';
+  -- Kind and TIN as given.
   perform tests.as_user(tests.id('partner'));
+  perform public.practice_fee_customer(c, '{"tin":"34567890-0002"}');
+  perform tests.throws(format($q$select public.practice_fee_customer(%L, '{"kind":"shop"}')$q$, c), '%individual, business or government%');
+  perform tests.as_postgres();
+  assert (select (kind, tin) = ('business', '34567890-0002') from customers where id = cu), 'fee_customer_idempotent: the TIN given';
+  update customers set tin = '34567890-0001' where id = cu;
+  -- An involved client: the business's own email, address and TIN; not its phone (another customer may have it).
+  perform tests.as_user(tests.id('partner'));
+  perform public.save_customer(f, '{"name": "Dayo Personal", "phone": "08031234567"}');
   r := public.practice_fee_customer(tests.id('ci'), '{}');
   perform tests.remember('cu_inv', (r->>'customer_id')::uuid);
   perform tests.as_postgres();
-  assert (select (name, email, phone, address) = ('Dayo Bakery Ltd', 'dayo@bakery.example.test', '+2348031234567', '1 Bakery Road, Lagos')
-      from customers where id = tests.id('cu_inv') and org_id = f), 'fee_customer_idempotent: an involved client''s own details';
+  assert (select (name, email, phone, address, kind, tin) is not distinct from ('Dayo Bakery Ltd', 'dayo@bakery.example.test', null::text, '1 Bakery Road, Lagos',
+      'business', '45678901-0001') from customers where id = tests.id('cu_inv') and org_id = f), 'fee_customer_idempotent: an involved client''s own details';
   assert tests.id('cu_inv') <> cu, 'fee_customer_idempotent: one customer per client';
   -- Refused: staff, someone outside, a client of another practice, an invitation not yet taken.
   perform tests.as_user(tests.id('staff'));
@@ -258,6 +277,26 @@ begin
     'fee_mirror_involved_none: nothing else recorded or posted';
 end $$;
 
+-- test: fee_mirror_manager_issues
+-- A manager of the firm business (not the client's contact) issues a fee invoice: the bill is entered and approved in the
+-- name of the client's contact (created_by, approved_by), while the activity log names the manager, who is signed in
+-- (auth.uid() comes before counta.actor).
+do $$
+declare f uuid := tests.id('f'); o uuid := tests.id('o1'); v_sale uuid; v_bill public.bills; v_contact public.members := private.org_contact(tests.id('o1'));
+begin
+  perform tests.member(f, tests.id('manager'), 'manager');
+  perform tests.as_user(tests.id('manager'));
+  v_sale := pg_temp.fee_invoice(f, tests.id('cu1'), 15000);
+  perform tests.as_postgres();
+  select * into v_bill from bills where id = (pg_temp.fb(v_sale)).bill_id;
+  assert v_contact.user_id = tests.id('partner') and v_bill.status = 'approved' and v_bill.created_by = v_contact.id and v_bill.approved_by = v_contact.id,
+    format('fee_mirror_manager_issues: in the contact''s name, got %s', to_jsonb(v_bill));
+  assert (select (actor_user, actor_name) = (tests.id('manager'), 'Tola Manager') from activity_log
+          where org_id = o and action = 'fee_bill_posted' and after->>'sale_id' = v_sale::text), 'fee_mirror_manager_issues: the event names the manager';
+  assert (select actor_user from activity_log where org_id = o and entity = 'bills' and entity_id = v_bill.id::text and action = 'insert') = tests.id('manager'),
+    'fee_mirror_manager_issues: the bill''s log entry names the manager';
+end $$;
+
 -- test: fee_mirror_failure_never_blocks
 -- The client's books are closed through the invoice's date: the invoice is issued all the same, and the record says why the
 -- bill failed. Once the month is reopened a lead tries it again (failed records only). A retry put back the actor it found.
@@ -318,10 +357,17 @@ begin
   c3 := tests.full_client(pr, tests.id('partner'), 'Cedar Farms Ltd');
   o3 := (select org_id from practice_clients where id = c3);
   perform tests.as_user(tests.id('partner'));
-  cu3 := (public.practice_fee_customer(c3, '{"email":"accounts@cedar.example.test"}')->>'customer_id')::uuid;
+  cu3 := (public.practice_fee_customer(c3, '{"email":"accounts@cedar.example.test","tin":"56789012-0001"}')->>'customer_id')::uuid;
   sa := pg_temp.fee_invoice(f, cu3, 30000);
+  perform tests.as_postgres();
+  assert (select (kind, tin) = ('business', '56789012-0001') from customers where id = cu3), 'fee_mirror_ended_client_skipped: a new customer, the TIN given';
+  assert private.white_label(f, cu3), 'fee_mirror_ended_client_skipped: unbranded while running';
+  perform tests.as_user(tests.id('partner'));
   perform public.practice_end_mandate(c3, '{"reason":"Engagement finished by agreement"}');
   perform tests.as_postgres();
+  -- Its closing fee invoices stay unbranded (ended without a handover); an ordinary customer's are not.
+  assert private.white_label(f, cu3) and not private.white_label(f, (select id from customers where org_id = f and name = 'Walk-up Client')),
+    'fee_mirror_ended_client_skipped: closing fee invoices unbranded';
   ba := (pg_temp.fb(sa)).bill_id;
   assert (select status from bills where id = ba) = 'approved', 'fee_mirror_ended_client_skipped: posted while running';
   n_log := (select count(*) from activity_log where org_id = o3);
@@ -449,6 +495,131 @@ begin
   perform tests.as_postgres();
 end $$;
 
+-- test: fee_mirror_skips_migrated_invoices
+-- The firm moves its own books into Counta: an unpaid invoice from the old system, to the client by the fee customer's
+-- name, comes in as an open invoice (channel 'import') posted with the opening balances. It is not a fee invoice: no bill
+-- in the client's books and no record.
+do $$
+declare f uuid := tests.id('f'); o uuid := tests.id('o1'); r jsonb; v_mig uuid; v_as_of date := private.local_day(tests.id('f'), now()) - 40;
+  v_name text := (select name from customers where id = tests.id('cu1')); l jsonb; n bigint := (select count(*) from bills where org_id = tests.id('o1'));
+  v_sale public.sales;
+begin
+  perform tests.as_user(tests.id('partner'));
+  r := public.start_books_migration(f, 'other', v_as_of);
+  v_mig := (r->'migration'->>'id')::uuid;
+  r := public.set_migration_trial_balance(v_mig, '[{"name": "Trade receivables", "debit": 50000}, {"name": "Share capital", "credit": 50000}]');
+  for l in select * from jsonb_array_elements(r->'accounts') loop
+    perform public.map_migration_account((l->>'id')::uuid, case when l->>'source_name' = 'Trade receivables' then '1101' else '3001' end);
+  end loop;
+  perform public.set_migration_open_items(v_mig, 'invoice', jsonb_build_array(jsonb_build_object('party', v_name, 'number', 'OLD-0042',
+    'issue_date', v_as_of - 10, 'due_date', v_as_of + 20, 'amount', 50000)));
+  r := public.post_books_migration(v_mig, '{"accept_differences": true}');
+  perform tests.as_postgres();
+  select * into v_sale from sales where org_id = f and channel = 'import';
+  assert v_sale.customer_id = tests.id('cu1') and v_sale.journal_id is not null and v_sale.doc_type = 'invoice' and v_sale.status = 'open',
+    format('fee_mirror_skips_migrated_invoices: the opening invoice, got %s', to_jsonb(v_sale));
+  assert not exists (select 1 from practice_fee_bills where sale_id = v_sale.id) and (select count(*) from bills where org_id = o) = n,
+    'fee_mirror_skips_migrated_invoices';
+  assert (private.fee_mirror(v_sale.id)).id is null, 'fee_mirror_skips_migrated_invoices: not even when asked';
+end $$;
+
+-- test: fee_credit_visible
+-- A credit note on a fee invoice is not posted to the client's bill (a deferral, shown): the fees overview gives what was
+-- credited on each invoice, and flags its posted bill. The invoice can no longer be voided.
+do $$
+declare pr uuid := tests.id('pr'); s2 uuid := tests.id('sale2'); r jsonb; cl jsonb; i jsonb; b jsonb;
+begin
+  perform tests.as_user(tests.id('partner'));
+  perform public.credit_sale(s2, '{"amount": 10000, "reason": "Discount agreed"}');
+  perform tests.throws(format($q$select public.void_sale(%L, 'Raised in error')$q$, s2), '%credit note%');
+  perform tests.as_user(tests.id('manager'));
+  r := public.practice_fees(pr);
+  perform tests.as_postgres();
+  select x into cl from jsonb_array_elements(r->'clients') x where x->>'client_id' = tests.id('c1')::text;
+  select x into i from jsonb_array_elements(cl->'invoices') x where x->>'id' = s2::text;
+  select x into b from jsonb_array_elements(cl->'fee_bills') x where x->>'sale_id' = s2::text;
+  assert (i->>'credited')::numeric = 10000 and (i->>'balance')::numeric = 54500, format('fee_credit_visible: the invoice, got %s', i);
+  assert b->>'status' = 'posted' and (b->>'credited')::numeric = 10000 and b->>'note' = 'credited on the invoice, not on the bill',
+    format('fee_credit_visible: the bill flagged, got %s', b);
+  assert (select total from bills where id = (b->>'bill_id')::uuid) = 64500, 'fee_credit_visible: the bill unchanged';
+  assert not exists (select 1 from jsonb_array_elements(cl->'fee_bills') x where x->>'sale_id' <> s2::text and (x->>'note' is not null or (x->>'credited')::numeric <> 0)),
+    'fee_credit_visible: no other bill flagged';
+end $$;
+
+-- test: fee_void_after_handover_leaves_bill
+-- Once the client has taken its books over (handover), the firm no longer writes in them: voiding a fee invoice whose bill
+-- was posted under the mandate leaves the bill, the record saying why; a new fee invoice gets nothing; its fee invoices are
+-- branded again.
+do $$
+declare pr uuid := tests.id('pr'); f uuid := tests.id('f'); c4 uuid; o4 uuid; cu4 uuid; sa uuid; sb uuid; ba uuid; h uuid; v_tok text; n bigint; v_owner uuid;
+begin
+  v_owner := tests.user('owner@delta.example.test', 'Delta Owner');
+  c4 := tests.full_client(pr, tests.id('partner'), 'Delta Mills Ltd');
+  o4 := (select org_id from practice_clients where id = c4);
+  perform tests.as_user(tests.id('partner'));
+  cu4 := (public.practice_fee_customer(c4, '{"email":"accounts@delta.example.test"}')->>'customer_id')::uuid;
+  sa := pg_temp.fee_invoice(f, cu4, 25000);
+  h := (public.practice_handover_start(c4, '{"email":"owner@delta.example.test","name":"Delta Owner"}')->>'id')::uuid;
+  perform tests.as_service();
+  v_tok := substring(public.svc_practice_invite_link('handover', h)->>'link' from 'ph_[0-9a-f]{48}$');
+  perform tests.as_user(v_owner);
+  perform public.practice_handover_accept(v_tok);
+  perform tests.as_postgres();
+  ba := (pg_temp.fb(sa)).bill_id;
+  assert (select status from bills where id = ba) = 'approved' and (select mode from practice_clients where id = c4) = 'involved',
+    'fee_void_after_handover_leaves_bill: posted, then handed over';
+  assert not private.white_label(f, cu4), 'fee_void_after_handover_leaves_bill: branded again';
+  n := (select count(*) from bills where org_id = o4);
+  perform tests.as_user(tests.id('partner'));
+  perform public.void_sale(sa, 'Raised in error');
+  sb := pg_temp.fee_invoice(f, cu4, 25000);
+  perform tests.as_postgres();
+  assert (select status from bills where id = ba) = 'approved' and (pg_temp.fb(sa)).status = 'posted'
+     and (pg_temp.fb(sa)).error like '%keeps its own books%', format('fee_void_after_handover_leaves_bill, got %s', to_jsonb(pg_temp.fb(sa)));
+  assert (pg_temp.fb(sb)).id is null and (select count(*) from bills where org_id = o4) = n, 'fee_void_after_handover_leaves_bill: nothing written';
+end $$;
+
+-- test: fee_bill_dismiss
+-- A fee bill that can never be posted (the client's accountant entered the invoice by hand while the month was closed) is
+-- dismissed by a partner with a reason: not tried again, left when the invoice is voided. Only failed records; a reason.
+do $$
+declare f uuid := tests.id('f'); o uuid := tests.id('o1'); v_day date := private.local_day(tests.id('o1'), now()) - 1; v_sale uuid; x public.practice_fee_bills;
+  r jsonb; v_number text; v_vendor uuid := (select fee_vendor_id from practice_clients where id = tests.id('c1'));
+begin
+  perform tests.as_user(tests.id('partner'));
+  perform public.close_period(o, v_day);
+  v_sale := pg_temp.fee_invoice(f, tests.id('cu1'), 12000, v_day);
+  perform tests.as_postgres();
+  v_number := (select number from sales where id = v_sale);
+  perform tests.as_user(tests.id('partner'));
+  perform public.reopen_period(o, 'Hand-entered fee');
+  perform public.save_bill(o, jsonb_build_object('status', 'approve', 'vendor_id', v_vendor,
+    'vendor_ref', v_number, 'lines', '[{"description": "Fees, entered by hand", "account_code": "6502", "qty": 1, "unit_cost": 12000}]'::jsonb));
+  perform tests.as_postgres();
+  x := pg_temp.fb(v_sale);
+  perform tests.as_user(tests.id('manager'));
+  r := public.practice_fee_bill_retry(x.id);
+  assert r->>'status' = 'failed' and r->>'error' like '%already entered%', format('fee_bill_dismiss: cannot succeed, got %s', r);
+  perform tests.throws(format($q$select public.practice_fee_bill_dismiss(%L, 'Entered by hand')$q$, x.id), '42501: Only a partner%');
+  perform tests.as_user(tests.id('kemi'));
+  perform tests.throws(format($q$select public.practice_fee_bill_dismiss(%L, 'Entered by hand')$q$, x.id), '%not on this practice%');
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.practice_fee_bill_dismiss(%L, ' ok ')$q$, x.id), '%reason%');
+  perform tests.throws(format($q$select public.practice_fee_bill_dismiss(%L, 'Entered by hand')$q$, tests.id('fb2')), '%failed%');
+  r := public.practice_fee_bill_dismiss(x.id, '  Entered by hand by the client''s accountant  ');
+  assert r->>'status' = 'dismissed' and r->>'dismiss_reason' = 'Entered by hand by the client''s accountant' and (r->>'dismissed_by')::uuid = tests.id('partner'),
+    format('fee_bill_dismiss: dismissed, got %s', r);
+  perform tests.as_user(tests.id('manager'));
+  perform tests.throws(format('select public.practice_fee_bill_retry(%L)', x.id), '%failed%');
+  r := public.practice_fees(tests.id('pr'));
+  assert exists (select 1 from jsonb_array_elements(r->'clients') c, jsonb_array_elements(c->'fee_bills') b
+                 where b->>'id' = x.id::text and b->>'status' = 'dismissed' and b->>'dismiss_reason' like 'Entered by hand%'), 'fee_bill_dismiss: on the fees page';
+  perform tests.as_user(tests.id('partner'));
+  perform public.void_sale(v_sale, 'Raised in error');
+  perform tests.as_postgres();
+  assert (pg_temp.fb(v_sale)).status = 'dismissed', 'fee_bill_dismiss: left when voided';
+end $$;
+
 -- test: fees_helpers_revoked
 -- The helpers are not callable by the signed-in person; the RPCs by authenticated only; the table is closed; the triggers and
 -- the bill source are in place.
@@ -456,11 +627,11 @@ do $$
 declare v_fn text;
 begin
   foreach v_fn in array array['private.fee_mirror(uuid)', 'private.fee_mirror_on_post()', 'private.fee_mirror_on_void()',
-    'private.void_bill_as(uuid, text, public.members)'] loop
+    'private.void_bill_as(uuid, text, public.members)', 'private.white_label(uuid, uuid)'] loop
     assert not has_function_privilege('anon', v_fn, 'execute') and not has_function_privilege('authenticated', v_fn, 'execute'), 'fees_helpers_revoked: ' || v_fn;
   end loop;
   foreach v_fn in array array['public.practice_firm_business(uuid, jsonb)', 'public.practice_fee_customer(uuid, jsonb)',
-    'public.practice_fee_bill_retry(uuid)', 'public.practice_fees(uuid)', 'public.void_bill(uuid, text)'] loop
+    'public.practice_fee_bill_retry(uuid)', 'public.practice_fee_bill_dismiss(uuid, text)', 'public.practice_fees(uuid)', 'public.void_bill(uuid, text)'] loop
     assert has_function_privilege('authenticated', v_fn, 'execute') and not has_function_privilege('anon', v_fn, 'execute'), 'fees_helpers_revoked: rpc ' || v_fn;
   end loop;
   assert (select relrowsecurity from pg_class where oid = 'public.practice_fee_bills'::regclass)

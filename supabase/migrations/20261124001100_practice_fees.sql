@@ -5,23 +5,31 @@
 -- tax wallet as for any business). A partner links one they really own (the owner, not someone acting for it: a business the
 -- firm runs under full mandate never becomes its own), or creates one here; a business created here starts with its
 -- identity pending, so its payments stay locked until a director's identity is verified the usual way (create_org's default,
--- not_required, would open them with no check).
+-- not_required, would open them with no check). One firm business per practice, and one practice per firm business.
 --
--- Each practice client has a customer in the firm business (practice_clients.fee_customer_id), named as the client's
--- business. Fee invoices are ordinary sales invoices of the firm business to that customer, by hand or by a recurring
--- schedule. For a client whose books the practice keeps under full mandate, each fee invoice is also posted, once issued,
--- as a bill in the client's own books (the fee mirror): the practice as vendor (practice_clients.fee_vendor_id, made on the
--- first bill and kept), professional fees (6502, or 6507 where the client has no 6502) and input VAT (the invoice's VAT and
--- total to the kobo), entered and approved as the client's contact (private.org_contact) with the activity log naming that
--- person, then the actor the mirror found put back. It is recorded in practice_fee_bills:
---   posted   the bill is in the client's books;
---   failed   it could not be (error says why, as approve_bill would: a month the client's books have closed, an invoice
---            already entered by hand...); a lead tries it again (practice_fee_bill_retry);
---   skipped  the client's engagement had ended (its books are read-only) or the practice no longer kept them, so no bill;
---   voided   the fee invoice was voided: its unpaid bill was voided with it (or it had none).
+-- Each practice client has a customer in the firm business (practice_clients.fee_customer_id): a business customer named as
+-- the client's business, with its TIN, when it is created. Fee invoices are ordinary sales invoices of the firm business to
+-- that customer, by hand or by a recurring schedule. Fee invoices to a full-mandate client carry no Counta branding, also
+-- the closing ones after the mandate ended without a handover (private.white_label). For a client whose books the practice
+-- keeps under full mandate, each fee invoice is also posted, once issued, as a bill in the client's own books (the fee
+-- mirror): the practice as vendor (practice_clients.fee_vendor_id, made on the first bill and kept), professional fees
+-- (6502, or 6507 where the client has no 6502) and input VAT (the invoice's VAT and total to the kobo), entered and approved
+-- in the name of the client's contact (private.org_contact: the bill's created_by and approved_by). The activity log names
+-- the person signed in when there is one (auth.uid() comes first in private.activity_add), else the contact, whom the
+-- mirror sets as counta.actor for a posting by Counta (a recurring invoice issued by the hourly tick), putting back the actor
+-- it found afterwards. Opening balances brought in by a books migration (channel 'import') are not fee invoices: no bill.
+-- It is recorded in practice_fee_bills:
+--   posted     the bill is in the client's books;
+--   failed     it could not be (error says why, as approve_bill would: a month the client's books have closed, an invoice
+--              already entered by hand...); a lead tries it again (practice_fee_bill_retry), or a partner dismisses it with
+--              a reason when it never can be (practice_fee_bill_dismiss);
+--   dismissed  a failed one a partner gave up on;
+--   skipped    the client's engagement had ended (its books are read-only) or the practice no longer kept them, so no bill;
+--   voided     the fee invoice was voided: its unpaid bill was voided with it (or it had none).
 -- The mirror never stops the invoice being issued, and never writes in a business that is read-only or that the practice no
 -- longer runs under full mandate: a voided fee invoice whose bill cannot be voided keeps the record posted, with why. An
--- involved client keeps its own books: nothing is posted or recorded.
+-- involved client keeps its own books: nothing is posted or recorded. Credit notes on fee invoices are not posted to the
+-- client's bill: the fees overview shows what was credited on each invoice and flags its posted bill.
 --
 -- void_bill keeps its behaviour: its body after the permission check is now private.void_bill_as, which the mirror calls
 -- as the client's contact. The fees overview (practice_fees) is for the practice's leads; wallet balances for partners only.
@@ -37,24 +45,42 @@ alter table public.bills add constraint bills_source_check
   check (source in ('manual', 'receipt', 'prism', 'ai', 'import', 'landed_cost', 'supplier', 'bulk', 'practice_fee'));
 
 -- One record per fee invoice of a full-mandate client (sale_id: the invoice in the firm business; bill_id: the bill in the
--- client's books). attempts: how many times the bill was tried.
+-- client's books). attempts: how many times the bill was tried. dismissed_*: the partner who gave up on a failed one, and why.
 create table public.practice_fee_bills (
   id uuid primary key default gen_random_uuid(),
   practice_id uuid not null references public.practices(id) on delete cascade,
   client_id uuid not null references public.practice_clients(id) on delete cascade,
   sale_id uuid not null unique references public.sales(id) on delete cascade,
   bill_id uuid references public.bills(id) on delete set null,
-  status text not null check (status in ('posted', 'failed', 'voided', 'skipped')),
+  status text not null check (status in ('posted', 'failed', 'voided', 'skipped', 'dismissed')),
   error text,
   attempts int not null default 0,
+  dismissed_by uuid references auth.users(id) on delete set null,
+  dismissed_at timestamptz,
+  dismiss_reason text check (dismiss_reason is null or length(dismiss_reason) <= 500),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index practice_fee_bills_client on public.practice_fee_bills(client_id, created_at);
 create index practice_fee_bills_practice on public.practice_fee_bills(practice_id);
 create index practice_fee_bills_bill on public.practice_fee_bills(bill_id) where bill_id is not null;
+create index practice_fee_bills_dismissed_by on public.practice_fee_bills(dismissed_by) where dismissed_by is not null;
 alter table public.practice_fee_bills enable row level security;
 revoke all on public.practice_fee_bills from anon, authenticated;
+
+-- One practice per firm business (the fee mirror finds the practice by it): the index of outbound_branding, made unique.
+drop index if exists public.practices_firm_org;
+create unique index practices_firm_org on public.practices(firm_org_id) where firm_org_id is not null;
+
+-- white_label: as before, and also the fee customer of a full-mandate client whose mandate ended without a handover (the
+-- practice still runs its records, read-only, so its closing fee invoices stay unbranded). A handover lifts it.
+create or replace function private.white_label(p_org uuid, p_customer uuid default null) returns boolean
+language sql stable set search_path = public, private as $$
+  select private.is_managed(p_org) or exists (
+    select 1 from practice_clients c join practices p on p.id = c.practice_id
+    where p.firm_org_id = p_org and c.fee_customer_id = p_customer and c.mode = 'full'
+      and (c.status = 'active' or (c.status = 'ended' and c.end_kind = 'ended')))
+$$;
 
 -- ---------------------------------------------------------------------------
 -- 2. Voiding a bill as a given member
@@ -146,13 +172,17 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- 4. Fee customers
 -- ---------------------------------------------------------------------------
--- A lead upserts the client's customer in the firm business, as the firm business's contact: named as the client's
--- business; its email, phone and address as p gives them (a key given replaces, one left out is kept); a new customer for
--- an involved client starts from the business's own (a full-mandate client's business email is the firm's). The client
--- must be connected (active, or ended for its last fees). Stored as fee_customer_id. {customer_id}.
+-- A lead upserts the client's customer in the firm business, as the firm business's contact. A new one is a business
+-- customer named as the client's business, with the business's TIN (so withholding tax is expected on fees and NRS clears
+-- the e-invoice), unless p gives the kind or TIN; an involved client's starts from the business's own email and address (a
+-- full-mandate client's business email is the firm's; a phone is never copied, as another customer may have it). After
+-- that the name stays as the firm keeps it, and email, phone, address, kind and TIN change only as p gives them (a key
+-- given replaces, one left out is kept). The client must be connected (active, or ended for its last fees). Stored as
+-- fee_customer_id. {customer_id}.
 create or replace function public.practice_fee_customer(p_client uuid, p jsonb default '{}'::jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
-declare c public.practice_clients; m public.practice_members; pr public.practices; o public.orgs; fm public.members; v_cust uuid; v jsonb; k text;
+declare c public.practice_clients; m public.practice_members; pr public.practices; o public.orgs; fm public.members; cu public.customers; v jsonb; k text;
+  v_cust uuid;
 begin
   select * into c from practice_clients where id = p_client for update;
   if c.id is null or c.practice_id is null then raise exception 'Client not found.'; end if;
@@ -161,18 +191,21 @@ begin
   if pr.firm_org_id is null then raise exception 'Set up the firm''s own business first: fee invoices are issued from it.'; end if;
   if c.status not in ('active', 'ended') or c.org_id is null then raise exception 'Bill a client once it is connected.'; end if;
   p := case when jsonb_typeof(p) = 'object' then p else '{}'::jsonb end;
+  if p ? 'kind' and coalesce(p->>'kind', '') not in ('individual', 'business', 'government') then
+    raise exception 'Choose the customer''s kind: individual, business or government.';
+  end if;
   select * into o from orgs where id = c.org_id;
   fm := private.org_contact(pr.firm_org_id);
   if fm.id is null then raise exception 'The firm''s own business has no owner to act for it.'; end if;
-  v_cust := (select id from customers where id = c.fee_customer_id and org_id = pr.firm_org_id);
-  v := jsonb_build_object('name', left(coalesce(o.name, c.business_name), 120));
-  if v_cust is not null then v := v || jsonb_build_object('id', v_cust, 'archived', false); end if;
-  foreach k in array array['email', 'phone', 'address'] loop
-    if p ? k then
-      v := v || jsonb_build_object(k, p->k);
-    elsif v_cust is null and c.mode = 'involved' then
-      v := v || jsonb_build_object(k, case k when 'email' then o.email when 'phone' then o.phone else o.address end);
-    end if;
+  select * into cu from customers where id = c.fee_customer_id and org_id = pr.firm_org_id;
+  if cu.id is not null then
+    v := jsonb_build_object('id', cu.id, 'name', cu.name, 'archived', false);
+  else
+    v := jsonb_build_object('name', left(coalesce(o.name, c.business_name), 120), 'kind', 'business', 'tin', o.tin);
+    if c.mode = 'involved' then v := v || jsonb_build_object('email', o.email, 'address', o.address); end if;
+  end if;
+  foreach k in array array['email', 'phone', 'address', 'kind', 'tin'] loop
+    if p ? k then v := v || jsonb_build_object(k, p->k); end if;
   end loop;
   v_cust := private.upsert_customer(pr.firm_org_id, v, fm);
   if c.fee_customer_id is distinct from v_cust then
@@ -185,8 +218,10 @@ end $$;
 -- 5. The fee mirror
 -- ---------------------------------------------------------------------------
 -- The bill in the client's books for a fee invoice (issued: posted to the firm business's books) to a practice client's
--- fee customer. For an active full-mandate client of the practice whose books are not read-only: entered as the client's
--- contact (the activity log names that person, then the actor found is put back), one line per invoice line (its amount
+-- fee customer; not for an opening balance a books migration brought in (channel 'import'). For an active full-mandate
+-- client of the practice whose books are not read-only: entered in the name of the client's contact (created_by,
+-- approved_by), with the contact as counta.actor so that a posting by Counta is logged in their name (a person signed in is
+-- logged as themselves) and the actor found put back afterwards; one line per invoice line (its amount
 -- as the invoice prices it, before VAT or with VAT included; professional fees; VAT standard when the line carries VAT),
 -- checked as approve_bill checks (an amount, a day the books have not closed, not entered already) and posted; the vendor
 -- kept on the client; logged (fee_bill_posted). Any error is recorded on the failed record with the attempt counted. A client whose engagement ended, or whose books the
@@ -198,7 +233,7 @@ declare s public.sales; c public.practice_clients; pr public.practices; o public
   b public.bills; v_vendor uuid; v_code text; v_lines jsonb; v_actor text; v_why text;
 begin
   select * into s from sales where id = p_sale;
-  if s.id is null or s.doc_type <> 'invoice' or s.journal_id is null or s.customer_id is null then return r; end if;
+  if s.id is null or s.doc_type <> 'invoice' or s.journal_id is null or s.customer_id is null or s.channel = 'import' then return r; end if;
   -- The client billed: of a practice whose firm business issued the invoice, with this fee customer (an active full mandate
   -- first).
   select x.* into c from practice_clients x join practices p on p.id = x.practice_id
@@ -286,16 +321,17 @@ begin
   return null;
 end $$;
 
--- After a fee invoice is voided: its bill in the client's books is voided as the client's contact (the actor found put back
--- afterwards) when nothing is paid on it and the practice still runs those books (not read-only); the record becomes voided.
--- A failed record (no bill) is closed as voided. A bill that cannot be voided is left, the record posted, with why. Never
--- stops the void.
+-- After a fee invoice is voided: its bill in the client's books is voided in the name of the client's contact (voided_by;
+-- counta.actor as in fee_mirror, the actor found put back afterwards) when nothing is paid on it and the practice still runs
+-- those books (not read-only); the record becomes voided.
+-- A failed record (no bill) is closed as voided; a dismissed, skipped or voided one is left. A bill that cannot be voided is
+-- left, the record posted, with why. Never stops the void.
 create or replace function private.fee_mirror_on_void() returns trigger
 language plpgsql security definer set search_path = public, private as $$
 declare r public.practice_fee_bills; c public.practice_clients; o public.orgs; b public.bills; m public.members; v_actor text; v_why text;
 begin
   select * into r from practice_fee_bills where sale_id = new.id for update;
-  if r.id is null or r.status in ('voided', 'skipped') then return null; end if;
+  if r.id is null or r.status in ('voided', 'skipped', 'dismissed') then return null; end if;
   begin
     select * into b from bills where id = r.bill_id;
     if r.status = 'failed' or b.id is null or b.status = 'void' then
@@ -362,14 +398,35 @@ begin
   return to_jsonb(r);
 end $$;
 
+-- A partner gives up on a failed fee bill that can never be posted (the client's accountant entered the invoice by hand,
+-- or it is dated after the day the bill could be), with a reason of 5 to 500 characters: dismissed, never tried again.
+-- The record, as it is now.
+create or replace function public.practice_fee_bill_dismiss(p_id uuid, p_reason text) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare r public.practice_fee_bills; m public.practice_members; v_reason text := trim(coalesce(p_reason, ''));
+begin
+  select * into r from practice_fee_bills where id = p_id for update;
+  if r.id is null then raise exception 'Fee bill not found.'; end if;
+  m := private.practice_require(r.practice_id, true);
+  if m.role <> 'partner' then raise exception 'Only a partner dismisses a fee bill.' using errcode = '42501'; end if;
+  if r.status <> 'failed' then raise exception 'Only a fee bill that failed is dismissed.'; end if;
+  if length(v_reason) < 5 then raise exception 'Give the reason for dismissing it.'; end if;
+  if length(v_reason) > 500 then raise exception 'Keep the reason under 500 characters.'; end if;
+  update practice_fee_bills set status = 'dismissed', dismissed_by = auth.uid(), dismissed_at = now(), dismiss_reason = v_reason, updated_at = now()
+  where id = r.id returning * into r;
+  return to_jsonb(r);
+end $$;
+
 -- The fees page for a lead: the firm business; each client (active, or ended with a fee customer) with its fee customer,
--- what it owes, its fee invoices (newest first, 100 at most), its recurring schedules in the firm business (total: each
--- repeat invoice, VAT included where the firm business charges it) and its fee bills (newest first); and, for partners
--- only, the firm business's wallet and tax wallet with their balances in the books.
+-- what it owes, its fee invoices (newest first, 100 at most; credited: what credit notes took off it), its recurring
+-- schedules in the firm business (total: each repeat invoice, VAT included where the firm business charges it) and its fee
+-- bills (newest first). Credit notes are not posted to the client's bill: a posted fee bill whose invoice was credited
+-- carries the amount credited and a note saying so. And, for partners only, the firm business's wallet and tax wallet with
+-- their balances in the books.
 -- {firm_org: {id, name, identity_status} | null, clients: [{client_id, business_name, mode, fee_customer_id, outstanding,
---  invoices: [{id, number, issue_date, total, balance, status}], schedules: [{id, frequency, day_of_month, next_run, status,
---  total}], fee_bills: [{id, sale_id, status, error, bill_id}]}], wallets?: {wallet: {status, balance}, tax_wallet: {status,
---  balance}}}
+--  invoices: [{id, number, issue_date, total, credited, balance, status}], schedules: [{id, frequency, day_of_month, next_run,
+--  status, total}], fee_bills: [{id, sale_id, status, error, bill_id, dismiss_reason, credited, note}]}],
+--  wallets?: {wallet: {status, balance}, tax_wallet: {status, balance}}}
 create or replace function public.practice_fees(p_practice uuid) returns jsonb
 language plpgsql stable security definer set search_path = public, private as $$
 declare m public.practice_members; f public.orgs; w public.wallets; t public.tax_wallets; v jsonb;
@@ -384,7 +441,7 @@ begin
           'outstanding', coalesce((select sum(s.total - s.amount_paid - s.credited) from sales s
             where s.org_id = f.id and s.customer_id = c.fee_customer_id and s.doc_type = 'invoice' and s.status in ('open', 'partially_paid')), 0),
           'invoices', coalesce((
-            select jsonb_agg(jsonb_build_object('id', s.id, 'number', s.number, 'issue_date', s.issue_date, 'total', s.total,
+            select jsonb_agg(jsonb_build_object('id', s.id, 'number', s.number, 'issue_date', s.issue_date, 'total', s.total, 'credited', s.credited,
                 'balance', case when s.status in ('open', 'partially_paid') then s.total - s.amount_paid - s.credited else 0 end, 'status', s.status)
               order by s.issue_date desc, s.created_at desc)
             from (select * from sales where org_id = f.id and customer_id = c.fee_customer_id and doc_type = 'invoice'
@@ -399,9 +456,11 @@ begin
             from recurring_invoices r
             where r.org_id = f.id and (r.practice_client_id = c.id or (c.fee_customer_id is not null and r.customer_id = c.fee_customer_id))), '[]'::jsonb),
           'fee_bills', coalesce((
-            select jsonb_agg(jsonb_build_object('id', x.id, 'sale_id', x.sale_id, 'status', x.status, 'error', x.error, 'bill_id', x.bill_id)
+            select jsonb_agg(jsonb_build_object('id', x.id, 'sale_id', x.sale_id, 'status', x.status, 'error', x.error, 'bill_id', x.bill_id,
+                'dismiss_reason', x.dismiss_reason, 'credited', coalesce(fs.credited, 0),
+                'note', case when x.status = 'posted' and fs.credited > 0 then 'credited on the invoice, not on the bill' end)
               order by x.created_at desc)
-            from practice_fee_bills x where x.client_id = c.id), '[]'::jsonb))
+            from practice_fee_bills x left join sales fs on fs.id = x.sale_id where x.client_id = c.id), '[]'::jsonb))
         order by lower(coalesce(o.name, c.business_name)), c.id)
       from practice_clients c left join orgs o on o.id = c.org_id
       where c.practice_id = p_practice and (c.status = 'active' or (c.status = 'ended' and c.fee_customer_id is not null))), '[]'::jsonb));
@@ -421,11 +480,11 @@ end $$;
 -- core.sql grants every private function to authenticated: the helpers this migration creates are not callable by the
 -- signed-in person.
 revoke all on function private.void_bill_as(uuid, text, public.members), private.fee_mirror(uuid), private.fee_mirror_on_post(),
-  private.fee_mirror_on_void()
+  private.fee_mirror_on_void(), private.white_label(uuid, uuid)
   from public, anon, authenticated;
 revoke execute on function public.practice_firm_business(uuid, jsonb), public.practice_fee_customer(uuid, jsonb),
-  public.practice_fee_bill_retry(uuid), public.practice_fees(uuid)
+  public.practice_fee_bill_retry(uuid), public.practice_fee_bill_dismiss(uuid, text), public.practice_fees(uuid)
   from public, anon;
 grant execute on function public.practice_firm_business(uuid, jsonb), public.practice_fee_customer(uuid, jsonb),
-  public.practice_fee_bill_retry(uuid), public.practice_fees(uuid)
+  public.practice_fee_bill_retry(uuid), public.practice_fee_bill_dismiss(uuid, text), public.practice_fees(uuid)
   to authenticated;
