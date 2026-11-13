@@ -15,7 +15,7 @@ const RULE = rgb(0.75, 0.78, 0.8);
 
 // ------------------------------------------------------------------ text the standard fonts can draw
 // Windows Latin (WinAnsi) beyond ASCII: 0xA0 to 0xFF, and these from 0x80 to 0x9F.
-const WIN_ANSI_EXTRA = new Set(Array.from('€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ'));
+const WIN_ANSI_EXTRA = new Set(Array.from('\u20AC\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u017D\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u017E\u0178'));
 const winAnsi = (ch: string) => {
   const c = ch.codePointAt(0)!;
   return (c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff) || WIN_ANSI_EXTRA.has(ch);
@@ -32,13 +32,13 @@ const MARK = /\p{M}/gu;
 // that the fonts cannot draw as "?". Line breaks stay; tabs and unusual spaces are spaces; invisible characters go.
 export function pdfSafe(s: string): string {
   const t = String(s ?? '')
-    .replace(/₦\s*/g, 'NGN ')
-    .replace(/[‘’‚‛′]/g, "'")
-    .replace(/[“”„‟″«»]/g, '"')
-    .replace(/[‐‑‒–—―−]/g, '-')
-    .replace(/…/g, '...')
+    .replace(/\u20A6\s*/g, 'NGN ')
+    .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB]/g, '"')
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, '-')
+    .replace(/\u2026/g, '...')
     .replace(/\r\n?/g, '\n')
-    .replace(/[\t   -   　]/g, ' ');
+    .replace(/[\t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, ' ');
   let out = '';
   for (const ch of t) {
     const c = ch.codePointAt(0)!;
