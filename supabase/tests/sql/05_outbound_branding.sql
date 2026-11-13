@@ -85,6 +85,12 @@ begin
   update orgs set alert_prefs = '{}' where id = ord;
   assert (private.alert_prefs(ord)->>'owner_calls')::boolean and not (private.alert_prefs(ord)->>'customer_calls')::boolean,
     'outbound_ordinary_untouched: call preference defaults';
+  -- Over a blocking limit the message is kept as failed, and the messaging hook is still called for it, as before.
+  insert into org_entitlement_overrides (org_id, module_key, included, quota, enforce) values (ord, 'emails', true, 0, 'block');
+  msg := private.queue_message(ord, 'email', 'c@example.test', 'document', 'Over the limit', '{}', null, null, null);
+  assert msg.status = 'failed' and msg.error like 'Your plan%' and exists (select 1 from net._requests where body->>'message_id' = msg.id::text),
+    'outbound_ordinary_untouched: an over-limit message still calls the hook';
+  delete from org_entitlement_overrides where org_id = ord;
   assert not exists (select 1 from activity_log where org_id = ord), 'outbound_ordinary_untouched: nothing logged';
   perform tests.as_postgres();
 end $$;
@@ -112,6 +118,11 @@ begin
   assert msg.status = 'suppressed' and msg.error = 'Not sent: not_firm_address' and msg.to_address = 'client-owner@example.test',
     'outbound_alert_readdressed: no firm address, not sent';
   assert not exists (select 1 from net._requests where body->>'message_id' = msg.id::text), 'outbound_alert_readdressed: no hook for a message not sent';
+  -- The contact's address is compared as the firm's are: lower-cased and trimmed.
+  update members set email = '  Partner@Firm.Example.Test ' where id = tests.id('partner_seat');
+  msg := private.queue_message(o, 'email', 'client-owner@example.test', 'alert', 'Contact with spaces', '{}', null, null, null);
+  assert msg.status = 'queued' and msg.to_address = 'partner@firm.example.test' and (msg.params->>'readdressed')::boolean,
+    'outbound_alert_readdressed: the contact''s address trimmed';
   update members set email = 'partner@firm.example.test' where id = tests.id('partner_seat');
   -- An invitation or a WhatsApp alert to someone outside the firm is not sent, and is logged.
   insert into messages (org_id, channel, to_address, template, subject, params) values (o, 'email', 'client-owner@example.test', 'invite', 'Join', '{}');
@@ -386,21 +397,132 @@ begin
   perform tests.as_postgres();
 end $$;
 
+-- test: outbound_signed_in_write
+-- Ruling 1: the gate runs as its owner whoever writes. A signed-in person's direct insert reaches row security (and is
+-- refused there, taking the gate's event with it); a gate running as the person would fail first, on outbound_check.
+do $$
+declare o uuid := tests.id('o'); n bigint := (select count(*) from activity_log where org_id = tests.id('o'));
+begin
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format('insert into messages (org_id, channel, to_address, template, subject) values (%L, %L, %L, %L, %L)',
+    o, 'email', 'client-owner@example.test', 'invite', 'Direct'), '42501: new row violates row-level security policy for table "messages"');
+  perform tests.as_postgres();
+  assert not exists (select 1 from messages where subject = 'Direct') and (select count(*) from activity_log where org_id = o) = n,
+    'outbound_signed_in_write: nothing kept';
+  perform tests.as_postgres();
+end $$;
+
+-- test: outbound_suppress_after_plan
+-- The gate runs after the plan's limits: a message not sent stays suppressed (not failed over the limit), logged once,
+-- and is never picked up again. A message that may go is still held to the limit.
+do $$
+declare o uuid := tests.id('o'); n bigint; v uuid;
+begin
+  insert into org_entitlement_overrides (org_id, module_key, included, quota, enforce) values (o, 'emails', true, 0, 'block');
+  update orgs set send_mode = 'download_only' where id = o;
+  n := (select count(*) from activity_log where org_id = o and action = 'message_suppressed');
+  insert into messages (org_id, channel, to_address, template, subject, params) values (o, 'email', 'bola@example.test', 'document', 'Over quota', '{}')
+  returning id into v;
+  assert (select status = 'suppressed' and error = 'Not sent: download_only' from messages where id = v), 'outbound_suppress_after_plan';
+  perform tests.as_service();
+  assert public.svc_message(v) is null and not (public.svc_messages_retry() @> to_jsonb(v)), 'outbound_suppress_after_plan: not picked up';
+  perform tests.as_postgres();
+  assert (select count(*) from activity_log where org_id = o and action = 'message_suppressed') = n + 1, 'outbound_suppress_after_plan: one event';
+  update orgs set send_mode = 'send' where id = o;
+  insert into messages (org_id, channel, to_address, template, subject, params) values (o, 'email', 'bola@example.test', 'document', 'Over quota, sending', '{}');
+  assert (select status = 'failed' and error like 'Your plan%' from messages where org_id = o and subject = 'Over quota, sending'),
+    'outbound_suppress_after_plan: the limit still holds';
+  delete from org_entitlement_overrides where org_id = o;
+  perform tests.as_postgres();
+end $$;
+
+-- test: outbound_meter
+-- Messages not sent use none of the plan's emails or WhatsApp messages.
+do $$
+declare o uuid := tests.id('o'); e numeric := private.meter_usage(tests.id('o'), 'emails'); w numeric := private.meter_usage(tests.id('o'), 'whatsapp');
+begin
+  update orgs set send_mode = 'download_only' where id = o;
+  perform private.queue_message(o, 'email', 'bola@example.test', 'document', 'Meter email', '{}', null, null, null);
+  perform private.queue_message(o, 'whatsapp', '08031234567', 'document', 'Meter WhatsApp', '{}', null, null, null);
+  assert (select count(*) from messages where org_id = o and subject like 'Meter %' and status = 'suppressed') = 2, 'outbound_meter: suppressed';
+  assert private.meter_usage(o, 'emails') = e and private.meter_usage(o, 'whatsapp') = w, 'outbound_meter';
+  update orgs set send_mode = 'send' where id = o;
+  perform private.queue_message(o, 'email', 'bola@example.test', 'document', 'Meter sent', '{}', null, null, null);
+  assert private.meter_usage(o, 'emails') = e + 1, 'outbound_meter: a message that goes counts';
+  perform tests.as_postgres();
+end $$;
+
+-- test: outbound_reminders
+-- An automatic reminder not sent leaves the invoice unreminded; an ordinary business's is sent and marked.
+do $$
+declare o uuid := tests.id('o'); ord uuid := tests.id('ord');
+begin
+  update orgs set reminders_enabled = true where id in (o, ord);
+  update sales set due_date = private.local_day(org_id, now()) - 3, reminded_at = null where id in (tests.id('o_invoice'), tests.id('ord_invoice'));
+  update orgs set send_mode = 'download_only' where id = o;
+  perform private.queue_reminders();
+  assert exists (select 1 from messages where sale_id = tests.id('o_invoice') and template = 'reminder' and status = 'suppressed'),
+    'outbound_reminders: queued and suppressed';
+  assert (select reminded_at is null from sales where id = tests.id('o_invoice')), 'outbound_reminders: not marked reminded';
+  assert exists (select 1 from messages where sale_id = tests.id('ord_invoice') and template = 'reminder' and status = 'queued')
+     and (select reminded_at is not null from sales where id = tests.id('ord_invoice')),
+    'outbound_reminders: an ordinary business''s reminder is sent and marked';
+  update orgs set send_mode = 'send', reminders_enabled = false where id in (o, ord);
+  perform tests.as_postgres();
+end $$;
+
+-- test: outbound_guide_followups
+-- Martina's onboarding follow-up never calls for a business run by a practice: it is declined, not left calling; an
+-- ordinary business's follow-up is placed as before.
+do $$
+declare o uuid := tests.id('o'); ord uuid := tests.id('ord'); r jsonb;
+  v_at timestamptz := (date_trunc('day', now() at time zone 'Africa/Lagos') + interval '10 hours') at time zone 'Africa/Lagos';
+begin
+  insert into guide_progress (user_id, org_id, call_consent, call_phone, started_at, last_seen_at)
+  values (tests.id('partner'), o, true, '+2348031110000', v_at - interval '1 day', v_at - interval '4 hours')
+  on conflict (user_id) do update set org_id = excluded.org_id, call_consent = true, call_phone = excluded.call_phone, started_at = excluded.started_at,
+    last_seen_at = excluded.last_seen_at, completed_at = null, dismissed_at = null, followup_status = 'none', followup_attempts = 0, followup_last_at = null;
+  perform tests.as_service();
+  r := public.svc_guide_followups_due(10, v_at);
+  perform tests.as_postgres();
+  assert r = '[]'::jsonb, 'outbound_guide_followups: nothing to call';
+  assert (select followup_status from guide_progress where user_id = tests.id('partner')) = 'declined', 'outbound_guide_followups: declined, not calling';
+  assert not exists (select 1 from voice_calls where org_id = o and kind = 'guide_followup'), 'outbound_guide_followups: no call';
+  -- An ordinary business.
+  insert into guide_progress (user_id, org_id, call_consent, call_phone, started_at, last_seen_at)
+  values (tests.id('owner'), ord, true, '+2348032224444', v_at - interval '1 day', v_at - interval '4 hours')
+  on conflict (user_id) do update set org_id = excluded.org_id, call_consent = true, call_phone = excluded.call_phone, started_at = excluded.started_at,
+    last_seen_at = excluded.last_seen_at, completed_at = null, dismissed_at = null, followup_status = 'none', followup_attempts = 0, followup_last_at = null;
+  perform tests.as_service();
+  r := public.svc_guide_followups_due(10, v_at);
+  perform tests.as_postgres();
+  assert jsonb_array_length(r) = 1 and r->0->>'org_id' = ord::text and r->0->>'to_number' = '+2348032224444'
+     and exists (select 1 from voice_calls where id = (r->0->>'call_id')::uuid and org_id = ord and kind = 'guide_followup'),
+    'outbound_guide_followups: an ordinary business''s call';
+  assert (select followup_status = 'calling' and followup_attempts = 1 from guide_progress where user_id = tests.id('owner')),
+    'outbound_guide_followups: an ordinary follow-up is calling';
+  perform tests.as_postgres();
+end $$;
+
 -- test: outbound_helpers_revoked
 do $$
 declare f text;
 begin
   foreach f in array array['private.firm_addresses(uuid)', 'private.outbound_check(uuid, text, text, text)', 'private.require_outbound(uuid, text, text)',
     'private.white_label(uuid, uuid)', 'private.org_brand(uuid, uuid)', 'private.messages_outbound()', 'private.voice_calls_mandate()',
-    'private.alert_prefs(uuid)', 'private.queue_message(uuid, text, text, text, text, jsonb, uuid, uuid, uuid)', 'private.sale_json(uuid, boolean)'] loop
+    'private.alert_prefs(uuid)', 'private.queue_message(uuid, text, text, text, text, jsonb, uuid, uuid, uuid)', 'private.sale_json(uuid, boolean)',
+    'private.meter_usage(uuid, text)', 'private.queue_reminders()', 'public.svc_guide_followups_due(integer, timestamp with time zone)'] loop
     assert not has_function_privilege('authenticated', f, 'execute') and not has_function_privilege('anon', f, 'execute'),
       format('outbound_helpers_revoked: %s', f);
   end loop;
   -- The triggers record events (activity_event is revoked from users) whoever writes, so they run as their owner.
   assert (select bool_and(prosecdef) from pg_proc where oid in ('private.messages_outbound()'::regprocedure, 'private.voice_calls_mandate()'::regprocedure)),
     'outbound_helpers_revoked: the trigger functions are security definer';
-  assert exists (select 1 from pg_trigger where tgrelid = 'public.messages'::regclass and tgname = 'messages_outbound'
+  -- Same-event triggers fire in name order: the gate after the plan's limits (messages_plan).
+  assert exists (select 1 from pg_trigger where tgrelid = 'public.messages'::regclass and tgname = 'messages_suppress'
                  and tgfoid = 'private.messages_outbound()'::regprocedure)
+     and 'messages_plan' < 'messages_suppress'::text collate "C"
+     and not exists (select 1 from pg_trigger where tgrelid = 'public.messages'::regclass and tgname = 'messages_outbound')
      and exists (select 1 from pg_trigger where tgrelid = 'public.voice_calls'::regclass and tgname = 'voice_calls_mandate'
                  and tgfoid = 'private.voice_calls_mandate()'::regprocedure),
     'outbound_helpers_revoked: the triggers';

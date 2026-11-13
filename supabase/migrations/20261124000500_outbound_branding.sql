@@ -9,18 +9,21 @@
 --                                      null when a message (or a call, channel 'call') may go, else why not: read_only,
 --                                      calls_off, not_firm_address (an alert, invitation or practice message to someone
 --                                      outside the firm), download_only. Always null for an ordinary business.
---   messages_outbound                  BEFORE INSERT on messages: an alert email to someone outside the firm goes to the
---                                      firm instead (the mandate's alert address, else the business's contact, while that
---                                      is the firm's); anything else that may not go is kept with status 'suppressed' and
---                                      logged (activity_event 'message_suppressed').
+--   messages_suppress                  BEFORE INSERT on messages (private.messages_outbound(), after messages_plan): an alert
+--                                      email to someone outside the firm goes to the firm instead (the mandate's alert
+--                                      address, else the business's contact, while that is the firm's); anything else that
+--                                      may not go is kept with status 'suppressed' and logged (activity_event
+--                                      'message_suppressed').
 --   voice_calls_mandate                BEFORE INSERT on voice_calls: a call for a managed or read-only business is dropped
 --                                      and logged (activity_event 'call_suppressed').
 --   private.require_outbound(org, channel, kind)
 --                                      the same check where a person presses send or call, with a plain refusal.
 --   public.svc_message                 checks again when the message is picked up, and tells the messaging function
 --                                      whether the business is managed and the address allowed (it fails closed).
--- private.alert_prefs turns the owner's and customers' calls off for a managed business, and private.queue_message calls the
--- messaging function only for a message still queued.
+-- private.alert_prefs turns the owner's and customers' calls off for a managed business; private.queue_message does not call
+-- the messaging function for a suppressed message; a suppressed message uses none of the plan's quota (meter_usage); an
+-- automatic reminder kept back does not mark its invoice reminded (queue_reminders); Martina's onboarding follow-up is
+-- declined rather than placed (svc_guide_followups_due).
 --
 -- Branding: private.white_label(org, customer) is true for a managed business, and for the firm business's documents to
 -- a full-mandate client it bills (practices.firm_org_id, practice_clients.fee_customer_id). private.org_brand(org, customer)
@@ -97,7 +100,7 @@ begin
   if v_reason is null then return new; end if;
   -- An alert email to someone outside the firm goes to the firm instead, while there is a firm address to turn to.
   if v_reason = 'not_firm_address' and new.channel = 'email' and new.template = 'alert' then
-    v_to := coalesce(lower(trim((private.mandate(new.org_id)).alert_email)), lower((private.org_contact(new.org_id)).email));
+    v_to := coalesce(lower(trim((private.mandate(new.org_id)).alert_email)), lower(trim((private.org_contact(new.org_id)).email)));
     if v_to = any (private.firm_addresses(new.org_id)) then
       new.to_address := v_to;
       new.params := coalesce(new.params, '{}'::jsonb) || jsonb_build_object('readdressed', true);
@@ -111,8 +114,10 @@ begin
   return new;
 end $$;
 
-drop trigger if exists messages_outbound on public.messages;
-create trigger messages_outbound before insert on public.messages for each row execute function private.messages_outbound();
+-- Same-event triggers fire in name order: messages_suppress runs after messages_plan, so a message kept back stays
+-- suppressed (not failed over the plan's limit) and is logged once.
+drop trigger if exists messages_suppress on public.messages;
+create trigger messages_suppress before insert on public.messages for each row execute function private.messages_outbound();
 
 -- Every call as it is written: none for a business run by a practice or read-only. Security definer, as above.
 create or replace function private.voice_calls_mandate() returns trigger
@@ -155,7 +160,8 @@ language sql stable security definer set search_path = public, private as $$
   from orgs o where o.id = p_org
 $$;
 
--- As before, except that the messaging function is called only for a message still queued (not one the gate kept back).
+-- As before, except that the messaging function is not called for a message the gate kept back (suppressed). A message the
+-- plan's limit marked failed still calls it, as before.
 create or replace function private.queue_message(p_org uuid, p_channel text, p_to text, p_template text, p_subject text, p_params jsonb,
   p_sale uuid, p_customer uuid, p_by uuid) returns public.messages
 language plpgsql security definer set search_path = public, private as $$
@@ -180,10 +186,81 @@ begin
   values (p_org, p_channel, v_to, p_template, p_subject,
     coalesce(p_params, '{}'::jsonb) || case when coalesce(array_length(v_cc, 1), 0) > 0 then jsonb_build_object('cc', to_jsonb(v_cc)) else '{}'::jsonb end,
     p_sale, p_customer, p_by) returning * into msg;
-  if msg.status = 'queued' then
+  if msg.status <> 'suppressed' then
     perform private.call_function('messaging', jsonb_build_object('message_id', msg.id));
   end if;
   return msg;
+end $$;
+
+-- The month's usage of a plan meter: as before, except that messages kept back (suppressed) use none of the plan's emails
+-- or WhatsApp messages.
+create or replace function private.meter_usage(p_org uuid, p_meter text) returns numeric
+language plpgsql stable security definer set search_path = public, private as $$
+declare v_from timestamptz := private.month_start(); v numeric;
+begin
+  case p_meter
+    when 'sales' then
+      select count(*) into v from sales where org_id = p_org and created_at >= v_from and doc_type in ('receipt', 'invoice') and status not in ('draft', 'void', 'cancelled')
+        and channel <> 'api';
+    when 'ai_reads' then
+      select count(*) into v from usage_events where org_id = p_org and service = 'gemini' and kind = any(private.ai_read_kinds()) and at >= v_from;
+    when 'assistant' then
+      select count(*) into v from usage_events where org_id = p_org and service = 'gemini' and kind = any(private.ai_assistant_kinds()) and at >= v_from;
+    when 'call_minutes' then
+      select coalesce(sum(ceil(coalesce(duration_secs, 0) / 60.0)), 0) into v from voice_calls where org_id = p_org and created_at >= v_from;
+    when 'whatsapp' then
+      select count(*) into v from messages where org_id = p_org and channel = 'whatsapp' and template <> 'alert' and status not in ('failed', 'suppressed')
+        and created_at >= v_from;
+    when 'emails' then
+      select count(*) into v from messages where org_id = p_org and channel = 'email' and template <> 'alert' and status not in ('failed', 'suppressed')
+        and created_at >= v_from;
+    when 'tin_checks' then
+      select count(*) into v from tin_checks where org_id = p_org and at >= v_from;
+    when 'supplier_invoices' then
+      select count(*) into v from supplier_invoices where org_id = p_org and created_at >= v_from;
+    when 'payouts' then
+      select count(*) into v from payouts where org_id = p_org and created_at >= v_from and status <> 'cancelled';
+    when 'users' then
+      select count(*) into v from members where org_id = p_org and status in ('active', 'invited');
+    when 'locations' then
+      select count(*) into v from locations where org_id = p_org;
+    when 'bank_feeds' then
+      select count(*) into v from bank_accounts where org_id = p_org and provider = 'mono' and active;
+    else v := 0;
+  end case;
+  return coalesce(v, 0);
+end $$;
+
+-- The customers' automatic reminders: as before, except that an invoice is marked reminded (and counted) only when its
+-- reminder was not kept back, so a business in download-only or read-only mode leaves its invoices unreminded.
+create or replace function private.queue_reminders() returns integer
+language plpgsql security definer set search_path = public, private as $$
+declare s record; n int := 0; msg public.messages;
+begin
+  for s in
+    select sa.*, o.name org_name, o.reply_to_email, o.email org_email, o.phone org_phone, cu.whatsapp_opt_in, cu.phone cphone, cu.email cemail
+    from sales sa join orgs o on o.id = sa.org_id join customers cu on cu.id = sa.customer_id
+    where o.reminders_enabled and sa.status in ('open', 'partially_paid') and sa.doc_type in ('invoice', 'receipt') and not cu.is_walk_in
+      and sa.due_date is not null and (sa.due_date - private.local_day(sa.org_id, now())) * -1 = any(o.reminder_days)
+      and (sa.reminded_at is null or private.local_day(sa.org_id, sa.reminded_at) < private.local_day(sa.org_id, now()))
+      and (cu.phone is not null and cu.whatsapp_opt_in or cu.email is not null)
+    limit 2000
+  loop
+    begin
+      msg := private.queue_message(s.org_id, case when s.cphone is not null and s.whatsapp_opt_in then 'whatsapp' else 'email' end,
+        case when s.cphone is not null and s.whatsapp_opt_in then s.cphone else s.cemail end, 'reminder', 'Payment reminder: ' || s.number || ' from ' || s.org_name,
+        jsonb_build_object('customer_name', s.customer_name, 'business', s.org_name, 'number', s.number, 'balance', s.total - s.amount_paid - s.credited,
+          'due_date', s.due_date, 'link', private.doc_link(s.public_token), 'reply_to', coalesce(s.reply_to_email, s.org_email), 'business_phone', s.org_phone,
+          'automatic', true), s.id, s.customer_id, null);
+      if msg.status <> 'suppressed' then
+        update sales set reminded_at = now() where id = s.id;
+        n := n + 1;
+      end if;
+    exception when others then
+      null;  -- one bad address does not stop the rest
+    end;
+  end loop;
+  return n;
 end $$;
 
 -- The messaging function's pick-up: a message that may no longer go (the business went read-only or download-only since,
@@ -465,6 +542,48 @@ begin
   return jsonb_build_object('call_id', v_id, 'to_number', v_to, 'variables', v_vars);
 end $$;
 
+-- Martina's onboarding follow-up calls: as before, except that a follow-up for a business run by a practice or read-only
+-- is declined (no call, and not left calling: the call trigger would drop the row, yet the voice function would still
+-- dial the entry).
+create or replace function public.svc_guide_followups_due(p_limit integer default 10, p_at timestamptz default now()) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare g public.guide_progress; v_out jsonb := '[]'::jsonb; v_state jsonb; v_vars jsonb; v_id uuid; v_name text; v_org public.orgs; v_step text;
+begin
+  for g in select * from private.guide_due(p_at) order by last_seen_at limit greatest(1, least(p_limit, 25)) loop
+    perform 1 from guide_progress where user_id = g.user_id and followup_status in ('none', 'no_answer') for update skip locked;
+    if not found then continue; end if;
+    if private.outbound_check(g.org_id, 'call', 'guide_followup', null) is not null then
+      update guide_progress set followup_status = 'declined' where user_id = g.user_id;
+      continue;
+    end if;
+    select * into v_org from orgs where id = g.org_id;
+    if not private.feature_on(g.org_id, 'phone_calls') then continue; end if;
+    select coalesce(nullif(trim(raw_user_meta_data->>'full_name'), ''), nullif(trim(raw_user_meta_data->>'name'), ''), '') into v_name from auth.users where id = g.user_id;
+    v_state := private.guide_steps(g.user_id, g.org_id, g.marks);
+    select s->>'id' into v_step from jsonb_array_elements(v_state) with ordinality t(s, ord)
+    where not (s->>'done')::boolean and not (s->>'skipped')::boolean order by ord limit 1;
+    v_vars := jsonb_build_object(
+      'first_name', coalesce(nullif(split_part(v_name, ' ', 1), ''), 'there'),
+      'business_name', coalesce(v_org.name, 'your business'),
+      'has_business', case when v_org.id is null then 'no' else 'yes' end,
+      'next_step', case v_step when 'find_business' then 'finding the business on CAC' when 'questions' then 'answering a few questions about the business'
+        when 'submitted' then 'checking and submitting the business profile' when 'cac_document' then 'uploading the CAC status report'
+        when 'account_number' then 'getting the business account number' when 'voice' then 'choosing the voice that announces payments'
+        when 'first_sale' then 'recording the first sale' when 'bank_connect' then 'connecting the bank account'
+        when 'bank_statement' then 'uploading a bank statement' when 'products' then 'adding the first products'
+        when 'identity' then 'confirming a director''s NIN' when 'team' then 'inviting the team' else 'finishing setup' end,
+      'steps_done', (select count(*) from jsonb_array_elements(v_state) s where (s->>'done')::boolean or (s->>'skipped')::boolean),
+      'steps_total', jsonb_array_length(v_state),
+      'language_style', case when g.language = 'pcm' then 'pidgin' else 'english' end);
+    insert into voice_calls (org_id, user_id, kind, to_number, variables)
+    values (g.org_id, g.user_id, 'guide_followup', g.call_phone, v_vars) returning id into v_id;
+    update guide_progress set followup_status = 'calling', followup_attempts = followup_attempts + 1, followup_last_at = p_at where user_id = g.user_id;
+    v_out := v_out || jsonb_build_object('call_id', v_id, 'to_number', g.call_phone, 'variables', v_vars, 'org_id', g.org_id,
+      'voice_id', v_org.voice_id, 'lang', g.language);
+  end loop;
+  return v_out;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- 5. Branding
 -- ---------------------------------------------------------------------------
@@ -574,5 +693,5 @@ end $$;
 revoke all on function private.firm_addresses(uuid), private.outbound_check(uuid, text, text, text), private.messages_outbound(),
   private.voice_calls_mandate(), private.require_outbound(uuid, text, text), private.alert_prefs(uuid),
   private.queue_message(uuid, text, text, text, text, jsonb, uuid, uuid, uuid), private.white_label(uuid, uuid), private.org_brand(uuid, uuid),
-  private.sale_json(uuid, boolean)
+  private.sale_json(uuid, boolean), private.meter_usage(uuid, text), private.queue_reminders()
   from public, anon, authenticated;
