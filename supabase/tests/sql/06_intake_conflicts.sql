@@ -84,6 +84,11 @@ begin
     '%last 4 characters%');
   perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada Eze","id_last4":"12345678901"}]}')$q$, pr),
     '%last 4 characters%');
+  -- Spaces and dashes do not hide one.
+  perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada 1234 5678 901"}]}')$q$, pr),
+    '%last 4 characters%');
+  perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada Eze","role":"NIN 1234-5678-901"}]}')$q$, pr),
+    '%last 4 characters%');
   perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada Eze","id_last4":"78901"}]}')$q$, pr),
     '%last 4 characters%');
   perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada Eze","nin":"12345678901"}]}')$q$, pr),
@@ -92,6 +97,9 @@ begin
     '%last 4 characters%');
   perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada Eze","id_number":"A01234567"}]}')$q$, pr),
     '%last 4 characters%');
+  -- A yes-or-no answer that is neither.
+  perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada Eze","is_pep":"maybe"}]}')$q$, pr),
+    '%politically exposed%');
   perform tests.as_postgres();
   assert not exists (select 1 from practice_intakes where legal_name = 'X Ltd'), 'intake_rejects_full_id_numbers: nothing saved';
   perform tests.as_user(tests.id('partner'));
@@ -112,6 +120,8 @@ begin
     '%check constraint%');
   perform tests.throws(format($q$insert into practice_intake_people (intake_id, practice_id, kind, name) values (%L, %L, 'director', 'Ada 12345678901')$q$, y, pr),
     '%check constraint%');
+  perform tests.throws(format($q$insert into practice_intake_people (intake_id, practice_id, kind, name) values (%L, %L, 'director', 'Ada 1234 5678-901')$q$, y, pr),
+    '%check constraint%');
   perform tests.as_postgres();
 end $$;
 
@@ -121,6 +131,7 @@ do $$
 declare pr uuid := tests.id('pr'); i uuid; j uuid; k uuid; r jsonb;
 begin
   assert private.fold_name('Ọlá Àdé Foods Ltd') = 'Ola Ade Foods Ltd' and private.fold_name(null) = '', 'conflict_diacritics_suffix_rc: accents folded';
+  assert private.fold_name('Ɗanjuma Ƙofar Ɓaƙo Ƴar ɗan ɓe ƴa') = 'Danjuma Kofar Bako Yar dan be ya', 'conflict_diacritics_suffix_rc: Hausa hooked letters';
   assert private.norm_id('RC 123456') = '123456' and private.norm_id('rc-123456') = '123456' and private.norm_id('BN 98765') = '98765'
      and private.norm_id('12345678-0001') = '123456780001' and private.norm_id(' - ') is null and private.norm_id(null) is null,
     'conflict_diacritics_suffix_rc: numbers normalised';
@@ -186,6 +197,13 @@ begin
   perform tests.as_postgres();
   assert (select source_intake_id = b from practice_conflict_hits where intake_id = a and matched_on = 'person' and kind = 'related_party'),
     'conflict_people_and_opposing: both ways';
+  -- A prospect in a person's own name: that person is a director on another intake.
+  perform tests.as_user(tests.id('manager'));
+  a := public.practice_intake_save(pr, '{"legal_name":"Adaeze Okafor","entity_type":"individual"}')->>'id';
+  perform public.practice_conflict_run(a);
+  perform tests.as_postgres();
+  assert exists (select 1 from practice_conflict_hits where intake_id = a and kind = 'related_party' and matched_on = 'name' and source_intake_id = tests.id('kemi')
+                 and match_name = 'Adaeze Okafor' and subject = 'Adaeze Okafor'), 'conflict_people_and_opposing: the prospect''s own name among the people';
 end $$;
 
 -- test: conflict_never_crosses_practices
@@ -219,6 +237,15 @@ do $$
 declare pr uuid := tests.id('pr'); i uuid; j uuid; r jsonb;
 begin
   assert not (select conflict_scan_books from practices where id = pr), 'conflict_books_scan_setting: off by default';
+  -- Names compared either way round.
+  assert private.company_name_score('Zenith Paints Distribution Ltd', 'Zenith Paints Ltd') = 1
+     and private.name_score(private.fold_name('Zenith Paints Distribution Ltd'), private.fold_name('Zenith Paints Ltd')) < 0.75,
+    'conflict_books_scan_setting: either way round';
+  assert private.company_name_score('Marigold Cement Distribution Ltd', 'Marigold Ltd') = 1
+     and private.company_name_score('Kola Foods Ltd', 'Kola Ltd') < 0.75,
+    'conflict_books_scan_setting: a one-word name the other way round needs six letters or more';
+  assert private.company_name_score('Ola Ade Foods Catering Events Ltd', 'Ola Ade Foods Bakeries Ltd') = 0.75,
+    'conflict_books_scan_setting: three-quarters of the other name';
   perform tests.as_user(tests.id('partner'));
   i := public.practice_intake_save(pr, '{"legal_name":"Zenith Paints Nigeria Ltd"}')->>'id';
   r := public.practice_conflict_run(i);
@@ -232,6 +259,10 @@ begin
   r := public.practice_set_conflict_scan(pr, true);
   assert (r->'practice'->>'conflict_scan_books')::boolean, 'conflict_books_scan_setting: the setting returned';
   perform public.practice_conflict_run(i);
+  -- A longer name that holds the whole of the other one.
+  r := public.practice_conflict_run((public.practice_intake_save(pr, '{"legal_name":"Zenith Paints Distribution Ltd"}')->>'id')::uuid);
+  assert exists (select 1 from jsonb_array_elements(r->'hits') h where h->>'kind' = 'books' and h->>'matched_on' = 'name' and h->>'match_name' = 'Zenith Paints Ltd'),
+    'conflict_books_scan_setting: the longer name finds the customer';
   -- A supplier in the client's books by its RC number.
   j := public.practice_intake_save(pr, '{"legal_name":"Northern Star Ltd","rc_number":"RC 5555555"}')->>'id';
   perform public.practice_conflict_run(j);
@@ -261,6 +292,7 @@ begin
   perform tests.throws(format($q$select public.practice_opposing_save(%L, jsonb_build_object('client_id', %L::uuid, 'name', 'Another Ltd'))$q$, pr, tests.id('zed_client')),
     '%Client not found%');
   perform tests.throws(format($q$select public.practice_opposing_save(%L, '{"name": "X"}')$q$, pr), '%opposing party%');
+  perform tests.throws(format($q$select public.practice_opposing_save(%L, jsonb_build_object('id', %L::uuid, 'remove', 'yes'))$q$, pr, v), '%true or false%');
   r := public.practice_opposing_save(pr, jsonb_build_object('id', v, 'remove', true));
   perform tests.as_postgres();
   assert (r->>'removed')::boolean and not exists (select 1 from practice_opposing_parties where id = v), 'opposing_parties: removed';
@@ -391,6 +423,12 @@ begin
     'declaration_keeps_clearance: the authority document';
   perform tests.throws(format($q$select public.practice_intake_declare(%L, jsonb_build_object('doc_path', 'practice/%s/intake/%s/authority.pdf'))$q$,
     k, tests.id('pr2'), k), '%intake''s folder%');
+  -- Another mode withdraws it: the statement is for a full mandate.
+  r := public.practice_intake_save(pr, jsonb_build_object('id', k, 'mode_requested', 'involved'));
+  assert r->>'authority_declared_at' is null and r->>'authority_statement' is null and r->>'authority_doc_path' is null and (r->>'cleared')::boolean,
+    'declaration_keeps_clearance: withdrawn when the mode changes';
+  perform public.practice_intake_save(pr, jsonb_build_object('id', k, 'mode_requested', 'full'));
+  perform public.practice_intake_declare(k, '{}');
   -- Only for a full mandate.
   perform tests.throws(format($q$select public.practice_intake_declare(%L, '{}')$q$, tests.id('ola_intake')), '%full mandate%');
   -- A new name withdraws it: the statement names the client.
@@ -402,12 +440,12 @@ end $$;
 
 -- test: invite_needs_cleared_intake
 -- Inviting a business owner needs a cleared involved intake of the practice; the link then carries the intake, which the
--- owner's acceptance engages and the end of the work dates.
+-- owner's acceptance engages and the end of the work dates. An engaged, cleared intake is kept as it is.
 do $$
-declare pr uuid := tests.id('pr'); u uuid; f uuid; e uuid; c uuid; o uuid; v_owner uuid;
+declare pr uuid := tests.id('pr'); u uuid; f uuid; e uuid; c uuid; o uuid; v_owner uuid; r jsonb;
 begin
   f := tests.cleared_intake(pr, 'Full Only Ltd', 'full');
-  e := tests.cleared_intake(tests.id('pr2'), 'Elsewhere Ltd');
+  e := tests.remember('elsewhere', tests.cleared_intake(tests.id('pr2'), 'Elsewhere Ltd'));
   perform tests.as_user(tests.id('partner'));
   perform tests.throws(format($q$select public.practice_invite_client(%L, '{"email":"o@example.test","intake_id":"%s"}')$q$, pr, tests.id('zenith')), '%due diligence%');
   perform tests.throws(format($q$select public.practice_invite_client(%L, '{"email":"o@example.test"}')$q$, pr), '%due diligence%');
@@ -418,10 +456,14 @@ begin
   perform tests.as_postgres();
   assert not exists (select 1 from practice_clients where lower(invite_email) = 'o@example.test'), 'invite_needs_cleared_intake: nothing sent';
 
-  u := tests.cleared_intake(pr, 'Invite Me Ltd');
   perform tests.as_user(tests.id('partner'));
+  u := public.practice_intake_save(pr, '{"legal_name":"Invite Me Ltd","risk_rating":"low","people":[{"kind":"director","name":"Ife Adeyemi"}]}')->>'id';
+  perform public.practice_conflict_run(u);
   c := public.practice_invite_client(pr, jsonb_build_object('email', 'im.owner@example.test', 'name', 'Ife Owner', 'intake_id', u));
   perform tests.throws(format($q$select public.practice_invite_client(%L, '{"email":"im2.owner@example.test","intake_id":"%s"}')$q$, pr, u), '%already%');
+  -- Checking again while the invitation waits: the invitation is not a conflict with itself.
+  r := public.practice_conflict_run(u);
+  assert r->>'conflict_status' = 'none' and (r->>'cleared')::boolean, 'invite_needs_cleared_intake: its own invitation is no conflict';
   perform tests.as_postgres();
   assert (select intake_id = u and business_name = 'Invite Me Ltd' and status = 'invited' and invite_email = 'im.owner@example.test' from practice_clients where id = c),
     'invite_needs_cleared_intake: the invitation carries the intake';
@@ -439,26 +481,67 @@ begin
   assert (select intake_id = u from practice_clients where id = c) and (select count(*) from practice_intakes where client_id = c) = 1,
     'invite_needs_cleared_intake: no second intake';
   assert private.intake_cleared((select x from practice_intakes x where id = u)), 'invite_needs_cleared_intake: still cleared';
-  -- The work ends: kept for five years from today.
+  -- The record of the engagement is kept as it is: no changes, no new check.
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'people', '[]'::jsonb))$q$, pr, u), '%kept as the record%');
+  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'risk_reason', 'Changed later'))$q$, pr, u), '%kept as the record%');
+  perform tests.throws(format('select public.practice_conflict_run(%L)', u), '%kept as the record%');
+  -- The work ends: kept for five years from today, still as it is.
   perform tests.as_user(v_owner);
   perform public.practice_end(c);
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'people', '[]'::jsonb))$q$, pr, u), '%kept as the record%');
   perform tests.as_postgres();
   assert (select retain_until = private.retain_date(null) and retain_until = (current_date + interval '5 years')::date from practice_intakes where id = u),
     'invite_needs_cleared_intake: kept five years after the end';
-  -- An intake changed after the invitation went: engaged on acceptance, and marked incomplete until it is checked again.
-  u := tests.cleared_intake(pr, 'Harbour Lights Ltd');
+  assert (select count(*) = 1 and bool_and(name = 'Ife Adeyemi') from practice_intake_people where intake_id = u), 'invite_needs_cleared_intake: the people survive';
+end $$;
+
+-- test: invitation_holds_the_gate
+-- While an invitation waits, the intake it carries keeps its substance; a check run again may find a new conflict, and
+-- then the owner cannot accept until a partner decides; refusing withdraws the invitation and keeps the intake declined.
+do $$
+declare pr uuid := tests.id('pr'); u uuid; c uuid; o uuid; v_owner uuid; r jsonb;
+begin
+  u := tests.remember('ripple', tests.cleared_intake(pr, 'Ripple Foods Ltd'));
   perform tests.as_user(tests.id('partner'));
-  c := public.practice_invite_client(pr, jsonb_build_object('email', 'hl.owner@example.test', 'intake_id', u));
-  perform public.practice_intake_save(pr, jsonb_build_object('id', u, 'rc_number', 'RC 135791'));
+  c := public.practice_invite_client(pr, jsonb_build_object('email', 'rf.owner@example.test', 'intake_id', u));
+  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'legal_name', 'Ripple Foods Nigeria Ltd'))$q$, pr, u),
+    '%withdraw the invitation%');
+  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'people', '[{"kind":"director","name":"Tobi Ripple"}]'::jsonb))$q$, pr, u),
+    '%withdraw the invitation%');
+  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'risk_rating', ''))$q$, pr, u), '%withdraw the invitation%');
+  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'mode_requested', 'full'))$q$, pr, u), '%withdraw the invitation%');
+  r := public.practice_intake_save(pr, jsonb_build_object('id', u, 'risk_reason', 'Bakery, walk-in sales'));
+  assert (r->>'cleared')::boolean, 'invitation_holds_the_gate: other details still change';
+  -- A new client with a matching name; the check run again finds it.
   perform tests.as_postgres();
-  v_owner := tests.user('hl.owner@example.test', 'Seun Owner');
-  o := tests.org(v_owner, 'Harbour Lights Ltd');
+  perform tests.involved_client(pr, tests.org(tests.user('rfl.owner@example.test', 'Remi Owner'), 'RIPPLE FOODS LIMITED'));
+  perform tests.as_user(tests.id('partner'));
+  r := public.practice_conflict_run(u);
+  assert r->>'conflict_status' = 'hits' and not (r->>'cleared')::boolean, 'invitation_holds_the_gate: the new client found';
+  -- The owner cannot accept while it is undecided.
+  perform tests.as_postgres();
+  v_owner := tests.user('rf.owner@example.test', 'Rita Owner');
+  o := tests.org(v_owner, 'Ripple Foods Ltd');
   update practice_clients set token_hash = encode(extensions.digest('pc_' || repeat('12', 24), 'sha256'), 'hex'), token_expires = now() + interval '7 days' where id = c;
   perform tests.as_user(v_owner);
-  perform public.practice_accept('pc_' || repeat('12', 24), jsonb_build_object('org_id', o));
+  perform tests.throws(format($q$select public.practice_accept('pc_' || repeat('12', 24), jsonb_build_object('org_id', %L::uuid))$q$, o), '%not finished its checks%');
+  -- The partner refuses: the invitation is withdrawn and the owner's link no longer works.
+  perform tests.as_user(tests.id('partner'));
+  perform public.practice_conflict_decide(u, '{"outcome":"refused","note":"We act for Ripple Foods Limited already"}');
+  perform tests.as_user(v_owner);
+  perform tests.throws(format($q$select public.practice_accept('pc_' || repeat('12', 24), jsonb_build_object('org_id', %L::uuid))$q$, o), '%replaced or used%');
   perform tests.as_postgres();
-  assert (select status = 'engaged' and client_id = c and dd_incomplete and conflict_status = 'pending' from practice_intakes where id = u),
-    'invite_needs_cleared_intake: changed after the invitation, marked incomplete';
+  assert (select status = 'declined' and token_hash is null and ended_at is not null from practice_clients where id = c), 'invitation_holds_the_gate: invitation withdrawn';
+  assert (select status = 'declined' and conflict_status = 'refused' and retain_until = private.retain_date(5) and client_id is null and org_id is null
+          from practice_intakes where id = u), 'invitation_holds_the_gate: intake stays declined with retain_until';
+  assert not exists (select 1 from practice_clients where org_id = o), 'invitation_holds_the_gate: the business is not connected';
+  -- A link only goes ahead on this practice's intake, and never on a declined one.
+  perform tests.throws(format($q$insert into practice_clients (practice_id, org_id, status, initiated_by, intake_id) values (%L, %L, 'active', 'practice', %L)$q$, pr, o, u),
+    '%not finished its checks%');
+  perform tests.throws(format($q$insert into practice_clients (practice_id, org_id, status, initiated_by, intake_id) values (%L, %L, 'active', 'practice', %L)$q$,
+    pr, o, tests.id('elsewhere')), '%another practice%');
 end $$;
 
 -- test: business_link_creates_draft_intake
@@ -483,6 +566,13 @@ begin
   assert x.legal_name = 'Linked Biz Ltd' and x.rc_number = 'RC 4444444' and x.tax_id = '22223333-0001' and x.org_id = o and x.practice_id = pr
      and x.conflict_status = 'pending' and x.risk_rating is null and x.mode_requested = 'involved' and x.retain_until is null,
     'business_link_creates_draft_intake: the business''s name and numbers';
+  -- A client already taken on is not refused after a check: its engagement is ended instead.
+  update practice_intakes set conflict_status = 'hits', checked_at = edited_at where id = x.id;
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.practice_conflict_decide(%L, '{"outcome":"refused","note":"A conflict found after the link"}')$q$, x.id),
+    '%end the engagement%');
+  perform tests.as_postgres();
+  update practice_intakes set conflict_status = 'pending' where id = x.id;
   assert (select intake_id = x.id from practice_clients where id = c), 'business_link_creates_draft_intake: the link carries it';
   assert not exists (select 1 from practice_intake_people where intake_id = x.id), 'business_link_creates_draft_intake: CAC directors not copied';
   -- Doing the due diligence takes the flag off.
@@ -494,6 +584,30 @@ begin
   r := public.practice_conflict_run(x.id);
   perform tests.as_postgres();
   assert r->>'conflict_status' = 'none' and not (r->>'dd_incomplete')::boolean, 'business_link_creates_draft_intake: complete once cleared';
+  -- From then on it is the record of the engagement.
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'risk_rating', 'high'))$q$, pr, x.id), '%kept as the record%');
+  perform tests.as_postgres();
+end $$;
+
+-- test: intake_backfill
+-- Client links active before intakes existed get the same draft intake as a link the business starts; once.
+do $$
+declare pr uuid := tests.id('pr'); o uuid; c uuid; x public.practice_intakes;
+begin
+  o := tests.org(tests.user('bf.owner@example.test', 'Bayo Owner'), 'Backfill Traders Ltd');
+  update orgs set rc_number = 'RC 1212121', tin = '33334444-0001', directors = '[{"name": "Hidden Director"}]' where id = o;
+  alter table practice_clients disable trigger practice_clients_intake;
+  c := tests.involved_client(pr, o);
+  alter table practice_clients enable trigger practice_clients_intake;
+  assert (select intake_id is null from practice_clients where id = c), 'intake_backfill: an old link without an intake';
+  assert private.intake_backfill() = 1, 'intake_backfill: one made';
+  select * into x from practice_intakes where client_id = c;
+  assert x.status = 'engaged' and x.dd_incomplete and x.legal_name = 'Backfill Traders Ltd' and x.rc_number = 'RC 1212121' and x.tax_id = '33334444-0001'
+     and x.org_id = o and x.practice_id = pr and x.conflict_status = 'pending' and x.risk_rating is null, 'intake_backfill: a draft from the link and the business';
+  assert (select intake_id = x.id from practice_clients where id = c), 'intake_backfill: the link carries it';
+  assert not exists (select 1 from practice_intake_people where intake_id = x.id), 'intake_backfill: CAC directors not copied';
+  assert private.intake_backfill() = 0, 'intake_backfill: only once';
 end $$;
 
 -- test: intake_reads
@@ -507,7 +621,8 @@ begin
      and (select bool_and(e ? 'conflict_status' and e ? 'cleared' and e ? 'dd_incomplete' and not e ? 'people') from jsonb_array_elements(r) e),
     'intake_reads: the list';
   r := public.practice_intakes(pr, '{"status": "declined"}');
-  assert jsonb_array_length(r) = 1 and (r->0->>'id')::uuid = tests.id('babatunde'), 'intake_reads: by status';
+  assert (select array_agg((e->>'id')::uuid order by e->>'id') from jsonb_array_elements(r) e)
+         = (select array_agg(x order by x::text) from unnest(array[tests.id('babatunde'), tests.id('ripple')]) x), 'intake_reads: by status';
   -- A document.
   r := public.practice_intake_doc_add(tests.id('kola'), jsonb_build_object('path', 'practice/' || pr || '/intake/' || tests.id('kola') || '/cac-certificate.pdf',
     'sha256', repeat('ab', 32), 'kind', 'cac'));
@@ -533,11 +648,13 @@ begin
 end $$;
 
 -- test: practice_files
--- Practice files in the documents bucket: intake and letter files for the practice's people, exports for its partners.
+-- Practice files in the documents bucket: intake files for the practice's partners and managers, letter files for its
+-- people, exports for its partners.
 do $$
-declare pr uuid := tests.id('pr'); i uuid := tests.id('ola_intake'); v_intake text; v_export text;
+declare pr uuid := tests.id('pr'); i uuid := tests.id('ola_intake'); v_intake text; v_letter text; v_export text;
 begin
   v_intake := 'practice/' || pr || '/intake/' || i || '/cac.pdf';
+  v_letter := 'practice/' || pr || '/letters/' || i || '/letter.pdf';
   v_export := 'practice/' || pr || '/exports/' || tests.id('ola_client') || '/records.zip';
   perform tests.as_definer(tests.id('partner'));
   assert private.practice_file_ok('practice/' || pr || '/intake/' || i || '/cac.pdf'), 'practice_files';
@@ -546,18 +663,20 @@ begin
      and not private.practice_file_ok('practice/not-a-practice/intake/x/y.pdf') and not private.practice_file_ok(pr || '/intake/x/y.pdf')
      and not private.practice_file_ok(null), 'practice_files: only practice areas';
   perform tests.as_definer(tests.id('staff'));
-  assert private.practice_file_ok(v_intake) and not private.practice_file_ok(v_export), 'practice_files: staff, not exports';
+  assert private.practice_file_ok(v_letter) and not private.practice_file_ok(v_intake) and not private.practice_file_ok(v_export),
+    'practice_files: staff, letters only';
   perform tests.as_definer(tests.id('manager'));
-  assert not private.practice_file_ok(v_export), 'practice_files: managers, not exports';
+  assert private.practice_file_ok(v_intake) and private.practice_file_ok(v_letter) and not private.practice_file_ok(v_export),
+    'practice_files: managers, not exports';
   perform tests.as_definer(tests.id('other_partner'));
   assert not private.practice_file_ok(v_intake), 'practice_files: another practice''s partner';
   assert private.practice_file_ok('practice/' || tests.id('pr2') || '/intake/' || i || '/x.pdf'), 'practice_files: their own practice';
   perform tests.as_postgres();
-  update practice_members set status = 'disabled' where id = tests.id('staff_pm');
-  perform tests.as_definer(tests.id('staff'));
-  assert not private.practice_file_ok(v_intake), 'practice_files: not once they have left';
+  update practice_members set status = 'disabled' where id = tests.id('manager_pm');
+  perform tests.as_definer(tests.id('manager'));
+  assert not private.practice_file_ok(v_intake) and not private.practice_file_ok(v_letter), 'practice_files: not once they have left';
   perform tests.as_postgres();
-  update practice_members set status = 'active' where id = tests.id('staff_pm');
+  update practice_members set status = 'active' where id = tests.id('manager_pm');
 
   -- Through the documents bucket's policies, as the signed-in person (Supabase grants the table; the policies decide).
   grant select, insert, delete on storage.objects to authenticated;
@@ -565,8 +684,14 @@ begin
   assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', 'practice/%s/intake/%s/cac.pdf')$q$, pr, i)) is null,
     'practice_files: partner uploads as authenticated through the policy';
   assert (select count(*) from storage.objects where name = v_intake) = 1, 'practice_files: and reads it';
+  perform tests.as_user(tests.id('manager'));
+  assert (select count(*) from storage.objects where name = v_intake) = 1, 'practice_files: a manager reads it';
   perform tests.as_user(tests.id('staff'));
-  assert (select count(*) from storage.objects where name = v_intake) = 1, 'practice_files: staff read it';
+  assert (select count(*) from storage.objects where name = v_intake) = 0, 'practice_files: staff do not see intake files';
+  assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', %L)$q$, 'practice/' || pr || '/intake/' || i || '/staff.pdf'))
+    like '%row-level security%', 'practice_files: staff cannot put intake files';
+  assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', %L)$q$, v_letter)) is null,
+    'practice_files: staff put letter files';
   assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', %L)$q$, v_export)) like '%row-level security%',
     'practice_files: staff cannot put exports';
   perform tests.as_user(tests.id('other_partner'));
@@ -616,6 +741,7 @@ begin
   perform tests.as_postgres();
   assert not exists (select 1 from orgs where id = tests.id('linked')), 'intake_outlives_business: the business is gone';
   assert (select org_id is null and client_id is null and legal_name = 'Linked Biz Ltd' from practice_intakes where id = x), 'intake_outlives_business: the record stays';
+  assert (select retain_until = private.retain_date(5) from practice_intakes where id = x), 'intake_outlives_business: kept five years from the deletion';
 end $$;
 
 -- test: intake_helpers_revoked
@@ -623,6 +749,8 @@ do $$
 declare f text;
 begin
   foreach f in array array['private.fold_name(text)', 'private.norm_id(text)', 'private.has_id_number(text)', 'private.uuid_of(text)', 'private.intake_cleared(practice_intakes)',
+    'private.company_name_score(text, text)', 'private.intake_kept(practice_intakes)', 'private.intake_invited(uuid)', 'private.intake_for_client(uuid)',
+    'private.intake_backfill()',
     'private.retain_date(integer)', 'private.conflict_scan(uuid)', 'private.intake_json(practice_intakes, boolean)', 'private.intake_require(uuid, boolean)',
     'private.intake_settle(uuid)', 'private.practice_intakes_retention()', 'private.practice_clients_intake()', 'private.activity_exempt()'] loop
     assert not has_function_privilege('authenticated', f, 'execute') and not has_function_privilege('anon', f, 'execute'), format('intake_helpers_revoked: %s', f);

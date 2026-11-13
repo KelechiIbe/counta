@@ -9,7 +9,8 @@
 --                               partner's declaration of the client's written authority (full mandate). Status draft;
 --                               engaged once the client link is active; declined when a partner refuses it.
 --   practice_intake_people      directors, beneficial owners and related people. An ID number only as its last 4
---                               characters: a longer run of digits anywhere in a person's details is refused.
+--                               characters: a longer run of digits (spaces and dashes aside) anywhere in a person's
+--                               details is refused.
 --   practice_intake_docs        supporting documents in the documents bucket under practice/<pid>/intake/<iid>/.
 --   practice_opposing_parties   the other side of the firm's matters for its clients.
 --   practice_conflict_hits      what the last conflicts check found.
@@ -20,10 +21,13 @@
 -- them. A partner clears or refuses what it finds, with a note.
 -- An intake is cleared (private.intake_cleared) when it has a risk rating and its last check, run after the last change
 -- to its name, numbers or people (edited_at), found nothing or was cleared. Inviting a business owner needs a cleared
--- involved intake; a link the business starts gets a draft intake marked "due diligence incomplete". Intakes, their
--- people and documents cannot be deleted before their retention date; a business deleted for good leaves the practice's
--- intake in place, no longer linked to it. Practice files live under practice/<pid>/ in the documents bucket: intake and
--- letter files for the practice's people, exports for its partners; nobody deletes them.
+-- involved intake, and the owner's acceptance needs it still cleared: while the invitation waits the intake's substance
+-- does not change, and refusing it withdraws the invitation. A link the business starts (and every active link made before
+-- intakes existed) gets a draft intake marked "due diligence incomplete" until the firm clears it. Once an engagement's
+-- intake is cleared, or once it has a retention date, it is kept as it is. Intakes, their people and documents cannot be
+-- deleted before their retention date; a business deleted for good leaves the practice's intake in place, no longer linked
+-- to it. Practice files live under practice/<pid>/ in the documents bucket: intake files for the practice's partners and
+-- managers, letter files for its people, exports for its partners; nobody deletes them.
 
 -- ---------------------------------------------------------------------------
 -- 1. Tables
@@ -72,16 +76,17 @@ create index practice_intakes_created_by on public.practice_intakes(created_by);
 alter table public.practice_intakes enable row level security;
 revoke all on public.practice_intakes from anon, authenticated;
 
--- A run of five or more digits in a name, role or nationality is an ID number pasted in the wrong place.
+-- A run of five or more digits (spaces and dashes aside) in a name, role or nationality is an ID number pasted in the
+-- wrong place.
 create table public.practice_intake_people (
   id uuid primary key default gen_random_uuid(),
   intake_id uuid not null references public.practice_intakes(id) on delete cascade,
   practice_id uuid not null references public.practices(id) on delete cascade,
   kind text not null check (kind in ('director', 'beneficial_owner', 'related')),
-  name text not null check (length(trim(name)) between 2 and 120 and name !~ '[0-9]{5,}'),
-  role text check (length(role) <= 80 and role !~ '[0-9]{5,}'),
+  name text not null check (length(trim(name)) between 2 and 120 and regexp_replace(name, '[[:space:]-]', '', 'g') !~ '[0-9]{5,}'),
+  role text check (length(role) <= 80 and regexp_replace(role, '[[:space:]-]', '', 'g') !~ '[0-9]{5,}'),
   ownership_pct numeric(5,2) check (ownership_pct between 0 and 100),
-  nationality text check (length(nationality) <= 60 and nationality !~ '[0-9]{5,}'),
+  nationality text check (length(nationality) <= 60 and regexp_replace(nationality, '[[:space:]-]', '', 'g') !~ '[0-9]{5,}'),
   is_pep boolean not null default false,
   id_type text check (id_type in ('nin', 'bvn', 'passport', 'drivers_licence', 'voters_card', 'cac', 'other')),
   id_last4 text check (id_last4 ~ '^[A-Za-z0-9]{4}$'),
@@ -157,10 +162,13 @@ create index practice_clients_intake_id on public.practice_clients(intake_id) wh
 -- ---------------------------------------------------------------------------
 -- 2. Helpers
 -- ---------------------------------------------------------------------------
--- A name without accents: the combining marks (U+0300 to U+036F) of its decomposed form removed, so "Ọlá Àdé" is "Ola Ade".
+-- A name without accents: the combining marks (U+0300 to U+036F) of its decomposed form removed, so "Ọlá Àdé" is "Ola Ade";
+-- and the Hausa hooked letters, which do not decompose, as plain ones: ɓ ɗ ƙ ƴ (U+0253, U+0257, U+0199, U+01B4) and their
+-- capitals Ɓ Ɗ Ƙ Ƴ (U+0181, U+018A, U+0198, U+01B3) as b d k y and B D K Y, so "Ɗanjuma" is "Danjuma".
 create or replace function private.fold_name(p text) returns text
 language sql immutable set search_path = '' as $$
-  select regexp_replace(normalize(coalesce(p, ''), NFD), '[̀-ͯ]', '', 'g')
+  select regexp_replace(translate(normalize(coalesce(p, ''), NFD), U&'\0253\0257\0199\01B4\0181\018A\0198\01B3', 'bdkyBDKY'),
+    U&'[\0300-\036F]', '', 'g')
 $$;
 
 -- An RC number, BN number or Tax ID as compared: upper case, letters and digits only, without a leading RC, BN or IT.
@@ -170,10 +178,22 @@ language sql immutable set search_path = '' as $$
   select nullif(regexp_replace(regexp_replace(upper(coalesce(p, '')), '[^A-Z0-9]', '', 'g'), '^(RC|BN|IT)', ''), '')
 $$;
 
--- Whether a text holds an ID number (five or more digits in a row).
+-- Whether a text holds an ID number: five or more digits in a row once spaces and dashes are taken out, so
+-- "1234 5678 901" and "1234-5678-901" count.
 create or replace function private.has_id_number(p text) returns boolean
 language sql immutable set search_path = '' as $$
-  select p ~ '[0-9]{5,}'
+  select regexp_replace(p, '[[:space:]-]', '', 'g') ~ '[0-9]{5,}'
+$$;
+
+-- How alike two company names are (0 to 1), either way round, without accents. 1 when every word that tells one of them
+-- apart is in the other (name_match, which wants two such words or one of six letters or more); otherwise the share of the
+-- prospect's distinguishing words found in the other name, or of the other's found in the prospect's when it has two such
+-- words or more. 0.75 or more is a possible conflict: "Zenith Paints Distribution Ltd" and "Zenith Paints Ltd" are.
+create or replace function private.company_name_score(p_prospect text, p_other text) returns numeric
+language sql immutable set search_path = public, private as $$
+  select case when private.name_match(a, b) or private.name_match(b, a) then 1.00
+    else greatest(private.name_score(a, b), case when cardinality(private.name_words(b)) >= 2 then private.name_score(b, a) else 0 end) end
+  from (select private.fold_name(p_prospect) as a, private.fold_name(p_other) as b) z
 $$;
 
 -- The text as an id, or null when it is not one.
@@ -208,12 +228,24 @@ begin
   return i;
 end $$;
 
--- Due diligence is complete once the intake is cleared: a draft made for a link the business started loses its
--- "incomplete" mark.
+-- "Due diligence incomplete": the client link is active and the intake is not cleared. Set again after every change.
 create or replace function private.intake_settle(p_intake uuid) returns void
 language sql set search_path = public, private as $$
-  update practice_intakes x set dd_incomplete = false, updated_at = now()
-  where x.id = p_intake and x.dd_incomplete and private.intake_cleared(x)
+  update practice_intakes x set dd_incomplete = (x.status = 'engaged' and not private.intake_cleared(x)), updated_at = now()
+  where x.id = p_intake and x.dd_incomplete is distinct from (x.status = 'engaged' and not private.intake_cleared(x))
+$$;
+
+-- An intake kept as it is: the record of an engagement once its due diligence is done, or anything with a retention
+-- date (the engagement ended, the invitation was withdrawn or declined). Changes then go on a new intake.
+create or replace function private.intake_kept(i public.practice_intakes) returns boolean
+language sql immutable set search_path = public, private as $$
+  select i.retain_until is not null or (i.status = 'engaged' and private.intake_cleared(i))
+$$;
+
+-- Whether an invitation to the business owner, carrying this intake, is waiting for an answer.
+create or replace function private.intake_invited(p_intake uuid) returns boolean
+language sql stable set search_path = public, private as $$
+  select exists (select 1 from practice_clients where intake_id = p_intake and status = 'invited')
 $$;
 
 -- An intake as the portal shows it: a list row, or in full with its people, documents and the last check's hits.
@@ -245,9 +277,10 @@ $$;
 -- 3. The conflicts check
 -- ---------------------------------------------------------------------------
 -- Replaces the intake's hits with what it matches in its own practice, and says how many. Each party the practice has
--- worked for or with is compared by RC number and Tax ID (the same number), by name (every word that tells the name apart,
--- or three-quarters of them), and by the prospect's people (as the NIN check matches a person to a director). One hit per
--- party, match and subject, however many of the party's names match.
+-- worked for or with is compared by RC number and Tax ID (the same number), by name (company_name_score 0.75 or more),
+-- and by the prospect's people (as the NIN check matches a person to a director); the people on the practice's other
+-- intakes are compared with the prospect's people and with the prospect's own name (a person, or a business in a
+-- person's name). One hit per party, match and subject, however many of the party's names match.
 create or replace function private.conflict_scan(p_intake uuid) returns integer
 language plpgsql set search_path = public, private as $$
 declare i public.practice_intakes; v_books boolean; v_n integer;
@@ -262,15 +295,21 @@ begin
     select p.name, z.t[1] as first, array_to_string(z.t[2:cardinality(z.t) - 1], ' ') as middle, z.t[cardinality(z.t)] as last
     from practice_intake_people p cross join lateral (select private.name_tokens(private.fold_name(p.name)) as t) z
     where p.intake_id = i.id and cardinality(z.t) > 0),
+  -- The prospect's own name, read as a person's.
+  me as (
+    select z.t[1] as first, array_to_string(z.t[2:cardinality(z.t) - 1], ' ') as middle, z.t[cardinality(z.t)] as last
+    from (select private.name_tokens(private.fold_name(i.legal_name)) as t) z
+    where cardinality(z.t) > 0),
   -- The practice's parties: what they are, a name, an RC number and a Tax ID, and where they are recorded.
   parties as (
-    -- Its clients whatever the state of the link: the business, the name on the link, and the client's intake.
+    -- Its clients whatever the state of the link: the business, the name on the link, and the client's intake (not the
+    -- prospect's own link, nor an invitation that carries this intake).
     select 'client' as kind, v.name, v.rc, v.tax, pc.id as client_id, pc.intake_id, null::uuid as opposing_id
     from practice_clients pc
     left join orgs o on o.id = pc.org_id
     left join practice_intakes x on x.id = pc.intake_id and x.practice_id = i.practice_id
     cross join lateral (values (o.name, o.rc_number, o.tin), (pc.business_name, null, null), (x.legal_name, x.rc_number, x.tax_id)) v(name, rc, tax)
-    where pc.practice_id = i.practice_id and pc.id is distinct from i.client_id and v.name is not null
+    where pc.practice_id = i.practice_id and pc.id is distinct from i.client_id and pc.intake_id is distinct from i.id and v.name is not null
     union all
     -- Its other intakes with no client link: prospects, and former clients whose business is gone.
     select case when x.status = 'engaged' then 'client' else 'prospect' end, x.legal_name, x.rc_number, x.tax_id, x.client_id, x.id, null
@@ -284,11 +323,13 @@ begin
     -- Its active clients' customers and suppliers, when the firm asks for them.
     select 'books', cu.name, null, cu.tin, pc.id, null, null
     from practice_clients pc join customers cu on cu.org_id = pc.org_id
-    where v_books and pc.practice_id = i.practice_id and pc.status = 'active' and pc.id is distinct from i.client_id and not cu.is_walk_in
+    where v_books and pc.practice_id = i.practice_id and pc.status = 'active' and pc.id is distinct from i.client_id
+      and pc.intake_id is distinct from i.id and not cu.is_walk_in
     union all
     select 'books', ve.name, ve.rc_number, ve.tin, pc.id, null, null
     from practice_clients pc join vendors ve on ve.org_id = pc.org_id
-    where v_books and pc.practice_id = i.practice_id and pc.status = 'active' and pc.id is distinct from i.client_id),
+    where v_books and pc.practice_id = i.practice_id and pc.status = 'active' and pc.id is distinct from i.client_id
+      and pc.intake_id is distinct from i.id),
   matches as (
     select kind, 'rc_number' as matched_on, i.rc_number as subject, name as match_name, 1.00 as score, client_id, intake_id, opposing_id
     from parties where private.norm_id(rc) = private.norm_id(i.rc_number)
@@ -296,13 +337,9 @@ begin
     select kind, 'tax_id', i.tax_id, name, 1.00, client_id, intake_id, opposing_id
     from parties where private.norm_id(tax) = private.norm_id(i.tax_id)
     union all
-    select kind, 'name', i.legal_name, name,
-      case when private.name_match(private.fold_name(i.legal_name), private.fold_name(name)) then 1.00
-           else private.name_score(private.fold_name(i.legal_name), private.fold_name(name)) end,
-      client_id, intake_id, opposing_id
-    from parties
-    where private.name_match(private.fold_name(i.legal_name), private.fold_name(name))
-       or private.name_score(private.fold_name(i.legal_name), private.fold_name(name)) >= 0.75
+    select kind, 'name', i.legal_name, name, s.score, client_id, intake_id, opposing_id
+    from parties cross join lateral (select private.company_name_score(i.legal_name, name) as score) s
+    where s.score >= 0.75
     union all
     -- The prospect's people among the names of the clients, prospects and opposing parties.
     select p.kind, 'person', m.name, p.name, 1.00, p.client_id, p.intake_id, p.opposing_id
@@ -314,7 +351,14 @@ begin
     from mine m
     join practice_intake_people rp on rp.practice_id = i.practice_id and rp.intake_id <> i.id
     join practice_intakes x on x.id = rp.intake_id and x.practice_id = i.practice_id
-    where private.identity_match(m.first, m.middle, m.last, jsonb_build_array(jsonb_build_object('name', private.fold_name(rp.name)))) is not null)
+    where private.identity_match(m.first, m.middle, m.last, jsonb_build_array(jsonb_build_object('name', private.fold_name(rp.name)))) is not null
+    union all
+    -- The prospect's own name among those people.
+    select 'related_party', 'name', i.legal_name, rp.name, 1.00, x.client_id, x.id, null
+    from me
+    join practice_intake_people rp on rp.practice_id = i.practice_id and rp.intake_id <> i.id
+    join practice_intakes x on x.id = rp.intake_id and x.practice_id = i.practice_id
+    where private.identity_match(me.first, me.middle, me.last, jsonb_build_array(jsonb_build_object('name', private.fold_name(rp.name)))) is not null)
   insert into practice_conflict_hits (intake_id, practice_id, kind, matched_on, subject, match_name, score, source_client_id, source_intake_id, source_opposing_id)
   select distinct on (kind, matched_on, subject, client_id, intake_id, opposing_id)
     i.id, i.practice_id, kind, matched_on, subject, match_name, score, client_id, intake_id, opposing_id
@@ -330,7 +374,7 @@ end $$;
 -- Intakes, their people and their documents stay until their retention date (none yet: the engagement has not ended).
 -- An intake's own deletion, once allowed, takes its people and documents with it. Saving an intake replaces its people
 -- (counta.intake_save). A business deleted for good (app.allow_purge) leaves the practice's intake in place, no longer
--- linked to it, as the intake's org_id foreign key does.
+-- linked to it, as the intake's org_id foreign key does, and kept at least five years from then.
 create or replace function private.practice_intakes_retention() returns trigger
 language plpgsql security definer set search_path = public, private as $$
 declare v_retain date;
@@ -344,7 +388,7 @@ begin
   end if;
   if v_retain is not null and v_retain <= current_date then return old; end if;
   if tg_table_name = 'practice_intakes' and coalesce(current_setting('app.allow_purge', true), '') = 'on' then
-    update practice_intakes set org_id = null, updated_at = now() where id = old.id;
+    update practice_intakes set org_id = null, retain_until = coalesce(retain_until, private.retain_date(5)), updated_at = now() where id = old.id;
     return null;
   end if;
   raise exception 'Due-diligence records are kept until %.', coalesce(to_char(v_retain, 'DD Mon YYYY'), 'five years after the engagement ends');
@@ -357,31 +401,65 @@ create trigger practice_intakes_retention before delete on public.practice_intak
 create trigger practice_intakes_retention before delete on public.practice_intake_docs
   for each row execute function private.practice_intakes_retention();
 
--- A client link that becomes active engages its intake; a link with none (the business started it, or a referral or
--- directory request) gets a draft intake marked "due diligence incomplete", with the business's name and numbers and
--- nobody from its CAC record. An intake changed since it was cleared (after the invitation went) is marked too. A link
--- that ends or is declined dates its intake's retention.
+-- The draft intake of an active client link that has none (the business started the link, or it came from a referral, a
+-- directory request or before intakes existed): marked "due diligence incomplete", engaged, with the name on the link (else
+-- the business's), its RC number and Tax ID, and nobody from its CAC record. The link then carries it. Returns its id.
+create or replace function private.intake_for_client(p_client uuid) returns uuid
+language plpgsql set search_path = public, private as $$
+declare c public.practice_clients; v_name text; v_id uuid;
+begin
+  select * into c from practice_clients where id = p_client;
+  if c.id is null or c.intake_id is not null or c.practice_id is null or c.org_id is null then return c.intake_id; end if;
+  select coalesce(nullif(trim(c.business_name), ''), trim(o.name)) into v_name from orgs o where o.id = c.org_id;
+  -- A one-letter business name is still a name to confirm.
+  v_name := case when length(v_name) >= 2 then left(v_name, 160) else coalesce(v_name, '') || ' (name to confirm)' end;
+  insert into practice_intakes (practice_id, status, mode_requested, legal_name, rc_number, tax_id, dd_incomplete, client_id, org_id)
+  select c.practice_id, 'engaged', c.mode, v_name, left(o.rc_number, 40), left(o.tin, 40), true, c.id, c.org_id
+  from orgs o where o.id = c.org_id
+  returning id into v_id;
+  update practice_clients set intake_id = v_id where id = c.id;
+  return v_id;
+end $$;
+
+-- Draft intakes for the active client links that have none; how many were made. Run once below for the links made before
+-- intakes existed.
+create or replace function private.intake_backfill() returns integer
+language plpgsql set search_path = public, private as $$
+declare v_client uuid; v_n integer := 0;
+begin
+  for v_client in select id from practice_clients
+                  where status = 'active' and intake_id is null and practice_id is not null and org_id is not null order by created_at, id loop
+    perform private.intake_for_client(v_client);
+    v_n := v_n + 1;
+  end loop;
+  return v_n;
+end $$;
+
+-- A client link that becomes active engages its intake, which must be this practice's and cleared (not declined, and
+-- not changed or found to conflict since) unless the link was engaged on it before: otherwise the link does not go ahead.
+-- A link with no intake gets a draft one.
+-- A link that ends or is declined dates its intake's retention (never earlier than a date it already has).
 create or replace function private.practice_clients_intake() returns trigger
 language plpgsql security definer set search_path = public, private as $$
-declare v_intake uuid := new.intake_id; v_name text;
+declare x public.practice_intakes;
 begin
   if new.practice_id is null or (tg_op = 'UPDATE' and new.status is not distinct from old.status) then return null; end if;
   if new.status = 'active' then
-    if v_intake is null then
-      select coalesce(nullif(trim(new.business_name), ''), trim(o.name)) into v_name from orgs o where o.id = new.org_id;
-      -- A one-letter business name is still a name to confirm.
-      v_name := case when length(v_name) >= 2 then left(v_name, 160) else coalesce(v_name, '') || ' (name to confirm)' end;
-      insert into practice_intakes (practice_id, mode_requested, legal_name, rc_number, tax_id, dd_incomplete, client_id, org_id)
-      select new.practice_id, new.mode, v_name, left(o.rc_number, 40), left(o.tin, 40), true, new.id, new.org_id
-      from orgs o where o.id = new.org_id
-      returning id into v_intake;
-      update practice_clients set intake_id = v_intake where id = new.id;
+    if new.intake_id is null then
+      perform private.intake_for_client(new.id);
+      return null;
     end if;
-    update practice_intakes x set status = 'engaged', org_id = new.org_id, client_id = new.id, retain_until = null,
-      dd_incomplete = x.dd_incomplete or not private.intake_cleared(x), updated_at = now()
-    where x.id = v_intake;
-  elsif new.status in ('ended', 'declined') and v_intake is not null then
-    update practice_intakes set retain_until = private.retain_date(new.retention_years), updated_at = now() where id = v_intake;
+    select * into x from practice_intakes where id = new.intake_id for update;
+    if x.practice_id is distinct from new.practice_id then raise exception 'That due-diligence intake belongs to another practice.'; end if;
+    -- (A link taken up again keeps the intake it was engaged on, cleared or not.)
+    if not (x.status = 'engaged' and x.client_id = new.id) and (x.status = 'declined' or not private.intake_cleared(x)) then
+      raise exception 'This cannot go ahead yet: the practice has not finished its checks on the business. Ask the practice about it.';
+    end if;
+    update practice_intakes set status = 'engaged', org_id = new.org_id, client_id = new.id, retain_until = null, updated_at = now() where id = x.id;
+    perform private.intake_settle(x.id);
+  elsif new.status in ('ended', 'declined') and new.intake_id is not null then
+    update practice_intakes set retain_until = greatest(retain_until, private.retain_date(new.retention_years)), updated_at = now()
+    where id = new.intake_id;
   end if;
   return null;
 end $$;
@@ -389,17 +467,24 @@ end $$;
 create trigger practice_clients_intake after insert or update of status on public.practice_clients
   for each row execute function private.practice_clients_intake();
 
+do $$
+begin
+  perform private.intake_backfill();
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- 5. Practice files in the documents bucket
 -- ---------------------------------------------------------------------------
--- practice/<pid>/intake/... and practice/<pid>/letters/...: the practice's active people; practice/<pid>/exports/...: its
--- active partners. Called by the bucket's policies as the signed-in person, so it reads the practice as its owner.
+-- practice/<pid>/letters/...: the practice's active people; practice/<pid>/intake/...: its active partners and managers (who
+-- keep the intakes); practice/<pid>/exports/...: its active partners. Called by the bucket's policies as the signed-in
+-- person, so it reads the practice as its owner.
 create or replace function private.practice_file_ok(p_name text) returns boolean
 language sql stable security definer set search_path = public, private as $$
   select coalesce(p_name ~ '^practice/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(intake|letters|exports)/[^/]', false)
     and exists (select 1 from practice_members pm
                 where pm.practice_id::text = split_part(p_name, '/', 2) and pm.user_id = auth.uid() and pm.status = 'active'
-                  and (split_part(p_name, '/', 3) <> 'exports' or pm.role = 'partner'))
+                  and case split_part(p_name, '/', 3) when 'exports' then pm.role = 'partner'
+                                                      when 'intake' then pm.role in ('partner', 'manager') else true end)
 $$;
 
 do $$
@@ -440,13 +525,15 @@ end $$;
 -- risk_rating, risk_reason, people?: [{kind, name, role, ownership_pct, nationality, is_pep, id_type, id_last4}]}; a key
 -- left out keeps its value, and people given replace those recorded. An ID number is recorded only as its last 4
 -- characters. A politically exposed person makes the risk high. A change to the name, RC number, Tax ID or people needs a
--- new conflicts check (and a new name a new declaration, which names the client).
+-- new conflicts check (and a new name or mode a new declaration, which names the client and the mandate). While an
+-- invitation carrying the intake waits, those changes, removing the risk rating or leaving involved mode wait for it to
+-- be withdrawn. An intake kept as the record of an engagement (private.intake_kept) is not changed.
 create or replace function public.practice_intake_save(p_practice uuid, p jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare m public.practice_members; i public.practice_intakes; x jsonb; v_people jsonb := '[]'; v_old_people jsonb := '[]';
   v_name text; v_mode text; v_type text; v_rc text; v_tax text; v_address text; v_industry text; v_risk text; v_reason text;
   v_pname text; v_prole text; v_pnat text; v_kind text; v_idtype text; v_last4 text; v_pct numeric;
-  v_people_changed boolean := false; v_edit boolean; v_pep boolean;
+  v_people_changed boolean := false; v_edit boolean; v_pep boolean; v_withdraw boolean;
 begin
   m := private.practice_require(p_practice, true);
   if jsonb_typeof(p) is distinct from 'object' then raise exception 'Nothing to save.'; end if;
@@ -454,6 +541,7 @@ begin
     select * into i from practice_intakes where id = private.uuid_of(p->>'id') and practice_id = p_practice for update;
     if i.id is null then raise exception 'Intake not found.'; end if;
     if i.status = 'declined' then raise exception 'This intake was declined after the conflicts check. Start a new one.'; end if;
+    if private.intake_kept(i) then raise exception 'This intake is kept as the record of the engagement. Start a new intake to record changes.'; end if;
   end if;
 
   -- The intake's details: those given, else as they were.
@@ -501,6 +589,9 @@ begin
         end if;
         v_pct := round(trim(x->>'ownership_pct')::numeric, 2);
       end if;
+      if jsonb_typeof(x->'is_pep') not in ('boolean', 'null') and coalesce(x->>'is_pep', '') not in ('true', 'false') then
+        raise exception 'Say yes or no to whether % is a politically exposed person.', v_pname;
+      end if;
       v_idtype := nullif(x->>'id_type', '');
       if v_idtype is not null and v_idtype not in ('nin', 'bvn', 'passport', 'drivers_licence', 'voters_card', 'cac', 'other') then
         raise exception 'Choose the kind of ID.';
@@ -519,6 +610,10 @@ begin
   end if;
   if v_pep then v_risk := 'high'; end if;
   v_edit := i.id is null or v_people_changed or v_name is distinct from i.legal_name or v_rc is distinct from i.rc_number or v_tax is distinct from i.tax_id;
+  v_withdraw := v_name is distinct from i.legal_name or coalesce(v_mode, i.mode_requested) is distinct from i.mode_requested;
+  if i.id is not null and private.intake_invited(i.id) and (v_edit or v_risk is null or coalesce(v_mode, i.mode_requested) <> 'involved') then
+    raise exception 'Withdraw the invitation first: it was sent on this intake as it stands.';
+  end if;
 
   if i.id is null then
     insert into practice_intakes (practice_id, mode_requested, legal_name, entity_type, rc_number, tax_id, address, industry, risk_rating, risk_reason,
@@ -533,10 +628,10 @@ begin
       conflict_decided_by = case when v_edit then null else conflict_decided_by end,
       conflict_decided_at = case when v_edit then null else conflict_decided_at end,
       edited_at = case when v_edit then now() else edited_at end,
-      authority_declared_by = case when v_name is distinct from legal_name then null else authority_declared_by end,
-      authority_declared_at = case when v_name is distinct from legal_name then null else authority_declared_at end,
-      authority_statement = case when v_name is distinct from legal_name then null else authority_statement end,
-      authority_doc_path = case when v_name is distinct from legal_name then null else authority_doc_path end,
+      authority_declared_by = case when v_withdraw then null else authority_declared_by end,
+      authority_declared_at = case when v_withdraw then null else authority_declared_at end,
+      authority_statement = case when v_withdraw then null else authority_statement end,
+      authority_doc_path = case when v_withdraw then null else authority_doc_path end,
       updated_at = now()
     where id = i.id
     returning * into i;
@@ -585,6 +680,9 @@ begin
   if nullif(p->>'id', '') is not null then
     select * into op from practice_opposing_parties where id = private.uuid_of(p->>'id') and practice_id = p_practice for update;
     if op.id is null then raise exception 'Opposing party not found.'; end if;
+    if jsonb_typeof(p->'remove') not in ('boolean', 'null') and coalesce(p->>'remove', '') not in ('true', 'false') then
+      raise exception 'Say true or false to remove the opposing party.';
+    end if;
     if coalesce((p->>'remove')::boolean, false) then
       delete from practice_opposing_parties where id = op.id;
       return jsonb_build_object('id', op.id, 'removed', true);
@@ -611,13 +709,15 @@ begin
   return jsonb_build_object('id', op.id, 'client_id', op.client_id, 'name', op.name, 'rc_number', op.rc_number, 'note', op.note);
 end $$;
 
--- Runs the conflicts check: hits or none, dated now. A decision on an earlier check no longer stands.
+-- Runs the conflicts check: hits or none, dated now. A decision on an earlier check no longer stands. It may run while an
+-- invitation waits: if it finds something, the invitation cannot be accepted until a partner clears it.
 create or replace function public.practice_conflict_run(p_intake uuid) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare i public.practice_intakes; v_n integer;
 begin
   i := private.intake_require(p_intake, true);
   if i.status = 'declined' then raise exception 'This intake was declined after the conflicts check.'; end if;
+  if private.intake_kept(i) then raise exception 'This intake is kept as the record of the engagement. Start a new intake to check again.'; end if;
   v_n := private.conflict_scan(i.id);
   update practice_intakes set checked_at = now(), conflict_status = case when v_n > 0 then 'hits' else 'none' end,
     conflict_note = null, conflict_decided_by = null, conflict_decided_at = null, updated_at = now()
@@ -627,7 +727,8 @@ begin
 end $$;
 
 -- A partner's outcome on what the check found. p: {outcome: cleared|refused, note (10 characters or more)}. Refused: the
--- intake is declined and kept for five years.
+-- intake is declined, kept for five years, and any invitation carrying it is withdrawn. A business already taken on is
+-- not refused here: its engagement is ended instead.
 create or replace function public.practice_conflict_decide(p_intake uuid, p jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare i public.practice_intakes; m public.practice_members; v_outcome text := p->>'outcome'; v_note text := trim(coalesce(p->>'note', ''));
@@ -643,11 +744,18 @@ begin
   if i.conflict_status <> 'hits' or not coalesce(i.checked_at >= i.edited_at, false) then
     raise exception 'Run the conflicts check first: the intake changed after it.';
   end if;
+  if v_outcome = 'refused' and i.status = 'engaged' then
+    raise exception 'This business is already a client: end the engagement instead of refusing it.';
+  end if;
   update practice_intakes set conflict_status = v_outcome, conflict_note = v_note, conflict_decided_by = m.id, conflict_decided_at = now(),
     status = case when v_outcome = 'refused' then 'declined' else status end,
     retain_until = case when v_outcome = 'refused' then private.retain_date(5) else retain_until end,
     updated_at = now()
   where id = i.id;
+  if v_outcome = 'refused' then
+    update practice_clients set status = 'declined', token_hash = null, ended_at = now(), ended_by = auth.uid()
+    where intake_id = i.id and status = 'invited';
+  end if;
   perform private.intake_settle(i.id);
   return public.practice_intake(i.id);
 end $$;
@@ -673,6 +781,7 @@ begin
   m := private.practice_me(i.practice_id);
   if m.role <> 'partner' then raise exception 'Only a partner makes the declaration.' using errcode = '42501'; end if;
   if i.status = 'declined' then raise exception 'This intake was declined after the conflicts check.'; end if;
+  if private.intake_kept(i) then raise exception 'This intake is kept as the record of the engagement.'; end if;
   if i.mode_requested <> 'full' then raise exception 'The declaration is for a full mandate.'; end if;
   if v_doc is not null and v_doc not like 'practice/' || i.practice_id || '/intake/' || i.id || '/_%' then
     raise exception 'Upload the signed authority to the intake''s folder first.';
@@ -697,7 +806,7 @@ language plpgsql security definer set search_path = public, private as $$
 declare m public.practice_members; i public.practice_intakes; v_email text := lower(trim(coalesce(p->>'email', ''))); v_id uuid; v_services text[];
 begin
   m := private.practice_require(p_practice, true);
-  select * into i from practice_intakes where id = private.uuid_of(p->>'intake_id') and practice_id = p_practice;
+  select * into i from practice_intakes where id = private.uuid_of(p->>'intake_id') and practice_id = p_practice for update;
   if i.id is null or i.mode_requested <> 'involved' or i.status = 'declined' or not private.intake_cleared(i) then
     raise exception 'Finish the due diligence and conflicts check first.';
   end if;
@@ -736,8 +845,10 @@ $$;
 -- ---------------------------------------------------------------------------
 -- core.sql grants every private function to authenticated: the helpers this migration creates or redefines are not
 -- callable by the signed-in person, except practice_file_ok, which the bucket's policies call as that person.
-revoke all on function private.fold_name(text), private.norm_id(text), private.has_id_number(text), private.uuid_of(text), private.retain_date(int),
-  private.intake_cleared(public.practice_intakes), private.intake_require(uuid, boolean), private.intake_settle(uuid),
+revoke all on function private.fold_name(text), private.norm_id(text), private.has_id_number(text), private.company_name_score(text, text),
+  private.uuid_of(text), private.retain_date(int), private.intake_cleared(public.practice_intakes), private.intake_kept(public.practice_intakes),
+  private.intake_invited(uuid), private.intake_require(uuid, boolean), private.intake_settle(uuid), private.intake_for_client(uuid),
+  private.intake_backfill(),
   private.intake_json(public.practice_intakes, boolean), private.conflict_scan(uuid), private.practice_intakes_retention(),
   private.practice_clients_intake(), private.activity_exempt()
   from public, anon, authenticated;
