@@ -2,7 +2,7 @@
 // send from the wallet, and download the results.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useInventory, useSession, useToast } from '../../state/session';
+import { actsAsOwner, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { edge, useChart, usePayments } from '../../lib/api';
 import { N2, when } from '../../lib/format';
@@ -189,7 +189,7 @@ export function BulkPayModal({ onClose, onCreated }: { onClose: () => void; onCr
   const fees = included.reduce((a, r) => a + transferFee(Number(r.server.amount)), 0);
   const available = Number(pay.data?.wallet?.available ?? check?.available ?? 0);
   const threshold = Number(pay.data?.settings?.payout_approval_threshold || 0);
-  const needsApproval = threshold > 0 && total >= threshold && inv?.me.role !== 'owner';
+  const needsApproval = threshold > 0 && total >= threshold && !actsAsOwner(inv);
   const short = Math.max(total + fees - available, 0);
   const dupes = useMemo(() => {
     const seen = new Map<string, number>(); const out = new Set<number>();

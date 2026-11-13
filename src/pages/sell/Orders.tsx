@@ -2,7 +2,7 @@
 // for delivery get a delivery note that follows the van to the customer.
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { can, useInventory, useSession, useToast } from '../../state/session';
+import { actsAsOwner, can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { money, useDeliveries, useSales, type Customer, type Sale } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
@@ -81,7 +81,7 @@ function Deliveries({ list, loading, onOpen }: { list: any[]; loading: boolean; 
   const [tab, setTab] = useState<'open' | 'done'>('open');
   const rows = list.filter((d) => (tab === 'open' ? ['pending', 'dispatched'].includes(d.status) : !['pending', 'dispatched'].includes(d.status)));
   const vans = (inv?.locations || []).filter((l: any) => l.kind === 'van');
-  const manager = !!inv && (inv.me.role === 'owner' || inv.me.role === 'manager' || can(inv, 'approve_adjustments'));
+  const manager = !!inv && (actsAsOwner(inv) || inv.me.role === 'manager' || can(inv, 'approve_adjustments'));
   const [receiving, setReceiving] = useState<any | null>(null);
   async function update(d: any, patch: Record<string, unknown>, ok: string) {
     try { await rpc('save_delivery', { p_org: orgId, p_delivery: { id: d.id, sale_id: d.sale_id, ...patch } }); toast(ok); await qc.invalidateQueries({ queryKey: ['deliveries'] }); return true; }

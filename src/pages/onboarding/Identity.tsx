@@ -4,7 +4,7 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { useInventory } from '../../state/session';
+import { actsAsOwner, useInventory } from '../../state/session';
 import { edge, edgeOk } from '../../lib/api';
 import { rpc, supabase } from '../../lib/supabase';
 import { Icon } from '../../components/Icon';
@@ -147,7 +147,7 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }
 export function PaymentsLock() {
   const { data: inv } = useInventory();
   if (!inv || inv.org.payments_open !== false) return null;
-  const owner = inv.me.role === 'owner';
+  const owner = actsAsOwner(inv);
   const st = inv.org.identity_status;
   const text = st === 'review' ? 'TaxStreem is checking the NIN slip. The wallet, payment links and payouts open once it is approved; everything else works.'
     : st === 'rejected' ? `TaxStreem could not confirm the NIN slip, so the wallet, payment links and payouts stay locked. ${owner ? 'Add a clearer slip or check your NIN again.' : 'The owner can add a clearer slip in Settings.'}`

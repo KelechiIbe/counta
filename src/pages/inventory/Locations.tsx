@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { can, useInventory, useSession } from '../../state/session';
+import { actsAsOwner, can, useInventory, useSession } from '../../state/session';
 import { useAction, useActivity, useTransfers } from '../../lib/queries';
 import { must, rpc, supabase } from '../../lib/supabase';
 import { K, N, initials, when } from '../../lib/format';
@@ -35,7 +35,7 @@ export default function Locations() {
   // Only a business on e-invoicing is told its main branch needs a postcode (NRS refuses invoices without one).
   const einv = useEinvoice(inv && can(inv, 'manage_settings') ? inv.org.id : null);
   if (!inv) return null;
-  const owner = inv.me.role === 'owner';
+  const owner = actsAsOwner(inv);
   const costs = inv.can_see_costs;
   const locName = (id: string | null) => inv.locations.find((l) => l.id === id)?.name || '—';
   const itemOf = (id: string) => inv.items.find((i) => i.id === id);
@@ -123,7 +123,7 @@ export default function Locations() {
           <Label>Team</Label>
           <a className="btn btn-ghost btn-xs" href="/settings#team" onClick={(e) => { e.preventDefault(); nav('/settings#team'); }}><Icon name="shield" size={14} />Roles and permissions</a>
         </div>
-        <PeopleCard onCall={inv.me.role === 'owner' || inv.me.role === 'manager' || inv.me.role === 'admin' ? (m) => setCalling(m as unknown as Member) : undefined} />
+        <PeopleCard onCall={actsAsOwner(inv) || inv.me.role === 'manager' || inv.me.role === 'admin' ? (m) => setCalling(m as unknown as Member) : undefined} />
       </div>
 
       <div className="card" style={{ overflow: 'hidden' }}>

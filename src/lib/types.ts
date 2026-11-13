@@ -43,6 +43,8 @@ export interface Org {
   share_info?: Record<string, any>; fs_narrative?: Record<string, any>;
   offering?: 'goods' | 'services' | 'both' | null; category_id?: string | null; identity_status?: string; payments_open?: boolean;
   professional_services?: boolean; legal_form?: string | null; revenue_account?: string | null;
+  managed_by?: string | null; director_confirmed_at?: string | null; read_only_at?: string | null; retain_until?: string | null;
+  send_mode?: 'send' | 'download_only';
 }
 export interface Location { id: string; org_id: string; name: string; code: string; address: string | null; is_main: boolean; state?: string | null; lga?: string | null;
   city?: string | null; postcode?: string | null; }
@@ -60,6 +62,7 @@ export interface MeRow {
   p_record_sales: boolean; p_receive_stock: boolean; p_count_stock: boolean; p_approve_adjustments: boolean; p_edit_prices: boolean;
   p_approve_pos: boolean; p_transfer_stock: boolean; p_see_margins: boolean; p_issue_stock?: boolean; p_keep_books?: boolean; p_make_payments?: boolean;
   p_add_items?: boolean; p_approve_payments?: boolean; p_file_tax?: boolean; p_manage_team?: boolean; p_manage_settings?: boolean;
+  acts_as_owner?: boolean;
 }
 export interface Item {
   id: string; name: string; photo_path: string | null; barcode: string | null; sku: string | null; qr_code: string; category: string;

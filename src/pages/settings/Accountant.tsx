@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cleanError, rpc, supabase } from '../../lib/supabase';
 import { fmtDay, uuid, when } from '../../lib/format';
-import { useInventory, useSession, useToast } from '../../state/session';
+import { actsAsOwner, useInventory, useSession, useToast } from '../../state/session';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Spinner } from '../../components/ui';
 import { type FileBrief, openDoc, type RequestRow, sendInvite, serviceLabel, serviceList, STATUS_CHIP } from '../../practice/api';
@@ -31,7 +31,7 @@ export function AccountantSection() {
   const d = q.data;
   const [open, setOpen] = useState<string | null>(null);
   if (q.isLoading || !d || !inv) return <Spinner small />;
-  const owner = inv.me.role === 'owner';
+  const owner = actsAsOwner(inv);
   const waiting = d.requests.filter((r) => r.status === 'open');
   return (
     <div className="stack" style={{ gap: 14 }} data-testid="accountant-section">

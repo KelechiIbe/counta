@@ -1,0 +1,15 @@
+acts_as_owner
+managed_by
+director_confirmed_at
+read_only_at
+retain_until
+send_mode
+client.mode
+clients[].mode
+engagement_partner_id
+intake_id
+alert_email
+retention_years
+end_kind
+fee_customer_id
+fee_vendor_id

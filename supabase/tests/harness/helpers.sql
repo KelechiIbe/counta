@@ -231,6 +231,36 @@ begin
   return v;
 end $$;
 
+-- A business the practice runs under full mandate, made by its first active partner: no owner, identity pending, an
+-- active full link (billed to the practice, that partner the engagement partner), and an admin place acting as the owner,
+-- with every permission, for each active partner and manager.
+create function tests.managed_org(p_practice uuid, p_name text default 'Managed Test Ltd') returns uuid
+language plpgsql as $$
+declare v uuid; pt public.practice_members;
+begin
+  perform tests.as_postgres();
+  select * into pt from public.practice_members
+  where practice_id = p_practice and role = 'partner' and status = 'active' and user_id is not null order by created_at limit 1;
+  if pt.id is null then raise exception 'tests.managed_org: no active partner in practice %', p_practice; end if;
+  perform tests.as_definer(pt.user_id);
+  v := private.create_org_core(p_name, 'books@firm.example.test', null, '[]', true, false);
+  update public.orgs set managed_by = p_practice, identity_status = 'pending' where id = v;
+  insert into public.practice_clients (practice_id, org_id, status, initiated_by, business_name, billing, mode, engagement_partner_id, started_at)
+  values (p_practice, v, 'active', 'practice', p_name, 'practice', 'full', pt.id, now());
+  perform set_config('counta.seat_sync', 'on', true);
+  insert into public.members (org_id, user_id, email, display_name, role, title, status, practice_id, acts_as_owner,
+    p_record_sales, p_receive_stock, p_count_stock, p_approve_adjustments, p_edit_prices, p_approve_pos, p_transfer_stock, p_see_margins,
+    p_issue_stock, p_keep_books, p_make_payments, p_add_items, p_approve_payments, p_file_tax, p_manage_team, p_manage_settings)
+  select v, pm.user_id, lower(pm.email), pm.display_name, 'admin', left('Accountant, ' || pr.name, 80), 'active', p_practice, true,
+    true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true
+  from public.practice_members pm join public.practices pr on pr.id = pm.practice_id
+  where pm.practice_id = p_practice and pm.status = 'active' and pm.role in ('partner', 'manager') and pm.user_id is not null
+  order by pm.created_at;
+  perform set_config('counta.seat_sync', '', true);
+  perform tests.as_postgres();
+  return v;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Grants: every caller can switch identity, read ids and capture results.
 -- ---------------------------------------------------------------------------

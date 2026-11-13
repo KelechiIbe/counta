@@ -2,7 +2,7 @@
 // by transfer or link, and lands orders in Orders & deliveries.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useInventory, useSession, useToast } from '../../state/session';
+import { actsAsOwner, useInventory, useSession, useToast } from '../../state/session';
 import { photoUrl, rpc } from '../../lib/supabase';
 import { money } from '../../lib/api';
 import { qrSvg } from '../../lib/labels';
@@ -36,7 +36,7 @@ export default function Shop() {
   useEffect(() => { if (f.shop_slug) qrSvg(url, 160).then(setQr).catch(() => {}); }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
   const categories = useMemo(() => Array.from(new Set((inv?.items || []).filter((i) => Number(i.price) > 0).map((i) => i.category))).sort(), [inv?.items]);
   if (!inv || !o) return null;
-  const owner = inv.me.role === 'owner';
+  const owner = actsAsOwner(inv);
   const shown = inv.items.filter((i) => Number(i.price) > 0 && (!f.shop_categories || f.shop_categories.includes(i.category)));
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
   async function save() {

@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useScreenPeriod } from '../../lib/period';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { can, useInventory, useSession, useToast } from '../../state/session';
+import { actsAsOwner, can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { today, yearStart } from '../../lib/api';
 import { fmtDay } from '../../lib/format';
@@ -43,7 +43,7 @@ export default function Statements() {
   const fsKey = pack.data?.periods?.from && pack.data?.periods?.to ? `${pack.data.periods.from}:${pack.data.periods.to}` : null;
   const acc = useFilingCurrent('fs', fsKey).data;
   if (!inv) return null;
-  const canEdit = inv.me.role === 'owner' || can(inv, 'keep_books');
+  const canEdit = actsAsOwner(inv) || can(inv, 'keep_books');
   const warnings = model?.warnings || [];
   const errors = warnings.filter((w) => w.level === 'error');
   const shown = showAll ? warnings : warnings.filter((w) => w.level !== 'info').slice(0, 6);

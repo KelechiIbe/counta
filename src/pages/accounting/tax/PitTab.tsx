@@ -7,7 +7,7 @@
 // owner can say it trades.
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useInventory, useSession, useToast } from '../../../state/session';
+import { actsAsOwner, useInventory, useSession, useToast } from '../../../state/session';
 import { ai, rpc, signedDoc, supabase } from '../../../lib/supabase';
 import { edge, money } from '../../../lib/api';
 import { N2, fmtDay, fmtTime, when } from '../../../lib/format';
@@ -72,7 +72,7 @@ function ExemptPanel() {
   const refresh = useTaxRefresh();
   const nav = useNavigate();
   const [busy, setBusy] = useState(false);
-  const owner = inv?.me.role === 'owner';
+  const owner = actsAsOwner(inv);
   const guarantee = !!(inv?.org as any)?.cit_profile?.limited_by_guarantee;
   async function set(p: Record<string, boolean>, ok: string, to?: string) {
     setBusy(true);

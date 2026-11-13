@@ -119,10 +119,17 @@ export function useInventory() {
   });
 }
 
+// The owner, or a practice's person running the business under full mandate (who acts as the owner).
+export function actsAsOwner(inv: Inventory | undefined): boolean {
+  if (!inv) return false;
+  const me = inv.me;
+  return me.role === 'owner' || me.acts_as_owner === true;
+}
+
 export function can(inv: Inventory | undefined, perm: Perm | 'owner'): boolean {
   if (!inv) return false;
   const me = inv.me;
-  if (me.role === 'owner') return true;
+  if (actsAsOwner(inv)) return true;
   if (perm === 'owner') return false;
   return Boolean((me as any)['p_' + perm]);
 }

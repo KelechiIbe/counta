@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { can, useInventory, useSession } from '../../state/session';
+import { actsAsOwner, can, useInventory, useSession } from '../../state/session';
 import { useLoc } from '../../shell/AppShell';
 import { useCashStory } from '../../shell/needsAction';
 import { useAction, useCashVsStock } from '../../lib/queries';
@@ -50,7 +50,7 @@ function Variance() {
   const days = useDays(cash.data, (inv?.locations || []).map((l) => l.id).filter((id) => loc === 'ALL' || id === loc), inv?.today || '');
   if (!inv) return null;
   if (!can(inv, 'see_margins')) return <Alert kind="yellow" icon="shield">Cash vs stock compares takings with what was sold, so it is visible to the owner and anyone with See margins.</Alert>;
-  const recorder = inv.me.role === 'owner' || inv.me.role === 'manager';
+  const recorder = actsAsOwner(inv) || inv.me.role === 'manager';
   const t = TONE[story.tone];
   const shift = story.names.map((n) => inv.members.find((m) => m.display_name === n)).filter(Boolean);
   const branch = story.location?.name || 'the shop';
@@ -72,7 +72,7 @@ function Variance() {
             {story.pattern && <div className="ink3" style={{ fontSize: 14, lineHeight: 1.5, marginTop: 12 }}>{story.pattern}</div>}
             {story.tone === 'red' && (
               <div className="row wrap" style={{ marginTop: 16 }}>
-                {inv.me.role === 'owner' && (shift.length ? shift.map((m) => (
+                {actsAsOwner(inv) && (shift.length ? shift.map((m) => (
                   <a key={m!.id} className="btn btn-dark btn-sm" href={waLink(m!.phone, ask(m!.display_name.split(' ')[0]))} target="_blank" rel="noreferrer"><Icon name="wa" size={14} color="#fff" />Ask {m!.display_name.split(' ')[0]}</a>
                 )) : <a className="btn btn-dark btn-sm" href={waLink(null, ask('team'))} target="_blank" rel="noreferrer"><Icon name="wa" size={14} color="#fff" />Ask the {story.weekday || ''} shift</a>)}
                 {can(inv, 'approve_adjustments') && <button className="btn btn-secondary btn-sm" onClick={() => nav('/inventory/counts', { state: { newCount: { location_id: story.location?.id, area: `Whole store · ${story.weekday || 'end of day'} close` } } })}>Schedule a count for {story.weekday ? story.weekday + ' close' : 'closing time'}</button>}

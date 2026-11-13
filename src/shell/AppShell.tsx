@@ -1,6 +1,6 @@
 import { Suspense, createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { can, useInventory, useSession } from '../state/session';
+import { actsAsOwner, can, useInventory, useSession } from '../state/session';
 import { Icon } from '../components/Icon';
 import { Popover, Seg, Spinner } from '../components/ui';
 import { initials } from '../lib/format';
@@ -247,8 +247,9 @@ function Header({ onMenu }: { onMenu: () => void }) {
   const populated = (inv?.items.length ?? 0) > 0;
   const w = useWords();
   const title = path === '/sell/sales' ? (w.has_stock ? `${cap(w.sales)} & invoices` : 'Invoices') : path === '/sell/customers' ? cap(w.customers) : path === '/sell/orders' && w.sale === 'order' ? 'Orders' : titleFor(path);
-  const owner = inv?.me.role === 'owner';
-  const roleLabel = !inv ? '' : owner ? 'Owner view' : `${({ admin: 'Admin', manager: 'Manager', cashier: 'Cashier', accountant: 'Accountant' } as Record<string, string>)[inv.me.role] || 'Staff'} view · ${inv.me.display_name.split(' ')[0]}`;
+  const owner = actsAsOwner(inv);
+  const firstName = inv?.me.display_name.split(' ')[0] ?? '';
+  const roleLabel = !inv ? '' : inv.me.acts_as_owner ? `Acting owner · ${firstName}` : owner ? 'Owner view' : `${({ admin: 'Admin', manager: 'Manager', cashier: 'Cashier', accountant: 'Accountant' } as Record<string, string>)[inv.me.role] || 'Staff'} view · ${firstName}`;
   return (
     <header className="header">
       <div className="row hdr-left" style={{ gap: 14, minWidth: 0, flex: '1 1 360px', flexWrap: 'wrap' }}>
