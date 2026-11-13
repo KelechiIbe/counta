@@ -26,3 +26,9 @@ can_full
 dd_incomplete
 read_only
 opposing_parties
+identity_reviews[].reason
+identity_reviews[].handover
+identity_state.reason
+identity_slip.reason
+svc_identity_slip.reason
+handover_review

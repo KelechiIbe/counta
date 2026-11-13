@@ -252,20 +252,75 @@ begin
   select detail into f from practice_mandate_flags where client_id = c and kind = 'handover';
   assert f->>'reason' = 'not_director' and (f->>'ip_matches_firm')::boolean and f->>'ip' = '203.0.113.50' and f->>'handover_id' = h::text,
     format('handover_review_closes_payments: flagged, got %s', f);
-  -- The new owner's NIN check does not go round TaxStreem's check.
+  -- Neither the new owner's NIN check nor a NIN slip goes round TaxStreem's check: not a new slip, not one already stored.
   perform tests.as_service();
   assert public.svc_identity_nin(v_alias, o, '1234', 'Amina', null, 'Yusuf') = '{"verified": false, "reason": "handover_review"}'::jsonb,
     'handover_review_closes_payments: no NIN check meanwhile';
   perform tests.as_postgres();
+  update orgs set identity = identity || jsonb_build_object('slip', jsonb_build_object('path', o || '/kyc/nin-slip-old.jpg', 'file_name', 'old.jpg', 'at', now(), 'read', false))
+  where id = o;
+  perform tests.as_service();
+  perform tests.throws(format($q$select public.svc_identity_slip(%L, %L, '{"is_nin_document": true, "first_name": "Amina", "surname": "Yusuf", "nin_last4": "1234"}')$q$, v_alias, o),
+    'P0001: Payments open once TaxStreem has checked the handover.%');
+  perform tests.as_user(v_alias);
+  perform tests.throws(format('select public.identity_slip(%L, %L)', o, o || '/kyc/nin-slip-new.jpg'), '%checked the handover%');
+  assert (select x->>'reason' = 'handover' and (x->>'handover_review')::boolean and x->>'status' = 'review' from public.identity_state(o) x),
+    'handover_review_closes_payments: the screens know';
+  perform tests.as_postgres();
   assert (select identity_status from orgs where id = o) = 'review', 'handover_review_closes_payments: still in review';
-  -- TaxStreem approves through the identity review: payments open.
+  -- TaxStreem sees it is a handover, of a business confirmed before it.
   perform tests.as_user(tests.id('admin'), 'aal2');
-  assert exists (select 1 from jsonb_array_elements(public.identity_reviews()) x where x->>'org_id' = o::text), 'handover_review_closes_payments: in the review queue';
+  assert exists (select 1 from jsonb_array_elements(public.identity_reviews()) x
+                 where x->>'org_id' = o::text and x->>'reason' = 'handover' and x->'handover'->>'status_before' = 'verified' and x->'handover'->>'id' = h::text),
+    'handover_review_closes_payments: in the review queue, as a handover';
   assert exists (select 1 from jsonb_array_elements(public.admin_mandates()->'flags') x where x->>'kind' = 'handover' and x->'business'->>'org_id' = o::text),
     'handover_review_closes_payments: on the mandates page';
-  perform public.review_identity(o, true, null);
+  -- Rejected: it stays shut, and only TaxStreem deciding again opens it.
+  perform public.review_identity(o, false, 'Not the owner on our records');
+  perform tests.as_postgres();
+  assert (select identity_status = 'rejected' and identity->>'reason' = 'handover' from orgs where id = o) and not private.payments_open(o), 'handover_review_closes_payments: rejected';
+  assert (select resolved_at is null from practice_mandate_flags where client_id = c and kind = 'handover'), 'handover_review_closes_payments: the flag stays open';
+  perform tests.throws(format('select private.require_payments_open(%L)', o), '42501: Payments are locked: TaxStreem did not accept the handover of the business.%');
+  perform tests.as_service();
+  assert public.svc_identity_nin(v_alias, o, '1234', 'Amina', null, 'Yusuf')->>'reason' = 'handover_review', 'handover_review_closes_payments: no NIN check after a rejection';
+  perform tests.throws(format($q$select public.svc_identity_slip(%L, %L, '{"is_nin_document": true, "first_name": "Amina", "surname": "Yusuf", "nin_last4": "1234"}')$q$, v_alias, o),
+    '%did not accept the handover%');
+  perform tests.as_user(v_alias);
+  perform tests.throws(format('select public.identity_slip(%L, %L)', o, o || '/kyc/nin-slip-new.jpg'), '%did not accept the handover%');
+  -- Approved (the business was confirmed before the handover): payments open, the flag resolved.
+  perform tests.as_user(tests.id('admin'), 'aal2');
+  assert public.review_identity(o, true, null)->>'status' = 'approved', 'handover_review_closes_payments: approve';
   perform tests.as_postgres();
   assert (select identity_status = 'approved' from orgs where id = o) and private.payments_open(o), 'handover_review_closes_payments: approved, open';
+  perform private.require_payments_open(o);
+  assert (select resolved_at is not null and resolution_note like 'Identity review: approved%' from practice_mandate_flags where client_id = c and kind = 'handover'),
+    'handover_review_closes_payments: flag resolved';
+  perform tests.as_service();
+  assert (public.svc_identity_nin(v_alias, o, '1234', 'Amina', null, 'Yusuf')->>'already')::boolean, 'handover_review_closes_payments: confirmed';
+  perform tests.as_postgres();
+end $$;
+
+-- test: handover_approval_back_to_pending
+-- A business handed over before its identity was confirmed: TaxStreem's approval sends it back to the ordinary check
+-- ('pending', no longer a handover review), and the new owner then confirms it like any owner (here with their own NIN,
+-- as the business is not on CAC).
+do $$
+declare o uuid := tests.id('ho');
+begin
+  assert (select identity_status = 'review' and identity->'handover'->>'status_before' = 'pending' from orgs where id = o), 'handover_approval_back_to_pending: before';
+  perform tests.as_user(tests.id('admin'), 'aal2');
+  assert public.review_identity(o, true, 'Owner confirmed by phone')->>'status' = 'pending', 'handover_approval_back_to_pending: pending';
+  perform tests.as_postgres();
+  assert (select identity_status = 'pending' and not identity ? 'reason' and identity ? 'handover' from orgs where id = o)
+     and not private.handover_pending('pending', (select identity from orgs where id = o)) and not private.payments_open(o),
+    'handover_approval_back_to_pending: the ordinary check';
+  perform tests.throws(format('select private.require_payments_open(%L)', o), '42501: Payments open once a director confirms their NIN.%');
+  perform tests.as_user(tests.id('new_owner'));
+  assert (select x->'reason' = 'null'::jsonb and not (x->>'handover_review')::boolean from public.identity_state(o) x), 'handover_approval_back_to_pending: the screens know';
+  perform tests.as_service();
+  assert (public.svc_identity_nin(tests.id('new_owner'), o, '4321', 'Ngozi', null, 'Owner')->>'verified')::boolean, 'handover_approval_back_to_pending: the owner confirms';
+  perform tests.as_postgres();
+  assert (select identity_status = 'verified' from orgs where id = o) and private.payments_open(o), 'handover_approval_back_to_pending: open';
 end $$;
 
 -- test: handover_accept_refusals
@@ -647,6 +702,11 @@ begin
   end loop;
   assert v_n = v_lines, format('export_rows: activity paged, %s of %s', v_n, v_lines);
   perform tests.throws(format('select public.svc_export_activity(%L, %L, 10)', o, '[1, 2]'), '%page%');
+  -- A page marker of the right shape with values of the wrong type: refused in plain words.
+  perform tests.throws(format('select public.svc_export_activity(%L, %L, 10)', o, '[{"a": 1}]'), 'P0001: That page of the export is not valid.');
+  perform tests.throws(format('select public.svc_export_ledger(%L, %L, 10)', o, '["not a date", 1, 2]'), 'P0001: That page of the export is not valid.');
+  perform tests.throws(format('select public.svc_export_ledger(%L, %L, 10)', o, '["2026-01-01", "x", 2]'), 'P0001: That page of the export is not valid.');
+  perform tests.throws(format('select public.svc_export_rows(%L, %L, %L, 1)', o, 'role_permissions', '["not-a-uuid", "manager"]'), 'P0001: That page of the export is not valid.');
   -- A value longer than 4 KB, an array, comes out whole.
   perform tests.as_postgres();
   v_big := jsonb_build_object('items', (select jsonb_agg(jsonb_build_object('n', g, 'label', 'item number ' || g)) from generate_series(1, 300) g));
@@ -774,8 +834,9 @@ declare f text;
 begin
   foreach f in array array['private.org_pause_all(uuid)', 'private.export_tables()', 'private.seat_exempt(uuid, uuid)', 'private.require_not_kept(date)',
     'private.orgs_retention_guard()', 'private.outbound_check(uuid, text, text, text)', 'private.practice_sync_seats(uuid)', 'private.meter_usage(uuid, text)',
-    'private.enforce_plan()', 'private.mandate_client_require(uuid)', 'private.export_redact(jsonb)', 'private.export_after(text, integer)',
-    'private.payments_open(uuid)', 'private.require_payments_open(uuid)', 'private.handover_review(text, jsonb)'] loop
+    'private.enforce_plan()', 'private.mandate_client_require(uuid)', 'private.export_redact(jsonb)', 'private.export_after(text, text[])',
+    'private.payments_open(uuid)', 'private.require_payments_open(uuid)', 'private.handover_pending(text, jsonb)', 'private.handover_pending_text(text)',
+    'private.identity_json(uuid, boolean)'] loop
     assert not has_function_privilege('authenticated', f, 'execute') and not has_function_privilege('anon', f, 'execute'), format('end_helpers_revoked: %s', f);
   end loop;
   foreach f in array array['public.svc_export_rows(uuid, text, text, integer)', 'public.svc_export_ledger(uuid, text, integer)', 'public.svc_export_activity(uuid, text, integer)',

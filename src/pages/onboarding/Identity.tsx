@@ -16,7 +16,11 @@ export type Identity = {
   people: { name: string; role: string }[];
   slip: { path: string; file_name: string; at: string; read: boolean; name?: string; last4?: string; is_nin_document?: boolean; warnings?: string[] } | null;
   review: { approved: boolean; note: string | null; at: string } | null;
+  // A handover TaxStreem has not approved: no NIN check or slip counts until it has.
+  reason?: string | null; handover_review?: boolean;
 };
+
+const HANDOVER_WAIT = 'Payments open once TaxStreem has checked the handover of the business. This usually takes a working day. Your books work meanwhile.';
 
 export function useIdentity(orgId: string | null | undefined) {
   return useQuery({ queryKey: ['identity', orgId], enabled: !!orgId, queryFn: () => rpc<Identity>('identity_state', { p_org: orgId }) });
@@ -52,6 +56,7 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }
   const [busy, setBusy] = useState<'nin' | 'slip' | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [miss, setMiss] = useState<string | null>(null);
+  const [held, setHeld] = useState<string | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const s = id.data;
   if (id.isLoading || !s) return <div className="row" style={{ justifyContent: 'center', padding: 30 }}><Spinner /></div>;
@@ -61,13 +66,21 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }
   const ok = s.status === 'verified' || s.status === 'approved' || s.status === 'not_required';
 
   async function check() {
-    setErr(null); setMiss(null);
+    setErr(null); setMiss(null); setHeld(null);
     const d = nin.replace(/\D/g, '');
     if (d.length !== 11) { setErr('An NIN has 11 digits.'); return; }
     setBusy('nin');
     try {
       const r = await checkNin(orgId, d);
       setNin('');
+      if (!r.result.verified && r.result.reason === 'handover_review') {
+        // Not a name mismatch, and no slip helps: TaxStreem decides the handover first.
+        setHeld(HANDOVER_WAIT);
+        onResult?.('I checked my NIN on screen.', HANDOVER_WAIT);
+        await refresh();
+        setBusy(null);
+        return;
+      }
       const why = r.result.verified ? '' : r.result.reason === 'not_account_holder' ? 'The name on that NIN is not the name on your Counta account.'
         : r.result.reason === 'no_directors_on_record' ? 'CAC has no directors on record for the business, so the NIN cannot be matched.'
         : `The name on that NIN does not match ${names.length ? listNames(names) : 'the directors CAC lists'}.`;
@@ -94,6 +107,18 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }
             : `Confirmed: ${s.matched || 'a director'}${s.last4 ? `, NIN ending ${s.last4}` : ''}${s.method === 'slip' ? ', from the NIN slip' : ''}. Payments are open.`}
         </Alert>
         {onDone && <div><button className="btn btn-primary" onClick={onDone}>Continue<Icon name="arrow" size={16} color="#fff" /></button></div>}
+      </div>
+    );
+  }
+  if (s.handover_review) {
+    const rejected = s.status === 'rejected';
+    return (
+      <div className="stack" style={{ gap: 12 }}>
+        <Alert kind={rejected ? 'red' : 'blue'} icon={rejected ? 'alert' : 'clock'}>
+          {rejected ? `TaxStreem did not accept the handover of the business${s.review?.note ? `: ${s.review.note}` : ''}. Payments stay locked; contact TaxStreem about it.`
+            : HANDOVER_WAIT}
+        </Alert>
+        {onDone && <div><button className="btn btn-primary" onClick={onDone}>Carry on<Icon name="arrow" size={16} color="#fff" /></button></div>}
       </div>
     );
   }
@@ -129,6 +154,7 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }
         Counta asks NIMC for the name on the NIN and compares it with the directors on the CAC record. Only the result and the last four digits are kept.
         {live ? ' You can also read it out to Martina.' : ''}
       </div>
+      {held && <Alert kind="blue" icon="clock">{held}</Alert>}
       {miss && <Alert kind="amber" icon="alert">{miss} Add your NIN slip instead, and TaxStreem will check it if it still does not match.</Alert>}
       {err && <Alert kind="red" icon="alert">{err}</Alert>}
       <div className="row wrap" style={{ gap: 8 }}>

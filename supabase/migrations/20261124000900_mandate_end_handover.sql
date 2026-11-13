@@ -625,11 +625,19 @@ begin
   return jsonb_build_object('client_id', c.id, 'org_id', o.id, 'read_only_at', o.read_only_at, 'retain_until', o.retain_until);
 end $$;
 
--- Money and stored files while a business is kept read-only, or after a handover TaxStreem has still to check.
--- A handover TaxStreem is checking (practice_handover_accept), until its identity review decides.
-create or replace function private.handover_review(p_status text, p_identity jsonb) returns boolean
+-- Money and stored files while a business is kept read-only, or after a handover TaxStreem has still to approve.
+-- A handover TaxStreem has not approved (practice_handover_accept): in review, or rejected. Until TaxStreem decides it
+-- through the identity review (review_identity), no NIN check or NIN slip of the new owner's verifies the business.
+create or replace function private.handover_pending(p_status text, p_identity jsonb) returns boolean
 language sql immutable set search_path = public, private as $$
-  select coalesce(p_status = 'review' and p_identity->>'reason' = 'handover' and p_identity->'review' is null, false)
+  select coalesce(p_identity->>'reason' = 'handover' and p_status in ('review', 'rejected'), false)
+$$;
+
+-- Why the identity cannot be confirmed by the business while its handover waits for TaxStreem.
+create or replace function private.handover_pending_text(p_status text) returns text
+language sql immutable set search_path = public, private as $$
+  select case when p_status = 'rejected' then 'Payments are locked: TaxStreem did not accept the handover of the business. Contact TaxStreem about it.'
+    else 'Payments open once TaxStreem has checked the handover. This usually takes a working day.' end
 $$;
 
 -- payments_open: as before, and never for a business kept read-only after its engagement ended.
@@ -640,7 +648,8 @@ language sql stable security definer set search_path = public, private as $$
     from orgs where id = p_org), false)
 $$;
 
--- require_payments_open: as before; a business kept read-only is refused, and a handover TaxStreem is checking says so.
+-- require_payments_open: as before; a business kept read-only is refused, and a handover TaxStreem has not approved says
+-- so.
 create or replace function private.require_payments_open(p_org uuid) returns void
 language plpgsql stable security definer set search_path = public, private as $$
 declare v_status text; v_managed uuid; v_confirmed timestamptz; v_read_only timestamptz; v_identity jsonb;
@@ -657,17 +666,16 @@ begin
     if v_managed is null or (v_confirmed is not null and private.practice_can_full(v_managed)) then return; end if;
     raise exception 'Payments open once a director of the business confirms, and while the firm may run full mandates.' using errcode = '42501';
   end if;
+  if private.handover_pending(v_status, v_identity) then raise exception '%', private.handover_pending_text(v_status) using errcode = '42501'; end if;
   raise exception '%', case v_status
-    when 'review' then case when private.handover_review(v_status, v_identity)
-      then 'Payments open once TaxStreem has checked the handover. This usually takes a working day.'
-      else 'Payments open once TaxStreem has checked the NIN slip. This usually takes a working day.' end
+    when 'review' then 'Payments open once TaxStreem has checked the NIN slip. This usually takes a working day.'
     when 'rejected' then 'Payments are locked: TaxStreem could not confirm a director''s identity. A director can do the NIN check in Settings.'
     else 'Payments open once a director confirms their NIN. Do the NIN check in Settings, Business identity, or ask Martina.' end
     using errcode = '42501';
 end $$;
 
--- svc_identity_nin: as before, and a handover TaxStreem is checking is not gone round by a NIN check (TaxStreem decides it
--- through the identity review).
+-- svc_identity_nin: as before, and a handover TaxStreem has not approved is not gone round by a NIN check (TaxStreem
+-- decides it through the identity review).
 create or replace function public.svc_identity_nin(p_user uuid, p_org uuid, p_last4 text, p_first text, p_middle text, p_last text,
   p_conversation text default null) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
@@ -683,7 +691,7 @@ begin
   if o.identity_status in ('verified', 'approved', 'not_required') then
     return jsonb_build_object('verified', true, 'already', true, 'matched', o.identity->>'matched');
   end if;
-  if private.handover_review(o.identity_status, o.identity) then
+  if private.handover_pending(o.identity_status, o.identity) then
     return jsonb_build_object('verified', false, 'reason', 'handover_review');
   end if;
   v_registered := exists (select 1 from kyc_profiles k where k.org_id = p_org and k.status = 'submitted' and k.source = 'cac');
@@ -709,6 +717,135 @@ begin
   return jsonb_build_object('verified', false, 'reason', case when not v_registered then 'not_account_holder'
     when jsonb_array_length(v_people) = 0 then 'no_directors_on_record' else 'no_match' end,
     'people', (select coalesce(jsonb_agg(x->>'name'), '[]'::jsonb) from jsonb_array_elements(v_people) x));
+end $$;
+
+-- identity_slip: as before, and no NIN slip is added while a handover waits for TaxStreem.
+create or replace function public.identity_slip(p_org uuid, p_path text, p_file_name text default null) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare m public.members; o public.orgs;
+begin
+  m := private.require(p_org, null);
+  if not private.perm_of(m, 'owner') then raise exception 'Only the owner adds the NIN slip.' using errcode = '42501'; end if;
+  if coalesce(p_path, '') !~ ('^' || p_org::text || '/kyc/nin-slip-[A-Za-z0-9._-]{1,120}$') then raise exception 'Upload the NIN slip again.'; end if;
+  select * into o from orgs where id = p_org;
+  if o.identity_status in ('verified', 'approved', 'not_required') then
+    raise exception 'The business''s identity is already confirmed.';
+  end if;
+  if private.handover_pending(o.identity_status, o.identity) then raise exception '%', private.handover_pending_text(o.identity_status); end if;
+  update orgs set identity = identity || jsonb_build_object('slip', jsonb_build_object('path', p_path, 'file_name', left(coalesce(p_file_name, 'NIN slip'), 120),
+    'at', now(), 'read', false)) where id = p_org;
+  return public.identity_state(p_org);
+end $$;
+
+-- svc_identity_slip: as before, and a slip read while a handover waits for TaxStreem (one added before it) changes nothing.
+create or replace function public.svc_identity_slip(p_user uuid, p_org uuid, p_extract jsonb) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare o public.orgs; v_people jsonb; v_match jsonb; v_self text; v_registered boolean; v_is_slip boolean := coalesce((p_extract->>'is_nin_document')::boolean, false);
+begin
+  if not private.acts_as_owner(p_org, p_user) then
+    raise exception 'Only the owner adds the NIN slip.' using errcode = '42501';
+  end if;
+  select * into o from orgs where id = p_org for update;
+  if private.handover_pending(o.identity_status, o.identity) then raise exception '%', private.handover_pending_text(o.identity_status); end if;
+  if o.identity->'slip' is null then raise exception 'Add the NIN slip first.'; end if;
+  v_registered := exists (select 1 from kyc_profiles k where k.org_id = p_org and k.status = 'submitted' and k.source = 'cac');
+  v_people := private.identity_people(p_org);
+  if not v_registered then
+    select coalesce(nullif(trim(raw_user_meta_data->>'full_name'), ''), '') into v_self from auth.users where id = p_user;
+    v_people := jsonb_build_array(jsonb_build_object('role', 'owner', 'name', v_self, 'surname', '', 'given', ''));
+  end if;
+  v_match := case when v_is_slip then private.identity_match(p_extract->>'first_name', p_extract->>'middle_name', p_extract->>'surname', v_people) end;
+  update orgs set
+    identity = identity || jsonb_build_object('slip', (identity->'slip') || jsonb_build_object('read', true, 'read_at', now(),
+      'name', left(concat_ws(' ', p_extract->>'first_name', p_extract->>'middle_name', p_extract->>'surname'), 160),
+      'last4', right(regexp_replace(coalesce(p_extract->>'nin_last4', ''), '\D', '', 'g'), 4), 'is_nin_document', v_is_slip,
+      'warnings', coalesce(p_extract->'warnings', '[]'::jsonb)))
+      || case when v_match is not null then jsonb_build_object('method', 'slip', 'matched', v_match->>'name', 'matched_role', v_match->>'role',
+           'last4', right(regexp_replace(coalesce(p_extract->>'nin_last4', ''), '\D', '', 'g'), 4), 'at', now(), 'by', p_user) else '{}'::jsonb end,
+    identity_status = case when v_match is not null then 'verified' else 'review' end
+  where id = p_org;
+  return private.identity_json(p_org, true);
+end $$;
+
+-- identity_json: as before, and whether the identity waits on a handover TaxStreem has not approved (reason 'handover',
+-- handover_review), so the screens and the edge functions stop before any NIN or slip check.
+create or replace function private.identity_json(p_org uuid, p_owner boolean) returns jsonb
+language plpgsql stable security definer set search_path = public, private as $$
+declare o public.orgs;
+begin
+  select * into o from orgs where id = p_org;
+  return jsonb_build_object(
+    'status', o.identity_status,
+    'payments_open', private.payments_open(p_org),
+    'can_check', p_owner,
+    'method', o.identity->>'method', 'matched', o.identity->>'matched', 'matched_role', o.identity->>'matched_role',
+    'last4', o.identity->>'last4', 'at', o.identity->>'at',
+    'attempts', coalesce((o.identity->>'attempts')::int, 0),
+    'registered', exists (select 1 from kyc_profiles k where k.org_id = p_org and k.status = 'submitted' and k.source = 'cac'),
+    'people', (select coalesce(jsonb_agg(jsonb_build_object('name', x->>'name', 'role', x->>'role')), '[]'::jsonb) from jsonb_array_elements(private.identity_people(p_org)) x),
+    'slip', case when p_owner then o.identity->'slip' end,
+    'review', o.identity->'review',
+    'reason', o.identity->>'reason', 'handover_review', private.handover_pending(o.identity_status, o.identity));
+end $$;
+
+-- identity_reviews: as before, each business also with why it is reviewed (reason 'handover') and the handover (its id,
+-- when, and the identity's status before it).
+create or replace function public.identity_reviews() returns jsonb
+language plpgsql stable security definer set search_path = public, private as $$
+begin
+  if not private.is_reviewer() then raise exception 'Only TaxStreem reviewers see this.' using errcode = '42501'; end if;
+  return (select coalesce(jsonb_agg(jsonb_build_object(
+      'org_id', o.id, 'business', o.name, 'rc_number', o.rc_number, 'legal_form', o.legal_form, 'status', o.identity_status,
+      'people', (select coalesce(jsonb_agg(jsonb_build_object('name', x->>'name', 'role', x->>'role')), '[]'::jsonb) from jsonb_array_elements(private.identity_people(o.id)) x),
+      'slip', o.identity->'slip', 'review', o.identity->'review', 'attempts', coalesce((o.identity->>'attempts')::int, 0),
+      'reason', o.identity->>'reason', 'handover', o.identity->'handover',
+      'owner', (select jsonb_build_object('name', mb.display_name, 'email', coalesce(mb.email, u.email)) from members mb left join auth.users u on u.id = mb.user_id
+        where mb.org_id = o.id and mb.role = 'owner' limit 1))
+    order by o.identity_status <> 'review', (o.identity->'slip'->>'read_at') desc nulls last), '[]'::jsonb)
+    from orgs o
+    where o.identity_status = 'review'
+       or (o.identity_status in ('approved', 'rejected') and (o.identity->'review'->>'at')::timestamptz > now() - interval '30 days'));
+end $$;
+
+-- review_identity: as before; a handover is approved as 'approved' only when the business's identity was confirmed before
+-- it (verified, approved or not needed), else it goes back to 'pending' (the new owner does the NIN check as any owner)
+-- and is no longer a handover review. A handover rejected stays one, and its 'handover' flag stays open (TaxStreem decides
+-- it again); approved, the flag is resolved.
+create or replace function public.review_identity(p_org uuid, p_approve boolean, p_note text default null) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare o public.orgs; v_handover boolean; v_status text;
+begin
+  if not private.is_reviewer() then raise exception 'Only TaxStreem reviewers decide this.' using errcode = '42501'; end if;
+  select * into o from orgs where id = p_org for update;
+  if not found then raise exception 'Business not found.'; end if;
+  if o.identity_status not in ('review', 'approved', 'rejected') then raise exception 'There is nothing to review for %.', o.name; end if;
+  if not p_approve and length(trim(coalesce(p_note, ''))) < 5 then raise exception 'Say why, so the business knows what to do next.'; end if;
+  v_handover := coalesce(o.identity->>'reason' = 'handover', false);
+  v_status := case when not p_approve then 'rejected'
+    when v_handover and coalesce(o.identity->'handover'->>'status_before', '') not in ('verified', 'approved', 'not_required') then 'pending'
+    else 'approved' end;
+  update orgs set identity_status = v_status,
+    identity = case when v_status = 'pending' then identity - 'reason' else identity end
+      || jsonb_build_object('review', jsonb_build_object('approved', p_approve, 'note', nullif(left(trim(coalesce(p_note, '')), 500), ''),
+      'at', now(), 'by', auth.uid()))
+  where id = p_org;
+  perform private.audit('review_identity', p_org::text, jsonb_build_object('approved', p_approve, 'note', nullif(trim(coalesce(p_note, '')), '')));
+  if v_handover then
+    update practice_mandate_flags set resolved_at = now(), resolved_by = auth.uid(),
+      resolution_note = left('Identity review: approved' || coalesce('. ' || nullif(trim(p_note), ''), ''), 1000)
+    where p_approve and kind = 'handover' and detail->>'org_id' = p_org::text and resolved_at is null;
+    perform private.notify_perm(p_org, 'owner', 'identity',
+      case when v_status = 'approved' then 'Payments are open' when v_status = 'pending' then 'TaxStreem checked the handover'
+        else 'TaxStreem did not accept the handover' end,
+      case when v_status = 'approved' then 'TaxStreem checked the handover of the business. Your wallet, payment links and payouts are ready.'
+        when v_status = 'pending' then 'Confirm a director''s NIN in Settings, Business identity, to open payments.'
+        else coalesce(nullif(trim(p_note), ''), 'Contact TaxStreem about it.') end, '/settings#identity', 'identity-' || p_org);
+    return jsonb_build_object('status', v_status);
+  end if;
+  perform private.notify_perm(p_org, 'owner', 'identity', case when p_approve then 'Payments are open' else 'We could not confirm the NIN slip' end,
+    case when p_approve then 'TaxStreem confirmed the director''s identity. Your wallet, payment links and payouts are ready.'
+      else coalesce(nullif(trim(p_note), ''), 'Check the NIN slip and try again.') end, '/settings#identity', 'identity-' || p_org);
+  return jsonb_build_object('status', case when p_approve then 'approved' else 'rejected' end);
 end $$;
 
 -- document_may_delete: as before, and no stored file of a business kept read-only is deleted until its records are past
@@ -821,19 +958,25 @@ language sql immutable set search_path = public, private as $$
     from jsonb_each(p) e) end
 $$;
 
--- The page an export continues after: p_after (the last key of the page before, a JSON array of p_n values, as next gave
--- it), or null for the first page.
-create or replace function private.export_after(p_after text, p_n int) returns jsonb
-language plpgsql immutable set search_path = public, private as $$
-declare v jsonb;
+-- The page an export continues after: p_after (the last key of the page before, a JSON array of one value per key column,
+-- each readable as that column's type in p_types, as next gave it), or null for the first page. Anything else is refused
+-- in plain words.
+create or replace function private.export_after(p_after text, p_types text[]) returns jsonb
+language plpgsql stable set search_path = public, private as $$
+declare v jsonb; i int;
 begin
   if p_after is null then return null; end if;
   begin
     v := p_after::jsonb;
+    if jsonb_typeof(v) is distinct from 'array' or jsonb_array_length(v) <> cardinality(p_types) then raise exception 'not a page'; end if;
+    for i in 1 .. cardinality(p_types) loop
+      if jsonb_typeof(v->(i - 1)) not in ('string', 'number') then raise exception 'not a page'; end if;
+      -- The types come from the catalog (the table's key) or are fixed by the caller.
+      execute format('select ($1)::%s', p_types[i]) using v->>(i - 1);
+    end loop;
   exception when others then
     raise exception 'That page of the export is not valid.';
   end;
-  if jsonb_typeof(v) is distinct from 'array' or jsonb_array_length(v) <> p_n then raise exception 'That page of the export is not valid.'; end if;
   return v;
 end $$;
 
@@ -871,7 +1014,7 @@ begin
   if v_cols is null then raise exception 'That table has no primary key.'; end if;
   select string_agg(format('t.%I', x), ', ' order by n) into v_order from unnest(v_cols) with ordinality u(x, n);
   v_key := 'jsonb_build_array(' || v_order || ')';
-  v_after := private.export_after(p_after, cardinality(v_cols));
+  v_after := private.export_after(p_after, v_types);
   if v_after is not null then
     select format(' and (%s) > (%s)', v_order, string_agg(format('($2->>%s)::%s', n - 1, ty), ', ' order by n)) into v_where
     from unnest(v_types) with ordinality u(ty, n);
@@ -892,7 +1035,7 @@ end $$;
 -- debit, credit, memo}], next}, paged as svc_export_rows (the key: date, journal number, line).
 create or replace function public.svc_export_ledger(p_org uuid, p_after text default null, p_limit int default 1000) returns jsonb
 language plpgsql stable security definer set search_path = public, private as $$
-declare v_limit int := least(greatest(coalesce(p_limit, 1000), 1), 1000); v_after jsonb := private.export_after(p_after, 3); v_rows jsonb; v_next jsonb;
+declare v_limit int := least(greatest(coalesce(p_limit, 1000), 1), 1000); v_after jsonb := private.export_after(p_after, array['date', 'integer', 'bigint']); v_rows jsonb; v_next jsonb;
 begin
   select coalesce(jsonb_agg(x.j order by x.n), '[]'::jsonb), (array_agg(x.k order by x.n desc))[1] into v_rows, v_next
   from (select jsonb_build_object('date', j.entry_date, 'journal_ref', j.ref, 'account_code', l.account_code,
@@ -910,7 +1053,7 @@ end $$;
 -- svc_export_rows (the key: the entry's id).
 create or replace function public.svc_export_activity(p_org uuid, p_after text default null, p_limit int default 1000) returns jsonb
 language plpgsql stable security definer set search_path = public, private as $$
-declare v_limit int := least(greatest(coalesce(p_limit, 1000), 1), 1000); v_after jsonb := private.export_after(p_after, 1); v_rows jsonb; v_next jsonb;
+declare v_limit int := least(greatest(coalesce(p_limit, 1000), 1), 1000); v_after jsonb := private.export_after(p_after, array['bigint']); v_rows jsonb; v_next jsonb;
 begin
   select coalesce(jsonb_agg(x.j order by x.n), '[]'::jsonb), (array_agg(x.k order by x.n desc))[1] into v_rows, v_next
   from (select jsonb_build_object('id', a.id, 'at', a.at, 'practice_id', a.practice_id, 'actor_name', a.actor_name, 'source', a.source,
@@ -1151,8 +1294,9 @@ end $$;
 -- callable by the signed-in person.
 revoke all on function private.outbound_check(uuid, text, text, text), private.seat_exempt(uuid, uuid), private.meter_usage(uuid, text),
   private.enforce_plan(), private.practice_sync_seats(uuid), private.org_pause_all(uuid), private.require_not_kept(date), private.orgs_retention_guard(),
-  private.export_tables(), private.mandate_client_require(uuid), private.export_redact(jsonb), private.export_after(text, int),
-  private.payments_open(uuid), private.require_payments_open(uuid), private.handover_review(text, jsonb)
+  private.export_tables(), private.mandate_client_require(uuid), private.export_redact(jsonb), private.export_after(text, text[]),
+  private.payments_open(uuid), private.require_payments_open(uuid), private.handover_pending(text, jsonb), private.handover_pending_text(text),
+  private.identity_json(uuid, boolean)
   from public, anon, authenticated;
 revoke execute on function public.practice_handover_start(uuid, jsonb), public.practice_handover_accept(text), public.practice_set_engagement_partner(uuid, uuid),
   public.practice_end_mandate(uuid, jsonb), public.practice_export_begin(uuid), public.practice_set_send_mode(uuid, text),

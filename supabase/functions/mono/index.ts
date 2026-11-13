@@ -376,6 +376,8 @@ async function ninCheck(sb: SupabaseClient, user: string, orgId: string, nin: un
   // A conversation in which the NIN was said is deleted from ElevenLabs once the check is done, whatever the outcome.
   if (conv) await svc('svc_forget_add', { p_user: user, p_conversation: conv });
   if (['verified', 'approved', 'not_required'].includes(st.status)) return { verified: true, already: true, matched: st.matched };
+  // A handover TaxStreem has not approved: the database refuses any NIN until it has, so NIMC is not asked (or paid).
+  if (st.handover_review) return { verified: false, reason: 'handover_review' };
   const n = digits(nin);
   if (n.length !== 11) throw new UserError('An NIN has 11 digits. Check it and try again.');
   if (!(await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'nin' }))) {
