@@ -450,13 +450,13 @@ begin
   perform tests.throws(format('select public.recovery_handover_start(%L)', v), '%not waiting for a handover%');
   perform tests.as_user(tests.id('cleo'));
   r := public.recovery_get(v);
-  assert r->>'status' = 'disputed' and r->>'dispute_reason' = 'Cleo resigned as a director last year.' and (r->>'support_open')::boolean,
-    format('recovery_dispute_and_support: Cleo sees it, got %s', r);
+  assert r->>'status' = 'disputed' and r->>'dispute_reason' = 'Cleo resigned as a director last year.' and (r->>'support_open')::boolean
+     and r->'support' = 'null', format('recovery_dispute_and_support: Cleo sees it (the holder''s request is not hers), got %s', r);
   perform tests.throws($q$select public.support_request('{"kind": "recovery_waiting"}')$q$, '%Choose the recovery%');
   perform tests.throws($q$select public.support_request('{"kind": "other", "message": "help"}')$q$, '%at least 10 characters%');
   perform tests.throws($q$select public.support_request('{"kind": "refund"}')$q$, '%Choose what the request is about%');
   r := public.support_request(jsonb_build_object('kind', 'recovery_waiting', 'recovery_id', v, 'message', 'I am a director; please check my request.'));
-  assert r->>'status' = 'open', 'recovery_dispute_and_support: asked';
+  assert r->>'status' = 'open' and public.recovery_get(v)->'support'->>'kind' = 'recovery_waiting', 'recovery_dispute_and_support: asked';
   perform tests.throws(format($q$select public.support_request(%L)$q$, jsonb_build_object('kind', 'recovery_no_access', 'recovery_id', v)), '%has your request about this already%');
   perform tests.as_user(tests.id('eze'));
   perform tests.throws(format($q$select public.support_request(%L)$q$, jsonb_build_object('kind', 'recovery_waiting', 'recovery_id', v)), '%Recovery not found%');
@@ -493,6 +493,15 @@ begin
   perform tests.as_user(tests.id('admin1'), 'aal2');
   perform tests.throws(format($q$select public.admin_support_close(%L, 'Done already')$q$, s), '%closed already%');
   perform tests.as_postgres();
+  -- Another request, closed with a note.
+  insert into support_cases (kind, user_id, message, contact_email) values ('other', tests.id('eze'), 'I cannot sign in to my old business.', 'eze@director.example.test')
+  returning id into s;
+  perform tests.as_user(tests.id('reviewer1'), 'aal2');
+  perform tests.throws(format($q$select public.admin_support_close(%L, 'ok')$q$, s), '%at least 5%');
+  assert public.admin_support_close(s, 'Replied by email.')->>'status' = 'closed', 'recovery_dispute_and_support: closed';
+  perform tests.as_postgres();
+  assert (select closed_by = tests.id('reviewer1') and close_note = 'Replied by email.' from support_cases where id = s)
+     and exists (select 1 from admin_audit where action = 'support_close' and target = s::text), 'recovery_dispute_and_support: recorded';
 end $$;
 
 -- test: recovery_review_and_holder_addresses

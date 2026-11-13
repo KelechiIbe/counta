@@ -213,7 +213,8 @@ begin
   if r.check_id is not null then select * into k from identity_checks where id = r.check_id; end if;
   select coalesce(nullif(btrim(raw_user_meta_data->>'full_name'), ''), split_part(email, '@', 1)), email into v_name, v_email
   from auth.users where id = r.user_id;
-  select * into s from support_cases where recovery_id = r.id order by created_at desc limit 1;
+  -- The person sees their own request; the holder (and TaxStreem) the latest one.
+  select * into s from support_cases where recovery_id = r.id and (p_holder or user_id = r.user_id) order by created_at desc limit 1;
   return jsonb_build_object('id', r.id, 'status', r.status, 'business', o.name, 'created_at', r.created_at,
     'matched_name', r.matched_name, 'matched_role', r.matched_role, 'verified_at', r.verified_at, 'handover_due', r.handover_due,
     'handover_at', r.handover_at, 'completed_at', r.completed_at, 'review_reason', r.review_reason, 'dispute_reason', r.dispute_reason,
@@ -502,6 +503,8 @@ begin
     update practice_director_confirmations set status = 'cancelled', token_hash = null, token_expires = null, otp_hash = null, otp_expires = null
     where client_id = c.id and status in ('pending', 'review');
     update practice_clients set status = 'ended', end_kind = 'handover', ended_at = coalesce(ended_at, now()), ended_by = r.user_id where id = c.id and status = 'active';
+    -- The firm stops paying for the plan at the end of its period, as when any engagement ends.
+    update subscriptions set cancel_at_period_end = true, updated_at = now() where org_id = o.id and paid_by = c.practice_id;
     perform private.practice_sync_seats(c.id);
     perform private.practice_notify(c.practice_id, o.name || ' was taken over by its director',
       left(v_name, 80) || ' proved with their NIN that they are a director on its CAC record and took the business over. The firm''s places in it have ended.',
