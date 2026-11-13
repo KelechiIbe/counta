@@ -1763,7 +1763,8 @@ begin
   );
 end $function$;
 
--- public.guide_language: the caller sets the business's voice language -> perm_of
+-- public.guide_language: the caller sets the business's voice language -> perm_of (written out: an acting seat counts only while
+-- active, as require() would have it; the place is found here without require)
 CREATE OR REPLACE FUNCTION public.guide_language(p_lang text)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -1776,13 +1777,14 @@ begin
   if p_lang not in ('en', 'pcm') then raise exception 'Choose English or Pidgin.'; end if;
   insert into guide_progress (user_id) values (v_uid) on conflict do nothing;
   update guide_progress set language = p_lang, last_seen_at = now() where user_id = v_uid returning * into g;
-  if g.org_id is not null and exists (select 1 from members where org_id = g.org_id and user_id = v_uid and (role in ('owner', 'manager') or acts_as_owner)) then
+  if g.org_id is not null and exists (select 1 from members where org_id = g.org_id and user_id = v_uid and (role in ('owner', 'manager') or (acts_as_owner and status = 'active'))) then
     update orgs set voice_lang = p_lang where id = g.org_id;
   end if;
   return public.guide_state(null);
 end $function$;
 
 -- public.guide_state: the caller's own latest business -> perm_of; the caller's guide language becomes the business's -> perm_of; is_owner -> perm_of
+-- (written out: an acting seat counts only while active, as require() would have it; the places are found here without require)
 CREATE OR REPLACE FUNCTION public.guide_state(p_org uuid DEFAULT NULL::uuid)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -1798,14 +1800,14 @@ begin
     v_org := p_org;
   else
     select m.org_id into v_org from members m join orgs x on x.id = m.org_id
-    where m.user_id = v_uid and private.perm_of(m, 'owner') and not coalesce(x.is_sample, false)
+    where m.user_id = v_uid and (m.role = 'owner' or (m.acts_as_owner and m.status = 'active')) and not coalesce(x.is_sample, false)
     order by x.created_at desc limit 1;
   end if;
   select * into g from guide_progress where user_id = v_uid;
   -- A business they have just set up speaks the language they chose for the guide, until they choose otherwise.
   if v_org is not null and g.org_id is distinct from v_org and g.language <> 'en' then
     update orgs set voice_lang = g.language where id = v_org and voice_id is null and voice_lang = 'en'
-      and exists (select 1 from members where org_id = v_org and user_id = v_uid and (role = 'owner' or acts_as_owner));
+      and exists (select 1 from members where org_id = v_org and user_id = v_uid and (role = 'owner' or (acts_as_owner and status = 'active')));
   end if;
   update guide_progress set org_id = coalesce(v_org, org_id), last_seen_at = now() where user_id = v_uid returning * into g;
   if g.org_id is not null and not exists (select 1 from members where org_id = g.org_id and user_id = v_uid) then
@@ -1826,7 +1828,7 @@ begin
     'steps', v_steps, 'done', v_done, 'total', jsonb_array_length(v_steps), 'next', v_next,
     'completed', g.completed_at is not null, 'dismissed', g.dismissed_at is not null,
     'org', case when o.id is null then null else jsonb_build_object('id', o.id, 'name', o.name, 'industry', o.industry, 'created_at', o.created_at,
-      'voice_id', o.voice_id, 'voice_lang', o.voice_lang, 'is_owner', exists (select 1 from members where org_id = o.id and user_id = v_uid and (role = 'owner' or acts_as_owner))) end,
+      'voice_id', o.voice_id, 'voice_lang', o.voice_lang, 'is_owner', exists (select 1 from members where org_id = o.id and user_id = v_uid and (role = 'owner' or (acts_as_owner and status = 'active')))) end,
     'first_name', coalesce(split_part(v_name, ' ', 1), ''),
     'language', g.language, 'marks', g.marks,
     'call', jsonb_build_object('consent', g.call_consent, 'phone', g.call_phone, 'status', g.followup_status));

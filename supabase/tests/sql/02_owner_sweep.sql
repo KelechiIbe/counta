@@ -24,8 +24,9 @@ begin
   v_owner := tests.remember('owner', tests.user('sw.owner@example.test', 'Ada Owner'));
   v_admin := tests.remember('admin', tests.user('sw.admin@example.test', 'Femi Admin'));
   v_pr := tests.remember('pr', tests.practice(v_partner, 'Sweep Partners', true));
-  perform tests.practice_member(v_pr, v_manager, 'manager');
+  perform tests.remember('manager_pm', tests.practice_member(v_pr, v_manager, 'manager'));
   v_o := tests.remember('o', tests.managed_org(v_pr, 'Sweep Managed Ltd'));
+  perform tests.remember('partner_pm', (select id from practice_members where practice_id = v_pr and user_id = v_partner));
   perform tests.remember('partner_seat', (select id from members where org_id = v_o and user_id = v_partner));
   perform tests.remember('manager_seat', (select id from members where org_id = v_o and user_id = v_manager));
   v_ord := tests.remember('ord', tests.org(v_owner, 'Sweep Ordinary Ltd'));
@@ -130,8 +131,9 @@ declare o uuid := tests.id('o'); v_charge uuid;
 begin
   assert (private.pos_owner_member(o)).id = tests.id('partner_seat'), 'sweep_actor: POS postings act as the contact';
   assert (private.prism_owner(o)).id = tests.id('partner_seat'), 'sweep_actor: Prism postings act as the contact';
-  insert into subscription_charges (org_id, plan_id, billing, amount, method, kind, tx_ref)
-  values (o, (select id from plans order by sort limit 1), 'month', 5000, 'card', 'start', 'SWEEP-TEST-1') returning id into v_charge;
+  -- A full mandate is billed to the practice, so its charges carry the practice.
+  insert into subscription_charges (org_id, practice_id, plan_id, billing, amount, method, kind, tx_ref)
+  values (o, tests.id('pr'), (select id from plans order by sort limit 1), 'month', 5000, 'card', 'start', 'SWEEP-TEST-1') returning id into v_charge;
   perform tests.as_service();
   assert public.svc_subscription_charge(v_charge)->'org'->>'email' = 'partner@firm.example.test', 'sweep_actor: the checkout email is the contact''s';
   perform tests.as_postgres();
@@ -150,6 +152,46 @@ begin
   perform tests.as_user(tests.id('partner'));
   assert private.document_may_delete(v_path), 'sweep_policy_helper: the acting owner may remove another''s upload';
   assert (public.document_delete(o, v_doc)->>'ok')::boolean, 'sweep_policy_helper: document_delete by the acting owner';
+  perform tests.as_postgres();
+end $$;
+
+-- test: sweep_departed_seat
+-- The guide finds its business by the person's places without require(): a disabled acting seat (acts_as_owner still set)
+-- is not the owner there. The manager has not opened the guide before this test.
+do $$
+declare o uuid := tests.id('o'); v jsonb;
+begin
+  update members set status = 'disabled' where id = tests.id('manager_seat');
+  perform tests.as_user(tests.id('manager'));
+  assert public.guide_state(null)->>'org' is null, 'sweep_departed_seat: guide_state finds no business for a disabled acting seat';
+  perform tests.as_postgres();
+  update guide_progress set org_id = o where user_id = tests.id('manager');
+  perform tests.as_user(tests.id('manager'));
+  v := public.guide_language('pcm');
+  assert not (v->'org'->>'is_owner')::boolean, 'sweep_departed_seat: guide_state is_owner false for a disabled acting seat';
+  perform tests.as_postgres();
+  assert (select voice_lang from orgs where id = o) = 'en', 'sweep_departed_seat: guide_language does not change the business''s voice language';
+  update members set status = 'active' where id = tests.id('manager_seat');
+  perform tests.as_postgres();
+end $$;
+
+-- test: sweep_held_invoice
+-- A held invoice whose issuer is gone is issued in the name of the business's contact (here the manager, made the
+-- engagement partner, so the contact is not merely the oldest acting seat).
+do $$
+declare o uuid := tests.id('o'); v_customer uuid; v_sale uuid;
+begin
+  perform tests.as_user(tests.id('partner'));
+  v_customer := public.save_customer(o, '{"name": "Sweep Customer Ltd", "email": "customer@sweep.example.test", "kind": "business"}');
+  v_sale := (public.save_sale_doc(o, jsonb_build_object('customer_id', v_customer,
+    'lines', '[{"description": "Bookkeeping", "qty": 1, "unit_price": 10000, "vat_treatment": "standard"}]'::jsonb))->>'id')::uuid;
+  perform tests.as_postgres();
+  update sales set created_by = null where id = v_sale;
+  update practice_clients set engagement_partner_id = tests.id('manager_pm') where org_id = o and mode = 'full';
+  perform private.einvoice_issue_held(v_sale);
+  assert (select s.status = 'open' and j.posted_by = tests.id('manager_seat') from sales s join journals j on j.id = s.journal_id where s.id = v_sale),
+    'sweep_held_invoice: issued in the contact''s name';
+  update practice_clients set engagement_partner_id = tests.id('partner_pm') where org_id = o and mode = 'full';
   perform tests.as_postgres();
 end $$;
 

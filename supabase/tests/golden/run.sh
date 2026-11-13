@@ -5,10 +5,12 @@
 #   coverage  every line of owner_functions.txt has cases/<line>.sql, and no case is vacuous (every caller's output only
 #             "ERROR 42501: permission denied..." or empty): "coverage OK (<n> functions)"
 #   sweep     every owner comparison (the owner enumeration regexes) in the latest definition of a public or private
-#             function is listed in sweep_manifest.tsv as keep, unless it already counts acting owners (it is immediately
-#             followed by `or [alias.]acts_as_owner`); no keep line is stale; every owner_functions.txt function has a
-#             line: "sweep OK (<n> kept)". A manifest line is <schema.function> TAB <perm_of|acts_as_owner|org_contact|keep>
-#             TAB <the line holding the comparison, whitespace collapsed>; '#' starts a comment line.
+#             function is listed in sweep_manifest.tsv as keep, unless it already counts acting owners (a positive test, with
+#             no <>, != or not, immediately followed by `or [alias.]acts_as_owner` or `or ([alias.]acts_as_owner and ...`;
+#             a built-in self-check proves negated forms are not accepted); no keep line is stale; every owner_functions.txt
+#             function has a line: "sweep OK (<n> kept)". A manifest line is <schema.function> TAB
+#             <perm_of|acts_as_owner|org_contact|keep> TAB <the line holding the comparison, whitespace collapsed>; '#' starts
+#             a comment line.
 # Each run starts a fresh harness cluster. Each case runs in one transaction: sequences reset, fixture.sql, then per caller
 # savepoint -> setup (as postgres) -> act as the caller -> each "-- exec" through tests.error_of -> tests.capture per
 # "-- call" -> back to postgres -> rollback to savepoint. Case format:
@@ -42,7 +44,11 @@ if [ "$mode" = sweep ]; then
     echo "copy owner_list from stdin with (format csv, quote E'\x01');"
     cat "$G/owner_functions.txt"; echo '\.'
     cat <<'SQL'
-create temp table hits_now as
+-- Every owner comparison in a public or private function. A comparison is resolved (it already counts acting owners) when it
+-- is a positive test, `role = 'owner'` or `role in (... 'owner' ...)` (no <>, != or not in it), immediately followed by
+-- `or [alias.]acts_as_owner` or `or ([alias.]acts_as_owner and ...`; a negated test before acting owners would let every
+-- non-owner through, so it is never resolved.
+create temp view owner_matches as
 with defs as (
   select n.nspname || '.' || p.proname as fn, pg_get_functiondef(p.oid) as src
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -53,13 +59,43 @@ hits as (
   cross join (select $r$role\s*(<>|!=|=)\s*'owner'|role\s+(not\s+)?in\s*\([^)]*'owner'[^)]*\)$r$ as pat) x
   cross join lateral generate_series(1, regexp_count(d.src, x.pat)) k),
 spans as (
-  select fn, src, b,
+  select fn, src, a, b,
     case when strpos(reverse(substr(src, 1, a - 1)), E'\n') = 0 then 1 else a - strpos(reverse(substr(src, 1, a - 1)), E'\n') + 1 end as s,
     case when strpos(substr(src, b), E'\n') = 0 then length(src) + 1 else b + strpos(substr(src, b), E'\n') - 1 end as e
   from hits)
 select fn, btrim(regexp_replace(substr(src, s, e - s), '\s+', ' ', 'g')) as snippet,
-  substr(src, b) ~ $r$^\s*or\s+(\w+\.)?acts_as_owner\M$r$ as resolved
+  substr(src, a, b - a) !~ $r$(<>|!=|\mnot\M)$r$
+    and substr(src, b) ~ $r$^\s*or\s+((\w+\.)?acts_as_owner\M|\(\s*(\w+\.)?acts_as_owner\s+and\M)$r$ as resolved
 from spans;
+
+-- Self-check of the rule above on a throwaway function: each line says whether it may count as resolved.
+begin;
+set local check_function_bodies = off;
+create function private.sweep_selfcheck(m public.members) returns boolean language sql as $f$
+  select (m.role = 'owner' or m.acts_as_owner)                                   -- resolved
+    and (m.role in ('owner', 'manager') or m.acts_as_owner)                      -- resolved
+    and (m.role = 'owner' or (m.acts_as_owner and m.status = 'active'))          -- resolved
+    and (role in ('owner', 'manager') or (acts_as_owner and status = 'active'))  -- resolved
+    and (m.role <> 'owner' or m.acts_as_owner)                                   -- not resolved
+    and (m.role != 'owner' or m.acts_as_owner)                                   -- not resolved
+    and (m.role not in ('owner', 'manager') or m.acts_as_owner)                  -- not resolved
+    and (m.role <> 'owner' or (m.acts_as_owner and m.status = 'active'))         -- not resolved
+    and (m.role = 'owner' or (m.acts_as_owner or m.role = 'staff'))              -- not resolved
+    and (m.role = 'owner' or m.acts_as_owner_x)                                  -- not resolved
+    and (m.role = 'owner')                                                       -- not resolved
+$f$;
+do $$
+declare v_wrong text;
+begin
+  select string_agg(snippet, E'\n') into v_wrong from owner_matches
+  where fn = 'private.sweep_selfcheck' and resolved is distinct from (snippet like '%-- resolved');
+  if v_wrong is not null or (select count(*) from owner_matches where fn = 'private.sweep_selfcheck') <> 11 then
+    raise exception E'sweep self-check: the resolved-comparison rule is wrong for:\n%', coalesce(v_wrong, '(a line was not found)');
+  end if;
+end $$;
+rollback;
+
+create temp table hits_now as select * from owner_matches;
 with keyed as (
   select fn, snippet, bool_or(category = 'keep') as kept, string_agg(distinct category, ',') as categories, count(distinct category) as n
   from manifest group by fn, snippet)
