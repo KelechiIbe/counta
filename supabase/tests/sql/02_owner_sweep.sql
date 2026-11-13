@@ -161,7 +161,10 @@ end $$;
 do $$
 declare o uuid := tests.id('o'); v jsonb;
 begin
+  -- Switched off as the seat sync does it (outside it the members guard refuses).
+  perform set_config('counta.seat_sync', 'on', true);
   update members set status = 'disabled' where id = tests.id('manager_seat');
+  perform set_config('counta.seat_sync', '', true);
   perform tests.as_user(tests.id('manager'));
   assert public.guide_state(null)->>'org' is null, 'sweep_departed_seat: guide_state finds no business for a disabled acting seat';
   perform tests.as_postgres();
@@ -171,7 +174,9 @@ begin
   assert not (v->'org'->>'is_owner')::boolean, 'sweep_departed_seat: guide_state is_owner false for a disabled acting seat';
   perform tests.as_postgres();
   assert (select voice_lang from orgs where id = o) = 'en', 'sweep_departed_seat: guide_language does not change the business''s voice language';
+  perform set_config('counta.seat_sync', 'on', true);
   update members set status = 'active' where id = tests.id('manager_seat');
+  perform set_config('counta.seat_sync', '', true);
   perform tests.as_postgres();
 end $$;
 

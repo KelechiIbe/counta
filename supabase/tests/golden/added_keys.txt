@@ -13,3 +13,4 @@ retention_years
 end_kind
 fee_customer_id
 fee_vendor_id
+mandate_suspended_at

@@ -232,11 +232,11 @@ begin
 end $$;
 
 -- A business the practice runs under full mandate, made by its first active partner: no owner, identity pending, an
--- active full link (billed to the practice, that partner the engagement partner), and an admin place acting as the owner,
--- with every permission, for each active partner and manager.
+-- active full link (billed to the practice, that partner the engagement partner), and the seat sync's places: an admin
+-- place acting as the owner, with every permission, for each active partner and manager.
 create function tests.managed_org(p_practice uuid, p_name text default 'Managed Test Ltd') returns uuid
 language plpgsql as $$
-declare v uuid; pt public.practice_members;
+declare v uuid; v_client uuid; pt public.practice_members;
 begin
   perform tests.as_postgres();
   select * into pt from public.practice_members
@@ -246,17 +246,9 @@ begin
   v := private.create_org_core(p_name, 'books@firm.example.test', null, '[]', true, false);
   update public.orgs set managed_by = p_practice, identity_status = 'pending' where id = v;
   insert into public.practice_clients (practice_id, org_id, status, initiated_by, business_name, billing, mode, engagement_partner_id, started_at)
-  values (p_practice, v, 'active', 'practice', p_name, 'practice', 'full', pt.id, now());
-  perform set_config('counta.seat_sync', 'on', true);
-  insert into public.members (org_id, user_id, email, display_name, role, title, status, practice_id, acts_as_owner,
-    p_record_sales, p_receive_stock, p_count_stock, p_approve_adjustments, p_edit_prices, p_approve_pos, p_transfer_stock, p_see_margins,
-    p_issue_stock, p_keep_books, p_make_payments, p_add_items, p_approve_payments, p_file_tax, p_manage_team, p_manage_settings)
-  select v, pm.user_id, lower(pm.email), pm.display_name, 'admin', left('Accountant, ' || pr.name, 80), 'active', p_practice, true,
-    true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true
-  from public.practice_members pm join public.practices pr on pr.id = pm.practice_id
-  where pm.practice_id = p_practice and pm.status = 'active' and pm.role in ('partner', 'manager') and pm.user_id is not null
-  order by pm.created_at;
-  perform set_config('counta.seat_sync', '', true);
+  values (p_practice, v, 'active', 'practice', p_name, 'practice', 'full', pt.id, now())
+  returning id into v_client;
+  perform private.practice_sync_seats(v_client);
   perform tests.as_postgres();
   return v;
 end $$;

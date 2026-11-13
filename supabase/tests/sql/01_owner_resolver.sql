@@ -88,9 +88,12 @@ begin
     and not private.acts_as_owner(tests.id('ord'), tests.id('staff')) and not private.acts_as_owner(tests.id('o'), tests.id('pstaff'))
     and not private.acts_as_owner(tests.id('o'), null), 'is_owner_acting: acts_as_owner by user';
   perform tests.as_postgres();
+  -- Switched off and on as the seat sync does it (outside it the members guard refuses).
+  perform set_config('counta.seat_sync', 'on', true);
   update members set status = 'disabled' where org_id = tests.id('o') and user_id = tests.id('manager');
   assert not private.acts_as_owner(tests.id('o'), tests.id('manager')), 'is_owner_acting: a disabled seat does not act';
   update members set status = 'active' where org_id = tests.id('o') and user_id = tests.id('manager');
+  perform set_config('counta.seat_sync', '', true);
   perform tests.as_postgres();
 end $$;
 
@@ -134,10 +137,14 @@ begin
   assert c.user_id = tests.id('partner') and c.acts_as_owner, 'org_contact: engagement partner seat when managed';
   update practice_clients set engagement_partner_id = tests.id('manager_pm') where org_id = tests.id('o') and mode = 'full';
   assert (private.org_contact(tests.id('o'))).user_id = tests.id('manager'), 'org_contact: follows the engagement partner';
+  perform set_config('counta.seat_sync', 'on', true);
   update members set status = 'disabled' where org_id = tests.id('o') and user_id = tests.id('manager');
+  perform set_config('counta.seat_sync', '', true);
   c := private.org_contact(tests.id('o'));
   assert c.user_id = tests.id('partner') and c.acts_as_owner, 'org_contact: the oldest active acting seat when the engagement partner has none';
+  perform set_config('counta.seat_sync', 'on', true);
   update members set status = 'active' where org_id = tests.id('o') and user_id = tests.id('manager');
+  perform set_config('counta.seat_sync', '', true);
   update practice_clients set engagement_partner_id = null where org_id = tests.id('o') and mode = 'full';
   assert (private.org_contact(tests.id('o'))).user_id = tests.id('partner'), 'org_contact: the oldest active acting seat with no engagement partner';
   update practice_clients set engagement_partner_id = (select id from practice_members where practice_id = tests.id('pr') and user_id = tests.id('partner'))
@@ -199,8 +206,13 @@ do $$
 declare v_pr2 uuid;
 begin
   v_pr2 := tests.practice(tests.user('or.partner2@example.test'), 'Second Partners', true);
+  -- The practice_clients guard (Task 4) refuses another practice first; the index holds underneath it.
+  perform tests.throws(format($q$insert into practice_clients (practice_id, org_id, status, initiated_by, mode, billing)
+    values (%L, %L, 'active', 'practice', 'full', 'practice')$q$, v_pr2, tests.id('o')), '42501%cannot connect to another practice%');
+  alter table practice_clients disable trigger practice_clients_guard;
   perform tests.throws(format($q$insert into practice_clients (practice_id, org_id, status, initiated_by, mode, billing)
     values (%L, %L, 'active', 'practice', 'full', 'practice')$q$, v_pr2, tests.id('o')), '23505%practice_clients_one_full%');
+  alter table practice_clients enable trigger practice_clients_guard;
   insert into practice_clients (practice_id, org_id, status, initiated_by, mode, billing)
   values (v_pr2, tests.id('o'), 'ended', 'practice', 'full', 'practice');
   perform tests.as_postgres();

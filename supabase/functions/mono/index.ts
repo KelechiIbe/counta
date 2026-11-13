@@ -469,7 +469,17 @@ async function verifyTin(mine: <T = any>(fn: string, args: Record<string, unknow
     tax_office: rec?.tax_office ?? null, channel: target.channel, number: target.number } });
 }
 
-async function cacSearch(user: string, query: unknown) {
+// An optional business id from the request: absent, or a UUID.
+function optionalOrg(v: unknown): string | null {
+  if (v === undefined || v === null || v === '') return null;
+  const id = String(v);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new UserError('Choose the business first.');
+  return id;
+}
+
+// With orgId (a business the caller acts as the owner of, such as one a firm runs under full mandate) what is found is
+// kept on that business's profile; without it, on the caller's own draft.
+async function cacSearch(user: string, query: unknown, orgId: string | null) {
   const ctx: Ctx = { kind: 'cac_search', user };
   const q = String(query ?? '').replace(/\s+/g, ' ').trim();
   if (q.length < 2 || q.length > 100) throw new UserError('Type at least two letters of the business name, or its RC number.');
@@ -490,10 +500,11 @@ async function cacSearch(user: string, query: unknown) {
   const want = q.toLowerCase();
   found.sort((a: any, b: any) => (Number(b.name?.toLowerCase() === want || b.rc_number === rc?.[1]) - Number(a.name?.toLowerCase() === want || a.rc_number === rc?.[1]))
     || (Number(b.active !== false) - Number(a.active !== false)));
-  return await svc('svc_kyc_store', { p_user: user, p_part: 'search', p_data: { query: q, candidates: found.slice(0, 10), at: new Date().toISOString() } });
+  return await svc('svc_kyc_store', { p_user: user, p_part: 'search', p_data: { query: q, candidates: found.slice(0, 10), at: new Date().toISOString() },
+    ...(orgId ? { p_org: orgId } : {}) });
 }
 
-async function cacSelect(user: string, draft: any, cacId: unknown) {
+async function cacSelect(user: string, draft: any, cacId: unknown, orgId: string | null) {
   const c = (draft?.search?.candidates || []).find((x: any) => String(x.id) === String(cacId ?? ''));
   if (!c) throw new UserError('Search for the business again and pick it from the list.');
   if (!(await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'profile' }))) {
@@ -521,7 +532,8 @@ async function cacSelect(user: string, draft: any, cacId: unknown) {
     found_profile: Boolean(raw),
     at: new Date().toISOString(),
   };
-  let kyc = await svc('svc_kyc_store', { p_user: user, p_part: 'cac', p_data: record });
+  const forOrg = orgId ? { p_org: orgId } : {};
+  let kyc = await svc('svc_kyc_store', { p_user: user, p_part: 'cac', p_data: record, ...forOrg });
 
   // The Tax ID the NRS holds for the RC number. A business name or a company the NRS does not know is not an error here.
   let taxNote: string | null = null;
@@ -531,7 +543,7 @@ async function cacSelect(user: string, draft: any, cacId: unknown) {
     try {
       const { status, body, secs } = await lookup('/v3/lookup/tin', { method: 'POST', body: JSON.stringify({ number: rcDigits, channel: 'cac' }) });
       const t = status === 404 ? null : taxRecord(body);
-      if (t && (t.nrs_tin || t.firstin || t.jittin)) kyc = await svc('svc_kyc_store', { p_user: user, p_part: 'tin', p_data: t });
+      if (t && (t.nrs_tin || t.firstin || t.jittin)) kyc = await svc('svc_kyc_store', { p_user: user, p_part: 'tin', p_data: t, ...forOrg });
       else {
         taxNote = 'The NRS did not return a Tax ID for this RC number.';
         await noteLookup(tctx, 'no_record', status, `RC number ${rcDigits}: ${reasonOf(body, status === 404 ? 'Not found' : 'An empty record')}`, secs);
@@ -664,11 +676,17 @@ Deno.serve(async (req) => {
     switch (action) {
       case 'cac_config':
         return json({ ok: true, lookup: Boolean(await lookupKey()) });
-      case 'cac_search':
-        return json({ ok: true, kyc: await cacSearch(u.user.id, body.query) });
+      // With org_id, the profile of that business: kyc_draft for a business answers only to its owner (or a firm person
+      // acting as its owner under full mandate), and binds the profile to it.
+      case 'cac_search': {
+        const orgId = optionalOrg(body.org_id);
+        if (orgId) await mine('kyc_draft', { p_org: orgId });
+        return json({ ok: true, kyc: await cacSearch(u.user.id, body.query, orgId) });
+      }
       case 'cac_select': {
-        const draft = await mine('kyc_draft', {});
-        return json({ ok: true, ...(await cacSelect(u.user.id, draft, body.cac_id)) });
+        const orgId = optionalOrg(body.org_id);
+        const draft = await mine('kyc_draft', orgId ? { p_org: orgId } : {});
+        return json({ ok: true, ...(await cacSelect(u.user.id, draft, body.cac_id, orgId)) });
       }
       case 'nin_check': {
         const orgId = String(body.org_id || '');

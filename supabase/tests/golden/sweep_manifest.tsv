@@ -35,7 +35,8 @@ private.plan_spot_checks	keep	order by (mb.user_id is null), (mb.role = 'owner')
 private.pos_owner_member	org_contact	select * from members where org_id = p_org and role = 'owner' and status = 'active' order by created_at limit 1
 private.pos_require_manager	perm_of	if not (m.role = 'owner' or coalesce(private.perm_of(m, 'manage_settings'), false)) then
 private.pos_require_owner	perm_of	if m.role <> 'owner' then raise exception 'Only the owner connects a POS provider or changes its key.' using errcode = '42501'; end if;
-private.practice_sync_seats	keep	update members set status = 'disabled' where org_id = c.org_id and practice_id = c.practice_id and status <> 'disabled' and role <> 'owner';
+private.practice_sync_seats	keep	where org_id = c.org_id and practice_id = c.practice_id and (status <> 'disabled' or acts_as_owner) and role <> 'owner'
+private.practice_sync_seats	keep	where org_id = c.org_id and practice_id = c.practice_id and (status <> 'disabled' or acts_as_owner) and role <> 'owner'
 private.practice_sync_seats	keep	elsif ex.role <> 'owner' and (ex.practice_id = c.practice_id or (ex.practice_id is null and (ex.role = 'accountant' or ex.user_id is null))) then
 private.prism_owner	org_contact	select * from public.members where org_id = p_org and role = 'owner' and status <> 'disabled' order by (status = 'active') desc, created_at limit 1
 private.prism_owner	keep	select * from public.members where org_id = p_org and (role = 'owner' or id = (private.org_contact(p_org)).id) and status <> 'disabled' order by (status = 'active') desc, created_at limit 1
