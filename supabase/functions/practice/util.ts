@@ -4,6 +4,25 @@
 // An error whose message is for the person (shown as it is); anything else is answered "Something went wrong".
 export class UserError extends Error {}
 
+// A database call that failed for another reason (logged, never shown). definite: the database itself answered with an
+// error (a SQLSTATE), so the call's transaction did not commit; otherwise (no answer, a gateway error, a lost response)
+// it may have committed.
+export class DbError extends Error {
+  constructor(message: string, readonly definite: boolean) { super(message); }
+}
+type PgError = { message?: string; code?: string } | null | undefined;
+// An error code that is a Postgres SQLSTATE: five digits or capital letters (PostgREST's own codes are PGRSTnnn).
+export const sqlState = (e: PgError): boolean => typeof e?.code === 'string' && /^[0-9A-Z]{5}$/.test(e.code);
+// What a failed database call (supabase-js { error }) becomes: a raise in the SQL (P0001), or its own refusals of who may
+// do something (42501, not Postgres's "permission denied for ..."), are written for the person; anything else is not.
+export function dbFailure(fn: string, e: PgError): Error {
+  const msg = String(e?.message || '');
+  if (e?.code === 'P0001' || (e?.code === '42501' && !/^permission denied/i.test(msg))) return new UserError(msg);
+  return new DbError(`${fn}: ${msg}${e?.code ? ` (${e.code})` : ''}`, sqlState(e));
+}
+// Whether an error from a database call says for certain that nothing was committed.
+export const refusedForSure = (e: unknown): boolean => e instanceof UserError || (e instanceof DbError && e.definite);
+
 // The caller's IP address: the first address in x-forwarded-for (the client, as Supabase's gateway records it), else
 // x-real-ip, else nothing.
 export function clientIp(req: Request): string {
@@ -31,8 +50,20 @@ export function tokenOk(t: string, prefix: 'es' | 'dc'): boolean {
 const PNG_PREFIX = 'data:image/png;base64,';
 const PNG_MAX = 300 * 1024;
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
+// The largest signature image accepted, in pixels: drawing it decodes every pixel, so a small file claiming a huge
+// image is refused before it is decoded.
+export const PNG_MAX_WIDTH = 2000, PNG_MAX_HEIGHT = 1000;
 
-// A drawn signature sent as a PNG data URL: its bytes when it is a PNG of at most 300 KB, else null.
+// A PNG's width and height from its header (the IHDR chunk, bytes 16 to 23), or null when the header is not there.
+export function pngSize(b: Uint8Array): { width: number; height: number } | null {
+  if (b.length < 33 || !PNG_SIGNATURE.every((v, i) => b[i] === v)) return null;
+  if (String.fromCharCode(b[12], b[13], b[14], b[15]) !== 'IHDR') return null;
+  const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  return { width: v.getUint32(16), height: v.getUint32(20) };
+}
+
+// A drawn signature sent as a PNG data URL: its bytes when it is a PNG of at most 300 KB and at most 2000 x 1000
+// pixels, else null.
 export function pngFromDataUrl(s: string): Uint8Array | null {
   if (typeof s !== 'string' || !s.startsWith(PNG_PREFIX)) return null;
   const b64 = s.slice(PNG_PREFIX.length);
@@ -41,7 +72,9 @@ export function pngFromDataUrl(s: string): Uint8Array | null {
   try { bin = atob(b64); } catch { return null; }
   if (bin.length < PNG_SIGNATURE.length || bin.length > PNG_MAX) return null;
   const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
-  return PNG_SIGNATURE.every((v, i) => bytes[i] === v) ? bytes : null;
+  const size = pngSize(bytes);
+  if (!size || size.width < 1 || size.height < 1 || size.width > PNG_MAX_WIDTH || size.height > PNG_MAX_HEIGHT) return null;
+  return bytes;
 }
 
 // Whether a stored file (a documents-bucket path) leaves in the business's export: anything under the business's own

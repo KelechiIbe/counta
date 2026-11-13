@@ -5,6 +5,7 @@
 // Counta: a full-mandate client sees only the firm.
 import { PDFDocument, type PDFFont, type PDFPage, rgb, StandardFonts } from 'npm:pdf-lib@1.17.1';
 import type { RenderedBlock } from '../_shared/letter.ts';
+import { PNG_MAX_HEIGHT, PNG_MAX_WIDTH, pngSize } from './util.ts';
 
 const PAGE_W = 595.28, PAGE_H = 841.89; // A4
 const MARGIN = 50;
@@ -211,8 +212,56 @@ export type Completion = {
     signaturePng: Uint8Array };
 };
 
-// Whether a PNG can be drawn into a PDF (checked before the signer's code is used up).
+// The image data of a PNG (its IDAT chunks, joined), or null when the chunks do not add up.
+function pngData(png: Uint8Array): Uint8Array | null {
+  const v = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  const parts: Uint8Array[] = [];
+  for (let at = 8; at + 12 <= png.length;) {
+    const len = v.getUint32(at), type = String.fromCharCode(png[at + 4], png[at + 5], png[at + 6], png[at + 7]);
+    if (at + 12 + len > png.length) return null;
+    if (type === 'IDAT') parts.push(png.subarray(at + 8, at + 8 + len));
+    if (type === 'IEND') break;
+    at += 12 + len;
+  }
+  if (!parts.length) return null;
+  const out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+
+// Whether the zlib data inflates to at most max bytes (stopped as soon as it goes past).
+async function inflatesWithin(data: Uint8Array, max: number): Promise<boolean> {
+  const ds = new DecompressionStream('deflate');
+  const w = ds.writable.getWriter();
+  w.write(new Uint8Array(data)).catch(() => null);
+  w.close().catch(() => null);
+  const r = ds.readable.getReader();
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await r.read();
+      if (done) return true;
+      total += value.length;
+      if (total > max) {
+        await r.cancel().catch(() => null);
+        return false;
+      }
+    }
+  } catch {
+    return false;
+  }
+}
+
+// Whether a signature PNG can be drawn into a PDF (checked before the signer's code is used up): at most 2000 x 1000
+// pixels by its header, image data that inflates to no more than such an image can hold (16-bit RGBA, every row's
+// filter byte and Adam7's extra rows allowed for), so a small file that inflates to a huge one is refused before it is
+// decoded; then drawn once.
 export async function pngDrawable(png: Uint8Array): Promise<boolean> {
+  const size = pngSize(png);
+  if (!size || size.width < 1 || size.height < 1 || size.width > PNG_MAX_WIDTH || size.height > PNG_MAX_HEIGHT) return false;
+  const data = pngData(png);
+  if (!data || !(await inflatesWithin(data, size.height * (size.width * 8 + 8) + 1024))) return false;
   try {
     await (await PDFDocument.create()).embedPng(png);
     return true;

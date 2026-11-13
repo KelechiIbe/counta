@@ -3,9 +3,41 @@
 // database's, minted as the email goes, so neither is ever queued in the clear. Letters and director requests go in the
 // firm's name only; TaxStreem's reviewers (director_admin, `to` a list) each get their own email, at most 20, and may
 // have no address to reply to.
-import { type Msg, senderAddress } from './wording.ts';
+import { displayName, type Msg, senderAddress } from './wording.ts';
 
 export const PRACTICE_MAIL_KINDS = ['letter_sign', 'letter_code', 'letter_done', 'director_confirm', 'director_code', 'director_admin'];
+
+export type PracticeMailDeps = {
+  emailOn: () => Promise<boolean>; // not paused by TaxStreem
+  configured: () => Promise<boolean>; // the Resend key and sending address are set
+  write: (kind: string, id: string) => Promise<{ data: any; error: { message: string } | null }>; // svc_practice_mail
+  send: (m: Msg, fromName: string) => Promise<unknown>;
+};
+
+// Sends a practice email. Everything that would stop it is checked before svc_practice_mail is asked, since asking mints
+// a fresh link or code (replacing the last): nothing is minted that cannot be sent. Sent from the firm's name alone.
+// {ok, sent_to} (a list when the database gave a list), {ok: true, skipped: true} when there is nothing to send.
+export async function practiceMail(kind: string, id: string, d: PracticeMailDeps): Promise<Record<string, unknown>> {
+  if (!PRACTICE_MAIL_KINDS.includes(kind) || !/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, error: 'Unknown practice email.' };
+  if (!(await d.emailOn())) return { ok: false, error: 'Email is paused by TaxStreem for now.' };
+  if (!(await d.configured())) return { ok: false, reason: 'not_configured', error: 'Email is not switched on yet. TaxStreem is setting it up.' };
+  const { data: r, error } = await d.write(kind, id);
+  if (error) return { ok: false, error: error.message };
+  if (!r) return { ok: true, skipped: true };
+  const msgs = practiceMailMessages(kind, id, r);
+  if (!msgs.length) return { ok: false, error: 'The email has no address to go to.' };
+  const sent: string[] = [], failed: string[] = [];
+  for (const m of msgs) {
+    try {
+      await d.send(m, displayName(String(r.from_name || 'Counta'), true));
+      sent.push(m.to_address);
+    } catch (e) {
+      failed.push((e as Error).message);
+    }
+  }
+  const sentTo = Array.isArray(r.to) ? sent : sent[0] ?? null;
+  return failed.length ? { ok: false, error: failed[0], sent_to: sentTo } : { ok: true, sent_to: sentTo };
+}
 
 export function practiceMailMessages(kind: string, id: string, r: Record<string, any>, stamp: number = Date.now()): Msg[] {
   const to = [...new Set((Array.isArray(r.to) ? r.to : [r.to])

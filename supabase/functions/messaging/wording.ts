@@ -127,9 +127,11 @@ export function wording(m: Msg) {
       // The accountant portal's invitations (a practice to its staff or to a business owner, a business to its accountant):
       // email only, the words written by the database and the one-time link made as it is sent.
       const lines = (Array.isArray(p.lines) ? p.lines : []).map((l: unknown) => String(l ?? '').trim()).filter(Boolean).slice(0, 6);
+      // (Counta's own email, to TaxStreem's reviewers, says "Sent by Counta", not "for Counta".)
+      const sender = String(p.from_name || 'Counta');
       return { heading: String(p.heading || m.subject || 'Counta'), lines, button: String(p.button || 'Open Counta'), link: p.link, wa: null,
         greet: p.greet ? first(p.greet) : 'there', footer: m.org?.white_label || p.white_label === true ? 'If you were not expecting this, you can ignore the email.'
-          : `Sent by Counta for ${p.from_name || 'Counta'}. If you were not expecting this, you can ignore the email.` };
+          : `Sent by Counta${sender === 'Counta' ? '' : ` for ${sender}`}. If you were not expecting this, you can ignore the email.` };
     }
     default:
       return { heading: m.subject || biz, lines: [String(p.body || '')], button: p.link ? 'Open' : '', link: p.link, wa: null };

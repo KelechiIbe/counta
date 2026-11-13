@@ -4,12 +4,16 @@
 // Public actions (the signing page /sign and the director's page /confirm, no account): the token is checked for its form
 // before anything else, the caller's IP address and browser go to the database with each call, the token is never logged,
 // and every answer carries Referrer-Policy: no-referrer. Files are written with the service role, write-once (upsert
-// false); a file written by a step that then fails is removed again so the step can be retried.
+// false); a file written by a step the database then refused for certain is removed again so the step can be retried.
+// When the database's answer is lost (it may have committed), the files stay and it is logged: a completed letter never
+// loses its signed files.
+// Only the SQL's own refusals (P0001 raises, its 42501 texts) are shown; any other database, storage or network error is
+// logged (tokens scrubbed) and answered "Something went wrong. Try again."
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { deriveMerge, type LetterBody, renderModel } from '../_shared/letter.ts';
 import { appendCompletion, pngDrawable, renderLetterPdf } from './pdf.ts';
 import { buildExport } from './export.ts';
-import { clientIp, pngFromDataUrl, sha256Hex, tokenOk, userAgent, UserError } from './util.ts';
+import { clientIp, dbFailure, pngFromDataUrl, refusedForSure, sha256Hex, tokenOk, userAgent, UserError } from './util.ts';
 import { PDFDocument } from 'npm:pdf-lib@1.17.1';
 
 export type Deps = {
@@ -47,6 +51,7 @@ export const REASONS: Record<string, string> = {
   locked: 'Too many wrong codes were entered. Ask the firm to send the link again.',
   too_many_today: 'That is five codes today. Try again tomorrow.',
   wrong_code: 'That code is not right. Check the latest email and try again.',
+  code_expired: 'That code has expired or has been used already. Ask for a new code.',
   used_up: 'That code has been tried five times. Ask for a new code.',
   not_verified: 'Enter a new code: the last one was confirmed more than 15 minutes ago.',
   review: 'This confirmation is being checked by TaxStreem.',
@@ -57,13 +62,19 @@ const refusal = (reason: unknown): Result => {
   const r = typeof reason === 'string' && reason ? reason : 'invalid';
   return { ok: false, reason: r, error: REASONS[r] || 'This link cannot be used now.' };
 };
+// A wrong or spent code (svc_sign_verify, svc_director_confirm). The code check's answer carries `locked`; the link's own
+// state does not. Its 'expired' is the code's (past its ten minutes, or used already by a right answer), not the link's.
+const codeRefusal = (r: any): Result => {
+  const reason = r?.reason === 'expired' && r && typeof r === 'object' && 'locked' in r ? 'code_expired' : r?.reason;
+  return { ...refusal(reason), tries_left: Number(r?.tries_left ?? 0), locked: r?.locked === true };
+};
 
 // Tokens never reach the logs, whatever an error message says.
 const scrub = (s: string) => s.replace(/\b[a-z]{2}_[0-9a-f]{48}\b/g, '[token]');
 
 async function rpc<T = any>(c: SupabaseClient, fn: string, args: Record<string, unknown>): Promise<T> {
   const { data, error } = await c.rpc(fn, args);
-  if (error) throw new UserError(error.message);
+  if (error) throw dbFailure(fn, error);
   return data as T;
 }
 const uuid = (v: unknown, what: string): string => {
@@ -124,7 +135,9 @@ async function letterFreeze(req: Request, b: Body, d: Deps, sb: SupabaseClient, 
     try {
       blocks = renderModel(prep.blocks as LetterBody, deriveMerge(prep.merge || {}), prep.variant === 'full' ? 'full' : 'involved');
     } catch (e) {
-      throw new UserError((e as Error).message);
+      // The renderer's own refusals are for the partner (a reference to a paragraph that dropped out); anything else is not.
+      const m = String((e as Error)?.message || '');
+      throw /^(Reference to a paragraph|The letter is not)/.test(m) ? new UserError(m) : e;
     }
     bytes = await renderLetterPdf(blocks, { title: String(prep.title || 'Letter of engagement'), firmName: String(prep.firm?.name || ''),
       partnerName: String(prep.partner?.name || ''), partnerTitle: String(prep.partner?.title || 'Partner'),
@@ -139,7 +152,10 @@ async function letterFreeze(req: Request, b: Body, d: Deps, sb: SupabaseClient, 
       p: { doc_path: path, doc_sha256: await sha256Hex(bytes), by_user: user.id, signature_name: signature || null, ip, ua } });
     return { ok: true, letter };
   } catch (e) {
-    if (written) await remove(d, [path]);
+    // Refused for certain: the file goes, so the partner can sign again. An answer lost on the way may mean the letter
+    // was frozen on this file: it stays.
+    if (written && refusedForSure(e)) await remove(d, [path]);
+    else if (written) console.error('practice: the letter may have been frozen; its file is kept', path);
     throw e;
   }
 }
@@ -154,8 +170,10 @@ async function exportRecords(_req: Request, b: Body, d: Deps, sb: SupabaseClient
 }
 
 // Bank feeds of a business whose mandate ended: the database unlinked them in Counta (provider manual, the Mono account
-// kept as former_feed); here they are unlinked at Mono too, as the mono function's own unlink does. Each outcome is kept
-// on the account (mono_unlinked_at, or mono_unlink_error to try again).
+// kept as former_feed); here they are unlinked at Mono too, as the mono function's own unlink does. An account Mono no
+// longer has (not found, or already unlinked) counts as unlinked. Each outcome is kept on the account in keys of its own
+// (mono_unlinked_at, or mono_unlink_error and mono_unlink_tried_at to try again), written onto the account's details as
+// they are just then, so nothing another writer changed meanwhile is lost; an account linked to a feed again is left alone.
 export async function unlinkFormerFeeds(d: Deps, orgId: string): Promise<{ unlinked: number; failed: number }> {
   const { data, error } = await d.admin.from('bank_accounts').select('id, provider, provider_meta').eq('org_id', orgId);
   if (error) throw new Error(`bank_accounts: ${error.message}`);
@@ -167,26 +185,32 @@ export async function unlinkFormerFeeds(d: Deps, orgId: string): Promise<{ unlin
   const call = d.fetch ?? fetch;
   let unlinked = 0, failed = 0;
   for (const r of todo) {
-    const meta = r.provider_meta || {};
     let err: string | null = null;
     if (!key) {
       err = 'Bank feeds are not switched on (no Mono key).';
     } else {
       try {
-        const res = await call(`${d.monoUrl}/v2/accounts/${encodeURIComponent(String(meta.former_feed))}/unlink`, {
+        const res = await call(`${d.monoUrl}/v2/accounts/${encodeURIComponent(String(r.provider_meta?.former_feed))}/unlink`, {
           method: 'POST', headers: { 'mono-sec-key': key, accept: 'application/json', 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(20_000) });
         const text = await res.text();
         let body: any = null;
         try { body = JSON.parse(text); } catch { /* not json */ }
-        if (!res.ok || body?.status === 'failed' || body?.status === 'error') err = `Mono: ${String(body?.message || text || res.status).slice(0, 200)}`;
+        const msg = String(body?.message || text || res.status);
+        const gone = res.status === 404 || /not\s+found|already\s+unlinked|does\s+not\s+exist|no\s+such\s+account/i.test(msg);
+        if (!gone && (!res.ok || body?.status === 'failed' || body?.status === 'error')) err = `Mono: ${msg.slice(0, 200)}`;
       } catch (e) {
         err = `Mono: ${(e as Error).message}`.slice(0, 200);
       }
     }
     const at = (d.now?.() ?? new Date()).toISOString();
-    const next = err ? { ...meta, mono_unlink_error: err, mono_unlink_tried_at: at } : { ...meta, mono_unlinked_at: at, mono_unlink_error: null };
-    const { error: ue } = await d.admin.from('bank_accounts').update({ provider_meta: next }).eq('id', r.id);
-    if (ue) console.error('practice: could not record the Mono unlink of', r.id, ue.message);
+    const own = err ? { mono_unlink_error: err, mono_unlink_tried_at: at } : { mono_unlinked_at: at, mono_unlink_error: null };
+    const { data: fresh, error: re } = await d.admin.from('bank_accounts').select('provider, provider_meta').eq('id', r.id).maybeSingle();
+    if (re || !fresh) console.error('practice: could not re-read bank account', r.id, re?.message || 'gone');
+    else if (fresh.provider === 'manual') {
+      const { error: ue } = await d.admin.from('bank_accounts').update({ provider_meta: { ...(fresh.provider_meta || {}), ...own } })
+        .eq('id', r.id).eq('provider', 'manual');
+      if (ue) console.error('practice: could not record the Mono unlink of', r.id, ue.message);
+    }
     if (err) failed++; else unlinked++;
   }
   return { unlinked, failed };
@@ -222,7 +246,9 @@ async function signOpen(req: Request, b: Body, d: Deps): Promise<Result> {
   if (!tokenOk(token, 'es')) return refusal('invalid');
   const r = await rpc(d.admin, 'svc_sign_open', ask(req, token));
   if (!r?.ok) return refusal(r?.reason);
-  return { ...r, doc_url: r.doc_path ? await signedUrl(d, String(r.doc_path), 300) : null };
+  // The storage path stays here: the page gets the 5-minute link only.
+  const { doc_path: docPath, ...open } = r;
+  return { ...open, doc_url: docPath ? await signedUrl(d, String(docPath), 300) : null };
 }
 
 async function signCode(req: Request, b: Body, d: Deps): Promise<Result> {
@@ -243,26 +269,29 @@ async function signSubmit(req: Request, b: Body, d: Deps): Promise<Result> {
   const typed = String(b.typed_name ?? '').replace(/\s+/g, ' ').trim();
   if (typed.length < 2 || typed.length > 120) throw new UserError('Type your full name (2 to 120 characters).');
   const png = pngFromDataUrl(String(b.signature_png ?? ''));
-  if (!png || !(await pngDrawable(png))) throw new UserError('Sign again: the signature must be a PNG image of at most 300 KB.');
+  if (!png || !(await pngDrawable(png))) throw new UserError('Sign again: the signature must be a PNG image of at most 300 KB and 2000 x 1000 pixels.');
   if (!codeShape(b.code)) return { ok: false, reason: 'wrong_code', error: 'Enter the 6-digit code from the email.' };
   const ip = clientIp(req), ua = userAgent(req);
 
   const v = await rpc(d.admin, 'svc_sign_verify', { ...ask(req, token), p_code: String(b.code) });
-  if (!v?.ok) return { ...refusal(v?.reason), tries_left: Number(v?.tries_left ?? 0), locked: v?.locked === true };
+  if (!v?.ok) return codeRefusal(v);
   const l = v.letter || {};
   if (!UUID.test(String(l.practice_id)) || !UUID.test(String(l.letter_id)) || !UUID.test(String(l.signer_id))) throw new Error('svc_sign_verify: unexpected answer');
 
   const doc = await download(d, String(l.doc_path || ''), 'The letter could not be read. Ask the firm to send it again.');
   if ((await sha256Hex(doc)) !== String(l.doc_sha256 || '').toLowerCase()) {
+    // (No letter event records this: engagement_letter_events' kinds have none for it and its writer is private, so the
+    // function log is the record until the database gains one.)
     console.error('practice: the stored letter does not match the fingerprint recorded when the firm signed it', l.letter_id);
     return { ok: false, reason: 'changed', error: 'The letter has changed since it was signed by the firm.' };
   }
-  const { data: pr } = await d.admin.from('practices').select('name').eq('id', l.practice_id).maybeSingle();
+  const { data: pr, error: prErr } = await d.admin.from('practices').select('name').eq('id', l.practice_id).maybeSingle();
+  if (prErr || !pr) throw new Error(`practices: ${prErr?.message || 'not found'}`);
   let final: Uint8Array;
   try {
     final = await appendCompletion(doc, {
       title: String(l.title || 'Letter of engagement'), originalSha256: String(l.doc_sha256).toLowerCase(),
-      firm: { name: String(pr?.name || ''), partnerName: String(l.partner_name || ''), partnerEmail: String(l.partner_email || ''),
+      firm: { name: String(pr.name || ''), partnerName: String(l.partner_name || ''), partnerEmail: String(l.partner_email || ''),
         signedAt: String(l.partner_signed_at || ''), ip: l.partner_ip ?? null, ua: l.partner_ua ?? null },
       client: { name: String(l.signer_name || typed), email: String(l.signer_email || ''), title: l.signer_title ?? null, signedAt: d.now?.() ?? new Date(),
         ip, ua, typedName: typed, signaturePng: png },
@@ -274,17 +303,27 @@ async function signSubmit(req: Request, b: Body, d: Deps): Promise<Result> {
 
   const dir = `practice/${l.practice_id}/letters/${l.letter_id}`;
   const sigPath = `${dir}/signature-${l.signer_id}.png`, finalPath = `${dir}/final.pdf`;
+  // The files, write-once. Only files this call certainly wrote are ever removed, and only before the letter can have
+  // been completed on them.
   const written: string[] = [];
-  let done: any;
   try {
     await upload(d, sigPath, png, 'image/png', 'This letter is being signed already. Open the link again in a minute.');
     written.push(sigPath);
     await upload(d, finalPath, final, 'application/pdf', 'This letter is being signed already. Open the link again in a minute.');
     written.push(finalPath);
+  } catch (e) {
+    await remove(d, written);
+    throw e;
+  }
+  let done: any;
+  try {
     done = await rpc(d.admin, 'svc_sign_complete', { p_token: token,
       p: { signature_path: sigPath, final_path: finalPath, final_sha256: await sha256Hex(final), typed_name: typed, ip, ua } });
   } catch (e) {
-    await remove(d, written);
+    // Refused for certain (nothing committed): the files go, so the signer can try again. With the answer lost, the
+    // letter may be completed on these files: they stay.
+    if (refusedForSure(e)) await remove(d, written);
+    else console.error('practice: the letter may have been completed; its signed files are kept', l.letter_id);
     throw e;
   }
   if (!done?.ok) {
@@ -312,7 +351,7 @@ async function directorConfirm(req: Request, b: Body, d: Deps): Promise<Result> 
   if (!tokenOk(token, 'dc')) return refusal('invalid');
   if (!codeShape(b.code)) return { ok: false, reason: 'wrong_code', error: 'Enter the 6-digit code from the email.' };
   const r = await rpc(d.admin, 'svc_director_confirm', { ...ask(req, token), p_code: String(b.code) });
-  return r?.ok ? r : { ...refusal(r?.reason), tries_left: Number(r?.tries_left ?? 0), locked: r?.locked === true };
+  return r?.ok ? r : codeRefusal(r);
 }
 async function directorDecline(req: Request, b: Body, d: Deps): Promise<Result> {
   const token = String(b.token ?? '');

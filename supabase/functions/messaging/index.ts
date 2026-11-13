@@ -36,7 +36,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { displayName, emailHtml, emailText, type Msg, mandateBlocked, senderAddress, waText, wording } from './wording.ts';
 import { ensureSession, type OpenWa, owa, owaError, RECEIPT_EVENTS, sendText, sessionState, setWebhooks, signatureOk, waDigits, waFormat } from './openwa.ts';
-import { PRACTICE_MAIL_KINDS, practiceMailMessages } from './practice_mail.ts';
+import { practiceMail } from './practice_mail.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -353,31 +353,13 @@ async function practiceEmail(sb: any, kind: string, id: string) {
 
 // ------------------------------------------------------------------ the practice's own emails (the database asks)
 // Letters to sign, signing codes, signed letters, a director's confirmation and code, and TaxStreem's reviewers told of a
-// confirmation to check or a refusal. Checked before svc_practice_mail is asked, since asking mints a fresh link or code
-// (replacing the last): nothing is minted that cannot be sent. Sent from the firm's name alone.
-async function practiceMail(kind: string, id: string) {
-  if (!PRACTICE_MAIL_KINDS.includes(kind) || !/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, error: 'Unknown practice email.' };
-  if (!(await channelOn(null, 'email'))) return { ok: false, error: 'Email is paused by TaxStreem for now.' };
-  if (!(await secret('RESEND_API_KEY')) || !senderAddress(await secret('RESEND_FROM'))) {
-    return { ok: false, reason: 'not_configured', error: 'Email is not switched on yet. TaxStreem is setting it up.' };
-  }
-  const { data: r, error } = await admin.rpc('svc_practice_mail', { p_kind: kind, p_id: id });
-  if (error) return { ok: false, error: error.message };
-  if (!r) return { ok: true, skipped: true };
-  const msgs = practiceMailMessages(kind, id, r);
-  if (!msgs.length) return { ok: false, error: 'The email has no address to go to.' };
-  const sent: string[] = [], failed: string[] = [];
-  for (const m of msgs) {
-    try {
-      await sendEmail(m, displayName(String(r.from_name || 'Counta'), true));
-      sent.push(m.to_address);
-    } catch (e) {
-      failed.push((e as Error).message);
-    }
-  }
-  const sentTo = Array.isArray(r.to) ? sent : sent[0] ?? null;
-  return failed.length ? { ok: false, error: failed[0], sent_to: sentTo } : { ok: true, sent_to: sentTo };
-}
+// confirmation to check or a refusal (practice_mail.ts).
+const practiceMailDeps = {
+  emailOn: () => channelOn(null, 'email'),
+  configured: async () => Boolean(await secret('RESEND_API_KEY')) && Boolean(senderAddress(await secret('RESEND_FROM'))),
+  write: async (kind: string, id: string) => await admin.rpc('svc_practice_mail', { p_kind: kind, p_id: id }),
+  send: (m: Msg, fromName: string) => sendEmail(m, fromName),
+};
 
 // ------------------------------------------------------------------ entry
 Deno.serve(async (req) => {
@@ -400,7 +382,7 @@ Deno.serve(async (req) => {
         for (const id of (ids as string[]) || []) results.push(await deliver(id));
         return json({ ok: true, results });
       }
-      if (body.action === 'practice_mail') return json(await practiceMail(String(body.kind || ''), String(body.id || '')));
+      if (body.action === 'practice_mail') return json(await practiceMail(String(body.kind || ''), String(body.id || ''), practiceMailDeps));
       return json({ ok: false, error: 'Unknown action.' }, 400);
     }
 
