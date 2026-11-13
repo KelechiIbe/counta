@@ -61,7 +61,11 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
   const asked = params.get('next') || '';
   const next = asked.startsWith('/') && !asked.startsWith('//') ? asked : '/';
   const joining = next.startsWith('/join') || next.startsWith('/admin/join');
-  const after = mode === 'signup' && !joining ? '/onboarding' : next;
+  // A director whose company is already on Counta under someone else's login: once in, straight to finding the company,
+  // where onboarding offers to recover it.
+  const recovering = next === RECOVER_NEXT;
+  const after = mode === 'signup' && !joining && !recovering ? '/onboarding' : next;
+  const keep = joining || recovering ? next : '';
   // An accountant's link (/r/CODE) sends people here with its code, kept for Home to offer connecting the accountant.
   const ref = params.get('ref') || '';
   useEffect(() => { if (REF_RE.test(ref)) refCode.set(ref); }, [ref]);
@@ -144,13 +148,20 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
           )}
           <div style={{ fontSize: 14, color: '#4B5563', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             {mode === 'login' ? (
-              <><span>New to Counta? <Link to={'/signup?' + carry(email, joining ? next : '')}>Create an account</Link></span><Link to="/reset">Forgot password?</Link></>
+              <><span>New to Counta? <Link to={'/signup?' + carry(email, keep)}>Create an account</Link></span><Link to="/reset">Forgot password?</Link></>
             ) : (
-              <span>Already have an account? <Link to={'/login?' + carry(email, joining ? next : '')}>Sign in</Link></span>
+              <span>Already have an account? <Link to={'/login?' + carry(email, keep)}>Sign in</Link></span>
             )}
           </div>
-          {mode === 'signup' && !joining && (
+          {mode === 'signup' && !joining && !recovering && (
             <div className="hint">Joining a team? Open the link in your invitation email. It brings you back here and then into the business.</div>
+          )}
+          {mode !== 'reset' && !joining && (
+            <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }} data-testid="auth-recover">
+              {recovering
+                ? <>{mode === 'signup' ? 'Once your account is made' : 'Once you are signed in'}, find your company on CAC. Counta shows that it is already here, and a director on its CAC record can take it over. The business then moves to this login.</>
+                : <>Is your company already on Counta under someone else's login? A director on its CAC record can <Link to={`/${mode}?` + carry(email, RECOVER_NEXT)} data-testid="auth-recover-link">recover it</Link>.</>}
+            </div>
           )}
           <div className="hint" data-testid="auth-legal" style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
             <Link to="/privacy">Privacy notice</Link><Link to="/sla">Service levels</Link><Link to="/developers">E-invoicing API</Link>
@@ -162,6 +173,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' | 'reset' }) {
 }
 
 // The code from the confirmation email. Supabase's "Confirm signup" email carries both the code ({{ .Token }}) and the link.
+const RECOVER_NEXT = '/onboarding?new=1&screen=find';
 const carry = (email: string, next: string) => new URLSearchParams({ ...(email ? { email } : {}), ...(next ? { next } : {}) }).toString();
 
 function CodeStep({ email, redirect, onBack, onDone }: { email: string; redirect: string; onBack: () => void; onDone: () => Promise<void> }) {

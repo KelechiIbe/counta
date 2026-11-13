@@ -68,6 +68,7 @@ export function RecoverPage() {
     refetchInterval: (query) => (OPEN.includes(String((query.state.data as Recovery | undefined)?.status)) ? 20_000 : false),
     queryFn: () => rpc<Recovery>('recovery_get', { p_id: id }) });
   const r = q.data;
+  const me = useSession().session?.user?.email || null;
   const [nin, setNin] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -180,6 +181,12 @@ export function RecoverPage() {
       )}
       {r.status === 'cancelled' && <Alert kind="grey" icon="info">You stopped this recovery.</Alert>}
       {err && <Alert kind="red" icon="alert"><span role="alert" data-testid="recover-error">{err}</span></Alert>}
+      {OPEN.includes(r.status) && (
+        <p className="muted" style={{ margin: 0, fontSize: 13, lineHeight: 1.5 }} data-testid="recover-login">
+          {r.business} moves to the login you are using now{me ? <>, <b style={{ wordBreak: 'break-all' }}>{me}</b></> : null}, and you sign in with it afterwards.
+          The previous owner keeps any other businesses they have on Counta and loses only this one.
+        </p>
+      )}
       {r.support_open && OPEN.includes(r.status) && (
         r.support?.status === 'open'
           ? <Alert kind="blue" icon="check"><span data-testid="recover-support-sent">TaxStreem's support has your request and will write to you.</span></Alert>
@@ -253,6 +260,7 @@ function SupportForm({ recoveryId, kinds, onSent }: { recoveryId?: string; kinds
 // /recover/accept/:token: the handover link.
 export function RecoverAccept() {
   const { token = '' } = useParams();
+  const me = useSession().session?.user?.email || null;
   const [state, setState] = useState<{ busy: boolean; err: string | null; org: { id: string; name: string } | null }>({ busy: false, err: null, org: null });
   async function take() {
     setState({ busy: true, err: null, org: null });
@@ -262,7 +270,7 @@ export function RecoverAccept() {
     } catch (e) { setState({ busy: false, err: cleanError(e), org: null }); }
   }
   return (
-    <Frame title="Take over the business" lead="The holder handed the business over to you. Take it with this login: you become its owner, and the previous owner's place ends.">
+    <Frame title="Take over the business" lead={<>The holder handed the business over to you. Take it with this login{me ? <> (<b style={{ wordBreak: 'break-all' }}>{me}</b>)</> : null}: you become its owner, and the previous owner's place ends. Their other businesses on Counta stay theirs.</>}>
       {state.org ? <Done orgName={state.org.name} orgId={state.org.id} /> : <>
         {state.err && <Alert kind="red" icon="alert"><span role="alert" data-testid="recover-accept-error">{state.err}</span></Alert>}
         <button className="btn btn-primary" disabled={state.busy || !/^rh_[0-9a-f]{48}$/.test(token)} onClick={take} data-testid="recover-accept">
