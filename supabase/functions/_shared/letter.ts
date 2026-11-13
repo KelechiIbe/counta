@@ -191,3 +191,41 @@ export function renderModel(body: LetterBody, merge: MergeValues, variant: 'full
     return { ...b, text: t };
   });
 }
+
+// ------------------------------------------------------------------ Word import
+// A firm's own letter as a Word file (word/document.xml, read out of the .docx in the browser) turned into blocks the
+// database checks like any other body. Styles give the shape: Heading1 or Title a heading, Heading2 a clause, a numbered
+// paragraph (w:numPr) a list item at its level (0 → level 3, deeper → level 4), anything else a paragraph. Numbers written
+// into the text (1., 1.1, (a), (iv)) go, because the letter numbers itself; angle brackets go; empty paragraphs are skipped.
+const XML_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+function xmlText(s: string): string {
+  return s.replace(/&(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);/g, (_m, e: string) =>
+    e[0] === '#' ? String.fromCodePoint(e[1] === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)) : XML_ENTITIES[e]);
+}
+
+export function docxXmlToBlocks(xml: string): LetterBody {
+  const blocks: LetterBlock[] = [];
+  const para = /<w:p(?=[\s>/])(?:[^>]*\/>|[^>]*>([\s\S]*?)<\/w:p>)/g;
+  let m: RegExpExecArray | null;
+  while ((m = para.exec(xml)) !== null) {
+    const inner = m[1] || '';
+    // Tabs and line breaks inside a paragraph read as spaces.
+    const runs = inner.replace(/<w:(?:tab|br|cr)\b[^>]*\/>/g, '<w:t> </w:t>');
+    let text = '';
+    const t = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g;
+    let r: RegExpExecArray | null;
+    while ((r = t.exec(runs)) !== null) text += xmlText(r[1]);
+    text = text.replace(/[<>]/g, '').replace(/\s+/g, ' ').trim()
+      .replace(/^\d+(\.\d+)*\.?\s+/, '').replace(/^\([a-z]+\)\s+/, '').replace(/^\([ivx]+\)\s+/, '').trim();
+    if (!text) continue;
+    const style = /<w:pStyle\b[^>]*w:val="([^"]+)"/.exec(inner)?.[1] || '';
+    const numbered = /<w:numPr\b/.test(inner);
+    const ilvl = Number(/<w:ilvl\b[^>]*w:val="(\d+)"/.exec(inner)?.[1] ?? 0);
+    let kind: LetterBlock['kind'] = 'paragraph', level = 1;
+    if (/^(Heading1|Title)$/i.test(style)) { kind = 'heading'; level = 1; }
+    else if (/^Heading2$/i.test(style)) { kind = 'clause'; level = 2; }
+    else if (numbered) { kind = 'list'; level = ilvl <= 0 ? 3 : 4; }
+    blocks.push({ id: `b${blocks.length + 1}`, kind, level, text });
+  }
+  return { version: 1, blocks };
+}

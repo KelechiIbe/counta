@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { rpc, supabase } from '../lib/supabase';
 import { edge } from '../lib/api';
+import type { LetterBody, MergeValues } from '../../supabase/functions/_shared/letter.ts';
 
 export type PracticeRole = 'partner' | 'manager' | 'staff';
 export type LicenceBody = 'ICAN' | 'ANAN' | 'CITN';
@@ -137,6 +138,29 @@ export const usePracticeIntakes = (pid: string, status?: string) => useQuery({ q
   queryFn: () => rpc<IntakeRow[]>('practice_intakes', { p_practice: pid, p: status ? { status } : {} }) });
 export const usePracticeIntake = (iid: string | null) => useQuery({ queryKey: ['practice-intake', iid], enabled: !!iid,
   queryFn: () => rpc<IntakeDetail>('practice_intake', { p_intake: iid }) });
+// Engagement letters: the practice's templates (the improved default letter is always there) and one letter with its signer
+// and its record of events.
+export type LetterTemplate = {
+  id: string; name: string; kind: 'blocks' | 'pdf'; body: LetterBody | null; pdf_path: string | null; is_default: boolean; archived: boolean;
+  created_by_name: string | null; created_at: string; updated_at: string;
+};
+export type LetterSigner = {
+  id: string; name: string; email: string; title: string | null; link_sent: boolean; token_expires: string | null; sends_today: number;
+  otp_failures: number; locked: boolean; code_verified_at: string | null; typed_name: string | null; signed_at: string | null; created_at: string;
+};
+export type LetterEvent = { id: number; at: string; kind: string; actor: string | null; ip: string | null; ua: string | null; detail: Record<string, unknown> | null };
+export type LetterDetail = {
+  id: string; practice_id: string; intake_id: string; client_id: string | null; template_id: string | null; variant: 'full' | 'involved';
+  source: 'template' | 'pdf' | 'signed_upload'; status: LetterStatus; title: string; blocks: LetterBody | null; merge: MergeValues;
+  doc_path: string | null; doc_sha256: string | null; final_path: string | null; final_sha256: string | null; retention_years: number;
+  partner_name: string | null; partner_email: string | null; partner_signed_at: string | null; white_label: boolean; void_reason: string | null;
+  created_at: string; updated_at: string; template_name: string | null; intake_name: string | null; signers: LetterSigner[]; events: LetterEvent[];
+};
+export const useLetterTemplates = (pid: string) => useQuery({ queryKey: ['letter-templates', pid], enabled: !!pid,
+  queryFn: () => rpc<LetterTemplate[]>('practice_letter_templates', { p_practice: pid }) });
+export const useLetter = (lid: string | null) => useQuery({ queryKey: ['letter', lid], enabled: !!lid,
+  queryFn: () => rpc<LetterDetail>('practice_letter', { p_letter: lid }) });
+
 export const useMandateGate = (iid: string | null) => useQuery({ queryKey: ['mandate-gate', iid], enabled: !!iid,
   queryFn: () => rpc<MandateGate>('practice_mandate_gate', { p_intake: iid }) });
 

@@ -19,10 +19,12 @@ import TeamPage from './pages/Team';
 import BillingPage from './pages/Billing';
 import SettingsPage from './pages/Settings';
 import Earnings from './pages/Earnings';
+import LettersPage, { LetterPage } from './pages/Letters';
 
-const NAV: [string, string, string][] = [
-  ['', 'Clients', 'building'], ['deadlines', 'Deadlines', 'cal'], ['team', 'Team', 'users'], ['earnings', 'Earnings', 'award'], ['billing', 'Billing', 'card'],
-  ['settings', 'Practice', 'settings'],
+// [path, label, icon, lead only]: partners and managers see the money and the letters; everyone sees the rest.
+const NAV: [string, string, string, boolean][] = [
+  ['', 'Clients', 'building', false], ['letters', 'Letters', 'file', true], ['deadlines', 'Deadlines', 'cal', false], ['team', 'Team', 'users', false],
+  ['earnings', 'Earnings', 'award', true], ['billing', 'Billing', 'card', true], ['settings', 'Practice', 'settings', false],
 ];
 
 function Centre({ children }: { children: ReactNode }) {
@@ -35,7 +37,7 @@ function Layout({ pid, children }: { pid: string; children: ReactNode }) {
   const home = usePracticeHome(pid);
   const nav = useNavigate();
   const lead = home.data?.me.role === 'partner' || home.data?.me.role === 'manager';
-  const items = NAV.filter(([p]) => lead || !['billing', 'earnings'].includes(p));
+  const items = NAV.filter(([, , , leadOnly]) => lead || !leadOnly);
   const many = (mine.data?.practices.length || 0) > 1;
   return (
     <div className="adm">
@@ -93,6 +95,8 @@ function InPractice() {
         <Route path="clients/:cid" element={<ClientPage pid={pid} />} />
         {/* intake/new and intake/<id>: one route, so the wizard keeps its place when a new intake is first saved and gets its id. */}
         <Route path="intake/:iid" element={<IntakePage pid={pid} />} />
+        <Route path="letters" element={<LettersPage pid={pid} />} />
+        <Route path="letters/:lid" element={<LetterPage pid={pid} />} />
         <Route path="deadlines" element={<Deadlines pid={pid} />} />
         <Route path="team" element={<TeamPage pid={pid} />} />
         <Route path="billing" element={<BillingPage pid={pid} />} />
@@ -126,7 +130,7 @@ export default function PracticeApp() {
     <Routes>
       <Route index element={<Pick />} />
       <Route path="new" element={<Setup invitations={[]} again />} />
-      {['billing', 'team', 'settings', 'deadlines', 'earnings'].map((p) => <Route key={p} path={p} element={<ToPage page={p} />} />)}
+      {['billing', 'team', 'settings', 'deadlines', 'earnings', 'letters'].map((p) => <Route key={p} path={p} element={<ToPage page={p} />} />)}
       <Route path="clients/:cid" element={<ToClient />} />
       <Route path=":pid/*" element={<InPractice />} />
     </Routes>

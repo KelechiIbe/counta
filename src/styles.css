@@ -500,3 +500,18 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
   .legal-body h2 { font-size: 19px; margin-top: 32px; }
   .legal-table th, .legal-table td { padding: 8px 10px; }
 }
+
+/* Engagement letters: the block editor beside its numbered preview, and the public signing pages. */
+.letter-ed { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@media (min-width: 1100px) { .letter-ed { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; } }
+.letter-blk { border: 1px solid var(--line, #E5E7EB); border-radius: 10px; padding: 10px 12px; background: #fff; }
+.letter-blk.open { border-color: var(--blue, #2563EB); box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+.letter-blk-text { font-size: 14px; color: #374151; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.letter-preview { border: 1px solid var(--line, #E5E7EB); border-radius: 12px; padding: 20px 22px; background: #fff; font-size: 14px; line-height: 1.6;
+  position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+.letter-ed .btn-sm { min-height: 36px; }
+.sign-wrap { min-height: 100vh; background: #F4F6F8; padding: 24px 16px 48px; }
+.sign-card { max-width: 640px; margin: 0 auto; background: #fff; border: 1px solid var(--line, #E5E7EB); border-radius: 14px; padding: 24px; }
+.sign-card .btn { min-height: 44px; }
+.sign-pad { width: 100%; height: 180px; border: 1px dashed #9CA3AF; border-radius: 10px; background: #fff; touch-action: none; display: block; }
+.sign-code { font-size: 22px; letter-spacing: 6px; text-align: center; max-width: 220px; }
