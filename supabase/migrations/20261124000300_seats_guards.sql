@@ -7,16 +7,19 @@
 --                                        acting as the owner, so switching a firm person off (practice_update_member)
 --                                        removes every place of theirs in one call. A full mandate that ended without a
 --                                        handover keeps its engagement partner's place, while they are an active partner
---                                        or manager of the firm.
--- The sync marks the transaction (counta.seat_sync = 'on') while it works; outside it, members_mandate_guard lets no one set
--- acts_as_owner, and in a business under full mandate lets in only the managing firm's places, which change only through
--- the sync. A business under full mandate cannot connect to another practice (practice_clients_guard, which also keeps the
--- engagement partner one of the firm's active partners or managers), gets no requests (practice_requests_guard), is paid
--- for by the practice (subscription_charges_guard), and its team, plan and practice link are not changed from inside it
--- (private.require_not_managed, practice_end).
+--                                        or manager of the firm. A full-mode link counts as a full mandate only while the
+--                                        practice runs the business (orgs.managed_by); otherwise its people are accountants.
+-- The sync marks the transaction (counta.seat_sync = 'on') while it works, and gives the caller back its own value; outside
+-- it, members_mandate_guard lets no one set acts_as_owner, and in a business under full mandate lets in only the managing
+-- firm's places, which change only through the sync (a departed person's login may still be deleted). A business under
+-- full mandate cannot connect to another practice (practice_clients_guard, which also keeps the engagement partner one of
+-- the firm's active partners or managers; practice_update_member keeps them so), gets no requests
+-- (practice_requests_guard), is paid for by the practice (subscription_charges_guard), and its team, plan and practice
+-- link are not changed from inside it (private.require_not_managed, practice_end).
 -- Admin kill switch: practices.mandate_suspended_at; private.practice_can_full says whether a firm may run full mandates.
 -- Identity: a business the firm runs is checked against its CAC directors only (svc_identity_nin), and its business
--- profile is submitted by its acting owner (kyc_submit with p.org_id).
+-- profile is submitted by its acting owner (kyc_submit with p.org_id); private.kyc_row never moves a person's draft for one
+-- business, or with anything in it, onto another business.
 --
 -- Redefined functions are their latest definitions with only the changes described at each one; signatures are unchanged,
 -- so create or replace keeps every grant.
@@ -41,26 +44,29 @@ create or replace function private.practice_sync_seats(p_client uuid) returns vo
 language plpgsql security definer set search_path = public, private as $$
 declare c public.practice_clients; pm public.practice_members; ex public.members; p jsonb; v_wanted boolean; v_firm text;
   v_full boolean; v_role text; v_over jsonb; v_seat uuid; v_seats uuid[] := '{}'; v_keep uuid;
+  v_prev text := coalesce(current_setting('counta.seat_sync', true), '');
 begin
   select * into c from practice_clients where id = p_client;
   if not found or c.org_id is null or c.practice_id is null then return; end if;
-  -- Only the seat sync changes the practice's places (members_mandate_guard), until it returns.
+  -- Only the seat sync changes the practice's places (members_mandate_guard), until it returns; then the caller's own
+  -- value again (a handover turns it on before it syncs).
   perform set_config('counta.seat_sync', 'on', true);
   if c.status <> 'active' then
     -- A full mandate that ended without a handover leaves the business with its engagement partner.
-    if c.end_kind = 'ended' then
+    if c.end_kind = 'ended' and c.mode = 'full' then
       select ep.user_id into v_keep from practice_members ep
       where ep.id = c.engagement_partner_id and ep.practice_id = c.practice_id and ep.status = 'active' and ep.role in ('partner', 'manager');
     end if;
     update members set status = 'disabled', acts_as_owner = false
     where org_id = c.org_id and practice_id = c.practice_id and (status <> 'disabled' or acts_as_owner) and role <> 'owner'
       and (v_keep is null or user_id is distinct from v_keep);
-    perform set_config('counta.seat_sync', '', true);
+    perform set_config('counta.seat_sync', v_prev, true);
     return;
   end if;
   -- Under full mandate the firm's people are admins acting as the owner, with the admin template as their own permissions
-  -- (the business's admin settings never narrow them); involved, accountants.
-  v_full := c.mode = 'full';
+  -- (the business's admin settings never narrow them); involved, accountants. A full-mode link is a full mandate only
+  -- while the practice runs the business.
+  v_full := c.mode = 'full' and exists (select 1 from orgs where id = c.org_id and managed_by = c.practice_id);
   v_role := case when v_full then 'admin' else 'accountant' end;
   select name into v_firm from practices where id = c.practice_id;
   for pm in select * from practice_members where practice_id = c.practice_id order by created_at, id loop
@@ -99,14 +105,15 @@ begin
   update members set status = 'disabled', acts_as_owner = false
   where org_id = c.org_id and practice_id = c.practice_id and (status <> 'disabled' or acts_as_owner) and role <> 'owner'
     and not (id = any (v_seats));
-  perform set_config('counta.seat_sync', '', true);
+  perform set_config('counta.seat_sync', v_prev, true);
 end $$;
 
 -- A firm person switched off, or moved, keeps no place they should not have: every client of the practice is synced,
--- including a full mandate that ended without a handover (its engagement partner's place).
+-- including a full mandate that ended without a handover (its engagement partner's place). The engagement partner of such
+-- a client stays an active partner or manager until another one is chosen (practice_clients_guard checks it when set).
 create or replace function public.practice_update_member(p_member uuid, p jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
-declare t public.practice_members; m public.practice_members; c record;
+declare t public.practice_members; m public.practice_members; c record; v_client text;
 begin
   select * into t from practice_members where id = p_member;
   if not found then raise exception 'Person not found.'; end if;
@@ -115,6 +122,14 @@ begin
   if (t.role = 'partner' or p->>'role' = 'partner') and m.role <> 'partner' then raise exception 'Only a partner changes a partner.' using errcode = '42501'; end if;
   if coalesce(p->>'role', t.role) not in ('partner', 'manager', 'staff') or coalesce(p->>'status', t.status) not in ('active', 'invited', 'disabled') then raise exception 'Unknown role or status.'; end if;
   if p->>'status' = 'active' and t.status = 'invited' then raise exception '% joins by accepting the invitation.', t.display_name; end if;
+  if coalesce(nullif(p->>'role', ''), t.role) not in ('partner', 'manager') or coalesce(nullif(p->>'status', ''), t.status) <> 'active' then
+    select coalesce(pc.business_name, o.name) into v_client from practice_clients pc left join orgs o on o.id = pc.org_id
+    where pc.engagement_partner_id = t.id and (pc.status = 'active' or pc.end_kind = 'ended')
+    order by coalesce(pc.business_name, o.name) limit 1;
+    if found then
+      raise exception '% is the engagement partner for %. Choose another engagement partner first.', t.display_name, v_client;
+    end if;
+  end if;
   update practice_members set role = coalesce(nullif(p->>'role', ''), role), status = coalesce(nullif(p->>'status', ''), status),
     token_hash = case when p->>'status' = 'disabled' then null else token_hash end where id = t.id;
   for c in select id from practice_clients where practice_id = t.practice_id and (status = 'active' or end_kind = 'ended') loop
@@ -160,6 +175,12 @@ begin
   if v_practice is null then return new; end if;
   if new.status in ('active', 'invited') and new.practice_id is distinct from v_practice then
     raise exception 'Under full mandate only the firm''s people work in this business.' using errcode = '42501';
+  end if;
+  -- A departed person's login being deleted (members.user_id is on delete set null): their switched-off place loses the
+  -- login and nothing else changes.
+  if tg_op = 'UPDATE' and old.status = 'disabled' and new.status = 'disabled' and old.user_id is not null and new.user_id is null
+     and (to_jsonb(new) - 'user_id') = (to_jsonb(old) - 'user_id') then
+    return new;
   end if;
   -- The person, their role, status and practice, and their permissions (perm_overrides and the p_ flags).
   if tg_op = 'INSERT' or exists (
@@ -443,8 +464,34 @@ begin
     'people', (select coalesce(jsonb_agg(x->>'name'), '[]'::jsonb) from jsonb_array_elements(v_people) x));
 end $$;
 
+-- kyc_row: a person has one draft at a time. Asked for a business that has no profile yet, it binds that draft to the
+-- business only while the draft is empty: a draft already bound to another business, or holding what the person found or
+-- answered for some business (search, CAC, manual details, Tax ID, website, document, answers), is never moved to it (under
+-- full mandate everyone acting as the owner sees the business's profile). Otherwise as before.
+create or replace function private.kyc_row(p_user uuid, p_org uuid default null) returns public.kyc_profiles
+language plpgsql security definer set search_path = public, private as $$
+declare k public.kyc_profiles;
+begin
+  if p_org is not null then
+    select * into k from kyc_profiles where org_id = p_org order by (status = 'submitted') desc, updated_at desc limit 1;
+    if found then return k; end if;
+  end if;
+  select * into k from kyc_profiles where user_id = p_user and status = 'draft';
+  if not found then
+    insert into kyc_profiles (user_id, org_id) values (p_user, p_org) on conflict do nothing returning * into k;
+    if k.id is null then select * into k from kyc_profiles where user_id = p_user and status = 'draft'; end if;
+  elsif p_org is not null and (k.org_id is not null and k.org_id <> p_org
+      or k.org_id is null and (k.search <> '{}'::jsonb or k.cac is not null or k.manual is not null or k.tin is not null or k.web is not null
+                               or k.doc is not null or k.answers <> '{}'::jsonb)) then
+    raise exception 'You have another business profile in progress. Finish it first, then come back to this business.';
+  elsif p_org is not null and k.org_id is null then
+    update kyc_profiles set org_id = p_org where id = k.id returning * into k;
+  end if;
+  return k;
+end $$;
+
 -- kyc_submit: with p.org_id, the profile of that business, which the caller must act as the owner of (a firm person for a
--- business under full mandate); without it, as before.
+-- business under full mandate), and never another business's draft; without it, as before.
 create or replace function public.kyc_submit(p jsonb default '{}'::jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare v_uid uuid := auth.uid(); k public.kyc_profiles; c jsonb; v_org uuid; v_name text; v_addr text; v_vat boolean; v_cat public.business_categories;
@@ -458,6 +505,9 @@ begin
   if p ? 'answers' then perform public.kyc_answer(p->'answers'); end if;
   if p ? 'charges_vat' then perform public.kyc_answer(jsonb_build_object('charges_vat', p->'charges_vat')); end if;
   k := private.kyc_row(v_uid, v_for);
+  if v_for is not null and k.org_id is distinct from v_for then
+    raise exception 'You have another business profile in progress. Finish it first, then come back to this business.';
+  end if;
   if k.status = 'submitted' then raise exception 'This profile is already submitted.'; end if;
   if k.source is null then raise exception 'Find the business on CAC first, or tell us it is not registered.'; end if;
   if array_length(private.kyc_missing(k.answers), 1) > 0 then
@@ -526,7 +576,7 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- core.sql grants every private function to authenticated: the helpers this migration creates or redefines are not
 -- callable by the signed-in person.
-revoke all on function private.practice_can_full(uuid), private.practice_sync_seats(uuid), private.org_contact(uuid),
+revoke all on function private.practice_can_full(uuid), private.practice_sync_seats(uuid), private.org_contact(uuid), private.kyc_row(uuid, uuid),
   private.members_mandate_guard(), private.practice_clients_guard(), private.practice_requests_guard(), private.subscription_charges_guard(),
   private.require_not_managed(uuid)
   from public, anon, authenticated;
