@@ -52,6 +52,7 @@ declare pr uuid := tests.id('pr'); pr2 uuid := tests.id('pr2'); f uuid; k uuid; 
 begin
   perform tests.as_user(tests.id('manager'));
   perform tests.throws(format($q$select public.practice_firm_business(%L, '{"name":"Firm Books Ltd"}')$q$, pr), '%partner%');
+  perform tests.throws(format($q$select public.practice_firm_business(%L, '{"name":"Firm Books Ltd"}')$q$, pr), '42501: Only a partner sets up%');
   perform tests.as_user(tests.id('staff'));
   perform tests.throws(format($q$select public.practice_firm_business(%L, '{"name":"Firm Books Ltd"}')$q$, pr), '42501: Only partners and managers%');
   perform tests.as_user(tests.id('someone'));
@@ -299,10 +300,12 @@ end $$;
 
 -- test: fee_mirror_ended_client_skipped
 -- Once the full mandate ends the client's books are read-only: a later fee invoice posts no bill (recorded as skipped, with
--- why, and not tried again), and voiding an earlier one leaves its bill there (the record says why); nothing is written in
--- the client's books.
+-- why, and not tried again), also when Counta issues it with nobody signed in (the read-only guard lets system writes
+-- through, so the mirror itself must not write); voiding an earlier one leaves its bill there (the record says why); the
+-- fee customer's details can still be changed; nothing is written in the client's books.
 do $$
 declare pr uuid := tests.id('pr'); f uuid := tests.id('f'); c3 uuid; o3 uuid; cu3 uuid; sa uuid; sb uuid; ba uuid; n_log bigint; n_bills bigint; x public.practice_fee_bills;
+  v_sched uuid; sc uuid;
 begin
   c3 := tests.full_client(pr, tests.id('partner'), 'Cedar Farms Ltd');
   o3 := (select org_id from practice_clients where id = c3);
@@ -318,7 +321,15 @@ begin
   perform tests.as_user(tests.id('partner'));
   sb := pg_temp.fee_invoice(f, cu3, 30000);
   perform public.void_sale(sa, 'Billed twice');
+  assert (public.practice_fee_customer(c3, '{"phone":"08035556666"}')->>'customer_id')::uuid = cu3, 'fee_mirror_ended_client_skipped: the fee customer';
+  -- Counta issues a schedule's invoice with nobody signed in.
+  v_sched := (public.recurring_save(f, jsonb_build_object('customer_id', cu3, 'frequency', 'monthly', 'day_of_month', 1,
+    'start_date', private.local_day(f, now()), 'auto_send', false,
+    'lines', '[{"description": "Closing fees", "qty": 1, "unit_price": 20000, "vat_treatment": "standard"}]'::jsonb))->>'id')::uuid;
   perform tests.as_postgres();
+  sc := private.recurring_run(v_sched, private.local_day(f, now()));
+  assert (select status from sales where id = sc) = 'open' and (pg_temp.fb(sc)).status = 'skipped', 'fee_mirror_ended_client_skipped: issued by Counta, skipped';
+  perform private.set_actor(null);
   x := pg_temp.fb(sb);
   assert (select status from sales where id = sb) = 'open' and x.status = 'skipped' and x.bill_id is null and x.error like '%engagement has ended%',
     format('fee_mirror_ended_client_skipped: skipped, got %s', to_jsonb(x));
