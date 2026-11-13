@@ -177,14 +177,30 @@ export function useVoices(enabled = true) {
 // ---------------------------------------------------------------- writes
 const must = <T>(r: T & { ok?: boolean; error?: string }) => { if (r && r.ok === false) throw new Error(r.error || 'Something went wrong.'); return r; };
 export const cacConfig = () => edge<{ lookup: boolean }>('mono', { action: 'cac_config' });
-export const cacSearch = async (query: string) => must(await edge<{ kyc: Kyc }>('mono', { action: 'cac_search', query })).kyc;
-export const cacSelect = async (cac_id: string | number) => must(await edge<{ kyc: Kyc; tax_note: string | null }>('mono', { action: 'cac_select', cac_id }));
+// org: the business being completed (/onboarding?org=…). A business a practice runs under full mandate has its own profile,
+// so every call about it names it; without org, the person's own profile.
+// Callers that do not say (the onboarding screens, Martina) mean the business on the onboarding page's address, if any.
+export function onboardOrg(): string | null {
+  try { return window.location.pathname.startsWith('/onboarding') ? new URLSearchParams(window.location.search).get('org') : null; } catch { return null; }
+}
+const forOrg = (org?: string | null) => { const o = org === undefined ? onboardOrg() : org; return o ? { org_id: o } : {}; };
+export const cacSearch = async (query: string, org?: string | null) => must(await edge<{ kyc: Kyc }>('mono', { action: 'cac_search', query, ...forOrg(org) })).kyc;
+export const cacSelect = async (cac_id: string | number, org?: string | null) =>
+  must(await edge<{ kyc: Kyc; tax_note: string | null }>('mono', { action: 'cac_select', cac_id, ...forOrg(org) }));
 export const cacStatusReport = async (org_id: string) => must(await edge<{ kyc: Kyc; document: { path: string; file_name: string } }>('mono', { action: 'cac_status_report', org_id }));
 export const webInsights = async (org_id?: string | null) => must(await ai<{ kyc: Kyc; insights: WebInsights }>('business_insights', org_id ? { org_id } : {}));
 export const readCacDocument = async (org_id: string) => must(await ai<{ kyc: Kyc; extract: any; checks: { id: string; ok: boolean; note: string }[] }>('read_cac_document', { org_id }));
-export const kycManual = (p: { name: string; kind: string; address?: string; state?: string; rc_number?: string }) => rpc<Kyc>('kyc_manual', { p });
-export const kycAnswer = (p: Partial<Answers>) => rpc<Kyc>('kyc_answer', { p });
-export const kycSubmit = (p: Record<string, unknown>) => rpc<{ org_id: string; name: string; compliance: Score }>('kyc_submit', { p });
+export const kycManual = (p: { name: string; kind: string; address?: string; state?: string; rc_number?: string }, org?: string | null) =>
+  rpc<Kyc>('kyc_manual', { p: { ...p, ...forOrg(org) } });
+export const kycAnswer = (p: Partial<Answers>, org?: string | null) => rpc<Kyc>('kyc_answer', { p: { ...p, ...forOrg(org) } });
+// A business a practice runs is refused, without an error, when the company is already someone else's on Counta: TaxStreem
+// is told and nothing is submitted.
+export const DUPLICATE_COMPANY = 'This company is already on Counta under someone else, so the profile was not submitted. TaxStreem has been told and will contact the firm.';
+export async function kycSubmit(p: Record<string, unknown>, org?: string | null) {
+  const r = await rpc<{ ok?: boolean; reason?: string; org_id: string; name: string; compliance: Score }>('kyc_submit', { p: { ...p, ...forOrg(org) } });
+  if (r && r.ok === false) throw new Error(r.reason === 'duplicate' ? DUPLICATE_COMPANY : 'The profile could not be submitted just now.');
+  return r;
+}
 export const kycDoc = (org: string, path: string, kind: string, fileName?: string) => rpc<Kyc>('kyc_doc', { p_org: org, p_path: path, p_kind: kind, p_file_name: fileName ?? null });
 export const guideMark = (mark: string) => rpc<GuideState>('guide_mark', { p_mark: mark });
 export const guideLanguage = (lang: 'en' | 'pcm') => rpc<GuideState>('guide_language', { p_lang: lang });

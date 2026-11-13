@@ -1,5 +1,8 @@
 // One client: how its books and tax stand, the returns the practice changed, requests to the business, the practice's own
-// notes, and who works on it. "Open the books" switches Counta to the business, through the accountant's own place in it.
+// notes, the other side of its matters, and who works on it. "Open the books" switches Counta to the business, through the
+// accountant's own place in it. A business the firm runs under full mandate also has its mandate panel (the director's
+// confirmation, sending, the handover, the end, the export and its activity log); one kept read-only after its mandate
+// ended shows that panel in place of the tabs.
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -13,8 +16,10 @@ import { type ClientDetail, openDoc, ROLE_WORD, serviceLabel, serviceList, usePr
 import { FilesPanel } from '../Files';
 import { attention } from './Overview';
 import { StartPaying } from './Billing';
+import { MandatePanel } from '../MandatePanel';
+import { OpposingList } from '../Opposing';
 
-type Tab = 'overview' | 'files' | 'requests' | 'notes' | 'team';
+type Tab = 'overview' | 'mandate' | 'files' | 'requests' | 'notes' | 'team';
 
 export default function ClientPage({ pid }: { pid: string }) {
   const { cid = '' } = useParams();
@@ -24,6 +29,9 @@ export default function ClientPage({ pid }: { pid: string }) {
   if (q.isLoading) return <SkeletonRows n={8} />;
   if (q.isError || !d) return <Alert kind="red" icon="alert">{q.isError ? cleanError(q.error) : 'Not found.'}</Alert>;
   const active = d.client.status === 'active';
+  // A full mandate that ended without a handover: read-only, its records kept; the engagement partner keeps a place.
+  const kept = !active && d.client.end_kind === 'ended' && !!d.mandate;
+  const full = active && d.client.mode === 'full' && !!d.mandate;
   const answered = d.requests.filter((r) => r.status === 'answered').length;
   return (
     <>
@@ -31,13 +39,22 @@ export default function ClientPage({ pid }: { pid: string }) {
       <PageHead title={d.client.business_name || d.client.invite_email || 'Client'}
         sub={[d.business?.tin ? `TIN ${d.business.tin}` : 'No TIN yet', d.business?.vat_registered ? 'VAT registered' : 'Not VAT registered',
           d.client.started_at ? `client since ${fmtDay(d.client.started_at.slice(0, 10))}` : null, serviceList(d.client.services)].filter(Boolean).join(' · ')}
-        right={active && <OpenBooks d={d} />} />
-      {!active && <Alert kind="grey" icon="history">This work ended {d.client.ended_at ? when(d.client.ended_at) : ''}. The practice's notes stay; the books are closed to you.</Alert>}
+        right={(active || (kept && d.my_seat?.status === 'active')) && <OpenBooks d={d} />} />
+      {!active && !kept && <Alert kind="grey" icon="history">This work ended {d.client.ended_at ? when(d.client.ended_at) : ''}. The practice's notes stay; the books are closed to you.</Alert>}
       {active && (
-        <Pills value={tab} onChange={setTab} options={[{ id: 'overview', label: 'Overview' }, { id: 'files', label: 'Returns and statements', count: d.files.filter((f) => f.status === 'review').length || undefined },
+        <Pills value={tab} onChange={setTab} options={[{ id: 'overview', label: 'Overview' }, ...(full ? [{ id: 'mandate' as Tab, label: 'Full mandate' }] : []),
+          { id: 'files', label: 'Returns and statements', count: d.files.filter((f) => f.status === 'review').length || undefined },
           { id: 'requests', label: 'Requests', count: answered || undefined }, { id: 'notes', label: 'Notes', count: d.notes.length || undefined }, { id: 'team', label: 'Team and billing' }]} />
       )}
       {(tab === 'overview' || !active) && <OverviewTab d={d} />}
+      {((full && tab === 'mandate') || kept) && <MandatePanel d={d} />}
+      {d.can_lead && (tab === 'overview' || !active) && (
+        <div data-testid="opposing-parties">
+          <Card title="Opposing parties" sub="The other side of the client's matters: a dispute, a deal or a tax matter. Every conflicts check finds them, so the firm never acts for both sides.">
+            <OpposingList pid={d.client.practice_id} clientId={d.client.id} list={d.opposing_parties || []} editable={active || kept} />
+          </Card>
+        </div>
+      )}
       {active && tab === 'files' && <FilesPanel d={d} />}
       {active && tab === 'requests' && <Requests d={d} />}
       {(tab === 'notes' || !active) && <Notes d={d} />}
@@ -245,7 +262,10 @@ function TeamTab({ d }: { d: ClientDetail }) {
             : <StartPaying clientId={d.client.id} name={d.client.business_name || ''} plans={plans} />}
         </Card>
       )}
-      {d.can_lead && (
+      {d.can_lead && d.client.mode === 'full' && (
+        <div className="faint" style={{ fontSize: 13 }}>A full mandate is handed over or ended under Full mandate.</div>
+      )}
+      {d.can_lead && d.client.mode !== 'full' && (
         <Card title="End the work" sub="Your places in the business switch off at once. Your notes stay. A plan you paid for runs to the end of its period.">
           {!ending ? <div><button className="btn btn-ghost btn-sm" onClick={() => setEnding(true)}>End our work for {d.client.business_name}</button></div> : (
             <div className="row wrap" style={{ gap: 8 }}>

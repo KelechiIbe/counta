@@ -13,6 +13,7 @@ import { useToast } from '../../state/session';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, SkeletonRows, Spinner } from '../../components/ui';
 import { Card, PageHead, grid } from '../../admin/ui';
+import { OpposingList } from '../Opposing';
 import {
   type ConflictHit, type Home, type IntakeDetail, type IntakeDoc, type IntakeMode, type IntakePerson, type LetterStatus,
   openDoc, SERVICES, sendInvite, useMandateGate, usePracticeClient, usePracticeHome, usePracticeIntake,
@@ -47,7 +48,6 @@ type Form = {
   mode_requested: IntakeMode; legal_name: string; entity_type: string; rc_number: string; tax_id: string; address: string; industry: string;
   risk_rating: string; risk_reason: string; people: PersonForm[];
 };
-type Opposing = { id: string; name: string; rc_number: string | null; note: string | null };
 
 const blankPerson = (): PersonForm => ({ key: uuid(), kind: 'director', name: '', role: '', ownership_pct: '', nationality: '', is_pep: false, id_type: '', id_last4: '' });
 function toForm(d: IntakeDetail | null, mode: IntakeMode = 'involved'): Form {
@@ -667,38 +667,13 @@ function Conflicts({ pid, h, d, partner, guard }: { pid: string; h: Home; d: Int
 // The other side of the work (a dispute, a deal, a tax matter) for a business that is already a client: saved on that client,
 // so later checks find them and the firm never acts for both sides. (A prospect's are recorded on its page once it is a client.)
 function OpposingParties({ pid, clientId }: { pid: string; clientId: string }) {
-  const qc = useQueryClient();
-  const toast = useToast();
   const c = usePracticeClient(clientId);
-  const list: Opposing[] = c.data?.opposing_parties || [];
-  const [name, setName] = useState('');
-  const [rc, setRc] = useState('');
-  const [busy, setBusy] = useState(false);
-  async function save(p: Record<string, unknown>) {
-    setBusy(true);
-    try {
-      await rpc('practice_opposing_save', { p_practice: pid, p });
-      await qc.invalidateQueries({ queryKey: ['practice-client', clientId] });
-      return true;
-    } catch (e) { toast(cleanError(e), 'err'); return false; } finally { setBusy(false); }
-  }
-  async function add() { if (await save({ client_id: clientId, name: name.trim(), rc_number: rc.trim() || null })) { setName(''); setRc(''); } }
   return (
     <details className="card card-pad" style={{ background: 'var(--canvas)' }}>
       <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 600, lineHeight: '20px', padding: '12px 0', margin: '-12px 0' }}>The other side of the work (optional)</summary>
       <div className="stack" style={{ gap: 10, marginTop: 10 }}>
         <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>If you act for this client in a dispute, a deal or a tax matter with someone else, record them. Later checks will find them, so you never act for both sides.</div>
-        {list.map((o) => (
-          <div key={o.id} className="row" style={{ gap: 8, justifyContent: 'space-between', fontSize: 14 }}>
-            <span>{o.name}{o.rc_number ? <span className="muted"> · {o.rc_number}</span> : null}</span>
-            <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => save({ id: o.id, remove: true })} aria-label={`Remove ${o.name}`}><Icon name="trash" size={14} /></button>
-          </div>
-        ))}
-        <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
-          <Field label="Name" style={{ flex: '2 1 220px' }}><input className="input" value={name} maxLength={160} onChange={(e) => setName(e.target.value)} /></Field>
-          <Field label="RC number" style={{ flex: '1 1 140px' }}><input className="input" value={rc} maxLength={40} onChange={(e) => setRc(e.target.value)} /></Field>
-          <button type="button" className="btn btn-secondary" disabled={busy || name.trim().length < 2} onClick={add}>{busy ? <Spinner small /> : <Icon name="plus" size={14} />}Record</button>
-        </div>
+        <OpposingList pid={pid} clientId={clientId} list={c.data?.opposing_parties || []} />
       </div>
     </details>
   );

@@ -1,8 +1,8 @@
 // The accountant portal's reads and calls. The database decides who sees what: partners and managers see every client,
 // staff the clients they are assigned; a business sees its own accountants, their requests and the files they changed.
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { rpc, supabase } from '../lib/supabase';
-import { edge } from '../lib/api';
+import { type ActivityPage, edge } from '../lib/api';
 import type { LetterBody, MergeValues } from '../../supabase/functions/_shared/letter.ts';
 
 export type PracticeRole = 'partner' | 'manager' | 'staff';
@@ -91,8 +91,21 @@ export type FileVersion = Omit<FileBrief, 'changes'> & {
   sha256: string; no_journal_reason: string | null; locked: string | null; base: { id: string; version: number; accepted_name: string | null } | null; can_apply: boolean;
   can_withdraw: boolean; statement_preview: string | null; accounts: { code: string; name: string; line: string | null; statement: string }[] | null;
 };
+// A business the firm runs under full mandate, or one kept read-only after that ended without a handover: how it sends its
+// documents, where its alerts go, the director's confirmation of the wallets, the latest handover and engagement letter.
+// The director's and the handover's contact details come to partners and managers only.
+export type DirectorStatus = 'pending' | 'review' | 'confirmed' | 'declined' | 'cancelled';
+export type Mandate = {
+  send_mode: 'send' | 'download_only'; alert_email: string | null; engagement_partner_id: string | null;
+  director_confirmed_at: string | null; read_only_at: string | null; retain_until: string | null; payments_open: boolean;
+  director: { status: DirectorStatus; name: string | null; email: string | null; sent_at: string; confirmed_at: string | null } | null;
+  handover: { id: string; email: string | null; status: 'pending' | 'accepted' | 'cancelled'; sent_at: string | null } | null;
+  letter: { id: string; status: LetterStatus } | null;
+};
 export type ClientDetail = {
-  client: ClientRow & { ended_at: string | null; practice_id: string };
+  // end_kind: how the work ended: 'ended' (a full mandate kept read-only) or 'handover' (handed to the owner).
+  client: ClientRow & { ended_at: string | null; practice_id: string; end_kind: 'ended' | 'handover' | null };
+  mandate: Mandate | null;
   business: { name: string; tin: string | null; rc_number: string | null; vat_registered: boolean; fiscal_year_start: number; books_start: string | null; address: string | null;
     phone: string | null; email: string | null; owner: { name: string; email: string | null } | null } | null;
   me: Member; my_seat: { member_id: string; status: string; role: string } | null; health: Health | null;
@@ -161,11 +174,18 @@ export const useLetterTemplates = (pid: string) => useQuery({ queryKey: ['letter
 export const useLetter = (lid: string | null) => useQuery({ queryKey: ['letter', lid], enabled: !!lid,
   queryFn: () => rpc<LetterDetail>('practice_letter', { p_letter: lid }) });
 
+// The practice's entries in a client business's activity log, a page at a time.
+export const usePracticeActivity = (cid: string | null, enabled = true) => useInfiniteQuery({
+  queryKey: ['practice-activity', cid], enabled: !!cid && enabled, initialPageParam: null as number | null,
+  queryFn: ({ pageParam }) => rpc<ActivityPage>('practice_activity', { p_client: cid, p: pageParam ? { before: pageParam } : {} }),
+  getNextPageParam: (last) => last.next_before,
+});
+
 export const useMandateGate = (iid: string | null) => useQuery({ queryKey: ['mandate-gate', iid], enabled: !!iid,
   queryFn: () => rpc<MandateGate>('practice_mandate_gate', { p_intake: iid }) });
 
 // Emails an invitation made in the database (a fresh one-time link goes with it).
-export async function sendInvite(kind: 'member' | 'client' | 'accountant', id: string): Promise<{ ok: boolean; sent_to?: string; error?: string; reason?: string }> {
+export async function sendInvite(kind: 'member' | 'client' | 'accountant' | 'handover', id: string): Promise<{ ok: boolean; sent_to?: string; error?: string; reason?: string }> {
   return edge('messaging', { action: 'practice_email', kind, id });
 }
 

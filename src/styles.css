@@ -515,3 +515,14 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 .sign-card .btn { min-height: 44px; }
 .sign-pad { width: 100%; height: 180px; border: 1px dashed #9CA3AF; border-radius: 10px; background: #fff; touch-action: none; display: block; }
 .sign-code { font-size: 22px; letter-spacing: 6px; text-align: center; max-width: 220px; }
+
+/* Activity log (portal mandate panel, Settings, Your accountant) */
+.act-list { list-style: none; margin: 0; padding: 0; }
+.act-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; padding: 10px 0; border-top: 1px solid var(--row); font-size: 14px; line-height: 1.5; }
+.act-row:first-child { border-top: 0; }
+.act-what { min-width: 0; overflow-wrap: anywhere; }
+.act-who { font-size: 12px; text-align: right; white-space: nowrap; }
+@media (max-width: 640px) {
+  .act-row { grid-template-columns: minmax(0, 1fr); }
+  .act-who { text-align: left; white-space: normal; }
+}

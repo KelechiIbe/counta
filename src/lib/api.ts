@@ -1,5 +1,5 @@
 // Reads and calls for selling, payments, payables and the books (Atlas).
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { cleanError, rpc, supabase } from './supabase';
 import { useSession } from '../state/session';
 import { vatPct } from './vat';
@@ -20,6 +20,39 @@ export async function edgeOk<T = any>(name: string, body: Record<string, unknown
   const r = await edge<T>(name, body);
   if (r && (r as any).ok === false) throw new Error((r as any).error || 'Something went wrong.');
   return r as T;
+}
+
+// ---------------------------------------------------------------- activity log
+// What was done in a business run by a practice (or kept read-only after its engagement ended), newest first, a page at a
+// time. A row is a write to one of the business's tables; an event is something done as a whole (a director's
+// confirmation asked for, a handover, the end of the mandate).
+export type ActivityRow = {
+  id: number; at: string; actor_name: string | null; source: 'row' | 'event'; action: string; entity: string | null; entity_id: string | null;
+  label: string | null; changed: string[] | null;
+};
+export type ActivityPage = { rows: ActivityRow[]; next_before: number | null };
+export const useOrgActivity = (orgId: string | null | undefined, enabled = true) => useInfiniteQuery({
+  queryKey: ['org-activity', orgId], enabled: !!orgId && enabled, initialPageParam: null as number | null,
+  queryFn: ({ pageParam }) => rpc<ActivityPage>('org_activity', { p_org: orgId, p: pageParam ? { before: pageParam } : {} }),
+  getNextPageParam: (last) => last.next_before,
+});
+const NOUN: Record<string, string> = {
+  orgs: 'business details', sales: 'sale', sale_lines: 'sale line', sale_payments: 'sale payment', bills: 'bill', bill_lines: 'bill line', customers: 'customer',
+  vendors: 'supplier', items: 'item', stock_moves: 'stock movement', journals: 'journal', journal_lines: 'journal line', bank_lines: 'bank line',
+  bank_accounts: 'bank account', members: 'person', locations: 'location', documents: 'document', messages: 'message', payouts: 'payout',
+  recurring_invoices: 'recurring invoice', recurring_lines: 'recurring invoice line', purchase_orders: 'purchase order', counts: 'stock count',
+  integrations: 'connection', tax_payments: 'tax payment', tax_transfers: 'tax wallet transfer', filing_versions: 'return', price_lists: 'price list',
+  subscriptions: 'Counta plan', voice_calls: 'call', assets: 'fixed asset', pit_people: 'income-tax person',
+};
+const noun = (t: string) => NOUN[t] || t.replace(/_/g, ' ').replace(/ies$/, 'y').replace(/s$/, '');
+// One entry in words: "Changed sale INV-0042 (status, due date)", or the event's own label.
+export function activityText(r: ActivityRow): string {
+  if (r.source === 'event' || !r.entity) return r.label || r.action.replace(/_/g, ' ');
+  const verb = r.action === 'insert' ? 'Added' : r.action === 'delete' ? 'Removed' : 'Changed';
+  const what = `${verb} ${noun(r.entity)}${r.label ? ` ${r.label}` : ''}`;
+  if (r.action !== 'update' || !r.changed?.length) return what;
+  const fields = r.changed.map((c) => c.replace(/_id$/, '').replace(/_/g, ' '));
+  return `${what} (${fields.slice(0, 3).join(', ')}${fields.length > 3 ? ` and ${fields.length - 3} more` : ''})`;
 }
 
 // ---------------------------------------------------------------- types

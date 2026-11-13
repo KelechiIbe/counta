@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { actsAsOwner, can, useInventory, useSession } from '../state/session';
 import { Icon } from '../components/Icon';
 import { Popover, Seg, Spinner } from '../components/ui';
-import { initials } from '../lib/format';
+import { fmtDay, initials } from '../lib/format';
 import { useNeedsAction } from './needsAction';
 import { InstallBanner } from '../components/InstallBanner';
 import { store } from '../lib/pwa';
@@ -281,6 +281,27 @@ function Header({ onMenu }: { onMenu: () => void }) {
   );
 }
 
+// A business a practice runs under full mandate, or one kept read-only after its engagement ended: said on every screen,
+// so nobody working in it forgets for whom they act or why nothing can be changed.
+function MandateBanner() {
+  const { data: inv } = useInventory();
+  const o = inv?.org;
+  if (!o) return null;
+  if (o.read_only_at) return (
+    <div className="alert alert-grey row" role="status" style={{ gap: 10, alignItems: 'center', marginBottom: 16 }} data-testid="read-only-banner">
+      <Icon name="lock" size={16} color="#4B5563" />
+      <span style={{ minWidth: 0, lineHeight: 1.5 }}>Read-only: this engagement has ended. Records are kept until {o.retain_until ? fmtDay(o.retain_until) : 'the end of the retention period'}.</span>
+    </div>
+  );
+  if (o.managed_by) return (
+    <div className="alert alert-blue row" role="status" style={{ gap: 10, alignItems: 'center', marginBottom: 16 }} data-testid="managed-banner">
+      <Icon name="shield" size={16} color="#0072F5" />
+      <span style={{ minWidth: 0, lineHeight: 1.5 }}>Full mandate: you are acting for the owner. Counta sends the client nothing and documents carry no Counta branding.</span>
+    </div>
+  );
+  return null;
+}
+
 export default function AppShell() {
   // The VAT rule book, so every VAT figure and label on the screens uses the rate on its own date.
   useVatRate();
@@ -311,6 +332,7 @@ export default function AppShell() {
             ) : (
               <>
                 <InstallBanner />
+                <MandateBanner />
                 <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: 320 }}><Spinner /></div>}><Outlet /></Suspense>
               </>
             )}

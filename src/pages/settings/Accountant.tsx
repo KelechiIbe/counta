@@ -1,5 +1,7 @@
 // Settings, Your accountant: invite an accountant by email, see the practice and the people with places in the business,
-// answer their requests, see the returns they changed (and withdraw one), and end the work at any time.
+// answer their requests, see the returns they changed (and withdraw one), and end the work at any time. A business a
+// practice runs under full mandate says so; and whoever manages the team sees what was done in the business while a
+// practice ran it (its activity log, kept after a handover).
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cleanError, rpc, supabase } from '../../lib/supabase';
@@ -7,6 +9,8 @@ import { fmtDay, uuid, when } from '../../lib/format';
 import { actsAsOwner, useInventory, useSession, useToast } from '../../state/session';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Spinner } from '../../components/ui';
+import { ActivityList } from '../../components/ActivityList';
+import { useOrgActivity } from '../../lib/api';
 import { type FileBrief, openDoc, type RequestRow, sendInvite, serviceLabel, serviceList, STATUS_CHIP } from '../../practice/api';
 import { FileReview } from '../../practice/FileReview';
 import { ConnectedBadge, PartnerDirectory } from './Partners';
@@ -30,11 +34,22 @@ export function AccountantSection() {
   const { data: inv } = useInventory();
   const d = q.data;
   const [open, setOpen] = useState<string | null>(null);
+  const activity = useOrgActivity(inv?.org.id, !!d?.can_manage);
   if (q.isLoading || !d || !inv) return <Spinner small />;
   const owner = actsAsOwner(inv);
   const waiting = d.requests.filter((r) => r.status === 'open');
+  const firm = inv.org.managed_by ? d.practices.find((p) => p.practice.id === inv.org.managed_by)?.practice.name : null;
+  const logged = (activity.data?.pages[0]?.rows.length || 0) > 0;
   return (
     <div className="stack" style={{ gap: 14 }} data-testid="accountant-section">
+      {inv.org.managed_by && (
+        <Alert kind="blue" icon="shield">
+          <span data-testid="managed-notice">
+            {firm || 'An accounting firm'} runs this business under full mandate, acting for its owner. Its people do everything an owner can, apart from moving money before a
+            director has confirmed the wallets. Everything they do is recorded below.
+          </span>
+        </Alert>
+      )}
       {d.practices.map((p) => <Practice key={p.client_id} p={p} canManage={d.can_manage} />)}
       {!d.practices.length && <div className="muted" style={{ fontSize: 14, lineHeight: 1.55 }}>
         Invite your accountant by email. Once they accept in Counta's accountant portal, they keep your books and prepare your returns from inside Counta, alongside their
@@ -65,6 +80,13 @@ export function AccountantSection() {
         </div>
       )}
       {open && <FileReview id={open} onClose={() => setOpen(null)} />}
+      {d.can_manage && (logged || !!inv.org.managed_by) && (
+        <section className="stack" style={{ gap: 8 }} aria-labelledby="org-activity-h" data-testid="org-activity">
+          <b id="org-activity-h" style={{ fontSize: 14 }}>What was done in the business</b>
+          <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>Each change made while an accounting firm ran the business, by whom and when.</div>
+          <ActivityList q={activity} empty="Nothing has been done yet." />
+        </section>
+      )}
     </div>
   );
 }
