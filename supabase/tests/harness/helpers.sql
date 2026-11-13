@@ -272,6 +272,39 @@ begin
   return v;
 end $$;
 
+-- An engagement letter for the intake signed by both sides, as the practice's first active partner: drafted from the
+-- default template (the intake's mode is the variant), signed by the firm with a stand-in rendered file, sent to a client
+-- signer, then e-signed through the link and the code the messaging function would email (svc_practice_mail mints both;
+-- practice_letter_send only queues the email). The intake must be cleared. Returns the letter's id.
+create function tests.completed_letter(p_intake uuid) returns uuid
+language plpgsql as $$
+declare v_practice uuid; v_partner uuid; v_name text; l uuid; s uuid; v_tok text; v_code text; r jsonb;
+begin
+  perform tests.as_postgres();
+  select practice_id into v_practice from public.practice_intakes where id = p_intake;
+  select user_id, display_name into v_partner, v_name from public.practice_members
+  where practice_id = v_practice and role = 'partner' and status = 'active' and user_id is not null order by created_at limit 1;
+  if v_partner is null then raise exception 'tests.completed_letter: no active partner for intake %', p_intake; end if;
+  perform tests.as_user(v_partner);
+  l := (public.practice_letter_draft(p_intake, '{}')->>'id')::uuid;
+  perform tests.as_service();
+  perform public.svc_letter_frozen(l, jsonb_build_object('doc_path', 'practice/' || v_practice || '/letters/' || l || '/letter.pdf',
+    'doc_sha256', repeat('ab', 32), 'by_user', v_partner, 'signature_name', v_name, 'ip', '203.0.113.5', 'ua', 'Test browser'));
+  perform tests.as_user(v_partner);
+  s := (public.practice_letter_send(l, '{"name":"Dayo Client","email":"dayo.client@client.example.test","title":"Director"}')->'signers'->0->>'id')::uuid;
+  perform tests.as_service();
+  v_tok := substring(public.svc_practice_mail('letter_sign', s)->>'link' from 'es_[0-9a-f]{48}$');
+  v_code := public.svc_practice_mail('letter_code', s)->>'code';
+  r := public.svc_sign_verify(v_tok, v_code, '203.0.113.9', 'Test browser');
+  if not coalesce((r->>'ok')::boolean, false) then raise exception 'tests.completed_letter: the code was refused: %', r; end if;
+  r := public.svc_sign_complete(v_tok, jsonb_build_object('signature_path', 'practice/' || v_practice || '/letters/' || l || '/signature-' || s || '.png',
+    'final_path', 'practice/' || v_practice || '/letters/' || l || '/final.pdf', 'final_sha256', repeat('cd', 32), 'typed_name', 'Dayo Client',
+    'ip', '203.0.113.9', 'ua', 'Test browser'));
+  if not coalesce((r->>'ok')::boolean, false) then raise exception 'tests.completed_letter: signing was refused: %', r; end if;
+  perform tests.as_postgres();
+  return l;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Grants: every caller can switch identity, read ids and capture results.
 -- ---------------------------------------------------------------------------
