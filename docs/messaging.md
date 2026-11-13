@@ -192,11 +192,25 @@ The database asks the messaging function for these (`private.practice_mail` call
 | `letter_sign` | The client's signer | The engagement letter to sign: a one-time `/sign` link, 14 days |
 | `letter_code` | The client's signer | The 6-digit signing code, 10 minutes |
 | `letter_done` | The signer, copied to the partner who signed | The signed letter is ready |
-| `director_confirm` | A director of the company | The request to confirm the wallets: a one-time `/confirm` link |
-| `director_code` | The director | The 6-digit code |
+| `director_confirm` | A director of the company | The request to confirm the wallets: a one-time `/confirm` link (only when the firm gave an email) |
 | `director_admin` | TaxStreem's reviewers (`svc_review_recipients()`, each their own email, at most 20) | A director's confirmation to check |
 
-Letters and director emails go in the firm's name alone. Letters reply to the partner who signed them for the firm, director emails to the engagement partner. The director's email says the wallets are provided by TaxStreem through Flutterwave.
+Letters and director emails go in the firm's name alone. Letters reply to the partner who signed them for the firm, director emails to the engagement partner. The director's email says the wallets are provided by TaxStreem through Flutterwave. (`director_code` sends nothing now: the director's code is an identity message, below.)
+
+### Identity messages: codes by email and SMS, and recoveries
+
+`private.identity_mail` calls the hook with `{action: 'identity_mail', kind, id}`; the function asks `svc_identity_mail` for the words and mints the code or link as it sends (`messaging/identity_mail.ts`). Nothing is minted while neither email nor SMS can go.
+
+| Kind | To | What |
+| --- | --- | --- |
+| `identity_code` | A director confirming wallets, or recovering a business | The 6-digit code (10 minutes): by SMS to the phone NIMC holds for their NIN (or their CAC phone), and by email to their address on the CAC record. A director's code goes in the firm's name; a recovery's from Counta |
+| `recovery_owner` | The holder of a business (its owners, or the engagement partner and the firm) | A director proved who they are and asked for the business: 30 minutes to answer |
+| `recovery_handover` | The director | The link to take the business (`/recover/accept/rh_…`, 7 days) |
+| `recovery_done` | The previous owners | The business has a new owner |
+| `recovery_admin` | TaxStreem's reviewers | A recovery to check |
+| `support_case` | The support address (`SUPPORT_EMAIL`, else `KYC_REVIEW_EMAIL`, else admin@taxstreem.com), replies to the person | A support request from the app |
+
+**SMS** goes through Termii (`POST {TERMII_BASE_URL}/api/sms/send`, default `https://api.ng.termii.com`, route `TERMII_CHANNEL`, default `dnd` so numbers on Do-Not-Disturb get it), from the sender ID `TERMII_SENDER_ID`, with the key `TERMII_API_KEY`, all set in the admin portal (Keys and services, SMS). Each SMS sent is counted in `usage_events` (service `termii`). Until the key and the sender ID are set, the database sends codes by email only and TaxStreem checks each confirmation.
 
 ## Testing
 

@@ -8,7 +8,7 @@ import { useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { localPhone } from '../../lib/format';
 import {
-  answered, cacSearch, cacSelect, cacStatusReport, classLabel, FILING, guideLanguage, guideMark, incomeTaxOf, kycAnswer, kycManual, kycSubmit, longDate, naira, OFFERING, PAY,
+  answered, cacSearch, cacSelect, cacStatusReport, classLabel, CompanyExists, existsText, FILING, guideLanguage, guideMark, incomeTaxOf, kycAnswer, kycManual, kycSubmit, longDate, naira, OFFERING, PAY,
   QUESTION_LABEL, questionsFor, readCacDocument, REASONS, RECEIVE, REVENUE, taxesFor, titleCase, uploadCacDocument, useCategories, useGuide, useKyc, useScore, yearsSince,
   type Answers, type Candidate, type IncomeTax, type Kyc, type Score,
 } from '../../lib/onboard';
@@ -295,6 +295,35 @@ function Fact({ k, children }: { k: string; children: ReactNode }) {
   if (children == null || children === '' || (Array.isArray(children) && !children.length)) return null;
   return <div className="ob-fact"><span className="k">{k}</span><span>{children}</span></div>;
 }
+// The company found on CAC is on Counta already: the person is told whose account holds it (masked) and, if they are a
+// director on its CAC record, recovers it instead of setting it up again (/recover).
+function Taken({ k, onBack }: { k: Kyc; onBack: () => void }) {
+  const nav = useNavigate();
+  const t = k.taken!;
+  return (
+    <div className="ob-card stack" style={{ gap: 14 }} data-testid="kyc-taken">
+      <h2 className="ob-h2">{titleCase(t.name)} is already on Counta</h2>
+      <Alert kind="amber" icon="building"><span data-testid="kyc-taken-text">{existsText(titleCase(t.name), t.masked_email, t.yours)}</span></Alert>
+      {t.yours ? (
+        <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={() => nav('/home')}>Open my businesses</button>
+      ) : (
+        <>
+          <div className="muted" style={{ fontSize: 14, lineHeight: 1.5 }}>
+            To recover it, you prove you are a director: your NIN is checked against the directors on the CAC record, and a code goes to the phone on your NIN
+            record and your email on the CAC record. The account that holds it then has 30 minutes to hand it over. TaxStreem's support helps if it does not.
+          </div>
+          <div className="row wrap" style={{ gap: 8 }}>
+            <button className="btn btn-primary" onClick={() => nav(t.recovery_id ? `/recover/${t.recovery_id}` : '/recover')} data-testid="kyc-recover">
+              {t.recovery_id ? 'Carry on recovering it' : 'Recover this business'}
+            </button>
+            <button className="btn btn-ghost" onClick={onBack}>That is not my business</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Found({ k, live, onNext, onBack }: { k: Kyc; live: boolean; onNext: () => void; onBack: () => void }) {
   const g = useGuideTalk();
   const [w, setW] = useState(k.web);
@@ -310,6 +339,7 @@ function Found({ k, live, onNext, onBack }: { k: Kyc; live: boolean; onNext: () 
   if (!b) return <Alert kind="amber" icon="info">Pick your business first. <button className="btn btn-ghost btn-xs" onClick={onBack}>Back</button></Alert>;
   const age = yearsSince(b.registered_on);
   const obj = b.objectives || '';
+  if (k.taken) return <Taken k={k} onBack={onBack} />;
   return (
     <>
       <Say live={live}>{age ? <>{titleCase(b.name)}, {age} {age === 1 ? 'year' : 'years'} on the register. I've done some reading. Here's what I know so far.</>
@@ -620,6 +650,7 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
   const { session, refreshMemberships } = useSession();
   const g = useGuideTalk();
   const qc = useQueryClient();
+  const nav = useNavigate();
   const meta = (session?.user?.user_metadata || {}) as any;
   const b = k.business;
   const [f, setF] = useState({ trading_name: titleCase(b?.name), phone: localPhone(meta.phone), email: b?.email?.toLowerCase() || session?.user?.email || '', address: titleCase(b?.address) });
@@ -649,7 +680,11 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
       g.answer('Set up my business.', `Done on screen: ${r.name} is set up with a compliance score of ${r.compliance.score} out of ${r.compliance.total}. Call get_score and talk them through it.`);
       void guideMark('score_seen').catch(() => null);
       onDone(r.org_id);
-    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+    } catch (e) {
+      setErr((e as Error).message);
+      // Already on Counta: the profile now says so, and the page shows how to recover it.
+      if (e instanceof CompanyExists) void qc.invalidateQueries({ queryKey: ['kyc'] });
+    } finally { setBusy(false); }
   }
   const jump = (id: string) => { g.showQuestion(id); g.notify(`On screen, the person is changing their answer about ${(id === 'filing_cit' ? taxes[2].label : QUESTION_LABEL[id] || id).toLowerCase()}.`); onEdit(); };
   return (
@@ -673,6 +708,11 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
         ))}
       </div>
       {err && <Alert kind="red" icon="alert">{err}</Alert>}
+      {k.taken && !k.taken.yours && (
+        <button className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => nav(k.taken?.recovery_id ? `/recover/${k.taken.recovery_id}` : '/recover')} data-testid="summary-recover">
+          Recover this business
+        </button>
+      )}
       <div className="ob-sticky">
         <button className="btn btn-secondary" onClick={onEdit}>Back</button>
         <button className="btn btn-primary" onClick={submit} disabled={busy || k.missing.length > 0 || !f.trading_name.trim()} style={{ boxShadow: 'var(--shadow-cta)' }}>

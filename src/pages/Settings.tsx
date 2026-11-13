@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { RecoveryHolderCard } from '../components/RecoveryHolder';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { actsAsOwner, can, useInventory, useSession, useToast } from '../state/session';
@@ -282,6 +283,7 @@ export default function Settings() {
 
   return (
     <div className="container" style={{ maxWidth: 1000 }}>
+      {inv.me.role === 'owner' && !inv.org.managed_by && <div style={{ marginBottom: 16 }}><RecoveryHolderCard orgId={inv.org.id} /></div>}
       {asks > 0 && (
         <Alert kind="blue" icon="chat">
           <div className="row wrap" style={{ gap: 10, justifyContent: 'space-between', alignItems: 'center' }} data-testid="settings-asks">

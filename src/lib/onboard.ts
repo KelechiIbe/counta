@@ -34,6 +34,8 @@ export interface Kyc {
   category: { id: string; label: string; industry: string } | null;
   doc: { kind: string; file_name: string; path: string; read: boolean; extract: any; checks: { id: string; ok: boolean; note: string }[] | null; at: string } | null;
   submitted_at: string | null; updated_at: string;
+  // The company is on Counta already (one company, one business): who holds it, masked, and the person's recovery of it.
+  taken?: { name: string; masked_email: string | null; yours: boolean; recovery_id: string | null } | null;
 }
 export interface ScoreItem { id: string; label: string; ok: boolean; text: string; action: string | null }
 export interface Score { score: number; total: number; items: ScoreItem[]; next: ScoreItem | null }
@@ -197,9 +199,18 @@ export const kycAnswer = (p: Partial<Answers>, org?: string | null) => rpc<Kyc>(
 // is told and nothing is submitted. So is an owner's own profile of a company an accounting firm already runs for its owner.
 export const DUPLICATE_COMPANY = 'This company is already on Counta under someone else, so the profile was not submitted. TaxStreem has been told and will contact the firm.';
 export const MANAGED_ELSEWHERE = 'This company is already on Counta: an accounting firm runs it for its owner. Ask the firm to hand it over to you. TaxStreem has been told.';
+// A company already on Counta (reason 'exists'): what the person is told, with how to recover it.
+export const existsText = (business: string, masked: string | null, yours: boolean) => yours
+  ? `You run ${business} on Counta already. Open it from your businesses instead of setting it up again.`
+  : `${business} is already on Counta${masked ? `, under the account ${masked}` : ''}. A company is on Counta once. If you are a director on its CAC record, recover it instead.`;
+export class CompanyExists extends Error {
+  constructor(readonly business: string, readonly masked: string | null, readonly yours: boolean) { super(existsText(business, masked, yours)); }
+}
 export async function kycSubmit(p: Record<string, unknown>, org?: string | null) {
-  const r = await rpc<{ ok?: boolean; reason?: string; org_id: string; name: string; compliance: Score }>('kyc_submit', { p: { ...p, ...forOrg(org) } });
+  const r = await rpc<{ ok?: boolean; reason?: string; org_id: string; name: string; compliance: Score; business?: string; masked_email?: string | null; yours?: boolean }>(
+    'kyc_submit', { p: { ...p, ...forOrg(org) } });
   if (r && r.ok === false) {
+    if (r.reason === 'exists') throw new CompanyExists(String(r.business || 'This company'), r.masked_email ?? null, r.yours === true);
     throw new Error(r.reason === 'duplicate' ? DUPLICATE_COMPANY : r.reason === 'managed_elsewhere' ? MANAGED_ELSEWHERE : 'The profile could not be submitted just now.');
   }
   return r;

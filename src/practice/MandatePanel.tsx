@@ -7,7 +7,7 @@
 // director and set sending and alerts; partners also hand over, end, export and choose the engagement partner.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cleanError, rpc } from '../lib/supabase';
 import { edge } from '../lib/api';
 import { fmtDay, when } from '../lib/format';
@@ -15,6 +15,7 @@ import { useToast } from '../state/session';
 import { Icon } from '../components/Icon';
 import { Alert, Field, Spinner } from '../components/ui';
 import { ActivityList } from '../components/ActivityList';
+import { RecoveryHolderCard } from '../components/RecoveryHolder';
 import { Card } from '../admin/ui';
 import { type ClientDetail, type Mandate, sendInvite, usePracticeActivity, usePracticeHome } from './api';
 import { LETTER_STATUS } from './pages/Letters';
@@ -32,6 +33,7 @@ export function MandatePanel({ d }: { d: ClientDetail }) {
   return (
     <div className="stack" style={{ gap: 16 }} data-testid="mandate-panel">
       <Standing d={d} m={m} />
+      {!kept && lead && d.client.org_id && <RecoveryHolderCard orgId={d.client.org_id} firm />}
       {!kept && lead && <Director d={d} m={m} />}
       {!kept && lead && <Sending d={d} m={m} />}
       {partner && <EngagementPartner d={d} m={m} />}
@@ -82,75 +84,122 @@ function Standing({ d, m }: { d: ClientDetail; m: Mandate }) {
   );
 }
 
-// Payments open only once a director of the company, named on its CAC record, confirms the wallets from an email.
+// Payments open only once a director of the company on its CAC record confirms the wallets: the firm picks the director
+// from the record and sends the link to their own email, or copies it to send another way. Whoever opens it proves with
+// their NIN that they are that director, and a code goes to the phone on their NIN record and their CAC email.
+type DirectorState = {
+  confirmed_at: string | null; cac: boolean; directors: { name: string; role: string }[];
+  latest: { id: string; status: string; name: string; email: string | null; created_at: string; matched_name: string | null; review_reason: string | null;
+    decline_reason: string | null; step: 'nin' | 'code' | 'slip' | null; link_live: boolean } | null;
+};
+const STEP_TEXT: Record<string, string> = { nin: 'has not entered their NIN yet', code: 'has the code and has not entered it yet', slip: 'has no phone or email to get a code: they upload their NIN slip' };
+
 function Director({ d, m }: { d: ClientDetail; m: Mandate }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const x = m.director;
+  const st = useQuery({ queryKey: ['director-state', d.client.id], staleTime: 15_000,
+    queryFn: () => rpc<DirectorState>('practice_director_state', { p_client: d.client.id }) });
+  const s = st.data;
+  const x = s?.latest;
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ name: '', email: '', phone: '' });
-  const [busy, setBusy] = useState(false);
+  const [f, setF] = useState({ name: '', email: '' });
+  const [link, setLink] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const refresh = () => Promise.all([qc.invalidateQueries({ queryKey: ['practice-client', d.client.id] }), qc.invalidateQueries({ queryKey: ['director-state', d.client.id] })]);
   async function send() {
     setErr(null);
-    if (f.name.trim().length < 2) { setErr('Enter the director\'s name as it is on the CAC record.'); return; }
-    if (!EMAIL.test(f.email.trim())) { setErr('Enter the director\'s own email address.'); return; }
-    setBusy(true);
+    if (!f.name) { setErr('Choose the director from the CAC record.'); return; }
+    if (f.email.trim() && !EMAIL.test(f.email.trim())) { setErr('That email address is not valid.'); return; }
+    setBusy('send');
     try {
-      await rpc('practice_director_request', { p_client: d.client.id, p: { name: f.name.trim(), email: f.email.trim(), phone: f.phone.trim() || null } });
-      await qc.invalidateQueries({ queryKey: ['practice-client', d.client.id] });
-      setOpen(false); setF({ name: '', email: '', phone: '' });
-      toast(`Sent to ${f.email.trim()}`);
+      const r = await rpc<{ link?: string; sent: boolean; email: string | null }>('practice_director_request', { p_client: d.client.id, p: { name: f.name, email: f.email.trim() || null } });
+      await refresh();
+      setOpen(false); setF({ name: '', email: '' });
+      if (r?.link) setLink(r.link); else toast(`Sent to ${r?.email || 'the director'}`);
     } catch (e) { setErr(cleanError(e)); }
-    setBusy(false);
+    setBusy(null);
+  }
+  async function newLink() {
+    if (!x) return;
+    setBusy('link'); setErr(null);
+    try {
+      const r = await rpc<{ link: string }>('practice_director_link', { p_confirmation: x.id });
+      setLink(r.link);
+      await refresh();
+    } catch (e) { setErr(cleanError(e)); }
+    setBusy(null);
+  }
+  async function copy() {
+    if (!link) return;
+    try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch { toast('Select the link and copy it'); }
   }
   const who = x?.name ? `${x.name}${x.email ? ` (${x.email})` : ''}` : 'The director';
   let state: React.ReactNode;
   let ask: string | null = 'Ask a director';
   if (m.director_confirmed_at) {
-    state = <Alert kind="green" icon="check">{x?.status === 'confirmed' && x.name ? `${x.name} confirmed` : 'A director confirmed'} the wallets on {fmtDay(m.director_confirmed_at.slice(0, 10))}.</Alert>;
+    state = <Alert kind="green" icon="check">{x?.status === 'confirmed' && x.name ? `${x.matched_name || x.name} confirmed` : 'A director confirmed'} the wallets on {fmtDay(m.director_confirmed_at.slice(0, 10))}.</Alert>;
     ask = null;
   } else if (x?.status === 'pending') {
-    state = <span>Waiting for {who} to confirm. Asked {when(x.sent_at)}.</span>;
-    ask = 'Send a new link';
+    state = <span>Waiting for {who}, who {STEP_TEXT[x.step || 'nin']}. Asked {when(x.created_at)}.</span>;
+    ask = 'Ask again';
   } else if (x?.status === 'review') {
-    state = <Alert kind="blue" icon="clock">TaxStreem is checking {who}'s confirmation before payments open. It usually takes a working day.</Alert>;
+    state = <Alert kind="blue" icon="clock">TaxStreem is checking {who}'s confirmation before payments open{x.review_reason === 'no_nin_phone' ? ': NIMC has no phone number for their NIN' : x.review_reason === 'no_channel' ? ': they sent their NIN slip' : ''}. It usually takes a working day.</Alert>;
     ask = null;
   } else if (x?.status === 'declined') {
-    state = <Alert kind="amber" icon="alert">{who} declined. TaxStreem has been told. You can ask again, or ask another director.</Alert>;
+    state = <Alert kind="amber" icon="alert">{who} declined{x.decline_reason ? `: “${x.decline_reason}”` : ''}. TaxStreem has been told. You can ask again, or ask another director.</Alert>;
     ask = 'Ask again';
   } else {
     state = <span className="muted">No director has been asked yet.</span>;
   }
+  if (s && !s.cac && !m.director_confirmed_at) {
+    state = <Alert kind="amber" icon="alert">Add the business's CAC record first (open the business, then Settings, Business profile), so Counta knows its directors.</Alert>;
+    ask = null;
+  }
   return (
-    <Card title="The director's confirmation" sub="The business wallet and the tax wallet open only once a director on the CAC record confirms, from a link in their own email. The business's identity must be verified first.">
-      <div className="stack" style={{ gap: 10, fontSize: 14 }} data-testid="director-status">{state}</div>
+    <Card title="The director's confirmation" sub="The business wallet and the tax wallet open only once a director on the CAC record confirms. They prove it with their NIN and a code sent to the phone on their NIN record and their email on the CAC record.">
+      <div className="stack" style={{ gap: 10, fontSize: 14 }} data-testid="director-status">{st.isLoading ? <Spinner small /> : state}</div>
+      {link && (
+        <div className="stack" style={{ gap: 6 }} data-testid="director-link">
+          <div style={{ fontSize: 13 }}>Send this link to the director yourself (it works for 14 days, and a new link replaces it):</div>
+          <div className="row wrap" style={{ gap: 8 }}>
+            <input className="input" readOnly value={link} style={{ flex: '1 1 260px', fontSize: 13 }} onFocus={(e) => e.currentTarget.select()} aria-label="The director's link" />
+            <button type="button" className="btn btn-secondary btn-sm" style={{ minHeight: 40 }} onClick={copy} data-testid="director-link-copy"><Icon name="copy" size={14} />Copy</button>
+          </div>
+        </div>
+      )}
+      {x?.status === 'pending' && !m.director_confirmed_at && !open && (
+        <div><button type="button" className="btn btn-ghost btn-sm" style={{ minHeight: 40 }} disabled={busy === 'link'} onClick={newLink} data-testid="director-new-link">
+          {busy === 'link' ? <Spinner small /> : <Icon name="link" size={14} />}Get a new link to send
+        </button></div>
+      )}
       {ask && !open && (
-        <div><button type="button" className="btn btn-secondary btn-sm" style={{ minHeight: 40 }} onClick={() => setOpen(true)} data-testid="director-request">
+        <div><button type="button" className="btn btn-secondary btn-sm" style={{ minHeight: 40 }} onClick={() => { setOpen(true); setLink(null); }} data-testid="director-request">
           <Icon name="mail" size={14} />{ask}
         </button></div>
       )}
       {open && (
         <form className="stack" style={{ gap: 10 }} onSubmit={(e) => { e.preventDefault(); void send(); }}>
           <div className="row wrap" style={{ gap: 8 }}>
-            <Field label="Director's name, as on the CAC record" style={{ flex: '2 1 240px' }}>
-              <input className="input" value={f.name} maxLength={120} autoComplete="off" onChange={(e) => setF({ ...f, name: e.target.value })} data-testid="director-name" />
+            <Field label="Director, from the CAC record" style={{ flex: '2 1 240px' }}>
+              <select className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} data-testid="director-name">
+                <option value="">Choose…</option>
+                {(s?.directors || []).map((p) => <option key={p.name + p.role} value={p.name}>{p.name}{p.role === 'owner' ? ' (proprietor)' : ''}</option>)}
+              </select>
             </Field>
-            <Field label="Their own email address" style={{ flex: '2 1 240px' }}>
+            <Field label="Their own email (optional)" style={{ flex: '2 1 240px' }}>
               <input className="input" type="email" value={f.email} maxLength={254} autoComplete="off" onChange={(e) => setF({ ...f, email: e.target.value })} data-testid="director-email" />
             </Field>
-            <Field label="Phone (optional)" style={{ flex: '1 1 160px' }}>
-              <input className="input" type="tel" value={f.phone} maxLength={40} autoComplete="off" onChange={(e) => setF({ ...f, phone: e.target.value })} data-testid="director-phone" />
-            </Field>
           </div>
-          <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>Not an address at the firm. A new link replaces any link sent before.</div>
+          <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>Not an address at the firm. Without an email, you get the link to send yourself. A new request replaces any sent before.</div>
           {err && <Alert kind="red" icon="alert"><span role="alert">{err}</span></Alert>}
           <div className="row wrap" style={{ gap: 8 }}>
-            <button className="btn btn-primary btn-sm" disabled={busy} data-testid="director-send">{busy ? <Spinner small /> : <Icon name="send" size={14} color="#fff" />}Send the request</button>
+            <button className="btn btn-primary btn-sm" disabled={busy === 'send'} data-testid="director-send">{busy === 'send' ? <Spinner small /> : <Icon name="send" size={14} color="#fff" />}{f.email.trim() ? 'Send the request' : 'Get the link'}</button>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setOpen(false); setErr(null); }}>Cancel</button>
           </div>
         </form>
       )}
+      {err && !open && <Alert kind="red" icon="alert"><span role="alert">{err}</span></Alert>}
     </Card>
   );
 }

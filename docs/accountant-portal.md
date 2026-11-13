@@ -86,15 +86,15 @@ Both start the same way, with due diligence on the prospect and an engagement le
 
 Clients, Add a client opens a step-by-step intake (`practice_intakes`, partners and managers):
 
-1. **The business**: its legal name, kind of entity, RC or BN number, Tax ID, address and industry, and which mode the firm wants.
-2. **Its people**: directors, beneficial owners (with their share) and related parties, each with a nationality, whether they are a politically exposed person, and the type of ID seen. Only the last four characters of an ID number are ever kept; a full NIN, BVN or other number typed anywhere is refused.
+1. **The business**: its legal name, kind of entity, RC or BN number, Tax ID, address and industry, and which mode the firm wants. **Find the business on CAC** fills these from the CAC record (the `mono` function's `intake_cac_search` and `intake_cac_select`, within the person's daily lookups): the registered name, kind, number with its registry, the Tax ID the NRS holds for it, the address and industry, and in step 2 its directors, shareholders of a quarter or more as beneficial owners, and the people with significant control. The partner checks them and saves; the record is kept with the intake (`practice_intakes.cac`), and when the firm sets the business up under full mandate it becomes the business's profile draft, so nobody looks the company up again.
+2. **Its people**: directors, beneficial owners (with their share) and related parties, each with a nationality, whether they are a politically exposed person, and the type of ID seen. Only the last four characters of an ID number are ever kept; a full NIN, BVN or other number typed anywhere is refused. **Check a person's NIN** looks it up with NIMC (`intake_nin`) and keeps the name NIMC holds and the last four digits (`practice_intake_nin_checks`); a person of that name on the intake is marked as checked by NIN.
 3. **Documents**: the CAC record, IDs, proof of address and others, kept with their SHA-256 (`practice_intake_docs`).
 4. **Risk**: low, medium or high, with the reason. A politically exposed person among the people makes it high.
 5. **Conflicts check** (`practice_conflict_run`): Counta compares the business, its numbers and its people with the firm's current and former clients, its other intakes and the people on them, and the opposing parties it recorded for its clients (and, when the practice switches it on, the names in its clients' books). Anything found must be cleared or refused by a partner with a note before the client can be taken on. A check counts only if it ran after the intake's last change.
 
 An intake that is risk-rated and cleared is ready. The letter comes next. For a client the firm already has, the client's page records its **opposing parties**: the other side of a dispute, a deal or a tax matter, so that later checks find them.
 
-A full mandate is refused when the company (by RC number or Tax ID) is already on Counta under someone else: the business already has an owner who signs in, or another practice runs it. TaxStreem is told (a `duplicate_company` flag) and decides what happens. It works the other way too: an owner who tries to set up a company a practice already runs under full mandate is told to ask the firm to hand it over, nothing is set up, and TaxStreem gets the same flag (marked as coming from an owner). RC and BN numbers with the same digits are different businesses; a number with no prefix matches either.
+A company is on Counta once (see [Recovering a business](recovering-a-business.md)). A full mandate is refused when the company (by RC number or Tax ID) is already on Counta under someone else: the business already has an owner who signs in, or another practice runs it. TaxStreem is told (a `duplicate_company` flag) and decides what happens. The firm's own second business for the same company is refused too. An owner who tries to set up a company a practice already runs is told it is on Counta already, with the firm's address masked, and may recover it as a director; nothing is set up, and the firm gets the same flag (marked as coming from an owner). RC and BN numbers with the same digits are different businesses; a number with no prefix takes its registry from the business's legal form.
 
 A prospect a partner refused after the conflicts check stays refused. It cannot come back as a client through the firm's referral link or a link the business starts: Counta matches it on the business itself, its RC number or its Tax ID.
 
@@ -147,8 +147,13 @@ The business app shows a banner on every screen saying the person is acting for 
 
 The business wallet and the tax wallet (Flutterwave, through TaxStreem) open only when all of these hold (`private.payments_open`):
 
-1. The business's identity is verified. Its own business profile holds its CAC record, and a partner or manager checks a director's NIN against it (Settings, Business identity). Martina can do it too.
-2. **A director of the company confirms**, from their own email. A partner or manager asks a director named on the CAC record (Full mandate tab, Ask a director). The director opens the link (`/confirm`), reads which firm asks and that TaxStreem provides the wallets through Flutterwave, and confirms with a 6-digit code, or declines with a reason. A confirmation from an address the firm's people signed in from in the last 30 days, or from one that cannot be read, goes to TaxStreem to check (`director_review`); a decline tells TaxStreem (`director_declined`).
+1. The business's identity is verified. Its own business profile holds its CAC record. The director's confirmation below verifies it; a partner or manager can also check a director's NIN in Settings, Business identity.
+2. **A director of the company confirms the wallets.** A partner or manager picks a director from the CAC record (Full mandate tab, Ask a director) and sends the link to the director's own email, or, with no email, gets the link to send another way (`practice_director_link` makes a new one; 14 days). Whoever opens it (`/confirm`) reads which firm asks and that TaxStreem provides the wallets through Flutterwave, then proves they are that director:
+   - Their **NIN** is looked up with NIMC (the `practice` function's `director_nin`, three a day) and must match a director (or, for a business name, a proprietor) on the CAC record, by name. Only the name it matched and the NIN's last four digits are kept.
+   - A **6-digit code** goes to the phone number NIMC holds for the NIN (by SMS through Termii) and to the director's email on the CAC record, never to one of the firm's addresses (`identity_checks`, `svc_identity_mail`). The code confirms. Where the code went is wiped once it is right, or within the hour.
+   - With **no phone on the NIN record** (or SMS not set up), the code goes to the director's email and phone on the CAC record, and once it is entered TaxStreem checks the confirmation (`director_review`, reason `no_nin_phone` or `sms_not_ready`).
+   - With **no way to send a code** at all, the director uploads their NIN slip (`director_slip`) and TaxStreem checks it (reason `no_channel`).
+   A decline tells TaxStreem (`director_declined`).
 3. TaxStreem has not paused the firm's full mandates (`practices.mandate_suspended_at`).
 
 ### What the firm sees
@@ -169,7 +174,7 @@ A partner can **export** the business's records at any time while the firm runs 
 
 ### TaxStreem's side
 
-The admin portal's **Mandates** page (admins and reviewers) holds the director confirmations to check, the open flags (a company already on Counta, a director who declined, a handover to someone else) and the practices that run or may run full mandates. Every decision takes a note. Admins can pause a practice's full mandates, which shuts the payments of every business it runs that way until resumed, and set the free-mail domains that never count as a firm's own address. Handovers waiting for TaxStreem are decided in **Identity reviews**.
+The admin portal's **Mandates** page (admins and reviewers) holds the director confirmations to check (whom the NIN matched, its last four digits, where the code went, masked, and the NIN slip), the open flags (a company already on Counta, a director who declined, a handover to someone else) and the practices that run or may run full mandates. Every decision takes a note. Admins can pause a practice's full mandates, which shuts the payments of every business it runs that way until resumed, and set the free-mail domains that never count as a firm's own address. Handovers waiting for TaxStreem are decided in **Identity reviews**.
 
 ## Fees
 
@@ -199,6 +204,8 @@ A partner or manager can pay for a client's Counta plan with the practice's card
 | `practice_conflict_hits`, `practice_opposing_parties` | What the conflicts check found, and the other side of clients' matters |
 | `practice_letter_templates`, `engagement_letters`, `engagement_letter_signers`, `engagement_letter_events` | Templates, letters, their signers and their record |
 | `practice_director_confirmations` | A director's confirmation of the wallets |
+| `identity_checks` | A NIN matched to the CAC record and the code sent for it (a confirmation or a recovery) |
+| `practice_cac_lookups`, `practice_intake_nin_checks` | CAC searches from the intake, and NINs checked from it |
 | `practice_handovers` | Handovers to the owner |
 | `practice_mandate_flags` | What TaxStreem is told to look at |
 | `activity_log` | What was done in a business a practice runs, or keeps read-only |

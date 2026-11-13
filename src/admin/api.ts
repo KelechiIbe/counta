@@ -13,7 +13,9 @@ export const useAdminMe = (enabled = true) =>
 // handover to someone other than the confirmed director), and the extra free-mail domains.
 export type AdminMandates = {
   reviews: { id: string; status: string; created_at: string; practice: { id: string; name: string }; business: { client_id: string; org_id: string; name: string };
-    director: { name: string; email: string; phone: string | null }; ip: string | null; ua: string | null; reason: string | null }[];
+    director: { name: string; email: string | null; phone: string | null; matched_name: string | null; nin_last4: string | null; sms: string | null; code_email: string | null;
+      skipped: Record<string, string> | null };
+    slip_path: string | null; ip: string | null; ua: string | null; reason: string | null }[];
   practices: { id: string; name: string; full_clients: number; suspended_at: string | null; partner_verified: boolean }[];
   flags: { id: string; kind: 'duplicate_company' | 'director_declined' | 'director_review' | 'handover'; detail: Record<string, any>; created_at: string;
     practice: { id: string; name: string }; intake: { id: string; legal_name: string; rc_number: string | null; tax_id: string | null } | null;
@@ -22,6 +24,25 @@ export type AdminMandates = {
   settings: { free_mail_domains: string[] };
 };
 export const useAdminMandates = () => useQuery({ queryKey: ['admin-mandates'], queryFn: () => rpc<AdminMandates>('admin_mandates') });
+
+// What an identity check did not use, and why (its skipped: {"email": "firm_address"}), in words.
+const SKIPPED: Record<string, string> = { firm_address: 'the CAC email is the firm\'s', holder_address: 'the CAC email belongs to the holder',
+  holder_phone: 'the CAC phone belongs to the business', sms_not_ready: 'SMS is not set up' };
+export const skippedText = (s: Record<string, string> | null | undefined) =>
+  Object.entries(s || {}).map(([k, v]) => `${k === 'sms' ? 'No SMS' : 'No email'}: ${SKIPPED[v] || v}`).join('. ');
+
+// Directors recovering businesses someone else set up, and support requests (20261125000200_account_recovery.sql).
+export type AdminRecovery = {
+  id: string; org_id: string; status: string; business: string; created_at: string; matched_name: string | null; matched_role: string | null; matched_on: string | null;
+  nin_last4: string | null; verified_at: string | null; handover_due: string | null; handover_at: string | null; completed_at: string | null; review_reason: string | null;
+  dispute_reason: string | null; decision_note: string | null; claimant: { name: string | null; email: string | null }; claimant_email: string | null;
+  holder_emails: string[]; code_went: { sms: string | null; email: string | null; route: string; why: string | null; skipped: Record<string, string> } | null;
+  support: { id: string; status: string; kind: string; at: string } | null;
+};
+export type SupportCase = { id: string; kind: string; status: 'open' | 'closed'; message: string | null; contact_email: string | null; created_at: string;
+  closed_at: string | null; close_note: string | null; business: string | null; recovery_id: string | null };
+export const useAdminRecoveries = () => useQuery({ queryKey: ['admin-recoveries'], refetchInterval: 60_000,
+  queryFn: () => rpc<{ recoveries: AdminRecovery[]; cases: SupportCase[] }>('admin_recoveries') });
 
 export type KeyRow = {
   name: string; group: string; label: string; secret: boolean; hint: string | null; set: boolean; shown: string | null; set_at: string | null; set_by: string | null;

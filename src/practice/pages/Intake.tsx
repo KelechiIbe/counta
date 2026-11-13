@@ -14,6 +14,7 @@ import { Icon } from '../../components/Icon';
 import { Alert, Field, SkeletonRows, Spinner } from '../../components/ui';
 import { Card, PageHead, grid } from '../../admin/ui';
 import { OpposingList } from '../Opposing';
+import { type CacFields, CacFinder, NinCheck, titleName, useIntakeLookups } from '../IntakeLookups';
 import {
   type ConflictHit, type Home, type IntakeDetail, type IntakeDoc, type IntakeMode, type IntakePerson, type LetterStatus,
   openDoc, SERVICES, sendInvite, useMandateGate, usePracticeClient, usePracticeHome, usePracticeIntake,
@@ -50,6 +51,15 @@ type Form = {
 };
 
 const blankPerson = (): PersonForm => ({ key: uuid(), kind: 'director', name: '', role: '', ownership_pct: '', nationality: '', is_pep: false, id_type: '', id_last4: '' });
+// A name compared as the database compares people: no accents, any order, any case.
+const nameKey = (s: string) => s.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().split(/[^a-z']+/).filter(Boolean).sort().join(' ');
+// The CAC record's people added to those already on the form (a person already there by name is left as it is).
+function withCacPeople(people: PersonForm[], cac: CacFields['people']): PersonForm[] {
+  const have = new Set(people.map((p) => nameKey(p.name)));
+  const added = cac.filter((c) => c.name && !have.has(nameKey(c.name))).map((c): PersonForm => ({ ...blankPerson(), kind: c.kind, name: c.name, role: c.role || '',
+    ownership_pct: c.ownership_pct == null ? '' : String(Number(c.ownership_pct)), nationality: c.nationality || '' }));
+  return [...people.filter((p) => p.name.trim()), ...added];
+}
 function toForm(d: IntakeDetail | null, mode: IntakeMode = 'involved'): Form {
   return {
     mode_requested: d?.mode_requested || mode, legal_name: d?.legal_name || '', entity_type: d?.entity_type || '', rc_number: d?.rc_number || '',
@@ -138,6 +148,10 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [tried, setTried] = useState(false);
+  // A CAC record found for this intake, attached to it on the next save.
+  const [cacLookup, setCacLookup] = useState<string | null>(null);
+  const [cacNote, setCacNote] = useState<string | null>(null);
+  const lookups = useIntakeLookups(d?.id ?? null);
   const loaded = useRef<string | null>(d?.id ?? null);
   const heading = useRef<HTMLHeadingElement>(null);
   const first = useRef(true);
@@ -189,7 +203,14 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
     if (problem) { setErr(problem[0]); setStep(problem[1]); return null; }
     setBusy(true); setErr(null);
     try {
-      const r = await rpc<IntakeDetail>('practice_intake_save', { p_practice: pid, p: payload(f, d?.id) });
+      let r = await rpc<IntakeDetail>('practice_intake_save', { p_practice: pid, p: payload(f, d?.id) });
+      if (cacLookup) {
+        try {
+          r = await rpc<IntakeDetail>('practice_intake_attach_cac', { p_intake: r.id, p_lookup: cacLookup });
+          setCacLookup(null);
+          void qc.invalidateQueries({ queryKey: ['intake-lookups', r.id] });
+        } catch (e) { setCacNote(`Saved, but the CAC record could not be kept with the intake: ${cleanError(e)}`); }
+      }
       loaded.current = r.id;
       qc.setQueryData(['practice-intake', r.id], r);
       setF(toForm(r)); setTried(false);
@@ -272,6 +293,16 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
 
           {step === 2 && (
             <div data-testid="intake-step-2" className="stack" style={{ gap: 14 }}>
+              {editable && (
+                <CacFinder pid={pid} initial={f.legal_name || f.rc_number} attached={lookups.data?.cac ?? null}
+                  onFound={(c, taxNote) => {
+                    setF((x) => ({ ...x, legal_name: titleName(c.legal_name).slice(0, 160), entity_type: c.entity_type || x.entity_type, rc_number: c.rc_number || x.rc_number,
+                      tax_id: c.tax_id || x.tax_id, address: c.address || x.address, industry: c.industry || x.industry, people: withCacPeople(x.people, c.people || []) }));
+                    setCacLookup(c.lookup_id);
+                    setCacNote(`Filled from CAC${c.active === false ? ' (CAC shows the business as inactive)' : ''}${c.people?.length ? `, with ${c.people.length} director${c.people.length === 1 ? '' : 's'} and owner${c.people.length === 1 ? '' : 's'} in step 3` : ''}. Check the details, then save.${taxNote ? ` ${taxNote}` : ''}`);
+                  }} />
+              )}
+              {cacNote && <div role="status"><Alert kind="blue" icon="info">{cacNote}</Alert></div>}
               <div style={grid(240)}>
                 <Field label="Registered name" req error={tried && f.legal_name.trim().length < 2 ? 'Enter the name on the business\'s registration.' : null}>
                   <input className={'input' + (tried && f.legal_name.trim().length < 2 ? ' err' : '')} data-testid="intake-legal-name" value={f.legal_name} maxLength={160}
@@ -303,7 +334,17 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
           )}
 
           {step === 3 && (
-            <People people={f.people} editable={editable} tried={tried} onChange={(p) => up('people', p)} rechecks={editable && !!d?.checked_at} />
+            <div className="stack" style={{ gap: 14 }}>
+              <People people={f.people} editable={editable} tried={tried} onChange={(p) => up('people', p)} rechecks={editable && !!d?.checked_at} />
+              {editable && d && (
+                <NinCheck pid={pid} iid={d.id} onChecked={(name, last4) => {
+                  const key = nameKey(name);
+                  setF((x) => ({ ...x, people: x.people.some((p) => nameKey(p.name) === key)
+                    ? x.people.map((p) => (nameKey(p.name) === key ? { ...p, id_type: 'nin', id_last4: last4 } : p))
+                    : [...x.people, { ...blankPerson(), name, id_type: 'nin', id_last4: last4 }] }));
+                }} />
+              )}
+            </div>
           )}
 
           {step === 4 && d && (

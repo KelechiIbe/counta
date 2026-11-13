@@ -26,10 +26,11 @@ import Costs from './pages/Costs';
 import Accountants from './pages/Accountants';
 import Partners from './pages/Partners';
 import Mandates from './pages/Mandates';
+import Recoveries from './pages/Recoveries';
 
 const NAV: [string, string, string][] = [
   ['', 'Overview', 'house'], ['businesses', 'Businesses', 'building'], ['people', 'People', 'users'], ['activity', 'Activity', 'radar'],
-  ['reviews', 'Identity reviews', 'shield'], ['mandates', 'Mandates', 'panel'], ['accountants', 'Accountants', 'book'], ['partners', 'Partners', 'award'], ['keys', 'Keys and services', 'lock'], ['martina', 'Martina and voices', 'volume'],
+  ['reviews', 'Identity reviews', 'shield'], ['mandates', 'Mandates', 'panel'], ['recoveries', 'Recoveries and support', 'undo'], ['accountants', 'Accountants', 'book'], ['partners', 'Partners', 'award'], ['keys', 'Keys and services', 'lock'], ['martina', 'Martina and voices', 'volume'],
   ['currency', 'Currency', 'dollar'], ['limits', 'Limits and switches', 'zap'], ['alerts', 'Alerts and tax wallets', 'bell'], ['tax', 'Tax rules', 'landmark'],
   ['plans', 'Plans', 'layers'], ['subscriptions', 'Subscriptions', 'card'], ['costs', 'Cost of service', 'percent'],
   ['team', 'Admin team', 'history'],
@@ -118,7 +119,7 @@ function CodeGate({ onDone }: { onDone: () => void }) {
 
 function Layout({ admin, children }: { admin: boolean; children: ReactNode }) {
   const { session, signOut } = useSession();
-  const items = admin ? NAV : NAV.filter(([p]) => p === 'reviews' || p === 'mandates' || p === 'accountants');
+  const items = admin ? NAV : NAV.filter(([p]) => p === 'reviews' || p === 'mandates' || p === 'recoveries' || p === 'accountants');
   return (
     <div className="adm">
       <header className="adm-top">
@@ -180,6 +181,7 @@ export default function AdminApp() {
             <Route path="activity" element={<Activity />} />
             <Route path="reviews" element={<Reviews />} />
             <Route path="mandates" element={<Mandates admin />} />
+            <Route path="recoveries" element={<Recoveries admin />} />
             <Route path="accountants" element={<Accountants />} />
             <Route path="partners" element={<Partners />} />
             <Route path="keys" element={<Keys />} />
@@ -198,6 +200,7 @@ export default function AdminApp() {
           <>
             <Route path="reviews" element={<Reviews />} />
             <Route path="mandates" element={<Mandates admin={false} />} />
+            <Route path="recoveries" element={<Recoveries admin={false} />} />
             <Route path="accountants" element={<Accountants />} />
             <Route path="*" element={<Navigate to="/admin/reviews" replace />} />
           </>
