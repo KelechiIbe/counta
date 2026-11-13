@@ -39,10 +39,11 @@ begin
   perform tests.remember('o', (select org_id from practice_clients where id = tests.id('c')));
 end $$;
 
--- The business's identity checked against a CAC record with two directors (Tunde Bello; Amina Bola Yusuf).
+-- The business's identity checked against a CAC record with two directors (Tunde Bello; Amina Bola Yusuf), in the
+-- business's own profile (as kyc_row makes it for a business the firm runs).
 create function pg_temp.verify_identity(p_org uuid) returns void language sql as $f$
-  insert into kyc_profiles (user_id, org_id, status, source, cac, submitted_at)
-  values (tests.id('partner'), p_org, 'submitted', 'cac', '{"profile": {"classification": "COMPANY", "directors": [{"firstname": "TUNDE", "surname": "BELLO"}, {"firstname": "AMINA", "other_name": "BOLA", "surname": "YUSUF"}]}}', now());
+  insert into kyc_profiles (user_id, org_id, status, source, cac, submitted_at, for_business)
+  values (tests.id('partner'), p_org, 'submitted', 'cac', '{"profile": {"classification": "COMPANY", "directors": [{"firstname": "TUNDE", "surname": "BELLO"}, {"firstname": "AMINA", "other_name": "BOLA", "surname": "YUSUF"}]}}', now(), true);
   update orgs set identity_status = 'verified' where id = p_org;
 $f$;
 
@@ -80,9 +81,9 @@ begin
 end $f$;
 
 -- test: mandate_gate_conditions
--- Each condition on its own: a fresh full-mandate intake has none of the intake's; then risk, the check, the declaration
--- and the signed letter open it, for a partner whose own licence is verified, while TaxStreem lets the firm run full
--- mandates.
+-- Each condition on its own: a fresh full-mandate intake has none of the intake's; then risk, an RC number, the check, the
+-- declaration and the signed letter open it, for a partner whose own licence is verified, while TaxStreem lets the firm
+-- run full mandates.
 do $$
 declare pr uuid := tests.id('pr'); i uuid; g jsonb;
 begin
@@ -90,12 +91,15 @@ begin
   i := (public.practice_intake_save(pr, '{"legal_name":"Gate Check Ltd","mode_requested":"full"}')->>'id')::uuid;
   perform tests.as_definer(tests.id('partner'));
   g := private.mandate_gate(i);
-  assert g = '{"partner_verified": true, "practice_can_full": true, "risk_rated": false, "conflicts_cleared": false, "letter_completed": false, "authority_declared": false, "ok": false}'::jsonb,
+  assert g = '{"partner_verified": true, "practice_can_full": true, "risk_rated": false, "rc_or_tax_id": false, "conflicts_cleared": false, "letter_completed": false, "authority_declared": false, "ok": false}'::jsonb,
     format('mandate_gate_conditions: blocked, got %s', g);
   perform tests.as_user(tests.id('partner'));
   perform public.practice_intake_save(pr, jsonb_build_object('id', i, 'risk_rating', 'low', 'risk_reason', 'Test client'));
   g := public.practice_mandate_gate(i);
-  assert (g->>'risk_rated')::boolean and not (g->>'conflicts_cleared')::boolean, 'mandate_gate_conditions: risk rated, not checked';
+  assert (g->>'risk_rated')::boolean and not (g->>'rc_or_tax_id')::boolean and not (g->>'conflicts_cleared')::boolean,
+    'mandate_gate_conditions: risk rated, no number, not checked';
+  perform public.practice_intake_save(pr, jsonb_build_object('id', i, 'rc_number', 'RC 3030301'));
+  assert (public.practice_mandate_gate(i)->>'rc_or_tax_id')::boolean, 'mandate_gate_conditions: an RC number';
   perform public.practice_conflict_run(i);
   assert (public.practice_mandate_gate(i)->>'conflicts_cleared')::boolean, 'mandate_gate_conditions: cleared';
   perform tests.throws(format($q$select public.practice_create_business(%L, '{"email":"books@firm.example.test"}')$q$, i),
@@ -130,6 +134,64 @@ begin
   perform tests.as_postgres();
   update practices set mandate_suspended_at = null where id = pr;
   perform tests.remember('gi', i);
+end $$;
+
+-- test: mandate_gate_letter_and_intake
+-- The letter that opens the gate is a full-mandate one, for this intake, signed by the client or uploaded signed, and fixed
+-- by the firm after the intake last changed its name, numbers or people; the declaration stands only for the name and mode
+-- it was made for; and the company is named by a number.
+do $$
+declare pr uuid := tests.id('pr'); ia uuid; ib uuid; ic uuid; inn uuid; l uuid; g jsonb;
+begin
+  ia := tests.cleared_intake(pr, 'Kebbi Salt Ltd', 'full', 'RC 4040401');
+  ib := tests.cleared_intake(pr, 'Yobe Gum Ltd', 'full', 'RC 4040403');
+  ic := tests.cleared_intake(pr, 'Kwara Shea Ltd', 'full', 'RC 4040404');
+  inn := tests.cleared_intake(pr, 'Bauchi Tin Ltd', 'full');
+  perform tests.as_user(tests.id('partner'));
+  perform public.practice_intake_declare(ia, '{}');
+  perform public.practice_intake_declare(ib, '{}');
+  perform public.practice_intake_declare(ic, '{}');
+  perform public.practice_intake_declare(inn, '{}');
+  -- An involved-mandate letter, signed and uploaded, keeps the gate shut.
+  l := (public.practice_letter_draft(ia, '{"variant":"involved"}')->>'id')::uuid;
+  perform public.practice_letter_upload_signed(l, jsonb_build_object('path', 'practice/' || pr || '/letters/' || l || '/signed.pdf', 'sha256', repeat('ef', 32)));
+  g := public.practice_mandate_gate(ia);
+  assert not (g->>'letter_completed')::boolean and not (g->>'ok')::boolean and (g->>'authority_declared')::boolean,
+    'mandate_gate_letter_and_intake: an involved letter does not count';
+  -- A full-mandate letter uploaded signed opens it.
+  l := (public.practice_letter_draft(ia, '{}')->>'id')::uuid;
+  perform public.practice_letter_upload_signed(l, jsonb_build_object('path', 'practice/' || pr || '/letters/' || l || '/signed.pdf', 'sha256', repeat('ef', 32)));
+  assert (public.practice_mandate_gate(ia)->>'ok')::boolean, 'mandate_gate_letter_and_intake: an uploaded full letter opens it';
+  -- Another intake's full letter does not.
+  assert not (public.practice_mandate_gate(ib)->>'letter_completed')::boolean, 'mandate_gate_letter_and_intake: not another intake''s letter';
+  -- The intake changes its RC number after the letter was fixed (a minute later), and is checked again: the letter no
+  -- longer describes it.
+  perform public.practice_intake_save(pr, jsonb_build_object('id', ia, 'rc_number', 'RC 4040402'));
+  perform tests.as_postgres();
+  update practice_intakes set edited_at = edited_at + interval '1 minute' where id = ia;
+  perform tests.as_user(tests.id('partner'));
+  perform public.practice_conflict_run(ia);
+  perform tests.as_postgres();
+  update practice_intakes set checked_at = edited_at + interval '1 second' where id = ia;
+  perform tests.as_user(tests.id('partner'));
+  g := public.practice_mandate_gate(ia);
+  assert not (g->>'letter_completed')::boolean and (g->>'conflicts_cleared')::boolean and (g->>'authority_declared')::boolean
+     and (g->>'rc_or_tax_id')::boolean, format('mandate_gate_letter_and_intake: a letter for the intake as it was, got %s', g);
+  perform tests.throws(format($q$select public.practice_create_business(%L, '{"email":"books@firm.example.test"}')$q$, ia),
+    'P0001: Full mandate needs: letter_completed');
+  -- A new name, or a new mode, withdraws the declaration.
+  perform public.practice_intake_save(pr, jsonb_build_object('id', ib, 'legal_name', 'Yobe Gum Exports Ltd'));
+  assert not (public.practice_mandate_gate(ib)->>'authority_declared')::boolean, 'mandate_gate_letter_and_intake: a new name';
+  perform public.practice_intake_save(pr, jsonb_build_object('id', ic, 'mode_requested', 'involved'));
+  g := public.practice_mandate_gate(ic);
+  assert not (g->>'authority_declared')::boolean and not (g->>'ok')::boolean, 'mandate_gate_letter_and_intake: a new mode';
+  -- No RC, BN or IT number and no Tax ID: the company cannot be told apart from one already on Counta.
+  perform tests.as_postgres();
+  perform tests.completed_letter(inn);
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.practice_create_business(%L, '{"email":"books@firm.example.test"}')$q$, inn),
+    'P0001: Full mandate needs: rc_or_tax_id');
+  perform tests.as_postgres();
 end $$;
 
 -- test: create_business_full
@@ -238,7 +300,11 @@ begin
   perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"tunde@FIRM.example.test"}')$q$, c), '%director''s own email%');
   perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"OFFICE@firm.example.test"}')$q$, c), '%director''s own email%');
   perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"Kunle.Partner@Firm.Example.Test"}')$q$, c), '%director''s own email%');
+  perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"tunde@Mail.Firm.example.test"}')$q$, c), '%director''s own email%');
   perform tests.as_postgres();
+  assert private.firm_email(pr, 'x@mail.firm.example.test') = 'domain' and private.firm_email(pr, 'x@a.b.firm.example.test') = 'domain'
+     and private.firm_email(pr, 'x@notfirm.example.test') is null and private.firm_email(pr, 'x@mail.freemail.example.test') is null,
+    'director_email_free_mail_and_case: subdomains of the firm''s own domain, not of a free-mail one';
   assert private.firm_email(pr, ' Partner@Firm.example.test ') = 'member' and private.firm_email(pr, 'x@firm.example.test') = 'domain'
      and private.firm_email(pr, 'tunde.bello@freemail.example.test') is null, 'director_email_free_mail_and_case: firm_email';
   assert private.firm_email(pr, 'Office@Firm.Example.Test') = 'practice' and private.firm_email(pr, 'someone@gmail.com') is null
@@ -276,8 +342,15 @@ begin
   perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"tunde@director.example.test"}')$q$, c), '%partners and managers%');
   perform tests.as_user(tests.id('other_partner'));
   perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"tunde@director.example.test"}')$q$, c), '%not on this practice%');
-  -- An involved client: the business's own owner deals with its money.
+  -- A manager of the practice with no place acting as the business's owner (not synced yet) does not read its CAC record.
   perform tests.as_postgres();
+  perform tests.practice_member(pr, tests.user('new.manager@firm.example.test', 'Nkem Manager'), 'manager');
+  perform tests.as_user((select id from auth.users where email = 'new.manager@firm.example.test'));
+  perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"tunde@director.example.test"}')$q$, c),
+    '42501: Only the firm''s people acting as the business''s owner%');
+  perform tests.as_postgres();
+  update practice_members set status = 'disabled' where email = 'new.manager@firm.example.test';
+  -- An involved client: the business's own owner deals with its money.
   v_ord := tests.org(tests.id('owner'), 'Involved Director Ltd');
   ic := tests.involved_client(pr, v_ord);
   perform pg_temp.verify_identity(v_ord);
@@ -394,7 +467,10 @@ begin
   perform tests.throws(format('select public.svc_wallet_to_open(%L, %L)', o, v_seat), '%director of the business confirms%');
   perform tests.throws(format('select public.svc_tax_wallet_to_open(%L, %L)', o, v_seat), '%director of the business confirms%');
   perform tests.as_user(tests.id('partner'));
-  assert not (public.get_inventory(o)->'org'->>'payments_open')::boolean, 'money_locked_until_director: the app is told';
+  assert not (public.get_inventory(o)->'org'->>'payments_open')::boolean and not (public.identity_state(o)->>'payments_open')::boolean
+     and public.identity_state(o)->>'status' = 'verified', 'money_locked_until_director: the app is told';
+  perform tests.as_user(tests.id('admin1'), 'aal2');
+  assert not (public.admin_business(o)->>'payments_open')::boolean, 'money_locked_until_director: so is TaxStreem';
   perform tests.as_postgres();
   dc := pg_temp.director_request(c);
   tok := pg_temp.director_link(dc);
@@ -404,13 +480,17 @@ begin
   perform tests.as_postgres();
   assert private.payments_open(o), 'money_locked_until_director: open';
   perform tests.as_user(tests.id('partner'));
-  assert (public.get_inventory(o)->'org'->>'payments_open')::boolean, 'money_locked_until_director: the app is told it is open';
+  assert (public.get_inventory(o)->'org'->>'payments_open')::boolean and (public.identity_state(o)->>'payments_open')::boolean,
+    'money_locked_until_director: the app is told it is open';
+  perform tests.as_user(tests.id('admin1'), 'aal2');
+  assert (public.admin_business(o)->>'payments_open')::boolean, 'money_locked_until_director: TaxStreem sees it open';
   -- TaxStreem's kill switch: admins only, with a reason.
   perform tests.as_user(tests.id('reviewer1'), 'aal2');
   perform tests.throws(format($q$select public.admin_practice_suspend(%L, true, 'Licence lapsed')$q$, pr), '%only for TaxStreem''s admins%');
   perform tests.as_user(tests.id('admin2'), 'aal2');
   perform tests.throws(format($q$select public.admin_practice_suspend(%L, true, 'No')$q$, pr), '%reason%');
   perform public.admin_practice_suspend(pr, true, 'Licence lapsed');
+  assert not (public.admin_business(o)->>'payments_open')::boolean, 'money_locked_until_director: TaxStreem sees the kill switch';
   perform tests.as_postgres();
   assert not private.payments_open(o), 'money_locked_until_director: kill switch';
   perform tests.as_service();
@@ -462,13 +542,16 @@ begin
      and (select resolved_at is not null and resolved_by = tests.id('reviewer1') from practice_mandate_flags where kind = 'director_review' and detail->>'confirmation_id' = dc1::text),
     'director_ip_review: recorded, flag resolved';
 
-  -- An address a firm person signed in from.
-  insert into auth.sessions (user_id, ip, updated_at) values (tests.id('partner'), '198.51.100.8', now() - interval '2 days');
+  -- An address a firm person signed in from: compared as hosts, so a netmask on the session's address or the IPv4 address
+  -- written as IPv6 by the director's connection still matches.
+  assert private.ip_host('::ffff:198.51.100.8') = '198.51.100.8'::inet and private.ip_host('198.51.100.8/24') = '198.51.100.8'::inet
+     and private.ip_host('2001:db8::1/64') = '2001:db8::1'::inet and private.ip_host(null) is null, 'director_ip_review: hosts';
+  insert into auth.sessions (user_id, ip, updated_at) values (tests.id('partner'), '198.51.100.8/24', now() - interval '2 days');
   dc2 := pg_temp.director_request(c2);
   tok := pg_temp.director_link(dc2);
   code := pg_temp.director_code(tok, dc2);
   perform tests.as_service();
-  assert public.svc_director_confirm(tok, code, '198.51.100.8', 'UA')->>'status' = 'review' and (select director_confirmed_at is null from orgs where id = o2),
+  assert public.svc_director_confirm(tok, code, '::ffff:198.51.100.8', 'UA')->>'status' = 'review' and (select director_confirmed_at is null from orgs where id = o2),
     'director_ip_review';
   assert public.svc_director_open(tok, null, null)->>'status' = 'review' and public.svc_director_code(tok, null, null)->>'reason' = 'review',
     'director_ip_review: waiting';
@@ -600,7 +683,77 @@ begin
     'kyc_drafts_per_business: the personal draft untouched';
   perform tests.as_user(tests.id('partner'));
   assert public.kyc_draft(null)->'search'->>'query' = 'mine', 'kyc_drafts_per_business: the personal draft is the person''s';
+  -- With no draft of their own, the person's own profile is empty: a business's submitted profile is not theirs.
   perform tests.as_postgres();
+  delete from kyc_profiles where user_id = tests.id('partner') and status = 'draft' and not for_business;
+  perform tests.as_user(tests.id('partner'));
+  r := public.kyc_draft(null);
+  assert r->>'id' is null and r->>'org_id' is null and r->>'status' = 'draft', format('kyc_drafts_per_business: no business profile as their own, got %s', r);
+  perform tests.as_postgres();
+end $$;
+
+-- test: kyc_submit_same_company
+-- The CAC record a firm submits for a business it runs must be the company it took on (the intake's RC number, compared as
+-- the conflicts check compares numbers) and not a company that is someone else's on Counta (by RC number or Tax ID): then
+-- nothing is submitted and TaxStreem is flagged, once. The company's numbers are the transaction's while it submits.
+do $$
+declare pr uuid := tests.id('pr'); cx uuid; ox uuid; cy uuid; oy uuid; v_own uuid; r jsonb;
+  v_ans jsonb := '{"offering": "goods", "category": "food", "revenue_band": "0_50m", "receive_methods": ["bank_transfer"], "pay_methods": ["bank_transfer"], "reasons": ["tax_compliance"], "examples": ["flour"], "filing": {"vat": "always", "wht": "never", "cit": "always"}}';
+begin
+  cx := tests.full_client(pr, tests.id('partner'), 'Sokoto Hides Ltd', 'RC 6060601');
+  ox := (select org_id from practice_clients where id = cx);
+  cy := tests.full_client(pr, tests.id('partner'), 'Taraba Honey Ltd', 'RC 6060602');
+  oy := (select org_id from practice_clients where id = cy);
+  -- A different company's record.
+  perform tests.as_service();
+  perform public.svc_kyc_store(tests.id('partner'), 'cac', '{"cac_id": 11, "profile": {"approved_name": "OTHER HIDES LIMITED", "rc_number": "6060699", "classification": "COMPANY", "directors": [{"firstname": "ABU", "surname": "SOKOTO"}]}}', ox);
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.kyc_submit(%L)$q$, jsonb_build_object('org_id', ox, 'answers', v_ans)), '%took this business on as RC 6060601%');
+  -- The right company, which someone else has since set up on Counta.
+  perform tests.as_postgres();
+  v_own := tests.org(tests.id('owner'), 'Sokoto Hides Owner Ltd');
+  update orgs set rc_number = '6060601' where id = v_own;
+  perform tests.as_service();
+  perform public.svc_kyc_store(tests.id('partner'), 'cac', '{"cac_id": 12, "profile": {"approved_name": "SOKOTO HIDES LIMITED", "rc_number": "6060601", "classification": "COMPANY", "directors": [{"firstname": "ABU", "surname": "SOKOTO"}]}}', ox);
+  perform tests.as_user(tests.id('partner'));
+  r := public.kyc_submit(jsonb_build_object('org_id', ox, 'answers', v_ans));
+  assert r = '{"ok": false, "reason": "duplicate"}'::jsonb, format('kyc_submit_same_company: refused, got %s', r);
+  assert exists (select 1 from pg_locks where locktype = 'advisory' and pid = pg_backend_pid()
+                 and ((classid::bigint << 32) | objid::bigint) = hashtextextended('company:rc:6060601', 0)), 'kyc_submit_same_company: the RC number''s turn taken';
+  r := public.kyc_submit(jsonb_build_object('org_id', ox));
+  perform tests.as_postgres();
+  assert r->>'reason' = 'duplicate' and (select count(*) from practice_mandate_flags where client_id = cx and kind = 'duplicate_company' and resolved_at is null) = 1
+     and (select detail->>'matched_on' = 'rc_number' and (detail->>'org_id')::uuid = v_own and detail->>'source' = 'cac' and practice_id = pr
+          from practice_mandate_flags where client_id = cx and kind = 'duplicate_company'), 'kyc_submit_same_company: flagged once';
+  assert (select status = 'draft' from kyc_profiles where org_id = ox) and (select name = 'Sokoto Hides Ltd' and rc_number = 'RC 6060601' from orgs where id = ox),
+    'kyc_submit_same_company: nothing submitted';
+  -- By Tax ID.
+  update orgs set tin = '1234567890123' where id = v_own;
+  perform tests.as_service();
+  perform public.svc_kyc_store(tests.id('partner'), 'cac', '{"cac_id": 13, "profile": {"approved_name": "TARABA HONEY LIMITED", "rc_number": "RC6060602", "tax_id": "12345678-90123", "classification": "COMPANY", "directors": [{"firstname": "TANI", "surname": "TARABA"}]}}', oy);
+  perform tests.as_user(tests.id('partner'));
+  r := public.kyc_submit(jsonb_build_object('org_id', oy, 'answers', v_ans));
+  perform tests.as_postgres();
+  assert r->>'reason' = 'duplicate' and (select detail->>'matched_on' = 'tax_id' from practice_mandate_flags where client_id = cy and kind = 'duplicate_company'),
+    'kyc_submit_same_company: by Tax ID';
+  -- Nobody else's any more: the same RC number, written differently, is submitted.
+  update orgs set rc_number = null where id = v_own;
+  perform tests.as_user(tests.id('partner'));
+  r := public.kyc_submit(jsonb_build_object('org_id', ox));
+  perform tests.as_postgres();
+  assert (r->>'org_id')::uuid = ox and (select rc_number = '6060601' and name = 'Sokoto Hides Limited' from orgs where id = ox)
+     and (select status = 'submitted' from kyc_profiles where org_id = ox), 'kyc_submit_same_company: the company the firm took on';
+end $$;
+
+-- test: full_client_defaults
+-- tests.full_client with only the practice and the partner, twice: two businesses with names and RC numbers of their own.
+do $$
+declare c1 uuid; c2 uuid;
+begin
+  c1 := tests.full_client(tests.id('pr'), tests.id('partner'));
+  c2 := tests.full_client(tests.id('pr'), tests.id('partner'));
+  assert c1 <> c2 and (select count(distinct o.rc_number) = 2 and count(distinct o.name) = 2 and bool_and(o.rc_number is not null)
+                       from practice_clients c join orgs o on o.id = c.org_id where c.id in (c1, c2)), 'full_client_defaults';
 end $$;
 
 -- test: firm_seats_free_of_plan_limit

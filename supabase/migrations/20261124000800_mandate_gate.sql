@@ -2,14 +2,17 @@
 --
 -- A firm runs a business under full mandate only through this gate (private.mandate_gate, each condition true or false):
 -- the caller is an active partner whose own licence TaxStreem has verified; TaxStreem lets the firm run full mandates
--- (private.practice_can_full: a verified partner, not suspended); the intake is risk rated and its conflicts check is clear
--- (private.intake_cleared); a full-mandate engagement letter for the intake is signed by both sides or a signed copy is
--- uploaded; a partner has declared that the firm holds the client's written authority. practice_create_business then sets
+-- (private.practice_can_full: a verified partner, not suspended); the intake is risk rated, names the company by an RC, BN
+-- or IT number or a Tax ID, and its conflicts check is clear (private.intake_cleared); a full-mandate engagement letter for
+-- the intake, signed by the firm after the last change to the intake's name, numbers or people, is signed by the client
+-- or a signed copy is uploaded (private.mandate_letter); a partner has declared that the firm holds the client's written
+-- authority. practice_create_business then sets
 -- the business up with no owner: its name from the intake, an email the firm chooses, the client's own bank details on its
 -- invoices, run by the practice (orgs.managed_by) with identity pending; a full, active client link billed to the practice;
 -- the firm's partners and managers acting as its owner (the seat sync). A company someone already owns on Counta, or that
 -- another practice runs (the same RC number or Tax ID, compared as the conflicts check compares them), is refused with a
--- plain answer and a flag for TaxStreem (practice_mandate_flags).
+-- plain answer and a flag for TaxStreem (practice_mandate_flags, private.company_taken); so is a CAC record found for the
+-- business later (kyc_submit) that is someone else's, and one for a different company from the intake's.
 --
 -- Money stays shut (private.payments_open, private.require_payments_open: the wallet, the tax wallet, payment links,
 -- payouts, bulk pay, tax payments, Flux) until the business's identity is verified and a director of the business has
@@ -114,29 +117,46 @@ $$;
 
 -- Whether an address is the firm's, compared without case or surrounding spaces: 'member' when it is one of the practice's
 -- people's (whatever their status), 'practice' when it is the practice's own, 'domain' when it is on the domain of one of
--- those and that domain is not a free-mail one; else null. The one "is this the firm's address" rule (the outbound gate's
--- private.firm_addresses keeps exact addresses for sending).
+-- those, or a subdomain of it, and that domain is not a free-mail one; else null. The one "is this the firm's address"
+-- rule (the outbound gate's private.firm_addresses keeps exact addresses for sending).
 create or replace function private.firm_email(p_practice uuid, p_email text) returns text
 language sql stable set search_path = public, private as $$
-  with e as (select lower(trim(coalesce(p_email, ''))) as email),
+  with e as (select lower(trim(coalesce(p_email, ''))) as email, substring(lower(trim(coalesce(p_email, ''))) from '@([^@]+)$') as domain),
   firm as (
     select 'member' as kind, lower(trim(pm.email)) as email from practice_members pm where pm.practice_id = p_practice and pm.email is not null
     union all
-    select 'practice', lower(trim(p.email)) from practices p where p.id = p_practice and p.email is not null)
+    select 'practice', lower(trim(p.email)) from practices p where p.id = p_practice and p.email is not null),
+  firm_domains as (
+    select distinct substring(f.email from '@([^@]+)$') as domain from firm f
+    where substring(f.email from '@([^@]+)$') is not null and not (substring(f.email from '@([^@]+)$') = any (private.free_mail_domains())))
   select case
     when e.email = '' then null
     when exists (select 1 from firm f where f.kind = 'member' and f.email = e.email) then 'member'
     when exists (select 1 from firm f where f.kind = 'practice' and f.email = e.email) then 'practice'
-    when substring(e.email from '@([^@]+)$') is not null
-         and exists (select 1 from firm f where substring(f.email from '@([^@]+)$') = substring(e.email from '@([^@]+)$'))
-         and not (substring(e.email from '@([^@]+)$') = any (private.free_mail_domains())) then 'domain' end
+    when exists (select 1 from firm_domains d where e.domain = d.domain or right(e.domain, length(d.domain) + 1) = '.' || d.domain) then 'domain' end
   from e
 $$;
 
 -- ---------------------------------------------------------------------------
 -- 3. The gate
 -- ---------------------------------------------------------------------------
+-- The intake's full-mandate letter as the intake stands: signed by the client (or a signed copy uploaded), and fixed by the
+-- firm (the partner's signature, or the upload of a letter never signed in Counta) no earlier than the last change to the
+-- intake's name, numbers or people (edited_at). A letter for the company as it was described before does not count. The
+-- latest such letter, or nothing.
+create or replace function private.mandate_letter(i public.practice_intakes) returns public.engagement_letters
+language sql stable set search_path = public, private as $$
+  select l.* from engagement_letters l
+  cross join lateral (select coalesce(l.partner_signed_at,
+    (select max(e.at) from engagement_letter_events e where e.letter_id = l.id and e.kind = 'uploaded')) as fixed_at) f
+  where l.intake_id = i.id and l.variant = 'full' and l.status in ('completed', 'uploaded') and f.fixed_at >= i.edited_at
+  order by f.fixed_at desc, l.id
+  limit 1
+$$;
+
 -- Each condition for taking the intake's business on under full mandate, as the signed-in person, and ok when all hold.
+-- rc_or_tax_id: the intake names the company by its RC, BN or IT number or its Tax ID (so it can be told apart from a
+-- company already on Counta).
 create or replace function private.mandate_gate(p_intake uuid) returns jsonb
 language plpgsql stable set search_path = public, private as $$
 declare i public.practice_intakes; m public.practice_members; g jsonb;
@@ -148,10 +168,42 @@ begin
     'partner_verified', coalesce(m.role = 'partner' and m.licence_status = 'verified', false),
     'practice_can_full', private.practice_can_full(i.practice_id),
     'risk_rated', i.risk_rating is not null,
+    'rc_or_tax_id', private.norm_id(i.rc_number) is not null or private.norm_id(i.tax_id) is not null,
     'conflicts_cleared', private.intake_cleared(i),
-    'letter_completed', exists (select 1 from engagement_letters l where l.intake_id = i.id and l.variant = 'full' and l.status in ('completed', 'uploaded')),
+    'letter_completed', (private.mandate_letter(i)).id is not null,
     'authority_declared', i.authority_declared_at is not null);
   return g || jsonb_build_object('ok', not exists (select 1 from jsonb_each(g) x where x.value = 'false'::jsonb));
+end $$;
+
+-- Takes the transaction's turn on a company's numbers (its RC number and Tax ID, as the conflicts check compares them, in
+-- a fixed order): two set-ups or business profiles of the same company wait for each other, so the later one sees the
+-- earlier one's business.
+create or replace function private.company_lock(p_rc text, p_tax text) returns void
+language plpgsql set search_path = public, private as $$
+declare x text;
+begin
+  for x in select k from unnest(array['company:rc:' || private.norm_id(p_rc), 'company:tax:' || private.norm_id(p_tax)]) k where k is not null order by k loop
+    perform pg_advisory_xact_lock(hashtextextended(x, 0));
+  end loop;
+end $$;
+
+-- The business already on Counta that is this company (the same RC number or Tax ID) and someone else's: owned by a
+-- person who signed in, or run by a practice other than p_practice. Never p_except itself or a sample business.
+-- {org_id, matched_on: rc_number|tax_id}, or null. Takes the company's turn first (private.company_lock).
+create or replace function private.company_taken(p_rc text, p_tax text, p_practice uuid, p_except uuid) returns jsonb
+language plpgsql set search_path = public, private as $$
+declare v_rc text := private.norm_id(p_rc); v_tax text := private.norm_id(p_tax); r jsonb;
+begin
+  perform private.company_lock(p_rc, p_tax);
+  if v_rc is null and v_tax is null then return null; end if;
+  select jsonb_build_object('org_id', o.id, 'matched_on', case when private.norm_id(o.rc_number) = v_rc then 'rc_number' else 'tax_id' end) into r
+  from orgs o
+  where o.id is distinct from p_except and not o.is_sample and (private.norm_id(o.rc_number) = v_rc or private.norm_id(o.tin) = v_tax)
+    and ((o.managed_by is not null and o.managed_by is distinct from p_practice)
+      or exists (select 1 from members x where x.org_id = o.id and x.role = 'owner' and x.status = 'active' and x.user_id is not null))
+  order by o.created_at, o.id
+  limit 1;
+  return r;
 end $$;
 
 -- The gate for the portal (partners and managers).
@@ -176,8 +228,7 @@ end $$;
 create or replace function public.practice_create_business(p_intake uuid, p jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare i public.practice_intakes; m public.practice_members; pr public.practices; g jsonb; v_missing text;
-  v_email text; v_phone text; v_vat boolean; v_bank text; v_alert text; v_ep uuid; v_years int; v_rc text; v_tax text;
-  v_dup uuid; v_on text; v_org uuid; v_client uuid;
+  v_email text; v_phone text; v_vat boolean; v_bank text; v_alert text; v_ep uuid; v_years int; v_dup jsonb; v_org uuid; v_client uuid;
 begin
   i := private.intake_require(p_intake, true);
   m := private.practice_me(i.practice_id);
@@ -186,8 +237,8 @@ begin
   if i.status <> 'draft' or i.client_id is not null then raise exception 'This intake has a client already. Start a new intake for another business.'; end if;
   g := private.mandate_gate(i.id);
   select string_agg(k, ', ' order by n) into v_missing
-  from unnest(array['partner_verified', 'practice_can_full', 'risk_rated', 'conflicts_cleared', 'letter_completed', 'authority_declared'])
-    with ordinality u(k, n)
+  from unnest(array['partner_verified', 'practice_can_full', 'risk_rated', 'rc_or_tax_id', 'conflicts_cleared', 'letter_completed',
+    'authority_declared']) with ordinality u(k, n)
   where not coalesce((g->>k)::boolean, false);
   if v_missing is not null then raise exception 'Full mandate needs: %', v_missing; end if;
 
@@ -213,23 +264,14 @@ begin
     raise exception 'The engagement partner must be one of the firm''s active partners or managers.';
   end if;
 
-  -- The same company already on Counta: owned by someone who signed in, or run by another practice.
-  v_rc := private.norm_id(i.rc_number);
-  v_tax := private.norm_id(i.tax_id);
-  if v_rc is not null or v_tax is not null then
-    select o.id, case when private.norm_id(o.rc_number) = v_rc then 'rc_number' else 'tax_id' end into v_dup, v_on
-    from orgs o
-    where not o.is_sample and (private.norm_id(o.rc_number) = v_rc or private.norm_id(o.tin) = v_tax)
-      and ((o.managed_by is not null and o.managed_by <> i.practice_id)
-        or exists (select 1 from members x where x.org_id = o.id and x.role = 'owner' and x.status = 'active' and x.user_id is not null))
-    order by o.created_at, o.id
-    limit 1;
-    if v_dup is not null then
-      insert into practice_mandate_flags (practice_id, intake_id, kind, detail)
-      select i.practice_id, i.id, 'duplicate_company', jsonb_build_object('org_id', v_dup, 'matched_on', v_on, 'by', m.id)
-      where not exists (select 1 from practice_mandate_flags f where f.intake_id = i.id and f.kind = 'duplicate_company' and f.resolved_at is null);
-      return jsonb_build_object('ok', false, 'reason', 'duplicate');
-    end if;
+  -- The same company already on Counta: owned by someone who signed in, or run by another practice. (Its numbers stay
+  -- this transaction's until it ends, so another practice setting it up at the same moment sees this one.)
+  v_dup := private.company_taken(i.rc_number, i.tax_id, i.practice_id, null);
+  if v_dup is not null then
+    insert into practice_mandate_flags (practice_id, intake_id, kind, detail)
+    select i.practice_id, i.id, 'duplicate_company', v_dup || jsonb_build_object('by', m.id)
+    where not exists (select 1 from practice_mandate_flags f where f.intake_id = i.id and f.kind = 'duplicate_company' and f.resolved_at is null);
+    return jsonb_build_object('ok', false, 'reason', 'duplicate');
   end if;
 
   select * into pr from practices where id = i.practice_id;
@@ -238,9 +280,7 @@ begin
   update orgs set managed_by = i.practice_id, identity_status = 'pending', invoice_note = v_bank, rc_number = nullif(trim(i.rc_number), ''),
     tin = nullif(trim(i.tax_id), ''), address = i.address
   where id = v_org;
-  select l.retention_years into v_years from engagement_letters l
-  where l.intake_id = i.id and l.variant = 'full' and l.status in ('completed', 'uploaded')
-  order by l.updated_at desc, l.id limit 1;
+  v_years := (private.mandate_letter(i)).retention_years;
   -- (The intake is engaged on the link by practice_clients_intake.)
   insert into practice_clients (practice_id, org_id, status, initiated_by, business_name, billing, mode, intake_id, engagement_partner_id,
     alert_email, retention_years, started_at, created_by)
@@ -363,6 +403,66 @@ begin
   return v;
 end $$;
 
+-- identity_json: payments_open is private.payments_open (the business identity screen says what the lock says).
+create or replace function private.identity_json(p_org uuid, p_owner boolean) returns jsonb
+language plpgsql stable security definer set search_path = public, private as $$
+declare o public.orgs;
+begin
+  select * into o from orgs where id = p_org;
+  return jsonb_build_object(
+    'status', o.identity_status,
+    'payments_open', private.payments_open(p_org),
+    'can_check', p_owner,
+    'method', o.identity->>'method', 'matched', o.identity->>'matched', 'matched_role', o.identity->>'matched_role',
+    'last4', o.identity->>'last4', 'at', o.identity->>'at',
+    'attempts', coalesce((o.identity->>'attempts')::int, 0),
+    'registered', exists (select 1 from kyc_profiles k where k.org_id = p_org and k.status = 'submitted' and k.source = 'cac'),
+    'people', (select coalesce(jsonb_agg(jsonb_build_object('name', x->>'name', 'role', x->>'role')), '[]'::jsonb) from jsonb_array_elements(private.identity_people(p_org)) x),
+    'slip', case when p_owner then o.identity->'slip' end,
+    'review', o.identity->'review');
+end $$;
+
+-- admin_business: payments_open is private.payments_open (and the payments switch, as before).
+create or replace function public.admin_business(p_org uuid) returns jsonb
+language plpgsql stable security definer set search_path = public, private as $$
+declare o public.orgs; v_owner uuid; v_month timestamptz := now() - interval '30 days'; k text; v_sw jsonb := '[]'::jsonb;
+begin
+  perform private.require_staff();
+  select * into o from orgs where id = p_org;
+  if not found then raise exception 'Business not found.'; end if;
+  select user_id into v_owner from members where org_id = p_org and role = 'owner' order by created_at limit 1;
+  foreach k in array private.feature_keys() loop
+    if k <> 'new_businesses' then
+      v_sw := v_sw || jsonb_build_object('feature', k, 'on', private.feature_on(p_org, k),
+        'override', (select jsonb_build_object('enabled', s.enabled, 'note', s.note, 'at', s.set_at, 'by', (select email from auth.users u where u.id = s.set_by))
+                     from org_switches s where s.org_id = p_org and s.feature = k));
+    end if;
+  end loop;
+  return jsonb_build_object(
+    'org', jsonb_build_object('id', o.id, 'name', o.name, 'rc_number', o.rc_number, 'legal_form', o.legal_form, 'tin', o.tin, 'industry', o.industry,
+      'offering', o.offering, 'category_id', o.category_id, 'email', o.email, 'phone', o.phone, 'address', o.address, 'created_at', o.created_at,
+      'is_sample', o.is_sample, 'vat_registered', o.vat_registered, 'payment_rail', o.payment_rail, 'taxstreem_org_id', o.taxstreem_org_id,
+      'voice_id', o.voice_id, 'voice_lang', o.voice_lang),
+    'identity', jsonb_build_object('status', o.identity_status, 'last4', o.identity->'nin'->>'last4', 'checked_at', o.identity->'nin'->>'at',
+      'slip', (o.identity->'slip') is not null, 'review', o.identity->'review', 'attempts', coalesce((o.identity->>'attempts')::int, 0)),
+    'people', (select coalesce(jsonb_agg(jsonb_build_object('name', mb.display_name, 'role', mb.role, 'title', mb.title, 'status', mb.status,
+        'email', coalesce(mb.email, u.email), 'joined', mb.created_at, 'last_sign_in', u.last_sign_in_at) order by mb.role = 'owner' desc, mb.created_at), '[]'::jsonb)
+      from members mb left join auth.users u on u.id = mb.user_id where mb.org_id = p_org),
+    'onboarding', case when v_owner is null then null else (select jsonb_build_object('steps', private.guide_steps(v_owner, p_org, coalesce(g.marks, '{}'::jsonb)),
+        'last_seen', g.last_seen_at, 'completed', g.completed_at, 'language', g.language) from (select 1) one left join guide_progress g on g.user_id = v_owner) end,
+    'wallet', (select jsonb_build_object('status', w.status, 'rail', w.rail, 'bank', w.bank_name, 'account_number', w.account_number, 'error', w.error, 'opened', w.created_at)
+      from wallets w where w.org_id = p_org order by w.created_at desc limit 1),
+    'payments_open', private.payments_open(p_org) and private.feature_on(p_org, 'payments'),
+    'switches', v_sw,
+    'usage', jsonb_build_object(
+      'sales', (select count(*) from sales where org_id = p_org and created_at >= v_month),
+      'messages', (select coalesce(jsonb_object_agg(st, n), '{}'::jsonb) from (select status st, count(*) n from messages where org_id = p_org and created_at >= v_month group by status) x),
+      'calls', (select coalesce(jsonb_object_agg(st, n), '{}'::jsonb) from (select status st, count(*) n from voice_calls where org_id = p_org and created_at >= v_month group by status) x),
+      'ai_reads', (select count(*) from ai_logs where org_id = p_org and created_at >= v_month),
+      'martina', (select count(*) from guide_sessions gs where gs.started_at >= v_month and gs.user_id in (select user_id from members where org_id = p_org and user_id is not null))),
+    'failures', private.platform_failures(now() - interval '30 days', p_org, 30));
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- 6. The director's confirmation
 -- ---------------------------------------------------------------------------
@@ -372,6 +472,15 @@ create or replace function private.director_mandate_open(p_client uuid, p_practi
 language sql stable set search_path = public, private as $$
   select exists (select 1 from practice_clients c join orgs o on o.id = c.org_id
                  where c.id = p_client and c.practice_id = p_practice and c.status = 'active' and c.mode = 'full' and o.managed_by = c.practice_id)
+$$;
+
+-- An address as compared for the director's check: the host alone (no netmask), and an IPv4 address written as IPv6
+-- (::ffff:a.b.c.d) as the IPv4 address.
+create or replace function private.ip_host(p inet) returns inet
+language sql immutable set search_path = '' as $$
+  select case when p is null then null
+    when family(p) = 6 and host(p) ~* '^::ffff:[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' then substring(host(p) from 8)::inet
+    else host(p)::inet end
 $$;
 
 -- The confirmation a presented link belongs to (locked), or nothing.
@@ -410,6 +519,11 @@ begin
   select * into o from orgs where id = c.org_id;
   if c.mode <> 'full' or c.status <> 'active' or o.managed_by is distinct from c.practice_id then
     raise exception 'A director confirms only for a business the firm runs under full mandate.';
+  end if;
+  -- The CAC record is read only by someone acting as the business's owner (the firm's partners and managers have such a
+  -- place while they are active).
+  if not private.acts_as_owner(o.id, auth.uid()) then
+    raise exception 'Only the firm''s people acting as the business''s owner ask a director to confirm.' using errcode = '42501';
   end if;
   if o.director_confirmed_at is not null then raise exception 'A director of the business has confirmed already.'; end if;
   if o.identity_status not in ('verified', 'approved') then raise exception 'Verify the business''s identity first.'; end if;
@@ -497,13 +611,14 @@ begin
   end if;
 
   begin
-    v_ip := nullif(trim(coalesce(p_ip, '')), '')::inet;
+    v_ip := private.ip_host(nullif(trim(coalesce(p_ip, '')), '')::inet);
   exception when others then
     v_ip := null;
   end;
   v_reason := case when v_ip is null then 'ip_unreadable'
     when exists (select 1 from auth.sessions s join practice_members pm on pm.user_id = s.user_id
-                 where pm.practice_id = d.practice_id and s.ip = v_ip and coalesce(s.updated_at, s.created_at) > now() - interval '30 days') then 'firm_ip' end;
+                 where pm.practice_id = d.practice_id and private.ip_host(s.ip) = v_ip
+                   and coalesce(s.updated_at, s.created_at) > now() - interval '30 days') then 'firm_ip' end;
   select c.org_id, o.name into v_org, v_business from practice_clients c join orgs o on o.id = c.org_id where c.id = d.client_id;
   if v_reason is not null then
     update practice_director_confirmations set status = 'review', ip = left(nullif(trim(p_ip), ''), 64), ua = left(nullif(p_ua, ''), 300),
@@ -758,11 +873,13 @@ end $$;
 
 -- Business profiles. A person keeps one draft of their own (for a business they set up or own, as before); each business a
 -- practice runs has its own draft as well (for_business), whoever of the firm started it, so a firm person completes
--- several such profiles, one after another or side by side. Drafts already bound to such a business become its own.
+-- several such profiles, one after another or side by side. Profiles already bound to such a business become its own (the
+-- newest draft, and every submitted one).
 alter table public.kyc_profiles add column if not exists for_business boolean not null default false;
 update public.kyc_profiles set for_business = true
 where id in (select distinct on (k.org_id) k.id from public.kyc_profiles k join public.orgs o on o.id = k.org_id
-             where k.status = 'draft' and o.managed_by is not null order by k.org_id, k.updated_at desc, k.id);
+             where k.status = 'draft' and o.managed_by is not null order by k.org_id, k.updated_at desc, k.id)
+   or (status = 'submitted' and org_id in (select id from public.orgs where managed_by is not null));
 drop index if exists public.kyc_profiles_one_draft;
 create unique index kyc_profiles_one_draft on public.kyc_profiles(user_id) where status = 'draft' and not for_business;
 create unique index kyc_profiles_business_draft on public.kyc_profiles(org_id) where status = 'draft' and for_business;
@@ -796,7 +913,7 @@ begin
   return k;
 end $$;
 
--- kyc_draft: without a business, the person's own draft (not a business's); otherwise as before.
+-- kyc_draft: without a business, the person's own draft or submitted profile (never a business's own); otherwise as before.
 create or replace function public.kyc_draft(p_org uuid default null) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare v_uid uuid := auth.uid(); k public.kyc_profiles;
@@ -808,7 +925,8 @@ begin
   else
     select * into k from kyc_profiles where user_id = v_uid and status = 'draft' and not for_business;
     if not found then
-      select * into k from kyc_profiles where user_id = v_uid and status = 'submitted' and org_id is not null and private.is_owner(org_id)
+      select * into k from kyc_profiles where user_id = v_uid and status = 'submitted' and not for_business and org_id is not null
+        and private.is_owner(org_id)
       order by submitted_at desc limit 1;
     end if;
     if not found then
@@ -906,12 +1024,17 @@ begin
   return private.kyc_json(k);
 end $$;
 
--- kyc_submit: with p.org_id, the answers given with it go to that business's profile too; otherwise as before.
+-- kyc_submit: with p.org_id, the answers given with it go to that business's profile too. The company's numbers (its RC
+-- number and Tax ID) are this transaction's while it runs (private.company_lock). For a business a practice runs, the
+-- record must be the company the firm took on (the RC number on its intake, when both have one) and not a company that is
+-- someone else's on Counta (private.company_taken): then nothing is submitted, TaxStreem is flagged (once while the flag is
+-- open) and the answer is {ok: false, reason: duplicate}. Otherwise as before.
 create or replace function public.kyc_submit(p jsonb default '{}'::jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare v_uid uuid := auth.uid(); k public.kyc_profiles; c jsonb; v_org uuid; v_name text; v_addr text; v_vat boolean; v_cat public.business_categories;
   v_form text; v_cls text; v_tin text; v_dir jsonb; v_display text; v_branch text; v_email text; v_state text; v_lga text; v_shares numeric;
-  v_new boolean := false; v_for uuid := nullif(p->>'org_id', '')::uuid; v_to jsonb;
+  v_new boolean := false; v_for uuid := nullif(p->>'org_id', '')::uuid; v_to jsonb; v_rc text; mc public.practice_clients; v_intake_rc text;
+  v_dup jsonb; v_practice uuid;
 begin
   if v_uid is null then raise exception 'Sign in first.' using errcode = '42501'; end if;
   if v_for is not null and not private.is_owner(v_for) then
@@ -947,6 +1070,27 @@ begin
                from jsonb_array_elements(coalesce(c->'shareholders', '[]'::jsonb)) s);
   select coalesce(nullif(trim(raw_user_meta_data->>'full_name'), ''), split_part(email, '@', 1)), email into v_display, v_email from auth.users where id = v_uid;
   v_branch := coalesce(nullif(left(trim(p->>'branch_name'), 60), ''), 'Head office');
+
+  -- The company: its turn on its numbers, and for a business a practice runs, the one the firm took on and nobody else's.
+  v_rc := coalesce(nullif(c->>'rc_number', ''), nullif(k.manual->>'rc_number', ''));
+  perform private.company_lock(v_rc, v_tin);
+  if k.org_id is not null and private.is_managed(k.org_id) then
+    select managed_by into v_practice from orgs where id = k.org_id;
+    mc := private.mandate(k.org_id);
+    select x.rc_number into v_intake_rc from practice_intakes x where x.id = mc.intake_id;
+    if private.norm_id(v_rc) is not null and private.norm_id(v_intake_rc) is not null and private.norm_id(v_rc) <> private.norm_id(v_intake_rc) then
+      raise exception 'This CAC record is for RC %, but the firm took this business on as RC %. Choose the right company.',
+        private.norm_id(v_rc), private.norm_id(v_intake_rc);
+    end if;
+    v_dup := private.company_taken(v_rc, v_tin, v_practice, k.org_id);
+    if v_dup is not null then
+      insert into practice_mandate_flags (practice_id, intake_id, client_id, kind, detail)
+      select v_practice, mc.intake_id, mc.id, 'duplicate_company', v_dup || jsonb_build_object('source', 'cac', 'business_org_id', k.org_id)
+      where not exists (select 1 from practice_mandate_flags f where f.practice_id = v_practice and f.kind = 'duplicate_company' and f.resolved_at is null
+                        and f.detail->>'business_org_id' = k.org_id::text);
+      return jsonb_build_object('ok', false, 'reason', 'duplicate');
+    end if;
+  end if;
 
   v_org := k.org_id;
   if v_org is null then
@@ -1084,6 +1228,8 @@ end $$;
 -- core.sql grants every private function to authenticated: the helpers this migration creates or redefines are not
 -- callable by the signed-in person.
 revoke all on function private.free_mail_domains(), private.firm_email(uuid, text), private.mandate_gate(uuid),
+  private.mandate_letter(public.practice_intakes), private.company_lock(text, text), private.company_taken(text, text, uuid, uuid),
+  private.ip_host(inet), private.identity_json(uuid, boolean),
   private.director_mandate_open(uuid, uuid), private.director_by_token(text), private.director_state(public.practice_director_confirmations),
   private.payments_open(uuid), private.require_payments_open(uuid), private.partner_referral_start(public.practice_clients),
   private.kyc_row(uuid, uuid), private.meter_usage(uuid, text), private.enforce_plan()

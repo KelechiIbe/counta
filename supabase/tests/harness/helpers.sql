@@ -253,9 +253,9 @@ begin
   return v;
 end $$;
 
--- A due-diligence intake ready for an engagement, made by the practice's first active partner: risk rated low and the
--- conflicts check run with nothing found (it raises if the check finds anything).
-create function tests.cleared_intake(p_practice uuid, p_name text, p_mode text default 'involved') returns uuid
+-- A due-diligence intake ready for an engagement, made by the practice's first active partner: risk rated low (with the RC
+-- number p_rc, when given) and the conflicts check run with nothing found (it raises if the check finds anything).
+create function tests.cleared_intake(p_practice uuid, p_name text, p_mode text default 'involved', p_rc text default null) returns uuid
 language plpgsql as $$
 declare v uuid; v_partner uuid; r jsonb;
 begin
@@ -265,7 +265,7 @@ begin
   if v_partner is null then raise exception 'tests.cleared_intake: no active partner in practice %', p_practice; end if;
   perform tests.as_user(v_partner);
   v := (public.practice_intake_save(p_practice, jsonb_build_object('legal_name', p_name, 'mode_requested', p_mode, 'risk_rating', 'low',
-    'risk_reason', 'Test client'))->>'id')::uuid;
+    'risk_reason', 'Test client') || case when p_rc is not null then jsonb_build_object('rc_number', p_rc) else '{}'::jsonb end)->>'id')::uuid;
   r := public.practice_conflict_run(v);
   perform tests.as_postgres();
   if r->>'conflict_status' <> 'none' then raise exception 'tests.cleared_intake: the conflicts check found %', r->'hits'; end if;
@@ -305,15 +305,20 @@ begin
   return l;
 end $$;
 
--- A business the practice takes on under full mandate the way a firm does it: a cleared full-mandate intake, the partner's
--- declaration of the client's written authority, a full-mandate letter signed by both sides, then practice_create_business
--- as p_partner (who must be a partner with a verified licence). The name must not match another of the practice's
--- clients or intakes (the conflicts check would stop it). Returns the client link's id.
-create function tests.full_client(p_practice uuid, p_partner uuid, p_name text default 'Full Client Ltd') returns uuid
+-- A business the practice takes on under full mandate the way a firm does it: a cleared full-mandate intake with an RC
+-- number, the partner's declaration of the client's written authority, a full-mandate letter signed by both sides, then
+-- practice_create_business as p_partner (who must be a partner with a verified licence). The name and RC number default to
+-- ones made from the number of intakes so far (one word, so two of them never look alike to the conflicts check); a name
+-- given must not match another of the practice's clients or intakes. Returns the client link's id.
+create function tests.full_client(p_practice uuid, p_partner uuid, p_name text default null, p_rc text default null) returns uuid
 language plpgsql as $$
-declare v_intake uuid; r jsonb;
+declare v_intake uuid; r jsonb; v_n bigint;
 begin
-  v_intake := tests.cleared_intake(p_practice, p_name, 'full');
+  perform tests.as_postgres();
+  v_n := (select count(*) from public.practice_intakes) + 1;
+  v_intake := tests.cleared_intake(p_practice,
+    coalesce(p_name, initcap('fullco' || translate(lpad(v_n::text, 6, '0'), '0123456789', 'abcdefghij')) || ' Ltd'), 'full',
+    coalesce(p_rc, 'RC 8' || lpad(v_n::text, 6, '0')));
   perform tests.as_user(p_partner);
   perform public.practice_intake_declare(v_intake, '{}');
   perform tests.as_postgres();
