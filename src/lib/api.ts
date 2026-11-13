@@ -55,6 +55,23 @@ export function activityText(r: ActivityRow): string {
   return `${what} (${fields.slice(0, 3).join(', ')}${fields.length > 3 ? ` and ${fields.length - 3} more` : ''})`;
 }
 
+// ---------------------------------------------------------------- recurring invoices
+// A customer billed on a schedule (recurring_save/list/set_status/run_now). Line prices are before VAT; a line marked once
+// goes on the first invoice only. created_by: the person on whose authority the invoices are issued (whoever saved last).
+export type RecurringLine = { description: string; qty: number; unit_price: number; vat_treatment: 'standard' | 'zero' | 'exempt'; once: boolean };
+export type RecurringRun = {
+  id: string; run_date: string; status: 'issued' | 'waiting_nrs' | 'sent' | 'failed' | 'void'; sale_id: string | null; number?: string | null;
+  total?: number | null; error?: string | null; send_error?: string | null; created_at: string;
+};
+export type RecurringSchedule = {
+  id: string; org_id: string; customer_id: string; customer_name: string; status: 'active' | 'paused' | 'ended'; frequency: 'monthly' | 'quarterly' | 'annually';
+  day_of_month: number; start_date: string; end_date: string | null; next_run: string; due_days: number; lines: RecurringLine[]; auto_send: boolean;
+  send_channel: 'email' | 'whatsapp'; notes: string | null; practice_client_id: string | null; failures: number; last_error: string | null;
+  last_run_at: string | null; created_by: string | null; created_by_name: string | null; created_at: string; updated_at: string; runs: RecurringRun[];
+};
+export const useRecurring = (orgId: string | null) => useQuery({ queryKey: ['recurring', orgId], enabled: !!orgId,
+  queryFn: () => rpc<RecurringSchedule[]>('recurring_list', { p_org: orgId }) });
+
 // ---------------------------------------------------------------- types
 export type DocType = 'receipt' | 'invoice' | 'quote' | 'order' | 'credit_note';
 export interface SaleRow {

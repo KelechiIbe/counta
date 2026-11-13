@@ -174,6 +174,22 @@ export const useLetterTemplates = (pid: string) => useQuery({ queryKey: ['letter
 export const useLetter = (lid: string | null) => useQuery({ queryKey: ['letter', lid], enabled: !!lid,
   queryFn: () => rpc<LetterDetail>('practice_letter', { p_letter: lid }) });
 
+// Fee billing from the firm's own Counta business (practices.firm_org_id): each client's fee customer, what it owes, its
+// fee invoices, its recurring schedules and, for a full-mandate client, the bills posted in its own books (the fee mirror).
+// Wallet balances for partners only.
+export type FeeBillStatus = 'posted' | 'failed' | 'voided' | 'skipped' | 'dismissed';
+export type PracticeFees = {
+  firm_org: { id: string; name: string; identity_status: string } | null;
+  clients: {
+    client_id: string; business_name: string; mode: IntakeMode; fee_customer_id: string | null; outstanding: number;
+    invoices: { id: string; number: string; issue_date: string; total: number; credited: number; balance: number; status: string }[];
+    schedules: { id: string; frequency: 'monthly' | 'quarterly' | 'annually'; day_of_month: number; next_run: string; status: 'active' | 'paused' | 'ended'; total: number }[];
+    fee_bills: { id: string; sale_id: string; status: FeeBillStatus; error: string | null; bill_id: string | null; dismiss_reason: string | null; credited: number; note: string | null }[];
+  }[];
+  wallets?: { wallet: { status: string | null; balance: number }; tax_wallet: { status: string | null; balance: number } };
+};
+export const usePracticeFees = (pid: string) => useQuery({ queryKey: ['practice-fees', pid], enabled: !!pid, queryFn: () => rpc<PracticeFees>('practice_fees', { p_practice: pid }) });
+
 // The practice's entries in a client business's activity log, a page at a time.
 export const usePracticeActivity = (cid: string | null, enabled = true) => useInfiniteQuery({
   queryKey: ['practice-activity', cid], enabled: !!cid && enabled, initialPageParam: null as number | null,

@@ -83,7 +83,7 @@ export default function BillingPage({ pid }: { pid: string }) {
   const b = q.data;
   return (
     <>
-      <PageHead title="Billing" sub="Pay for clients' Counta plans with the practice's card. Each client's owner sees that you pay, and can take it back at any time." />
+      <PageHead title="Counta plans" sub="Pay for clients' Counta plans with the practice's card. Each client's owner sees that you pay, and can take it back at any time." />
       {q.isLoading ? <SkeletonRows n={5} /> : q.isError ? <Alert kind="red" icon="alert">{cleanError(q.error)}</Alert> : b && (
         <>
           <Card title="Clients" pad={false}>

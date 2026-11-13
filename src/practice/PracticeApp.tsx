@@ -20,11 +20,12 @@ import BillingPage from './pages/Billing';
 import SettingsPage from './pages/Settings';
 import Earnings from './pages/Earnings';
 import LettersPage, { LetterPage } from './pages/Letters';
+import Fees from './pages/Fees';
 
 // [path, label, icon, lead only]: partners and managers see the money and the letters; everyone sees the rest.
 const NAV: [string, string, string, boolean][] = [
   ['', 'Clients', 'building', false], ['letters', 'Letters', 'file', true], ['deadlines', 'Deadlines', 'cal', false], ['team', 'Team', 'users', false],
-  ['earnings', 'Earnings', 'award', true], ['billing', 'Billing', 'card', true], ['settings', 'Practice', 'settings', false],
+  ['fees', 'Fees', 'receipt', true], ['earnings', 'Earnings', 'award', true], ['billing', 'Counta plans', 'card', true], ['settings', 'Practice', 'settings', false],
 ];
 
 function Centre({ children }: { children: ReactNode }) {
@@ -100,6 +101,7 @@ function InPractice() {
         <Route path="deadlines" element={<Deadlines pid={pid} />} />
         <Route path="team" element={<TeamPage pid={pid} />} />
         <Route path="billing" element={<BillingPage pid={pid} />} />
+        <Route path="fees" element={<Fees pid={pid} />} />
         <Route path="earnings" element={<Earnings pid={pid} />} />
         <Route path="settings" element={<SettingsPage pid={pid} />} />
         <Route path="*" element={<Navigate to={`/practice/${pid}`} replace />} />
@@ -130,7 +132,7 @@ export default function PracticeApp() {
     <Routes>
       <Route index element={<Pick />} />
       <Route path="new" element={<Setup invitations={[]} again />} />
-      {['billing', 'team', 'settings', 'deadlines', 'earnings', 'letters'].map((p) => <Route key={p} path={p} element={<ToPage page={p} />} />)}
+      {['billing', 'team', 'settings', 'deadlines', 'earnings', 'letters', 'fees'].map((p) => <Route key={p} path={p} element={<ToPage page={p} />} />)}
       <Route path="clients/:cid" element={<ToClient />} />
       <Route path=":pid/*" element={<InPractice />} />
     </Routes>

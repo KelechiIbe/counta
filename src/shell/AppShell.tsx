@@ -23,7 +23,7 @@ const TITLES: Record<string, string> = {
   '/inventory': 'Inventory', '/inventory/items': 'Items', '/inventory/receive': 'Receive stock', '/inventory/counts': 'Stock counts',
   '/inventory/reorder': 'Reorder', '/inventory/pricing': 'Pricing', '/inventory/insights': 'Insights', '/inventory/locations': 'Locations & staff', '/inventory/reports': 'Reports',
   '/inventory/production': 'Production & jobs', '/inventory/month-end': 'Stock close', '/inventory/migrate': 'Move to Counta',
-  '/sell/till': 'Till', '/sell/sales': 'Sales', '/sell/customers': 'Customers', '/sell/orders': 'Orders & deliveries', '/sell/price-lists': 'Price lists', '/sell/shop': 'Online shop',
+  '/sell/till': 'Till', '/sell/sales': 'Sales', '/sell/customers': 'Customers', '/sell/orders': 'Orders & deliveries', '/sell/price-lists': 'Price lists', '/sell/shop': 'Online shop', '/sell/recurring': 'Recurring invoices',
   '/payments': 'Payments', '/purchases/bills': 'Bills', '/purchases/vendors': 'Vendors',
   '/accounting/inbox': 'Books inbox', '/accounting/banking': 'Banking & reconciliation', '/accounting/statements': 'Financial statements',
   '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close',
@@ -181,8 +181,8 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
         <Group to={w.has_stock ? '/sell/till' : '/sell/sales'} label={w.has_stock ? 'Sell' : 'Billing'} icon="receipt" active={p.startsWith('/sell')} onClose={onClose} rail={rail} drawer={drawer} show={can(inv, 'record_sales') || money}
           subs={w.has_stock
             ? [['/sell/till', 'Till'], ['/sell/sales', `${cap(w.sales)} & invoices`, n('invoices_overdue')], ['/sell/customers', cap(w.customers)], ['/sell/orders', 'Orders & deliveries', n('orders_to_confirm')],
-              ['/sell/price-lists', 'Price lists'], ['/sell/shop', 'Online shop']]
-            : [...(mode.walkIn ? [['/sell/till', 'Till'] as [string, string]] : []), ['/sell/sales', 'Invoices', n('invoices_overdue')], ['/sell/customers', cap(w.customers)], ['/sell/price-lists', 'Price lists']]} />
+              ['/sell/recurring', 'Recurring invoices'], ['/sell/price-lists', 'Price lists'], ['/sell/shop', 'Online shop']]
+            : [...(mode.walkIn ? [['/sell/till', 'Till'] as [string, string]] : []), ['/sell/sales', 'Invoices', n('invoices_overdue')], ['/sell/recurring', 'Recurring invoices'], ['/sell/customers', cap(w.customers)], ['/sell/price-lists', 'Price lists']]} />
         <Group to="/payments" label="Payments" icon="card" active={p.startsWith('/payments')} onClose={onClose} rail={rail} drawer={drawer} show={can(inv, 'record_sales') || money}
           subs={[['/payments', 'Wallet & payments', Number(ib?.payouts_to_approve || 0) + n('tax_wallet')]]} />
         <Group to="/purchases/bills" label="Purchases" icon="file" active={p.startsWith('/purchases')} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'approve_pos')}
