@@ -174,6 +174,12 @@ begin
   assert (select status = 'accepted' and accepted_by = tests.id('new_owner') and accepted_at is not null from practice_handovers where id = h), 'handover_accept: accepted';
   assert exists (select 1 from activity_log where org_id = o and action = 'handover' and practice_id = tests.id('pr')), 'handover_accept: logged';
   assert private.outbound_check(o, 'call', 'reminder', null) is null and not private.white_label(o, null), 'handover_accept: silence and branding lifted';
+  -- No director confirmed the wallets: TaxStreem checks the handover before payments open; its flag says the session's
+  -- address could not be read.
+  assert (select identity_status = 'review' and identity->>'reason' = 'handover' and identity->'handover'->>'status_before' = 'pending' from orgs where id = o)
+     and not private.payments_open(o), 'handover_accept: TaxStreem checks it';
+  assert (select detail->>'reason' = 'no_director' and detail->'ip_matches_firm' = 'null'::jsonb and detail->'ip' = 'null'::jsonb and resolved_at is null
+          from practice_mandate_flags where client_id = c and kind = 'handover'), 'handover_accept: flagged';
   -- Once.
   perform tests.as_user(tests.id('new_owner'));
   perform tests.throws(format('select public.practice_handover_accept(%L)', v_tok), '%accepted already%');
@@ -184,6 +190,82 @@ begin
   perform private.alert_send(o, 'test', 'k2', array['email'], '{"title":"T"}');
   assert (select to_address from messages where org_id = o and template = 'alert' order by created_at desc limit 1) = 'owner@client.example.test', 'handover_accept: silence lifted';
   assert (select status from messages where org_id = o and template = 'alert' order by created_at desc limit 1) <> 'suppressed', 'handover_accept: sent';
+end $$;
+
+-- test: handover_to_confirmed_director
+-- The director who confirmed the wallets takes the business over (their confirmed address, whatever its case):
+-- payments stay open, nothing for TaxStreem to check.
+do $$
+declare pr uuid := tests.id('pr'); c uuid; o uuid; h uuid; v_tok text; v_dir uuid;
+begin
+  c := tests.full_client(pr, tests.id('partner'));
+  o := (select org_id from practice_clients where id = c);
+  v_dir := tests.user('tunde.director@client.example.test', 'Tunde Bello');
+  update orgs set identity_status = 'verified', director_confirmed_at = now() where id = o;
+  insert into practice_director_confirmations (practice_id, client_id, name, email, status, confirmed_at)
+  values (pr, c, 'Tunde Bello', 'Tunde.Director@Client.example.test', 'confirmed', now());
+  assert private.payments_open(o), 'handover_to_confirmed_director: open before';
+  perform tests.as_user(tests.id('partner'));
+  h := (public.practice_handover_start(c, '{"email":"tunde.director@client.example.test","name":"Tunde Bello"}')->>'id')::uuid;
+  perform tests.as_service();
+  v_tok := substring(public.svc_practice_invite_link('handover', h)->>'link' from 'ph_[0-9a-f]{48}$');
+  perform tests.as_user(v_dir);
+  perform public.practice_handover_accept(v_tok);
+  perform tests.as_postgres();
+  assert (select managed_by is null and identity_status = 'verified' and not identity ? 'reason' from orgs where id = o) and private.payments_open(o),
+    'handover_to_confirmed_director: payments stay open';
+  assert not exists (select 1 from practice_mandate_flags where client_id = c and kind = 'handover'), 'handover_to_confirmed_director: no flag';
+  perform private.require_payments_open(o);
+end $$;
+
+-- test: handover_review_closes_payments
+-- A handover to anyone other than the director who confirmed: the payments that were open shut until TaxStreem has
+-- checked it (its own message), a 'handover' flag records that the accepting session came from an address the firm's
+-- people use (an IPv4 address written as IPv6 still matches), and TaxStreem's approval through the identity review opens
+-- them again.
+do $$
+declare pr uuid := tests.id('pr'); c uuid; o uuid; h uuid; v_tok text; v_alias uuid; v_session uuid := gen_random_uuid(); f jsonb;
+begin
+  c := tests.full_client(pr, tests.id('partner'));
+  o := (select org_id from practice_clients where id = c);
+  v_alias := tests.user('ngozi.alias@freemail.example.test', 'Ngozi Alias');
+  update orgs set identity_status = 'verified', director_confirmed_at = now() where id = o;
+  insert into practice_director_confirmations (practice_id, client_id, name, email, status, confirmed_at)
+  values (pr, c, 'Amina Yusuf', 'amina.director@client.example.test', 'confirmed', now());
+  assert private.payments_open(o), 'handover_review_closes_payments: open before';
+  -- The firm's partner signed in from 203.0.113.50 last week; the new owner's session comes from the same address.
+  insert into auth.sessions (user_id, ip, created_at, updated_at) values (tests.id('partner'), '203.0.113.50', now() - interval '7 days', now() - interval '7 days');
+  insert into auth.sessions (id, user_id, ip) values (v_session, v_alias, '::ffff:203.0.113.50');
+  perform tests.as_user(tests.id('partner'));
+  h := (public.practice_handover_start(c, '{"email":"ngozi.alias@freemail.example.test","name":"Ngozi Alias"}')->>'id')::uuid;
+  perform tests.as_service();
+  v_tok := substring(public.svc_practice_invite_link('handover', h)->>'link' from 'ph_[0-9a-f]{48}$');
+  perform tests.as_postgres();
+  perform tests.set_claims(tests.user_claims(v_alias, 'aal1') || jsonb_build_object('session_id', v_session));
+  set local role authenticated;
+  perform public.practice_handover_accept(v_tok);
+  perform tests.as_postgres();
+  assert (select managed_by is null and identity_status = 'review' and identity->>'reason' = 'handover' and identity->'handover'->>'status_before' = 'verified'
+          from orgs where id = o) and not private.payments_open(o), 'handover_review_closes_payments: shut';
+  perform tests.throws(format('select private.require_payments_open(%L)', o),
+    '42501: Payments open once TaxStreem has checked the handover. This usually takes a working day.');
+  select detail into f from practice_mandate_flags where client_id = c and kind = 'handover';
+  assert f->>'reason' = 'not_director' and (f->>'ip_matches_firm')::boolean and f->>'ip' = '203.0.113.50' and f->>'handover_id' = h::text,
+    format('handover_review_closes_payments: flagged, got %s', f);
+  -- The new owner's NIN check does not go round TaxStreem's check.
+  perform tests.as_service();
+  assert public.svc_identity_nin(v_alias, o, '1234', 'Amina', null, 'Yusuf') = '{"verified": false, "reason": "handover_review"}'::jsonb,
+    'handover_review_closes_payments: no NIN check meanwhile';
+  perform tests.as_postgres();
+  assert (select identity_status from orgs where id = o) = 'review', 'handover_review_closes_payments: still in review';
+  -- TaxStreem approves through the identity review: payments open.
+  perform tests.as_user(tests.id('admin'), 'aal2');
+  assert exists (select 1 from jsonb_array_elements(public.identity_reviews()) x where x->>'org_id' = o::text), 'handover_review_closes_payments: in the review queue';
+  assert exists (select 1 from jsonb_array_elements(public.admin_mandates()->'flags') x where x->>'kind' = 'handover' and x->'business'->>'org_id' = o::text),
+    'handover_review_closes_payments: on the mandates page';
+  perform public.review_identity(o, true, null);
+  perform tests.as_postgres();
+  assert (select identity_status = 'approved' from orgs where id = o) and private.payments_open(o), 'handover_review_closes_payments: approved, open';
 end $$;
 
 -- test: handover_accept_refusals
@@ -325,10 +407,18 @@ end $$;
 -- Ended without a handover: connections paused (tools, POS, bank feeds), the plan cancelled at the end of its period, the
 -- client ended, only the engagement partner's place left, a waiting handover cancelled and a director's request closed,
 -- logged, and last the business read-only and kept as long as the letter says (six years by default), still run by the
--- practice so it stays silent.
+-- practice so it stays silent. Payments that were open shut, and no stored file is deleted while the records are kept.
 do $$
 declare pr uuid := tests.id('pr'); c uuid := tests.id('ec'); o uuid := tests.id('eo'); h uuid; d public.practice_director_confirmations; r jsonb;
+  v_path text := tests.id('eo') || '/documents/kept-letter.pdf';
 begin
+  update orgs set identity_status = 'verified', director_confirmed_at = now() where id = o;
+  insert into documents (org_id, cat, folder, name, path, uploaded_by)
+  values (o, 'company', 'Letters', 'Kept letter.pdf', v_path, (select id from members where org_id = o and user_id = tests.id('partner')));
+  assert private.payments_open(o) and (private.org_brand(o, null)->>'pay_online')::boolean, 'end_mandate: payments open before';
+  perform tests.as_user(tests.id('partner'));
+  assert private.document_may_delete(v_path), 'end_mandate: the file could be deleted before';
+  perform tests.as_postgres();
   insert into integrations (org_id, provider, hook_token_hash) values (o, 'paystack', 'abc123');
   insert into pos_connections (org_id, provider, label) values (o, 'moniepoint', 'Shop counter');
   insert into org_entitlement_overrides (org_id, module_key, included, quota, enforce) values (o, 'bank_feeds', true, 5, 'block');
@@ -362,9 +452,19 @@ begin
   perform tests.as_user(tests.id('partner'));
   perform tests.throws(format($q$select public.save_customer(%L, '{"name":"After"}')$q$, o), '42501%');
   perform tests.throws(format($q$select public.practice_end_mandate(%L, '{"reason":"Client moved firms"}')$q$, c), '%full mandate%');
+  assert not private.document_may_delete(v_path), 'end_mandate: no stored file deleted while kept';
   perform tests.as_postgres();
   insert into messages (org_id, channel, to_address, template, params) values (o, 'email', 'partner@firm.example.test', 'alert', '{}');
   assert (select status from messages where org_id = o order by created_at desc limit 1) = 'suppressed', 'end_mandate: silence persists';
+  -- Payments shut.
+  assert not private.payments_open(o) and not (private.org_brand(o, null)->>'pay_online')::boolean, 'end_mandate: payments shut';
+  perform tests.throws(format('select private.require_payments_open(%L)', o), '42501: This business is read-only: its engagement has ended. Payments are closed.');
+  -- Past the date, a file may go again.
+  update orgs set retain_until = current_date - 1 where id = o;
+  perform tests.as_user(tests.id('partner'));
+  assert private.document_may_delete(v_path), 'end_mandate: a file past the date';
+  perform tests.as_postgres();
+  update orgs set retain_until = (current_date + interval '6 years')::date where id = o;
 end $$;
 
 -- test: end_tick_runs_for_others
@@ -457,14 +557,16 @@ begin
   perform tests.throws(format('select public.admin_business_delete(%L, %L)', o, 'Wrong Name'), '%kept until%');
   perform tests.as_postgres();
   update orgs set retain_until = current_date - 1 where id = o;
-  -- Past the date the guard lets it go (the deletion is rolled back here).
+  -- Past the date the guard lets it go: the admin's delete goes through (rolled back here).
+  perform tests.as_user(tests.id('admin'), 'aal2');
   begin
-    delete from orgs where id = o;
+    perform public.admin_business_delete(o, v_name);
     raise exception 'rolled back';
   exception when others then
     v_err := sqlerrm;
   end;
-  assert v_err not like '%kept until%', format('deletion_blocked: past the date, got %s', v_err);
+  perform tests.as_postgres();
+  assert v_err = 'rolled back', format('deletion_blocked: past the date the business is deleted, got %s', v_err);
   update orgs set retain_until = (current_date + interval '6 years')::date where id = o;
   assert exists (select 1 from orgs where id = o), 'deletion_blocked: still there';
 end $$;
@@ -472,14 +574,17 @@ end $$;
 -- test: export_rows
 -- A partner exports a full-mandate client's records (also kept read-only after it ended): every business table but the
 -- logs, sessions and KYC, each row with its secrets redacted and CAC people's names hidden, paged by the table's primary
--- key; the ledger and the activity log; the finished file logged.
+-- key; values whole, however long; the business's own row without its identity, directors and company secretary; the
+-- ledger and the activity log, paged the same way; the finished file logged.
 do $$
 declare pr uuid := tests.id('pr'); c uuid := tests.id('ec'); o uuid := tests.id('eo'); t jsonb; r jsonb; r2 jsonb; v_rows int; v_after text; v_n int := 0;
+  v_big jsonb; v_t text; v_followed int := 0; v_lines int;
 begin
   perform tests.as_user(tests.id('partner'));
   r := public.practice_export_begin(c);
   t := r->'tables';
   assert t ? 'customers' and not t ? 'kyc_profiles', 'export_rows: tables';
+  assert t ? 'orgs', 'export_rows: the business''s own row';
   assert r->>'org_id' = o::text and r->>'client_id' = c::text and r->>'practice_id' = pr::text, 'export_rows: what to export';
   assert not (t ?| array['activity_log', 'usage_events', 'ai_logs', 'shop_hits', 'sso_logins', 'chat_links', 'whatsapp_sessions', 'portal_logins', 'pit_etax_logins'])
      and t ?& array['subscriptions', 'role_permissions', 'journal_lines', 'pit_people'], 'export_rows: the logs, sessions and KYC stay';
@@ -517,9 +622,53 @@ begin
   assert (select bool_and(case when x->>'source' = 'cac' then x->>'name' = '[redacted]' else x->>'name' <> '[redacted]' end) from jsonb_array_elements(r->'rows') x)
      and jsonb_array_length(r->'rows') = 2, 'export_rows: CAC people''s names hidden';
   r := public.svc_export_ledger(o);
-  assert jsonb_array_length(r) > 0 and (select bool_and(x ?& array['date', 'journal_ref', 'account_code', 'account_name', 'debit', 'credit', 'memo']) from jsonb_array_elements(r) x)
-     and (select sum((x->>'debit')::numeric) = sum((x->>'credit')::numeric) from jsonb_array_elements(r) x), 'export_rows: ledger';
-  assert jsonb_array_length(public.svc_export_activity(o)) > 0, 'export_rows: activity';
+  assert jsonb_array_length(r->'rows') > 0 and r->'next' = 'null'::jsonb
+     and (select bool_and(x ?& array['date', 'journal_ref', 'account_code', 'account_name', 'debit', 'credit', 'memo']) from jsonb_array_elements(r->'rows') x)
+     and (select sum((x->>'debit')::numeric) = sum((x->>'credit')::numeric) from jsonb_array_elements(r->'rows') x), 'export_rows: ledger';
+  -- The ledger and the activity log one row at a time: every row once.
+  v_lines := jsonb_array_length(r->'rows');
+  v_n := 0; v_after := null;
+  loop
+    r := public.svc_export_ledger(o, v_after, 1);
+    v_n := v_n + jsonb_array_length(r->'rows');
+    exit when r->>'next' is null;
+    v_after := r->>'next';
+  end loop;
+  assert v_n = v_lines and v_lines > 1, format('export_rows: ledger paged, %s of %s', v_n, v_lines);
+  r := public.svc_export_activity(o);
+  assert jsonb_array_length(r->'rows') > 1 and r->'next' = 'null'::jsonb, 'export_rows: activity';
+  v_lines := jsonb_array_length(r->'rows');
+  v_n := 0; v_after := null;
+  loop
+    r := public.svc_export_activity(o, v_after, 2);
+    v_n := v_n + jsonb_array_length(r->'rows');
+    exit when r->>'next' is null;
+    v_after := r->>'next';
+  end loop;
+  assert v_n = v_lines, format('export_rows: activity paged, %s of %s', v_n, v_lines);
+  perform tests.throws(format('select public.svc_export_activity(%L, %L, 10)', o, '[1, 2]'), '%page%');
+  -- A value longer than 4 KB, an array, comes out whole.
+  perform tests.as_postgres();
+  v_big := jsonb_build_object('items', (select jsonb_agg(jsonb_build_object('n', g, 'label', 'item number ' || g)) from generate_series(1, 300) g));
+  update integrations set settings = v_big where org_id = o;
+  assert length(v_big::text) > 4096, 'export_rows: a long value';
+  perform tests.as_service();
+  assert (select x->'settings' = v_big from jsonb_array_elements(public.svc_export_rows(o, 'integrations', null, 1000)->'rows') x), 'export_rows: whole values';
+  -- The business's own row, without the identity check, directors and company secretary, its secrets redacted.
+  r := public.svc_export_rows(o, 'orgs', null, 1000);
+  assert jsonb_array_length(r->'rows') = 1 and r->'rows'->0->>'id' = o::text and r->'rows'->0->>'identity' = '[redacted]' and r->'rows'->0->>'directors' = '[redacted]'
+     and r->'rows'->0->>'company_secretary' = '[redacted]' and r->'rows'->0->>'invoice_portal_token' = '[redacted]' and r->'rows'->0->>'name' is not null,
+    format('export_rows: the business''s row, got %s', r);
+  -- Every exported table: a first page of one row, and the next page when there is one.
+  for v_t in select jsonb_array_elements_text(t) loop
+    r := public.svc_export_rows(o, v_t, null, 1);
+    if r->>'next' is not null then
+      r2 := public.svc_export_rows(o, v_t, r->>'next', 1);
+      assert r2->'rows'->0 is distinct from r->'rows'->0, format('export_rows: %s next page', v_t);
+      v_followed := v_followed + 1;
+    end if;
+  end loop;
+  assert v_followed >= 10, format('export_rows: next pages followed in %s tables', v_followed);
   perform tests.throws(format($q$select public.svc_export_done(%L, '{"path":"practice/elsewhere/x.zip","sha256":"%s","bytes":10}')$q$, c, repeat('ab', 32)), '%path%');
   perform public.svc_export_done(c, jsonb_build_object('path', 'practice/' || pr || '/exports/' || c || '/x.zip', 'sha256', repeat('ab', 32), 'bytes', 10));
   perform tests.as_postgres();
@@ -566,11 +715,21 @@ begin
   perform public.practice_set_alert_email(c, null);
   assert public.practice_client(c)->'mandate'->'alert_email' = 'null'::jsonb, 'portal_reads: alert email cleared';
   perform tests.throws(format('select public.practice_set_send_mode(%L, %L)', tests.id('ec'), 'send'), '%full mandate%');
-  -- Staff assigned to the client: no opposing parties, no settings.
+  -- A director asked and a handover started: their contact details for leads.
+  perform public.practice_handover_start(c, '{"email":"portal.owner@client.example.test","name":"Portal Owner"}');
+  perform tests.as_postgres();
+  insert into practice_director_confirmations (practice_id, client_id, name, email) values (pr, c, 'Tunde Bello', 'tunde.portal@director.example.test');
+  perform tests.as_user(tests.id('partner'));
+  m := public.practice_client(c);
+  assert m->'mandate'->'director'->>'name' = 'Tunde Bello' and m->'mandate'->'director'->>'email' = 'tunde.portal@director.example.test'
+     and m->'mandate'->'handover'->>'email' = 'portal.owner@client.example.test' and m->'mandate'->'handover'->>'status' = 'pending', 'portal_reads: contacts for leads';
+  -- Staff assigned to the client: no opposing parties, no contact details, no settings.
   perform public.practice_assign(c, tests.id('ada_pm'), true);
   perform tests.as_user(tests.id('ada'));
   m := public.practice_client(c);
   assert m->'opposing_parties' = '[]'::jsonb and m->'mandate' ? 'send_mode', 'portal_reads: staff';
+  assert m->'mandate'->'director'->>'status' = 'pending' and m->'mandate'->'director'->'name' = 'null'::jsonb and m->'mandate'->'director'->'email' = 'null'::jsonb
+     and m->'mandate'->'handover'->>'status' = 'pending' and m->'mandate'->'handover'->'email' = 'null'::jsonb, format('portal_reads: no contacts for staff, got %s', m->'mandate');
   perform tests.throws(format('select public.practice_set_send_mode(%L, %L)', c, 'send'), '42501%');
   perform tests.as_postgres();
 end $$;
@@ -615,10 +774,11 @@ declare f text;
 begin
   foreach f in array array['private.org_pause_all(uuid)', 'private.export_tables()', 'private.seat_exempt(uuid, uuid)', 'private.require_not_kept(date)',
     'private.orgs_retention_guard()', 'private.outbound_check(uuid, text, text, text)', 'private.practice_sync_seats(uuid)', 'private.meter_usage(uuid, text)',
-    'private.enforce_plan()', 'private.mandate_client_require(uuid)'] loop
+    'private.enforce_plan()', 'private.mandate_client_require(uuid)', 'private.export_redact(jsonb)', 'private.export_after(text, integer)',
+    'private.payments_open(uuid)', 'private.require_payments_open(uuid)', 'private.handover_review(text, jsonb)'] loop
     assert not has_function_privilege('authenticated', f, 'execute') and not has_function_privilege('anon', f, 'execute'), format('end_helpers_revoked: %s', f);
   end loop;
-  foreach f in array array['public.svc_export_rows(uuid, text, text, integer)', 'public.svc_export_ledger(uuid)', 'public.svc_export_activity(uuid)',
+  foreach f in array array['public.svc_export_rows(uuid, text, text, integer)', 'public.svc_export_ledger(uuid, text, integer)', 'public.svc_export_activity(uuid, text, integer)',
     'public.svc_export_done(uuid, jsonb)'] loop
     assert not has_function_privilege('authenticated', f, 'execute') and not has_function_privilege('anon', f, 'execute')
        and has_function_privilege('service_role', f, 'execute'), format('end_helpers_revoked: %s for the service only', f);
@@ -628,6 +788,10 @@ begin
     'public.practice_set_engagement_partner(uuid, uuid)', 'public.admin_mandates()', 'public.admin_mandate_flag_resolve(uuid, text)'] loop
     assert has_function_privilege('authenticated', f, 'execute') and not has_function_privilege('anon', f, 'execute'), format('end_helpers_revoked: %s for signed-in people', f);
   end loop;
+  -- The storage policy's helper stays the signed-in person's to call; the retention guard runs as its owner.
+  assert has_function_privilege('authenticated', 'private.document_may_delete(text)', 'execute')
+     and not has_function_privilege('anon', 'private.document_may_delete(text)', 'execute'), 'end_helpers_revoked: document_may_delete for signed-in people';
+  assert (select prosecdef and proconfig is not null from pg_proc where oid = 'private.orgs_retention_guard()'::regprocedure), 'end_helpers_revoked: retention guard as its owner';
   assert not has_table_privilege('authenticated', 'public.practice_handovers', 'select') and not has_table_privilege('anon', 'public.practice_handovers', 'select')
      and not has_table_privilege('authenticated', 'public.practice_handovers', 'insert') and (select relrowsecurity from pg_class where oid = 'public.practice_handovers'::regclass),
     'end_helpers_revoked: table practice_handovers';

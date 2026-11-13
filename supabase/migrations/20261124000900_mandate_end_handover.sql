@@ -54,6 +54,11 @@ create index practice_handovers_accepted_by on public.practice_handovers(accepte
 alter table public.practice_handovers enable row level security;
 revoke all on public.practice_handovers from anon, authenticated;
 
+-- TaxStreem is also told of a handover to someone other than the director who confirmed the wallets (kind 'handover').
+alter table public.practice_mandate_flags drop constraint if exists practice_mandate_flags_kind_check;
+alter table public.practice_mandate_flags add constraint practice_mandate_flags_kind_check
+  check (kind in ('duplicate_company', 'director_declined', 'director_review', 'handover'));
+
 -- A partner of the practice hands a business it runs under full mandate to the person who will own it. p: {email, name}.
 -- Never one of the practice's people (whatever their status) or the practice's own address; a handover waiting is
 -- cancelled (its link stops working); five handovers a day for a business. The email goes as the practice's other
@@ -235,14 +240,23 @@ end $$;
 -- The person signed in with the handover's address takes the business over, in this order: the practice no longer runs it;
 -- they are its owner (their own place, or a place they had there, becomes the owner's); the client is involved and was
 -- handed over; the firm's people get ordinary accountants' places; the handover is accepted; logged. {org_id}.
+-- The director's consent stays binding: unless the new owner is the director who confirmed the wallets (the same address),
+-- TaxStreem checks the handover before payments open (identity_status 'review', identity reason 'handover'; approved through
+-- review_identity), and is told with a 'handover' flag that records whether the accepting session's address is one the
+-- firm's people signed in from in the last 30 days (null when it cannot be read). The client link is locked before the
+-- handover, as practice_handover_start and practice_end_mandate do.
 create or replace function public.practice_handover_accept(p_token text) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare h public.practice_handovers; c public.practice_clients; o public.orgs; ex public.members; v_uid uuid := auth.uid(); v_email text; v_name text;
-  v_confirmed timestamptz; v_member uuid; v_prev text;
+  v_confirmed timestamptz; v_member uuid; v_prev text; v_client uuid; v_director boolean; v_ip inet; v_firm_ip boolean;
 begin
   if v_uid is null then raise exception 'Sign in first.' using errcode = '42501'; end if;
   if coalesce(p_token, '') ~ '^ph_[0-9a-f]{48}$' then
-    select * into h from practice_handovers where token_hash = private.sha256_hex(p_token) for update;
+    select client_id into v_client from practice_handovers where token_hash = private.sha256_hex(p_token);
+  end if;
+  if v_client is not null then
+    select * into c from practice_clients where id = v_client for update;
+    select * into h from practice_handovers where token_hash = private.sha256_hex(p_token) and client_id = v_client for update;
   end if;
   if h.id is null then raise exception 'That handover link is not valid. Ask the firm to send it again.'; end if;
   if h.status = 'accepted' then raise exception 'This handover was accepted already.'; end if;
@@ -255,7 +269,6 @@ begin
   end if;
   -- The business goes to whoever holds the address: the address must be confirmed as theirs.
   if v_confirmed is null then raise exception 'Confirm your email address first, then open the link again.' using errcode = '42501'; end if;
-  select * into c from practice_clients where id = h.client_id for update;
   select * into o from orgs where id = c.org_id for update;
   if not (c.status = 'active' and c.mode = 'full' and o.managed_by is not distinct from c.practice_id) then
     raise exception 'The firm no longer runs this business under full mandate.';
@@ -263,8 +276,25 @@ begin
   if exists (select 1 from practice_members where practice_id = c.practice_id and user_id = v_uid and status = 'active') then
     raise exception 'You are on the practice. The business is handed over to someone outside the firm.';
   end if;
+  -- The director who confirmed the wallets, taking the business over themselves.
+  v_director := exists (select 1 from practice_director_confirmations d where d.client_id = c.id and d.status = 'confirmed' and lower(trim(d.email)) = v_email);
+  if not v_director then
+    begin
+      v_ip := private.ip_host((select s.ip from auth.sessions s where s.id = private.uuid_of(auth.jwt()->>'session_id') and s.user_id = v_uid));
+    exception when others then
+      v_ip := null;
+    end;
+    v_firm_ip := case when v_ip is not null then exists (
+      select 1 from auth.sessions s join practice_members pm on pm.user_id = s.user_id
+      where pm.practice_id = c.practice_id and private.ip_host(s.ip) = v_ip and coalesce(s.updated_at, s.created_at) > now() - interval '30 days') end;
+  end if;
 
-  update orgs set managed_by = null where id = o.id;
+  update orgs set managed_by = null,
+    identity_status = case when v_director then identity_status else 'review' end,
+    identity = case when v_director then identity
+      else (identity - 'review') || jsonb_build_object('reason', 'handover',
+        'handover', jsonb_build_object('id', h.id, 'at', now(), 'status_before', o.identity_status)) end
+  where id = o.id;
   v_prev := coalesce(current_setting('counta.seat_sync', true), '');
   perform set_config('counta.seat_sync', 'on', true);
   select * into ex from members where org_id = o.id and (user_id = v_uid or (user_id is null and lower(email) = v_email))
@@ -284,10 +314,17 @@ begin
   update practice_clients set mode = 'involved', end_kind = 'handover', accepted_by = v_uid where id = c.id;
   perform private.practice_sync_seats(c.id);
   update practice_handovers set status = 'accepted', accepted_by = v_uid, accepted_at = now() where id = h.id;
+  if not v_director then
+    insert into practice_mandate_flags (practice_id, client_id, kind, detail)
+    values (c.practice_id, c.id, 'handover', jsonb_build_object('handover_id', h.id, 'org_id', o.id,
+      'reason', case when o.director_confirmed_at is null then 'no_director' else 'not_director' end,
+      'ip', host(v_ip), 'ip_matches_firm', v_firm_ip, 'identity_before', o.identity_status));
+  end if;
   perform private.activity_event(o.id, 'handover', 'Handed over to ' || left(v_name, 80),
-    jsonb_build_object('practice_id', c.practice_id, 'client_id', c.id, 'handover_id', h.id));
+    jsonb_build_object('practice_id', c.practice_id, 'client_id', c.id, 'handover_id', h.id, 'director', v_director));
   perform private.practice_notify(c.practice_id, o.name || ' was handed over',
-    left(v_name, 80) || ' accepted the handover and owns the business on Counta now. The firm stays on as its accountant.', '/practice/clients');
+    left(v_name, 80) || ' accepted the handover and owns the business on Counta now. The firm stays on as its accountant.'
+      || case when v_director then '' else ' Payments stay shut until TaxStreem has checked the handover.' end, '/practice/clients');
   return jsonb_build_object('org_id', o.id);
 end $$;
 
@@ -588,6 +625,102 @@ begin
   return jsonb_build_object('client_id', c.id, 'org_id', o.id, 'read_only_at', o.read_only_at, 'retain_until', o.retain_until);
 end $$;
 
+-- Money and stored files while a business is kept read-only, or after a handover TaxStreem has still to check.
+-- A handover TaxStreem is checking (practice_handover_accept), until its identity review decides.
+create or replace function private.handover_review(p_status text, p_identity jsonb) returns boolean
+language sql immutable set search_path = public, private as $$
+  select coalesce(p_status = 'review' and p_identity->>'reason' = 'handover' and p_identity->'review' is null, false)
+$$;
+
+-- payments_open: as before, and never for a business kept read-only after its engagement ended.
+create or replace function private.payments_open(p_org uuid) returns boolean
+language sql stable security definer set search_path = public, private as $$
+  select coalesce((select identity_status in ('not_required', 'verified', 'approved') and read_only_at is null
+      and (managed_by is null or (director_confirmed_at is not null and private.practice_can_full(managed_by)))
+    from orgs where id = p_org), false)
+$$;
+
+-- require_payments_open: as before; a business kept read-only is refused, and a handover TaxStreem is checking says so.
+create or replace function private.require_payments_open(p_org uuid) returns void
+language plpgsql stable security definer set search_path = public, private as $$
+declare v_status text; v_managed uuid; v_confirmed timestamptz; v_read_only timestamptz; v_identity jsonb;
+begin
+  if not private.feature_on(p_org, 'payments') then
+    raise exception 'TaxStreem has paused payments for this business for now. The books still work; contact TaxStreem to find out more.' using errcode = '42501';
+  end if;
+  select identity_status, managed_by, director_confirmed_at, read_only_at, identity into v_status, v_managed, v_confirmed, v_read_only, v_identity
+  from orgs where id = p_org;
+  if v_read_only is not null then
+    raise exception 'This business is read-only: its engagement has ended. Payments are closed.' using errcode = '42501';
+  end if;
+  if v_status in ('not_required', 'verified', 'approved') then
+    if v_managed is null or (v_confirmed is not null and private.practice_can_full(v_managed)) then return; end if;
+    raise exception 'Payments open once a director of the business confirms, and while the firm may run full mandates.' using errcode = '42501';
+  end if;
+  raise exception '%', case v_status
+    when 'review' then case when private.handover_review(v_status, v_identity)
+      then 'Payments open once TaxStreem has checked the handover. This usually takes a working day.'
+      else 'Payments open once TaxStreem has checked the NIN slip. This usually takes a working day.' end
+    when 'rejected' then 'Payments are locked: TaxStreem could not confirm a director''s identity. A director can do the NIN check in Settings.'
+    else 'Payments open once a director confirms their NIN. Do the NIN check in Settings, Business identity, or ask Martina.' end
+    using errcode = '42501';
+end $$;
+
+-- svc_identity_nin: as before, and a handover TaxStreem is checking is not gone round by a NIN check (TaxStreem decides it
+-- through the identity review).
+create or replace function public.svc_identity_nin(p_user uuid, p_org uuid, p_last4 text, p_first text, p_middle text, p_last text,
+  p_conversation text default null) returns jsonb
+language plpgsql security definer set search_path = public, private as $$
+declare o public.orgs; v_people jsonb; v_match jsonb; v_self text; v_registered boolean; v_attempts int;
+begin
+  if not private.acts_as_owner(p_org, p_user) then
+    raise exception 'Only the owner confirms a director''s identity.' using errcode = '42501';
+  end if;
+  select * into o from orgs where id = p_org for update;
+  if p_conversation is not null and p_conversation ~ '^[A-Za-z0-9_-]{6,80}$' then
+    insert into voice_forget (conversation_id, user_id) values (p_conversation, p_user) on conflict (conversation_id) do nothing;
+  end if;
+  if o.identity_status in ('verified', 'approved', 'not_required') then
+    return jsonb_build_object('verified', true, 'already', true, 'matched', o.identity->>'matched');
+  end if;
+  if private.handover_review(o.identity_status, o.identity) then
+    return jsonb_build_object('verified', false, 'reason', 'handover_review');
+  end if;
+  v_registered := exists (select 1 from kyc_profiles k where k.org_id = p_org and k.status = 'submitted' and k.source = 'cac');
+  if not v_registered and o.managed_by is not null then
+    return jsonb_build_object('verified', false, 'reason', 'cac_required');
+  end if;
+  v_people := private.identity_people(p_org);
+  if not v_registered then
+    -- Not on CAC: the NIN must be the account holder's own.
+    select coalesce(nullif(trim(raw_user_meta_data->>'full_name'), ''), '') into v_self from auth.users where id = p_user;
+    v_people := jsonb_build_array(jsonb_build_object('role', 'owner', 'name', v_self, 'surname', '', 'given', ''));
+  end if;
+  v_match := private.identity_match(p_first, p_middle, p_last, v_people);
+  v_attempts := coalesce((o.identity->>'attempts')::int, 0) + 1;
+  if v_match is not null then
+    update orgs set identity_status = 'verified', identity = identity || jsonb_build_object('method', 'nin', 'matched', v_match->>'name',
+      'matched_role', v_match->>'role', 'last4', right(regexp_replace(coalesce(p_last4, ''), '\D', '', 'g'), 4), 'at', now(), 'by', p_user, 'attempts', v_attempts)
+    where id = p_org;
+    return jsonb_build_object('verified', true, 'matched', v_match->>'name', 'role', v_match->>'role');
+  end if;
+  update orgs set identity = identity || jsonb_build_object('attempts', v_attempts, 'last_try', jsonb_build_object('at', now(),
+    'last4', right(regexp_replace(coalesce(p_last4, ''), '\D', '', 'g'), 4), 'result', 'no_match')) where id = p_org;
+  return jsonb_build_object('verified', false, 'reason', case when not v_registered then 'not_account_holder'
+    when jsonb_array_length(v_people) = 0 then 'no_directors_on_record' else 'no_match' end,
+    'people', (select coalesce(jsonb_agg(x->>'name'), '[]'::jsonb) from jsonb_array_elements(v_people) x));
+end $$;
+
+-- document_may_delete: as before, and no stored file of a business kept read-only is deleted until its records are past
+-- their date.
+create or replace function private.document_may_delete(p_path text) returns boolean
+language sql stable security definer set search_path = public, private as $$
+  select exists (select 1 from documents d join members mm on mm.org_id = d.org_id and mm.user_id = auth.uid() and mm.status = 'active'
+    where d.path = p_path and d.source = 'upload' and (d.uploaded_by = mm.id or private.perm_of(mm, 'owner')))
+    and not exists (select 1 from documents d join orgs o on o.id = d.org_id
+                    where d.path = p_path and o.read_only_at is not null and coalesce(o.retain_until >= current_date, true))
+$$;
+
 -- ---------------------------------------------------------------------------
 -- 5. Deletion while the records are kept
 -- ---------------------------------------------------------------------------
@@ -601,7 +734,7 @@ begin
 end $$;
 
 create or replace function private.orgs_retention_guard() returns trigger
-language plpgsql set search_path = public, private as $$
+language plpgsql security definer set search_path = public, private as $$
 begin
   perform private.require_not_kept(old.retain_until);
   return old;
@@ -664,16 +797,45 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- 6. Export
 -- ---------------------------------------------------------------------------
--- The business tables exported: every public table with org_id but the logs, counters' sources, sessions and KYC (CAC
--- directors stay with the owner; documents under kyc/ are left out by the edge function).
+-- The business tables exported: the business's own row (orgs), and every public table with org_id but the logs, counters'
+-- sources, sessions and KYC (CAC directors stay with the owner; documents under kyc/ are left out by the edge function).
 create or replace function private.export_tables() returns text[]
 language sql stable set search_path = public, private as $$
-  select coalesce(array_agg(c.table_name::text order by c.table_name), '{}')
-  from information_schema.columns c join information_schema.tables tb using (table_schema, table_name)
-  where c.table_schema = 'public' and c.column_name = 'org_id' and tb.table_type = 'BASE TABLE'
-    and c.table_name <> all (array['activity_log', 'kyc_profiles', 'usage_events', 'ai_logs', 'shop_hits', 'sso_logins', 'chat_links',
-      'whatsapp_sessions', 'portal_logins', 'pit_etax_logins'])
+  select coalesce(array_agg(t order by t), '{}')
+  from (
+    select 'orgs'::text as t
+    union
+    select c.table_name::text
+    from information_schema.columns c join information_schema.tables tb using (table_schema, table_name)
+    where c.table_schema = 'public' and c.column_name = 'org_id' and tb.table_type = 'BASE TABLE'
+      and c.table_name <> all (array['activity_log', 'kyc_profiles', 'usage_events', 'ai_logs', 'shop_hits', 'sso_logins', 'chat_links',
+        'whatsapp_sessions', 'portal_logins', 'pit_etax_logins'])) x
 $$;
+
+-- A row as exported: values under a secret's key replaced by "[redacted]" (private.redact_key), nothing cut short (an
+-- export keeps whole values, unlike the activity log's private.redact).
+create or replace function private.export_redact(p jsonb) returns jsonb
+language sql immutable set search_path = public, private as $$
+  select case when p is null or jsonb_typeof(p) <> 'object' then p else (
+    select coalesce(jsonb_object_agg(e.key, case when private.redact_key(e.key) then to_jsonb('[redacted]'::text) else e.value end), '{}'::jsonb)
+    from jsonb_each(p) e) end
+$$;
+
+-- The page an export continues after: p_after (the last key of the page before, a JSON array of p_n values, as next gave
+-- it), or null for the first page.
+create or replace function private.export_after(p_after text, p_n int) returns jsonb
+language plpgsql immutable set search_path = public, private as $$
+declare v jsonb;
+begin
+  if p_after is null then return null; end if;
+  begin
+    v := p_after::jsonb;
+  exception when others then
+    raise exception 'That page of the export is not valid.';
+  end;
+  if jsonb_typeof(v) is distinct from 'array' or jsonb_array_length(v) <> p_n then raise exception 'That page of the export is not valid.'; end if;
+  return v;
+end $$;
 
 -- A partner starts the export of a full-mandate client's records, or of one kept read-only after its mandate ended: what
 -- the practice edge function exports. {org_id, client_id, practice_id, tables}.
@@ -691,9 +853,11 @@ begin
   return jsonb_build_object('org_id', c.org_id, 'client_id', c.id, 'practice_id', c.practice_id, 'tables', to_jsonb(private.export_tables()));
 end $$;
 
--- A page of a table's rows for the business, in the order of the table's primary key: each row with its secrets redacted
--- (private.redact) and the names of income-tax people taken from the CAC record hidden. p_after is the last key of the
--- page before (a JSON array of its values, as next gave it); p_limit 1 to 1,000. {rows, next (null on the last page)}.
+-- A page of a table's rows for the business (for orgs, the business's own row), in the order of the table's primary key:
+-- each row with its secrets redacted (private.export_redact), the names of income-tax people taken from the CAC record
+-- hidden, and the business row without its identity check, directors and company secretary (as the activity log keeps
+-- them out). p_after is the last key of the page before (a JSON array of its values, as next gave it); p_limit 1 to
+-- 1,000. {rows, next (null on the last page)}.
 create or replace function public.svc_export_rows(p_org uuid, p_table text, p_after text, p_limit int) returns jsonb
 language plpgsql stable security definer set search_path = public, private as $$
 declare v_limit int := least(greatest(coalesce(p_limit, 1000), 1), 1000); v_cols text[]; v_types text[]; v_after jsonb; v_order text; v_key text;
@@ -707,47 +871,58 @@ begin
   if v_cols is null then raise exception 'That table has no primary key.'; end if;
   select string_agg(format('t.%I', x), ', ' order by n) into v_order from unnest(v_cols) with ordinality u(x, n);
   v_key := 'jsonb_build_array(' || v_order || ')';
-  if p_after is not null then
-    begin
-      v_after := p_after::jsonb;
-    exception when others then
-      raise exception 'That page of the export is not valid.';
-    end;
-    if jsonb_typeof(v_after) is distinct from 'array' or jsonb_array_length(v_after) <> cardinality(v_cols) then
-      raise exception 'That page of the export is not valid.';
-    end if;
+  v_after := private.export_after(p_after, cardinality(v_cols));
+  if v_after is not null then
     select format(' and (%s) > (%s)', v_order, string_agg(format('($2->>%s)::%s', n - 1, ty), ', ' order by n)) into v_where
     from unnest(v_types) with ordinality u(ty, n);
   end if;
   execute format(
     'select coalesce(jsonb_agg(r.j order by r.n), ''[]''::jsonb), (array_agg(r.k order by r.n desc))[1]
-     from (select private.redact(private.activity_hide(to_jsonb(t), case when %L = ''pit_people'' and to_jsonb(t)->>''source'' = ''cac'' then array[''name''] end)) as j,
-                  %s as k, row_number() over (order by %s) as n
-           from public.%I t where t.org_id = $1%s order by %s limit %s) r',
-    p_table, v_key, v_order, p_table, v_where, v_order, v_limit)
+     from (select private.export_redact(private.activity_hide(to_jsonb(t), case
+                    when %1$L = ''pit_people'' and to_jsonb(t)->>''source'' = ''cac'' then array[''name'']
+                    when %1$L = ''orgs'' then array[''identity'', ''directors'', ''company_secretary''] end)) as j,
+                  %2$s as k, row_number() over (order by %3$s) as n
+           from public.%4$I t where %5$s%6$s order by %3$s limit %7$s) r',
+    p_table, v_key, v_order, p_table, case when p_table = 'orgs' then 't.id = $1' else 't.org_id = $1' end, v_where, v_limit)
     into v_rows, v_next using p_org, v_after;
   return jsonb_build_object('rows', v_rows, 'next', case when jsonb_array_length(v_rows) = v_limit then v_next::text end);
 end $$;
 
--- The business's ledger, line by line in date order: [{date, journal_ref, account_code, account_name, debit, credit, memo}].
-create or replace function public.svc_export_ledger(p_org uuid) returns jsonb
-language sql stable security definer set search_path = public, private as $$
-  select coalesce(jsonb_agg(jsonb_build_object('date', j.entry_date, 'journal_ref', j.ref, 'account_code', l.account_code,
-      'account_name', private.account_name(p_org, l.account_code), 'debit', l.debit, 'credit', l.credit, 'memo', coalesce(l.memo, j.memo))
-      order by j.entry_date, j.je_no, l.id), '[]'::jsonb)
-  from journals j join journal_lines l on l.journal_id = j.id
-  where j.org_id = p_org
-$$;
+-- A page of the business's ledger, line by line in date order: {rows: [{date, journal_ref, account_code, account_name,
+-- debit, credit, memo}], next}, paged as svc_export_rows (the key: date, journal number, line).
+create or replace function public.svc_export_ledger(p_org uuid, p_after text default null, p_limit int default 1000) returns jsonb
+language plpgsql stable security definer set search_path = public, private as $$
+declare v_limit int := least(greatest(coalesce(p_limit, 1000), 1), 1000); v_after jsonb := private.export_after(p_after, 3); v_rows jsonb; v_next jsonb;
+begin
+  select coalesce(jsonb_agg(x.j order by x.n), '[]'::jsonb), (array_agg(x.k order by x.n desc))[1] into v_rows, v_next
+  from (select jsonb_build_object('date', j.entry_date, 'journal_ref', j.ref, 'account_code', l.account_code,
+                 'account_name', private.account_name(p_org, l.account_code), 'debit', l.debit, 'credit', l.credit, 'memo', coalesce(l.memo, j.memo)) as j,
+               jsonb_build_array(j.entry_date, j.je_no, l.id) as k, row_number() over (order by j.entry_date, j.je_no, l.id) as n
+        from journals j join journal_lines l on l.journal_id = j.id
+        where j.org_id = p_org
+          and (v_after is null or (j.entry_date, j.je_no, l.id) > ((v_after->>0)::date, (v_after->>1)::int, (v_after->>2)::bigint))
+        order by j.entry_date, j.je_no, l.id
+        limit v_limit) x;
+  return jsonb_build_object('rows', v_rows, 'next', case when jsonb_array_length(v_rows) = v_limit then v_next::text end);
+end $$;
 
--- The business's activity log, oldest first (as written: redacted, CAC details kept out).
-create or replace function public.svc_export_activity(p_org uuid) returns jsonb
-language sql stable security definer set search_path = public, private as $$
-  select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'at', a.at, 'practice_id', a.practice_id, 'actor_name', a.actor_name, 'source', a.source,
-      'action', a.action, 'entity', a.entity, 'entity_id', a.entity_id, 'label', a.label, 'before', a.before, 'after', a.after, 'changed', a.changed)
-      order by a.id), '[]'::jsonb)
-  from activity_log a
-  where a.org_id = p_org
-$$;
+-- A page of the business's activity log, oldest first (as written: redacted, CAC details kept out): {rows, next}, paged as
+-- svc_export_rows (the key: the entry's id).
+create or replace function public.svc_export_activity(p_org uuid, p_after text default null, p_limit int default 1000) returns jsonb
+language plpgsql stable security definer set search_path = public, private as $$
+declare v_limit int := least(greatest(coalesce(p_limit, 1000), 1), 1000); v_after jsonb := private.export_after(p_after, 1); v_rows jsonb; v_next jsonb;
+begin
+  select coalesce(jsonb_agg(x.j order by x.n), '[]'::jsonb), (array_agg(x.k order by x.n desc))[1] into v_rows, v_next
+  from (select jsonb_build_object('id', a.id, 'at', a.at, 'practice_id', a.practice_id, 'actor_name', a.actor_name, 'source', a.source,
+                 'action', a.action, 'entity', a.entity, 'entity_id', a.entity_id, 'label', a.label, 'before', a.before, 'after', a.after,
+                 'changed', a.changed) as j,
+               jsonb_build_array(a.id) as k, row_number() over (order by a.id) as n
+        from activity_log a
+        where a.org_id = p_org and (v_after is null or a.id > (v_after->>0)::bigint)
+        order by a.id
+        limit v_limit) x;
+  return jsonb_build_object('rows', v_rows, 'next', case when jsonb_array_length(v_rows) = v_limit then v_next::text end);
+end $$;
 
 -- The export file is stored: p {path (practice/<practice>/exports/<client>/<name>.zip), sha256, bytes} is logged.
 create or replace function public.svc_export_done(p_client uuid, p jsonb) returns jsonb
@@ -862,7 +1037,8 @@ end $$;
 -- practice_client: as before; client also with its mode, how it ended and its intake; the opposing parties the firm
 -- recorded for it (for leads); and for a full mandate (or one kept read-only after it ended) the mandate: how the business
 -- sends, its alert address, engagement partner, director's confirmation, read-only state and retention, whether payments
--- are open, the latest director's request, handover and engagement letter.
+-- are open, the latest director's request, handover and engagement letter (the director's and the handover's contact
+-- details for leads only).
 create or replace function public.practice_client(p_client uuid) returns jsonb
 language plpgsql stable security definer set search_path = public, private as $$
 declare c public.practice_clients; me public.practice_members; o public.orgs; v_lead boolean;
@@ -901,9 +1077,10 @@ begin
       'send_mode', o.send_mode, 'alert_email', c.alert_email, 'engagement_partner_id', c.engagement_partner_id,
       'director_confirmed_at', o.director_confirmed_at, 'read_only_at', o.read_only_at, 'retain_until', o.retain_until,
       'payments_open', private.payments_open(o.id),
-      'director', (select jsonb_build_object('status', d.status, 'name', d.name, 'email', d.email, 'sent_at', d.created_at, 'confirmed_at', d.confirmed_at)
+      'director', (select jsonb_build_object('status', d.status, 'name', case when v_lead then d.name end, 'email', case when v_lead then d.email end,
+          'sent_at', d.created_at, 'confirmed_at', d.confirmed_at)
         from practice_director_confirmations d where d.client_id = c.id order by d.created_at desc, d.id limit 1),
-      'handover', (select jsonb_build_object('id', h.id, 'email', h.email, 'status', h.status, 'sent_at', h.sent_at)
+      'handover', (select jsonb_build_object('id', h.id, 'email', case when v_lead then h.email end, 'status', h.status, 'sent_at', h.sent_at)
         from practice_handovers h where h.client_id = c.id order by h.created_at desc, h.id limit 1),
       'letter', (select jsonb_build_object('id', l.id, 'status', l.status) from engagement_letters l
         where l.intake_id = c.intake_id or l.client_id = c.id
@@ -974,7 +1151,8 @@ end $$;
 -- callable by the signed-in person.
 revoke all on function private.outbound_check(uuid, text, text, text), private.seat_exempt(uuid, uuid), private.meter_usage(uuid, text),
   private.enforce_plan(), private.practice_sync_seats(uuid), private.org_pause_all(uuid), private.require_not_kept(date), private.orgs_retention_guard(),
-  private.export_tables(), private.mandate_client_require(uuid)
+  private.export_tables(), private.mandate_client_require(uuid), private.export_redact(jsonb), private.export_after(text, int),
+  private.payments_open(uuid), private.require_payments_open(uuid), private.handover_review(text, jsonb)
   from public, anon, authenticated;
 revoke execute on function public.practice_handover_start(uuid, jsonb), public.practice_handover_accept(text), public.practice_set_engagement_partner(uuid, uuid),
   public.practice_end_mandate(uuid, jsonb), public.practice_export_begin(uuid), public.practice_set_send_mode(uuid, text),
@@ -984,9 +1162,9 @@ grant execute on function public.practice_handover_start(uuid, jsonb), public.pr
   public.practice_end_mandate(uuid, jsonb), public.practice_export_begin(uuid), public.practice_set_send_mode(uuid, text),
   public.practice_set_alert_email(uuid, text), public.admin_mandates(), public.admin_mandate_flag_resolve(uuid, text)
   to authenticated;
-revoke all on function public.svc_export_rows(uuid, text, text, int), public.svc_export_ledger(uuid), public.svc_export_activity(uuid),
+revoke all on function public.svc_export_rows(uuid, text, text, int), public.svc_export_ledger(uuid, text, int), public.svc_export_activity(uuid, text, int),
   public.svc_export_done(uuid, jsonb)
   from public, anon, authenticated;
-grant execute on function public.svc_export_rows(uuid, text, text, int), public.svc_export_ledger(uuid), public.svc_export_activity(uuid),
+grant execute on function public.svc_export_rows(uuid, text, text, int), public.svc_export_ledger(uuid, text, int), public.svc_export_activity(uuid, text, int),
   public.svc_export_done(uuid, jsonb)
   to service_role;
