@@ -19,3 +19,4 @@ white_label
 pay_online
 managed
 alert_to_allowed
+conflict_scan_books

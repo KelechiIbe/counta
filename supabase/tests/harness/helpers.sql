@@ -253,6 +253,25 @@ begin
   return v;
 end $$;
 
+-- A due-diligence intake ready for an engagement, made by the practice's first active partner: risk rated low and the
+-- conflicts check run with nothing found (it raises if the check finds anything).
+create function tests.cleared_intake(p_practice uuid, p_name text, p_mode text default 'involved') returns uuid
+language plpgsql as $$
+declare v uuid; v_partner uuid; r jsonb;
+begin
+  perform tests.as_postgres();
+  select user_id into v_partner from public.practice_members
+  where practice_id = p_practice and role = 'partner' and status = 'active' and user_id is not null order by created_at limit 1;
+  if v_partner is null then raise exception 'tests.cleared_intake: no active partner in practice %', p_practice; end if;
+  perform tests.as_user(v_partner);
+  v := (public.practice_intake_save(p_practice, jsonb_build_object('legal_name', p_name, 'mode_requested', p_mode, 'risk_rating', 'low',
+    'risk_reason', 'Test client'))->>'id')::uuid;
+  r := public.practice_conflict_run(v);
+  perform tests.as_postgres();
+  if r->>'conflict_status' <> 'none' then raise exception 'tests.cleared_intake: the conflicts check found %', r->'hits'; end if;
+  return v;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Grants: every caller can switch identity, read ids and capture results.
 -- ---------------------------------------------------------------------------
