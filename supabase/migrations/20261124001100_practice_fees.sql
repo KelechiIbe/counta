@@ -11,9 +11,9 @@
 -- business. Fee invoices are ordinary sales invoices of the firm business to that customer, by hand or by a recurring
 -- schedule. For a client whose books the practice keeps under full mandate, each fee invoice is also posted, once issued,
 -- as a bill in the client's own books (the fee mirror): the practice as vendor (practice_clients.fee_vendor_id, made on the
--- first bill and kept), professional fees (6502, or 6507 where the client has no 6502) and input VAT, entered and approved
--- as the client's contact (private.org_contact) with the activity log naming that person, then the actor the mirror found
--- put back. It is recorded in practice_fee_bills:
+-- first bill and kept), professional fees (6502, or 6507 where the client has no 6502) and input VAT (the invoice's VAT and
+-- total to the kobo), entered and approved as the client's contact (private.org_contact) with the activity log naming that
+-- person, then the actor the mirror found put back. It is recorded in practice_fee_bills:
 --   posted   the bill is in the client's books;
 --   failed   it could not be (error says why, as approve_bill would: a month the client's books have closed, an invoice
 --            already entered by hand...); a lead tries it again (practice_fee_bill_retry);
@@ -187,9 +187,9 @@ end $$;
 -- The bill in the client's books for a fee invoice (issued: posted to the firm business's books) to a practice client's
 -- fee customer. For an active full-mandate client of the practice whose books are not read-only: entered as the client's
 -- contact (the activity log names that person, then the actor found is put back), one line per invoice line (its amount
--- before VAT, professional fees, VAT standard when the line carries VAT), checked as approve_bill checks (an amount, a day
--- the books have not closed, not entered already) and posted; the vendor kept on the client; logged (fee_bill_posted).
--- Any error is recorded on the failed record with the attempt counted. A client whose engagement ended, or whose books the
+-- as the invoice prices it, before VAT or with VAT included; professional fees; VAT standard when the line carries VAT),
+-- checked as approve_bill checks (an amount, a day the books have not closed, not entered already) and posted; the vendor
+-- kept on the client; logged (fee_bill_posted). Any error is recorded on the failed record with the attempt counted. A client whose engagement ended, or whose books the
 -- practice no longer keeps, gets a skipped record; an involved client nothing. A record already posted, skipped or voided is
 -- returned as it is. Returns the record (null fields when there is none).
 create or replace function private.fee_mirror(p_sale uuid) returns public.practice_fee_bills
@@ -230,12 +230,16 @@ begin
     if m.id is null then raise exception 'Nobody can enter the bill in %: the engagement partner has no place in it.', o.name; end if;
     perform private.set_actor(m.user_id);
     v_code := case when private.bill_account_ok(o.id, '6502') then '6502' else '6507' end;
-    select jsonb_agg(jsonb_build_object('description', l.description, 'qty', 1, 'unit_cost', l.net, 'account_code', v_code,
+    -- Each line's amount as the invoice priced it (before VAT, or with VAT included), so the bill's VAT and total are the
+    -- invoice's to the kobo (an amount with VAT included, taken back to its amount before VAT and charged VAT again, can
+    -- come out a kobo off).
+    select jsonb_agg(jsonb_build_object('description', l.description, 'qty', 1,
+        'unit_cost', case when s.prices_include_vat then l.gross else l.net end, 'account_code', v_code,
         'vat_treatment', case when l.vat > 0 then 'standard' else 'none' end) order by l.line_no)
       into v_lines from sale_lines l where l.sale_id = s.id;
     v_vendor := (select id from vendors where id = c.fee_vendor_id and org_id = o.id);
     b := private.write_bill(o.id, jsonb_build_object('bill_date', s.issue_date, 'due_date', s.due_date, 'vendor_ref', s.number,
-        'source', 'practice_fee', 'vat_charged', s.vat_total > 0, 'prices_include_vat', false, 'lines', coalesce(v_lines, '[]'::jsonb))
+        'source', 'practice_fee', 'vat_charged', s.vat_total > 0, 'prices_include_vat', s.prices_include_vat, 'lines', coalesce(v_lines, '[]'::jsonb))
       || case when v_vendor is not null then jsonb_build_object('vendor_id', v_vendor)
          else jsonb_build_object('vendor', jsonb_build_object('name', pr.name, 'tin', (select tin from orgs where id = s.org_id),
            'email', pr.email, 'wht_category', 'professional')) end, m);

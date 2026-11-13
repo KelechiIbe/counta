@@ -219,6 +219,14 @@ begin
   v_sale := tests.remember('sale_p', pg_temp.fee_invoice(f, tests.id('cu1'), 40000));
   perform tests.as_postgres();
   assert (select b2.vendor_id = v_vendor.id from bills b2 where b2.id = (pg_temp.fb(v_sale)).bill_id), 'fee_mirror_posts_bill: the vendor kept is used';
+  -- An invoice priced with VAT included: the bill's VAT and total are the invoice's to the kobo (45,000 with VAT taken back to
+  -- 41,860.47 and charged VAT again would come to 45,000.01).
+  perform tests.as_user(tests.id('partner'));
+  v_sale := (public.save_sale_doc(f, jsonb_build_object('customer_id', tests.id('cu1'), 'status', 'issue', 'prices_include_vat', true,
+    'lines', '[{"description": "Advisory, VAT included", "qty": 1, "unit_price": 45000, "vat_treatment": "standard"}]'::jsonb))->>'id')::uuid;
+  perform tests.as_postgres();
+  assert (select (b2.subtotal, b2.vat_total, b2.total) = (s2.subtotal, s2.vat_total, s2.total) and b2.total = 45000
+          from bills b2, sales s2 where b2.id = (pg_temp.fb(v_sale)).bill_id and s2.id = v_sale), 'fee_mirror_posts_bill: VAT included, to the kobo';
   -- 6507 when the client has no 6502.
   insert into org_accounts (org_id, code, name, parent_code, kind, category, normal_balance, statement, ifrs_line, cash_flow_class, active)
   select o, a.code, a.name, a.parent_code, 'custom', a.category, a.normal_balance, a.statement, a.ifrs_line, a.cash_flow_class, false from accounts a where a.code = '6502';
@@ -246,7 +254,7 @@ begin
   perform tests.as_postgres();
   assert not exists (select 1 from practice_fee_bills where sale_id = tests.id('involved_sale')), 'fee_mirror_involved_none';
   assert (select status from sales where id = tests.id('involved_sale')) = 'open', 'fee_mirror_involved_none: issued';
-  assert (select count(*) from practice_fee_bills) = 3 and (select count(*) from bills where org_id = tests.id('dayo_org')) = n,
+  assert (select count(*) from practice_fee_bills) = 4 and (select count(*) from bills where org_id = tests.id('dayo_org')) = n,
     'fee_mirror_involved_none: nothing else recorded or posted';
 end $$;
 
