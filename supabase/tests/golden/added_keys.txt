@@ -21,3 +21,8 @@ managed
 alert_to_allowed
 conflict_scan_books
 for_business
+mandate
+can_full
+dd_incomplete
+read_only
+opposing_parties

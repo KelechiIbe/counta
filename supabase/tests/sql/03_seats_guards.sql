@@ -429,7 +429,8 @@ begin
   assert not exists (select 1 from members where user_id = tests.id('manager') and acts_as_owner), 'departed_staff_disabled: no place acts as the owner';
   assert not private.acts_as_owner(tests.id('o'), tests.id('manager')) and not private.acts_as_owner(v_o2, tests.id('manager')),
     'departed_staff_disabled: not the owner anywhere';
-  assert (private.org_contact(v_o2)).id is null, 'departed_staff_disabled: the ended business has no contact left';
+  -- (Since Task 11 the place kept follows the engagement partner: the new one has it now.)
+  assert (private.org_contact(v_o2)).user_id = tests.id('partner'), 'departed_staff_disabled: the ended business is kept by its new engagement partner';
   assert (select count(*) from members where user_id = tests.id('partner') and status = 'active' and practice_id = tests.id('pr')
             and org_id in (tests.id('o'), tests.id('ord'))) = 2,
     'departed_staff_disabled: the partner keeps the running ones';
