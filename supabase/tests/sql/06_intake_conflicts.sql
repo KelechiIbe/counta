@@ -118,7 +118,7 @@ end $$;
 -- test: conflict_diacritics_suffix_rc           (Review Focus 2)
 -- "Ọlá Àdé Foods Ltd" / "RC 123456" hits the existing client "OLA ADE FOODS LIMITED" / "123456".
 do $$
-declare pr uuid := tests.id('pr'); i uuid; r jsonb;
+declare pr uuid := tests.id('pr'); i uuid; j uuid; k uuid; r jsonb;
 begin
   assert private.fold_name('Ọlá Àdé Foods Ltd') = 'Ola Ade Foods Ltd' and private.fold_name(null) = '', 'conflict_diacritics_suffix_rc: accents folded';
   assert private.norm_id('RC 123456') = '123456' and private.norm_id('rc-123456') = '123456' and private.norm_id('BN 98765') = '98765'
@@ -143,6 +143,16 @@ begin
   -- A name three-quarters the same is a possible conflict too.
   assert private.name_score(private.fold_name('Ọlá Àdé Foods and Bakeries Ltd'), private.fold_name('OLA ADE FOODS LIMITED')) = 0.75,
     'conflict_diacritics_suffix_rc: three of four words';
+  -- The other way round: a plain spelling finds the accented intake, and an accented person.
+  perform tests.as_user(tests.id('partner'));
+  j := public.practice_intake_save(pr, '{"legal_name":"Adigun Plain Spelling Ltd","people":[{"kind":"director","name":"Ṣọlá Àdìgún"}]}')->>'id';
+  k := public.practice_intake_save(pr, '{"legal_name":"OLA ADE FOODS","people":[{"kind":"director","name":"Sola Adigun"}]}')->>'id';
+  perform public.practice_conflict_run(k);
+  perform tests.as_postgres();
+  assert exists (select 1 from practice_conflict_hits where intake_id = k and kind = 'prospect' and matched_on = 'name' and source_intake_id = i),
+    'conflict_diacritics_suffix_rc: plain finds accented';
+  assert exists (select 1 from practice_conflict_hits where intake_id = k and kind = 'related_party' and matched_on = 'person' and source_intake_id = j
+                 and match_name = 'Ṣọlá Àdìgún'), 'conflict_diacritics_suffix_rc: an accented person';
 end $$;
 
 -- test: conflict_people_and_opposing
@@ -435,6 +445,20 @@ begin
   perform tests.as_postgres();
   assert (select retain_until = private.retain_date(null) and retain_until = (current_date + interval '5 years')::date from practice_intakes where id = u),
     'invite_needs_cleared_intake: kept five years after the end';
+  -- An intake changed after the invitation went: engaged on acceptance, and marked incomplete until it is checked again.
+  u := tests.cleared_intake(pr, 'Harbour Lights Ltd');
+  perform tests.as_user(tests.id('partner'));
+  c := public.practice_invite_client(pr, jsonb_build_object('email', 'hl.owner@example.test', 'intake_id', u));
+  perform public.practice_intake_save(pr, jsonb_build_object('id', u, 'rc_number', 'RC 135791'));
+  perform tests.as_postgres();
+  v_owner := tests.user('hl.owner@example.test', 'Seun Owner');
+  o := tests.org(v_owner, 'Harbour Lights Ltd');
+  update practice_clients set token_hash = encode(extensions.digest('pc_' || repeat('12', 24), 'sha256'), 'hex'), token_expires = now() + interval '7 days' where id = c;
+  perform tests.as_user(v_owner);
+  perform public.practice_accept('pc_' || repeat('12', 24), jsonb_build_object('org_id', o));
+  perform tests.as_postgres();
+  assert (select status = 'engaged' and client_id = c and dd_incomplete and conflict_status = 'pending' from practice_intakes where id = u),
+    'invite_needs_cleared_intake: changed after the invitation, marked incomplete';
 end $$;
 
 -- test: business_link_creates_draft_intake

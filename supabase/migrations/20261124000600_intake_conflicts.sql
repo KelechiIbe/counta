@@ -268,7 +268,7 @@ begin
     select 'client' as kind, v.name, v.rc, v.tax, pc.id as client_id, pc.intake_id, null::uuid as opposing_id
     from practice_clients pc
     left join orgs o on o.id = pc.org_id
-    left join practice_intakes x on x.id = pc.intake_id
+    left join practice_intakes x on x.id = pc.intake_id and x.practice_id = i.practice_id
     cross join lateral (values (o.name, o.rc_number, o.tin), (pc.business_name, null, null), (x.legal_name, x.rc_number, x.tax_id)) v(name, rc, tax)
     where pc.practice_id = i.practice_id and pc.id is distinct from i.client_id and v.name is not null
     union all
@@ -359,7 +359,8 @@ create trigger practice_intakes_retention before delete on public.practice_intak
 
 -- A client link that becomes active engages its intake; a link with none (the business started it, or a referral or
 -- directory request) gets a draft intake marked "due diligence incomplete", with the business's name and numbers and
--- nobody from its CAC record. A link that ends or is declined dates its intake's retention.
+-- nobody from its CAC record. An intake changed since it was cleared (after the invitation went) is marked too. A link
+-- that ends or is declined dates its intake's retention.
 create or replace function private.practice_clients_intake() returns trigger
 language plpgsql security definer set search_path = public, private as $$
 declare v_intake uuid := new.intake_id; v_name text;
@@ -376,7 +377,9 @@ begin
       returning id into v_intake;
       update practice_clients set intake_id = v_intake where id = new.id;
     end if;
-    update practice_intakes set status = 'engaged', org_id = new.org_id, client_id = new.id, retain_until = null, updated_at = now() where id = v_intake;
+    update practice_intakes x set status = 'engaged', org_id = new.org_id, client_id = new.id, retain_until = null,
+      dd_incomplete = x.dd_incomplete or not private.intake_cleared(x), updated_at = now()
+    where x.id = v_intake;
   elsif new.status in ('ended', 'declined') and v_intake is not null then
     update practice_intakes set retain_until = private.retain_date(new.retention_years), updated_at = now() where id = v_intake;
   end if;
