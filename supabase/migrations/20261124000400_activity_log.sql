@@ -1,14 +1,16 @@
 -- Practice management, part 4: the activity log.
 --
 -- Every write in a business run by a practice (orgs.managed_by) or read-only after its engagement ended (orgs.read_only_at)
--- is recorded in public.activity_log: who did it, what changed (updates keep only the changed keys) and nothing secret.
+-- is recorded in public.activity_log: who did it, what changed (updates keep only the changed keys), nothing secret and
+-- no person's details copied from the CAC record.
 --   private.activity_row()      AFTER row trigger named activity_row on orgs, members and every public table with org_id
 --                               except private.activity_exempt() (logs, counters, sessions, KYC). For an ordinary business
 --                               it returns after one primary-key lookup and changes nothing. It is security definer because
 --                               signed-in people write some tables directly (orgs, locations, vendors, receipts,
 --                               receipt_lines, ocr_corrections) and have no rights on the log. The same trigger keeps a
---                               read-only business read-only: a signed-in person's write is refused, Counta's own system
---                               writes (service role, the scheduled jobs) pass and are logged.
+--                               read-only business read-only: a signed-in person's or an anonymous visitor's write is
+--                               refused; Counta's own system writes (service role, the scheduled jobs), a business's purge,
+--                               the seat sync, and anything after the retention date pass and are logged.
 --   private.activity_attach(t)  puts the trigger on a table (a later migration's new table with org_id).
 --   private.activity_event(...) a business event (mode change, handover, end, export, a letter step, a suppressed message).
 --   private.set_actor(user)     names the person a system write is done for (svc_*, the fee mirror, the recurring job),
@@ -39,6 +41,8 @@ create table public.activity_log (
 );
 create index activity_log_org on public.activity_log(org_id, at desc);
 create index activity_log_practice on public.activity_log(practice_id, at desc);
+-- The reads page by id.
+create index activity_log_org_id on public.activity_log(org_id, id desc);
 alter table public.activity_log enable row level security;
 revoke all on public.activity_log from anon, authenticated;
 
@@ -83,6 +87,13 @@ language sql immutable set search_path = public, private as $$
     from jsonb_each(p) e) end
 $$;
 
+-- The row with the given keys' values replaced by "[redacted]" (keys it lacks are not added).
+create or replace function private.activity_hide(p jsonb, p_keys text[]) returns jsonb
+language sql immutable set search_path = public, private as $$
+  select case when p is null then null
+    else p || coalesce((select jsonb_object_agg(k, to_jsonb('[redacted]'::text)) from unnest(p_keys) k where p ? k), '{}'::jsonb) end
+$$;
+
 -- ---------------------------------------------------------------------------
 -- 3. Writing to the log
 -- ---------------------------------------------------------------------------
@@ -94,7 +105,7 @@ begin
 end $$;
 
 -- One entry. The actor is the signed-in person, else the one set with set_actor; their name is their place's in the
--- business, else theirs in the practice, else Counta.
+-- business, else theirs in the practice, else Public for an anonymous visitor (the public shop), else Counta.
 create or replace function private.activity_add(p_org uuid, p_practice uuid, p_source text, p_action text, p_entity text, p_entity_id text,
   p_label text, p_before jsonb, p_after jsonb, p_changed text[]) returns bigint
 language plpgsql set search_path = public, private as $$
@@ -107,8 +118,8 @@ begin
     end if;
   end if;
   insert into activity_log (org_id, practice_id, actor_user, actor_member, actor_name, source, action, entity, entity_id, label, before, after, changed)
-  values (p_org, p_practice, v_actor, v_member, coalesce(v_name, 'Counta'), p_source, p_action, p_entity, p_entity_id, left(p_label, 120),
-    p_before, p_after, p_changed)
+  values (p_org, p_practice, v_actor, v_member, coalesce(v_name, case when auth.role() = 'anon' then 'Public' else 'Counta' end), p_source,
+    p_action, p_entity, p_entity_id, left(p_label, 120), p_before, p_after, p_changed)
   returning id into v_id;
   return v_id;
 end $$;
@@ -118,7 +129,7 @@ end $$;
 create or replace function private.activity_row() returns trigger
 language plpgsql security definer set search_path = public, private as $$
 declare v_org uuid; v_practice uuid; v_read_only timestamptz; v_retain date; f record;
-  v_row jsonb; v_before jsonb; v_after jsonb; v_changed text[];
+  v_new jsonb; v_old jsonb; v_hide text[]; v_row jsonb; v_before jsonb; v_after jsonb; v_changed text[];
 begin
   -- 1. The business, and how it is kept.
   if tg_table_name = 'orgs' then
@@ -145,8 +156,13 @@ begin
   end if;
   if v_practice is null and v_read_only is null then return null; end if;
 
-  -- 2. Read-only: no signed-in person writes; Counta's own system writes pass.
-  if v_read_only is not null and auth.uid() is not null then
+  -- 2. Read-only: no signed-in person and no anonymous visitor (the public shop) writes. Counta's own system writes pass, and
+  -- so do a business's purge (app.allow_purge), the seat sync (counta.seat_sync) and anything once the records are past
+  -- their retention date.
+  if v_read_only is not null and (auth.uid() is not null or auth.role() = 'anon')
+     and coalesce(current_setting('app.allow_purge', true), '') <> 'on'
+     and coalesce(current_setting('counta.seat_sync', true), '') <> 'on'
+     and not coalesce(v_retain < current_date, false) then
     raise exception 'This business is read-only: its engagement has ended.%',
       coalesce(' Its records are kept until ' || to_char(v_retain, 'DD Mon YYYY') || '.', '') using errcode = '42501';
   end if;
@@ -154,24 +170,28 @@ begin
   if tg_table_name = 'orgs' and tg_op = 'DELETE' then return null; end if;
 
   -- 3. What was written. An update keeps only the keys whose values changed (updated_at aside); none, no entry.
-  if tg_op = 'INSERT' then
-    v_row := to_jsonb(new);
-    v_after := private.redact(v_row);
-  elsif tg_op = 'DELETE' then
-    v_row := to_jsonb(old);
-    v_before := private.redact(v_row);
-  else
-    v_row := to_jsonb(new);
+  if tg_op <> 'DELETE' then v_new := to_jsonb(new); end if;
+  if tg_op <> 'INSERT' then v_old := to_jsonb(old); end if;
+  if tg_op = 'UPDATE' then
     select array_agg(n.key order by n.key), jsonb_object_agg(n.key, o.value), jsonb_object_agg(n.key, n.value)
       into v_changed, v_before, v_after
-    from jsonb_each(v_row) n join jsonb_each(to_jsonb(old)) o on o.key = n.key
+    from jsonb_each(v_new) n join jsonb_each(v_old) o on o.key = n.key
     where n.key <> 'updated_at' and n.value is distinct from o.value;
     if v_changed is null then return null; end if;
-    v_before := private.redact(v_before);
-    v_after := private.redact(v_after);
+  else
+    v_before := v_old;
+    v_after := v_new;
   end if;
+  -- People's details copied from the CAC record stay with the owner (kyc_profiles): the business row's identity check,
+  -- directors and company secretary, and the names of income-tax people taken from CAC. Their keys are still listed as
+  -- changed.
+  v_hide := case
+    when tg_table_name = 'orgs' then array['identity', 'directors', 'company_secretary']
+    when tg_table_name = 'pit_people' and 'cac' in (v_old->>'source', v_new->>'source') then array['name'] end;
+  v_row := private.activity_hide(coalesce(v_new, v_old), v_hide);
   perform private.activity_add(v_org, v_practice, 'row', lower(tg_op), tg_table_name, v_row->>'id',
-    coalesce(v_row->>'number', v_row->>'name', v_row->>'display_name', v_row->>'title', v_row->>'description'), v_before, v_after, v_changed);
+    coalesce(v_row->>'number', v_row->>'name', v_row->>'display_name', v_row->>'title', v_row->>'description'),
+    private.redact(private.activity_hide(v_before, v_hide)), private.redact(private.activity_hide(v_after, v_hide)), v_changed);
   return null;
 end $$;
 
@@ -184,12 +204,14 @@ begin
 end $$;
 
 -- A business event. The practice is the one running the business, else the one the event names (p_meta.practice_id).
+-- Security definer, so its callers need no rights on the log. It stays revoked from users: a trigger that records an event
+-- while a signed-in person writes (on messages, on voice calls) is itself security definer to call it.
 create or replace function private.activity_event(p_org uuid, p_action text, p_label text, p_meta jsonb default '{}') returns bigint
-language plpgsql set search_path = public, private as $$
+language plpgsql security definer set search_path = public, private as $$
 declare v_practice uuid;
 begin
   select coalesce(managed_by, nullif(p_meta->>'practice_id', '')::uuid) into v_practice from orgs where id = p_org;
-  return private.activity_add(p_org, v_practice, 'event', p_action, null, null, p_label, null, coalesce(p_meta, '{}'::jsonb), null);
+  return private.activity_add(p_org, v_practice, 'event', p_action, null, null, p_label, null, private.redact(coalesce(p_meta, '{}'::jsonb)), null);
 end $$;
 
 do $$
@@ -210,10 +232,13 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- A page of a business's log, newest first, optionally one practice's entries only.
 -- p = {before?: id, limit?: 1..200 (default 50), entity?: table name} -> {rows, next_before (null on the last page)}.
+-- A limit that is not a number is the default, one out of range is brought within it; a before that is not an id is ignored.
 create or replace function private.activity_page(p_org uuid, p_practice uuid, p jsonb) returns jsonb
 language plpgsql stable set search_path = public, private as $$
-declare v_limit int := least(greatest(coalesce(nullif(p->>'limit', '')::int, 50), 1), 200);
-  v_before bigint := nullif(p->>'before', '')::bigint; v_entity text := nullif(trim(p->>'entity'), ''); v_rows jsonb; v_next bigint;
+declare v_limit int := least(greatest(coalesce(
+    case when p->>'limit' ~ '^\s*-?[0-9]+(\.[0-9]+)?\s*$' then round(trim(p->>'limit')::numeric) end, 50), 1), 200);
+  v_before bigint := case when p->>'before' ~ '^\s*[0-9]{1,18}\s*$' then trim(p->>'before')::bigint end;
+  v_entity text := nullif(trim(p->>'entity'), ''); v_rows jsonb; v_next bigint;
 begin
   select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'at', a.at, 'actor_name', a.actor_name, 'source', a.source, 'action', a.action,
       'entity', a.entity, 'entity_id', a.entity_id, 'label', a.label, 'before', a.before, 'after', a.after, 'changed', a.changed) order by a.id desc), '[]'::jsonb)
@@ -252,7 +277,8 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- core.sql grants every private function to authenticated: the helpers this migration creates are not callable by the
 -- signed-in person (the trigger functions still fire for them).
-revoke all on function private.activity_guard(), private.activity_exempt(), private.redact_key(text), private.redact(jsonb), private.set_actor(uuid),
+revoke all on function private.activity_guard(), private.activity_exempt(), private.redact_key(text), private.redact(jsonb), private.activity_hide(jsonb, text[]),
+  private.set_actor(uuid),
   private.activity_add(uuid, uuid, text, text, text, text, text, jsonb, jsonb, text[]), private.activity_row(), private.activity_attach(regclass),
   private.activity_event(uuid, text, text, jsonb), private.activity_page(uuid, uuid, jsonb)
   from public, anon, authenticated;

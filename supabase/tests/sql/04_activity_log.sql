@@ -185,6 +185,47 @@ begin
   perform tests.as_postgres();
 end $$;
 
+-- test: activity_cac_private
+-- People's details copied from the CAC record never reach the log: the identity check matched on a director (NIN check),
+-- the directors and secretary copied onto the business row (kyc_submit), the income-tax people taken from CAC (pit_setup).
+-- The keys are still listed as changed, and identity_status stays readable.
+do $$
+declare o uuid := tests.id('o'); p uuid := tests.id('partner'); v jsonb; v_pp uuid;
+begin
+  insert into kyc_profiles (user_id, org_id, status, source, submitted_at, cac)
+  values (p, o, 'submitted', 'cac', now(),
+    '{"profile": {"classification": "PRIVATE COMPANY LIMITED BY SHARES", "directors": [{"surname": "OKONKWO", "firstname": "CHIDINMA", "other_name": "ADAEZE"}]}}');
+  update orgs set directors = '[{"name": "Chidinma Adaeze Okonkwo", "role": "Director"}]', company_secretary = 'Chidinma Adaeze Okonkwo' where id = o;
+  perform tests.as_service();
+  v := public.svc_identity_nin(p, o, '4321', 'Chidinma', null, 'Okonkwo');
+  perform tests.as_postgres();
+  assert (v->>'verified')::boolean and (select identity->>'matched' from orgs where id = o) ilike '%okonkwo%',
+    'activity_cac_private: the NIN matched a director (the business row keeps the match)';
+  perform tests.as_user(p);
+  perform public.pit_setup(o);
+  perform tests.as_postgres();
+  select id into v_pp from pit_people where org_id = o and source = 'cac';
+  assert (select name from pit_people where id = v_pp) ilike '%okonkwo%', 'activity_cac_private: an income-tax person from CAC';
+  update pit_people set name = 'Chidinma A. Okonkwo' where id = v_pp;
+  insert into pit_people (org_id, name, source) values (o, 'Bisi Added', 'added');
+  assert not exists (select 1 from activity_log a where a.org_id = o and (a::text ilike '%okonkwo%' or a::text ilike '%chidinma%')),
+    'activity_cac_private: no director name in the log';
+  assert (select 'identity' = any (changed) and before->>'identity' = '[redacted]' and after->>'identity' = '[redacted]'
+            and before->>'identity_status' = 'pending'
+          from activity_log where org_id = o and entity = 'orgs' and after->>'identity_status' = 'verified'),
+    'activity_cac_private: the identity check, without its details';
+  assert (select changed = '{company_secretary,directors}' and after->>'directors' = '[redacted]' and after->>'company_secretary' = '[redacted]'
+          from activity_log where org_id = o and entity = 'orgs' and 'directors' = any (changed)),
+    'activity_cac_private: directors and secretary';
+  assert (select count(*) from activity_log where org_id = o and entity = 'pit_people' and entity_id = v_pp::text and label = '[redacted]'
+            and (action = 'insert' and after->>'name' = '[redacted]' and after->>'source' = 'cac'
+              or action = 'update' and changed = '{name}' and before->>'name' = '[redacted]' and after->>'name' = '[redacted]')) = 2,
+    'activity_cac_private: a pit_people cac row logs no name';
+  assert (select after->>'name' = 'Bisi Added' and label = 'Bisi Added' from activity_log where org_id = o and entity = 'pit_people' and after->>'source' = 'added'),
+    'activity_cac_private: people added by hand keep their names';
+  perform tests.as_postgres();
+end $$;
+
 -- test: activity_immutable
 do $$
 declare v_gone uuid;
@@ -246,6 +287,10 @@ begin
   assert (select practice_id = tests.id('pr') and source = 'event' and actor_name = 'Counta' from activity_log where id = v), 'activity_event: from p_meta';
   v := private.activity_event(tests.id('ord'), 'note', 'No practice');
   assert (select practice_id is null and after = '{}' from activity_log where id = v), 'activity_event: default meta';
+  v := private.activity_event(o, 'letter_sent', 'Engagement letter sent', '{"token_hash": "abc", "to": "client@example.test"}');
+  assert (select after = '{"token_hash": "[redacted]", "to": "client@example.test"}' from activity_log where id = v), 'activity_event: secrets in meta redacted';
+  -- Triggers that run as the signed-in person record events through it.
+  assert (select prosecdef from pg_proc where oid = 'private.activity_event(uuid, text, text, jsonb)'::regprocedure), 'activity_event: security definer';
   perform tests.as_postgres();
 end $$;
 
@@ -285,6 +330,97 @@ begin
   perform tests.as_postgres();
 end $$;
 
+-- test: read_only_exemptions
+-- TaxStreem's purge, the seat sync and anything after the retention date pass in a read-only business; a signed-in
+-- person's ordinary write is still refused.
+do $$
+declare p uuid := tests.id('partner'); v_admin uuid; v_mgr uuid; v_mgr_pm uuid; o2 uuid; c2 uuid; o3 uuid; v jsonb; v_mgr_seat uuid; v_partner_seat uuid;
+  v_msg text := '42501: This business is read-only: its engagement has ended.%';
+begin
+  -- (a) The admin purge of a read-only business whose retention date has passed.
+  v_admin := tests.admin_user('al.admin@admin.example.test');
+  o3 := tests.managed_org(tests.id('pr'), 'Activity Expired Ltd');
+  insert into vendors (org_id, name) values (o3, 'Expired Supplies');
+  update orgs set read_only_at = now() - interval '6 years', retain_until = current_date - 1 where id = o3;
+  perform tests.as_user(v_admin, 'aal2');
+  v := public.admin_business_delete(o3, 'Activity Expired Ltd');
+  perform tests.as_postgres();
+  assert (v->>'ok')::boolean and not exists (select 1 from orgs where id = o3) and not exists (select 1 from activity_log where org_id = o3),
+    'read_only_exemptions: the admin purge after the retention date';
+  -- Within the retention date the purge setting alone lets a write through.
+  perform tests.as_definer(p);
+  perform tests.throws(format('delete from vendors where id = %L', tests.id('vendor')), v_msg);
+  perform set_config('app.allow_purge', 'on', true);
+  delete from vendors where id = tests.id('vendor');
+  perform set_config('app.allow_purge', 'off', true);
+  perform tests.as_postgres();
+  assert not exists (select 1 from vendors where id = tests.id('vendor')), 'read_only_exemptions: app.allow_purge';
+
+  -- An ended full mandate, read-only, whose manager's place is still on (ended outside the sync).
+  v_mgr := tests.user('al.manager@firm.example.test', 'Tunde Manager');
+  v_mgr_pm := tests.practice_member(tests.id('pr'), v_mgr, 'manager');
+  o2 := tests.managed_org(tests.id('pr'), 'Activity Ended Ltd');
+  c2 := (private.mandate(o2)).id;
+  select id into v_mgr_seat from members where org_id = o2 and user_id = v_mgr and status = 'active' and acts_as_owner;
+  select id into v_partner_seat from members where org_id = o2 and user_id = p and status = 'active' and acts_as_owner;
+  update practice_clients set status = 'ended', ended_at = now(), end_kind = 'ended' where id = c2;
+  update orgs set read_only_at = now(), retain_until = current_date + 1825 where id = o2;
+  -- (c) A signed-in person's ordinary write is still refused, and so is a change of engagement partner outside the sync.
+  perform tests.as_user(p);
+  perform tests.throws(format($q$update orgs set name = 'Activity Ended Group Ltd' where id = %L$q$, o2), v_msg);
+  perform tests.as_definer(p);
+  perform tests.throws(format($q$update members set title = 'Auditor' where id = %L$q$, v_mgr_seat), v_msg);
+  perform tests.throws(format('update practice_clients set engagement_partner_id = %L where id = %L', v_mgr_pm, c2), v_msg);
+  -- (b) The seat sync, run for the signed-in partner, switches the manager's place off.
+  perform private.practice_sync_seats(c2);
+  assert (select status = 'disabled' and not acts_as_owner from members where id = v_mgr_seat), 'read_only_exemptions: a seat-sync write passes';
+  assert (select actor_user = p and 'status' = any (changed) from activity_log where org_id = o2 and entity = 'members' and entity_id = v_mgr_seat::text
+          and action = 'update'),
+    'read_only_exemptions: and is logged';
+  -- Another engagement partner for the ended business, under the seat sync, then synced: the partner's place goes.
+  perform set_config('counta.seat_sync', 'on', true);
+  update practice_clients set engagement_partner_id = v_mgr_pm where id = c2;
+  perform set_config('counta.seat_sync', '', true);
+  perform private.practice_sync_seats(c2);
+  assert (select engagement_partner_id = v_mgr_pm from practice_clients where id = c2)
+     and (select status = 'disabled' from members where id = v_partner_seat),
+    'read_only_exemptions: the engagement partner changes under the seat sync';
+  perform tests.as_postgres();
+  -- After the retention date a signed-in write passes.
+  update orgs set retain_until = current_date - 1 where id = o2;
+  perform tests.as_definer(p);
+  update orgs set name = 'Activity Ended Group Ltd' where id = o2;
+  perform tests.as_postgres();
+  assert (select name from orgs where id = o2) = 'Activity Ended Group Ltd', 'read_only_exemptions: after the retention date';
+  perform tests.as_postgres();
+end $$;
+
+-- test: read_only_public
+-- The public shop is anonymous: in a business run by a practice its orders are the Public's; read-only, it takes none.
+do $$
+declare o4 uuid; v_item uuid; v jsonb;
+begin
+  o4 := tests.managed_org(tests.id('pr'), 'Activity Shop Ltd');
+  update orgs set shop_slug = 'activity-shop', shop_enabled = true where id = o4;
+  insert into items (org_id, name, price) values (o4, 'Shop Item', 1000) returning id into v_item;
+  insert into stock_levels (item_id, location_id, org_id, qty) select v_item, id, o4, 10 from locations where org_id = o4;
+  perform tests.as_anon();
+  v := public.shop_place_order('activity-shop', jsonb_build_object('customer', jsonb_build_object('name', 'Public Buyer', 'phone', '08031112222'),
+    'lines', jsonb_build_array(jsonb_build_object('item_id', v_item, 'qty', 1))));
+  perform tests.as_postgres();
+  assert v->>'number' is not null, 'read_only_public: the order is placed';
+  assert (select actor_user is null and actor_member is null and actor_name = 'Public' from activity_log where org_id = o4 and entity = 'customers' and action = 'insert'),
+    'read_only_public: an anonymous visitor is Public, not Counta';
+  update orgs set read_only_at = now(), retain_until = date '2031-11-13' where id = o4;
+  perform tests.as_anon();
+  perform tests.throws(format($q$select public.shop_place_order('activity-shop', %L)$q$,
+    jsonb_build_object('customer', jsonb_build_object('name', 'Late Buyer', 'phone', '08033334444'), 'lines', jsonb_build_array(jsonb_build_object('item_id', v_item, 'qty', 1)))),
+    '42501: This business is read-only: its engagement has ended. Its records are kept until 13 Nov 2031.');
+  perform tests.as_postgres();
+  assert not exists (select 1 from customers where org_id = o4 and name = 'Late Buyer'), 'read_only_public: an anon shop write on a read-only business is refused';
+  perform tests.as_postgres();
+end $$;
+
 -- test: activity_reads
 do $$
 declare o uuid := tests.id('o'); c uuid := tests.id('c'); v jsonb; v1 jsonb; v2 jsonb; n int; r jsonb;
@@ -318,6 +454,17 @@ begin
      and not exists (select 1 from jsonb_array_elements(v->'rows') x where x->>'entity' <> 'vendors'),
     'activity_reads: one kind of record';
   assert jsonb_array_length(v1->'rows') = 1 and jsonb_array_length(v2->'rows') = least(n, 200), 'activity_reads: limit kept within 1..200';
+  -- What is not a number does not raise: the default limit, the first page.
+  perform tests.as_user(tests.id('partner'));
+  v := public.practice_activity(c, '{"limit": "lots", "before": "yesterday"}');
+  v1 := public.practice_activity(c, '{"limit": "2.4", "before": 99999999999999999999999}');
+  v2 := public.org_activity(o, '{"limit": 1e10, "before": -5}');
+  perform tests.as_postgres();
+  assert jsonb_array_length(v->'rows') = least(n, 50) and (v->'rows'->0->>'id')::bigint = (select max(id) from activity_log where org_id = o),
+    'activity_reads: a limit or before that is not a number';
+  assert jsonb_array_length(v1->'rows') = 2 and jsonb_array_length(v2->'rows') = least(n, 200)
+     and (v2->'rows'->0->>'id')::bigint = (select max(id) from activity_log where org_id = o),
+    'activity_reads: numbers out of range';
   -- The business reads its own log: the owner or acting owner, or someone who manages the team.
   perform tests.as_user(tests.id('partner'));
   v := public.org_activity(o, '{"limit": 200}');
@@ -350,6 +497,7 @@ do $$
 declare f text;
 begin
   foreach f in array array['private.activity_event(uuid, text, text, jsonb)', 'private.activity_row()', 'private.redact(jsonb)', 'private.redact_key(text)',
+    'private.activity_hide(jsonb, text[])',
     'private.set_actor(uuid)', 'private.activity_attach(regclass)', 'private.activity_exempt()', 'private.activity_guard()',
     'private.activity_add(uuid, uuid, text, text, text, text, text, jsonb, jsonb, text[])', 'private.activity_page(uuid, uuid, jsonb)'] loop
     assert not has_function_privilege('authenticated', f, 'execute') and not has_function_privilege('anon', f, 'execute'),
@@ -364,6 +512,9 @@ begin
      and not has_table_privilege('authenticated', 'public.activity_log', 'insert'),
     'activity_helpers_revoked: the table';
   assert (select relrowsecurity from pg_class where oid = 'public.activity_log'::regclass), 'activity_helpers_revoked: row level security on';
+  -- The reads page a business's log by id.
+  assert exists (select 1 from pg_indexes where schemaname = 'public' and tablename = 'activity_log' and indexdef like '%(org_id, id DESC)'),
+    'activity_helpers_revoked: (org_id, id desc) index';
   perform tests.as_postgres();
 end $$;
 
