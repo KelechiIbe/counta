@@ -693,8 +693,8 @@ begin
 end $$;
 
 -- test: practice_files
--- Practice files in the documents bucket: intake files for the practice's partners and managers, letter files for its
--- people, exports for its partners.
+-- Practice files in the documents bucket: intake and letter files for the practice's partners and managers (letter files
+-- since 20261124000700), exports for its partners.
 do $$
 declare pr uuid := tests.id('pr'); i uuid := tests.id('ola_intake'); v_intake text; v_letter text; v_export text;
 begin
@@ -708,8 +708,8 @@ begin
      and not private.practice_file_ok('practice/not-a-practice/intake/x/y.pdf') and not private.practice_file_ok(pr || '/intake/x/y.pdf')
      and not private.practice_file_ok(null), 'practice_files: only practice areas';
   perform tests.as_definer(tests.id('staff'));
-  assert private.practice_file_ok(v_letter) and not private.practice_file_ok(v_intake) and not private.practice_file_ok(v_export),
-    'practice_files: staff, letters only';
+  assert not private.practice_file_ok(v_letter) and not private.practice_file_ok(v_intake) and not private.practice_file_ok(v_export),
+    'practice_files: staff, none';
   perform tests.as_definer(tests.id('manager'));
   assert private.practice_file_ok(v_intake) and private.practice_file_ok(v_letter) and not private.practice_file_ok(v_export),
     'practice_files: managers, not exports';
@@ -735,8 +735,8 @@ begin
   assert (select count(*) from storage.objects where name = v_intake) = 0, 'practice_files: staff do not see intake files';
   assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', %L)$q$, 'practice/' || pr || '/intake/' || i || '/staff.pdf'))
     like '%row-level security%', 'practice_files: staff cannot put intake files';
-  assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', %L)$q$, v_letter)) is null,
-    'practice_files: staff put letter files';
+  assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', %L)$q$, v_letter)) like '%row-level security%',
+    'practice_files: staff cannot put letter files';
   assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', %L)$q$, v_export)) like '%row-level security%',
     'practice_files: staff cannot put exports';
   perform tests.as_user(tests.id('other_partner'));

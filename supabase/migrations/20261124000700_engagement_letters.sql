@@ -29,6 +29,21 @@
 -- link or the code as the email is sent, so neither is ever stored or queued in the clear. The signing calls are the
 -- service role's (svc_sign_*); a wrong code never raises, so the counts stay. Each step is recorded, and logged in the
 -- client business's activity log when there is a business (without links, codes or fingerprints).
+-- Letter files live directly in practice/<pid>/letters/<letter id>/ (template PDFs in practice/<pid>/letters/templates/),
+-- one level, plain file names; like intake files they are for the practice's partners and managers only
+-- (private.practice_file_ok, redefined here).
+
+-- ---------------------------------------------------------------------------
+-- 0. Letter files
+-- ---------------------------------------------------------------------------
+-- A file directly in one of the practice's letter folders, practice/<pid>/letters/<folder>/<name>: the folder a letter's id
+-- or templates; the name letters, digits, dots, dashes and underscores, not starting with a dot and without "..".
+-- At most 500 characters.
+create or replace function private.letter_file_ok(p_path text, p_practice uuid, p_folder text) returns boolean
+language sql immutable set search_path = public, private as $$
+  select coalesce(length(p_path) <= 500 and p_path !~ '\.\.'
+    and p_path ~ ('^practice/' || p_practice::text || '/letters/' || p_folder || '/[A-Za-z0-9_-][A-Za-z0-9._-]*$'), false)
+$$;
 
 -- ---------------------------------------------------------------------------
 -- 1. Tables
@@ -39,7 +54,7 @@ create table public.practice_letter_templates (
   name text not null check (length(trim(name)) between 2 and 80),
   kind text not null default 'blocks' check (kind in ('blocks', 'pdf')),
   body jsonb,
-  pdf_path text check (pdf_path like 'practice/' || practice_id::text || '/letters/_%' and length(pdf_path) <= 500),
+  pdf_path text check (pdf_path is null or private.letter_file_ok(pdf_path, practice_id, 'templates')),
   is_default boolean not null default false,
   archived boolean not null default false,
   created_by uuid references public.practice_members(id) on delete set null,
@@ -66,13 +81,18 @@ create table public.engagement_letters (
   title text not null check (length(trim(title)) between 2 and 160),
   blocks jsonb,
   merge jsonb not null default '{}' check (jsonb_typeof(merge) = 'object'),
-  doc_path text check (doc_path like 'practice/' || practice_id::text || '/letters/_%' and length(doc_path) <= 500),
+  -- The rendered letter in the letter's folder, or the template PDF a PDF letter is.
+  doc_path text check (doc_path is null or private.letter_file_ok(doc_path, practice_id, id::text)
+    or private.letter_file_ok(doc_path, practice_id, 'templates')),
   doc_sha256 text check (doc_sha256 ~ '^[0-9a-f]{64}$'),
-  final_path text check (final_path like 'practice/' || practice_id::text || '/letters/' || id::text || '/_%' and length(final_path) <= 500),
+  final_path text check (final_path is null or private.letter_file_ok(final_path, practice_id, id::text)),
   final_sha256 text check (final_sha256 ~ '^[0-9a-f]{64}$'),
   retention_years int not null default 6 check (retention_years >= 5),
   partner_id uuid references public.practice_members(id) on delete set null,
   partner_signature text check (length(partner_signature) <= 120),
+  -- The signing partner's name and email as they were when they signed (the completion certificate's).
+  partner_name text check (length(partner_name) <= 80),
+  partner_email text check (length(partner_email) <= 254),
   partner_signed_at timestamptz,
   partner_ip text,
   partner_ua text,
@@ -84,7 +104,8 @@ create table public.engagement_letters (
   -- White label exactly when the letter is the full-mandate one.
   check (white_label = (variant = 'full')),
   check (source <> 'pdf' or doc_path is not null),
-  check (status not in ('partner_signed', 'sent', 'completed') or (doc_path is not null and doc_sha256 is not null and partner_signed_at is not null)),
+  check (status not in ('partner_signed', 'sent', 'completed')
+    or (doc_path is not null and doc_sha256 is not null and partner_signed_at is not null and partner_name is not null and partner_email is not null)),
   check (status not in ('completed', 'uploaded') or (final_path is not null and final_sha256 is not null)),
   check (status <> 'void' or void_reason is not null)
 );
@@ -166,8 +187,10 @@ language sql immutable set search_path = public, private as $$
 $$;
 
 -- Why a body is not a letter Counta can keep, or null when it is. At most 200 KB, version 1, 1 to 600 blocks, each with an
--- id of its own (lower-case letters, digits, - and _, up to 40), a kind, a level from 1 to 4 and up to 4,000 characters
--- of plain text (no HTML); a variant of full or involved, or none; optional naming a field. Every {{field}}, {{#field}}
+-- id of its own (lower-case letters, digits, - and _, up to 40), a kind at its level as the renderer numbers it (a heading
+-- 1., level 1; a clause 1.1, level 2; a list item (a), level 3, or (i), level 4; an unnumbered paragraph at levels 1 to 4,
+-- its indent; a signature at level 1), and up to 4,000 characters of plain text (no HTML); a variant of full or involved,
+-- or none; optional naming a field. Every {{field}}, {{#field}}
 -- and {{/field}} names a field of the letter, sections close in order within their block, and every {{ref:id}} names a
 -- numbered block (heading, clause or list item) of the letter. A signature block's text says whose: firm or client.
 create or replace function private.letter_body_ok(p_body jsonb) returns text
@@ -200,8 +223,13 @@ begin
     if v_kind is null or v_kind not in ('heading', 'clause', 'paragraph', 'list', 'signature') then
       return format('Paragraph %s is not a heading, clause, paragraph, list item or signature.', v_id);
     end if;
-    if not coalesce(case when jsonb_typeof(b->'level') = 'number' then (b->>'level')::numeric in (1, 2, 3, 4) end, false) then
+    if jsonb_typeof(b->'level') is distinct from 'number' or b->>'level' !~ '^[1-4]$' then
       return format('Paragraph %s needs a level from 1 to 4.', v_id);
+    end if;
+    if not (case v_kind when 'heading' then b->>'level' = '1' when 'clause' then b->>'level' = '2' when 'list' then b->>'level' in ('3', '4')
+                        when 'signature' then b->>'level' = '1' else true end) then
+      return format('Paragraph %s is a %s at level %s: a heading is at level 1, a clause at level 2, a list item at level 3 or 4 and a signature at level 1.',
+        v_id, v_kind, b->>'level');
     end if;
     v_text := case when jsonb_typeof(b->'text') = 'string' then b->>'text' end;
     if v_text is null or btrim(v_text) = '' then return format('Paragraph %s has no text.', v_id); end if;
@@ -241,6 +269,21 @@ begin
     if regexp_replace(v_text, '\{\{[^{}]*\}\}', '', 'g') ~ '\{\{|\}\}' then return format('Paragraph %s has unmatched braces.', v_id); end if;
   end loop;
   return null;
+end $$;
+
+-- A number of years to keep the letter's files, given as a JSON number or text: null when not given, else a whole number of
+-- 5 or more (fewer is refused as the table's check would refuse it).
+create or replace function private.letter_years(p jsonb) returns int
+language plpgsql immutable set search_path = public, private as $$
+declare v int;
+begin
+  if p is null or jsonb_typeof(p) = 'null' then return null; end if;
+  if jsonb_typeof(p) not in ('number', 'string') or (p #>> '{}') !~ '^\s*[0-9]{1,3}\s*$' then
+    raise exception 'Keep the letter''s files for a whole number of years, 5 or more.' using errcode = '22023';
+  end if;
+  v := trim(p #>> '{}')::int;
+  if v < 5 then raise exception 'Keep the letter''s files for at least 5 years.' using errcode = '23514'; end if;
+  return v;
 end $$;
 
 -- Why merge values are not a letter's, or null when they are: fields of the letter only, each text (plain, up to 2,000
@@ -512,24 +555,36 @@ begin
   perform private.call_function('messaging', jsonb_build_object('action', 'practice_mail', 'kind', p_kind, 'id', p_id));
 end $$;
 
--- Once the partner signs, what the letter says and the firm's signature are fixed; a completed, uploaded or void letter is
--- closed. (A template deleted with its practice may leave the letter without it.)
+-- A letter only moves forward: draft -> partner_signed, uploaded or void; partner_signed -> sent, uploaded or void; sent ->
+-- sent (again), completed, uploaded or void; completed, uploaded and void letters are closed. It stays with its practice.
+-- Once the partner signs, what the letter says, the firm's signature and who signed it are fixed. (The template or the
+-- partner's place in the practice may go, deleted, leaving the letter without the link to it.)
 create or replace function private.engagement_letters_freeze() returns trigger
 language plpgsql set search_path = public, private as $$
 begin
-  if old.status <> 'draft' and (
-       (new.blocks, new.merge, new.variant, new.source, new.doc_path, new.doc_sha256, new.intake_id, new.title, new.retention_years, new.white_label,
-        new.partner_signature, new.partner_signed_at, new.partner_ip, new.partner_ua)
-       is distinct from
-       (old.blocks, old.merge, old.variant, old.source, old.doc_path, old.doc_sha256, old.intake_id, old.title, old.retention_years, old.white_label,
-        old.partner_signature, old.partner_signed_at, old.partner_ip, old.partner_ua)
-     or (new.template_id is distinct from old.template_id
-         and not (new.template_id is null and not exists (select 1 from practice_letter_templates where id = old.template_id)))) then
-    raise exception 'A signed letter cannot be edited. Void it and start again.';
-  end if;
+  if new.practice_id is distinct from old.practice_id then raise exception 'A letter stays with its practice.'; end if;
   if old.status in ('completed', 'uploaded', 'void')
      and (new.status, new.final_path, new.final_sha256, new.void_reason) is distinct from (old.status, old.final_path, old.final_sha256, old.void_reason) then
     raise exception 'This letter is closed: it cannot change.';
+  end if;
+  if old.status <> 'draft' and (
+       new.status = 'draft'
+     or (new.blocks, new.merge, new.variant, new.source, new.doc_path, new.doc_sha256, new.intake_id, new.title, new.retention_years, new.white_label,
+         new.partner_signature, new.partner_name, new.partner_email, new.partner_signed_at, new.partner_ip, new.partner_ua)
+        is distinct from
+        (old.blocks, old.merge, old.variant, old.source, old.doc_path, old.doc_sha256, old.intake_id, old.title, old.retention_years, old.white_label,
+         old.partner_signature, old.partner_name, old.partner_email, old.partner_signed_at, old.partner_ip, old.partner_ua)
+     or (new.template_id is distinct from old.template_id
+         and not (new.template_id is null and not exists (select 1 from practice_letter_templates where id = old.template_id)))
+     or (new.partner_id is distinct from old.partner_id
+         and not (new.partner_id is null and not exists (select 1 from practice_members where id = old.partner_id)))) then
+    raise exception 'A signed letter cannot be edited. Void it and start again.';
+  end if;
+  if new.status is distinct from old.status and not (
+       (old.status = 'draft' and new.status in ('partner_signed', 'uploaded', 'void'))
+    or (old.status = 'partner_signed' and new.status in ('sent', 'uploaded', 'void'))
+    or (old.status = 'sent' and new.status in ('completed', 'uploaded', 'void'))) then
+    raise exception 'A letter cannot go from % to %.', old.status, new.status;
   end if;
   return new;
 end $$;
@@ -569,7 +624,6 @@ create or replace function private.letter_json(l public.engagement_letters) retu
 language sql stable set search_path = public, private as $$
   select to_jsonb(l) || jsonb_build_object(
     'template_name', (select name from practice_letter_templates where id = l.template_id),
-    'partner_name', (select display_name from practice_members where id = l.partner_id),
     'intake_name', (select legal_name from practice_intakes where id = l.intake_id),
     'signers', (select coalesce(jsonb_agg(jsonb_build_object('id', s.id, 'name', s.name, 'email', s.email, 'title', s.title,
         'link_sent', s.token_hash is not null, 'token_expires', s.token_expires, 'sends_today', s.sends_today, 'sends_day', s.sends_day,
@@ -598,13 +652,19 @@ language sql set search_path = public, private as $$
   on conflict (practice_id) where is_default do nothing
 $$;
 
--- The signer a presented link belongs to (locked), or nothing.
+-- The signer a presented link belongs to, or nothing. Locks the letter, then the signer: every call that locks both locks
+-- them in that order.
 create or replace function private.letter_signer_by_token(p_token text) returns public.engagement_letter_signers
 language plpgsql set search_path = public, private as $$
-declare s public.engagement_letter_signers;
+declare s public.engagement_letter_signers; v_id uuid; v_letter uuid;
 begin
   if coalesce(p_token, '') ~ '^es_[0-9a-f]{48}$' then
-    select * into s from engagement_letter_signers where token_hash = private.sha256_hex(p_token) for update;
+    select id, letter_id into v_id, v_letter from engagement_letter_signers where token_hash = private.sha256_hex(p_token);
+    if v_id is not null then
+      perform 1 from engagement_letters where id = v_letter for update;
+      -- (The link may have been replaced while waiting.)
+      select * into s from engagement_letter_signers where id = v_id and token_hash = private.sha256_hex(p_token) for update;
+    end if;
   end if;
   return s;
 end $$;
@@ -672,8 +732,8 @@ begin
     if v_err is not null then raise exception '%', v_err; end if;
   else
     v_pdf := case when p ? 'pdf_path' then nullif(trim(p->>'pdf_path'), '') else t.pdf_path end;
-    if v_pdf is null or v_pdf not like 'practice/' || p_practice || '/letters/_%' or length(v_pdf) > 500 then
-      raise exception 'Upload the PDF to the practice''s letters folder first.';
+    if v_pdf is null or not private.letter_file_ok(v_pdf, p_practice, 'templates') then
+      raise exception 'Upload the PDF to the templates folder of the practice''s letters folder first.';
     end if;
     if lower(v_pdf) !~ '\.pdf$' then raise exception 'The template file must be a PDF.'; end if;
   end if;
@@ -752,8 +812,7 @@ begin
       'service.monthly', v_services && '{vat,wht,payroll}', 'service.annual', v_services && '{cit,statements}',
       'mode.full_mandate', v_variant = 'full'))
     || case when jsonb_typeof(p->'merge') = 'object' then p->'merge' else '{}' end;
-  v_years := coalesce(case when p ? 'retention_years' then (p->>'retention_years')::int end,
-    case when v_merge->>'retention.years' ~ '^\s*[0-9]{1,3}\s*$' then trim(v_merge->>'retention.years')::int end, 6);
+  v_years := coalesce(private.letter_years(p->'retention_years'), private.letter_years(v_merge->'retention.years'), 6);
   v_merge := v_merge || jsonb_build_object('retention.years', v_years);
   v_err := private.letter_merge_ok(v_merge);
   if v_err is not null then raise exception '%', v_err; end if;
@@ -792,9 +851,7 @@ begin
   end if;
   v_title := case when p ? 'title' then trim(p->>'title') else l.title end;
   if v_title is null or length(v_title) not between 2 and 160 then raise exception 'Give the letter a title (2 to 160 characters).'; end if;
-  v_years := coalesce(case when p ? 'retention_years' then (p->>'retention_years')::int end,
-    case when p->'merge' ? 'retention.years' and v_merge->>'retention.years' ~ '^\s*[0-9]{1,3}\s*$' then trim(v_merge->>'retention.years')::int end,
-    l.retention_years);
+  v_years := coalesce(private.letter_years(p->'retention_years'), private.letter_years(p->'merge'->'retention.years'), l.retention_years);
   v_merge := v_merge || jsonb_build_object('retention.years', v_years);
   v_err := private.letter_merge_ok(v_merge);
   if v_err is not null then raise exception '%', v_err; end if;
@@ -865,8 +922,9 @@ begin
   return private.letter_json(l);
 end $$;
 
--- A partner records a copy signed outside Counta, uploaded to the letter's folder. p: {path, sha256}. From a draft the
--- uploaded file is the letter; otherwise the letter stays as the firm signed it and its link stops working.
+-- A partner records a copy signed outside Counta, uploaded to the letter's folder, once the intake is cleared (the letter
+-- says the conflicts check was done). p: {path, sha256}. From a draft the uploaded file is the letter; otherwise the letter
+-- stays as the firm signed it and its link stops working.
 create or replace function public.practice_letter_upload_signed(p_letter uuid, p jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare l public.engagement_letters; m public.practice_members; v_path text := trim(coalesce(p->>'path', '')); v_sha text := lower(trim(coalesce(p->>'sha256', '')));
@@ -876,10 +934,8 @@ begin
   if m.role <> 'partner' then raise exception 'Only a partner records a signed letter.' using errcode = '42501'; end if;
   if l.status = 'void' then raise exception 'This letter is void: draft a new one.'; end if;
   if l.status in ('completed', 'uploaded') then raise exception 'This letter is signed already.'; end if;
-  if (select status from practice_intakes where id = l.intake_id) = 'declined' then raise exception 'This intake was declined after the conflicts check.'; end if;
-  if v_path not like 'practice/' || l.practice_id || '/letters/' || l.id || '/_%' or length(v_path) > 500 then
-    raise exception 'Upload the signed copy to the letter''s folder first.';
-  end if;
+  perform private.letter_intake_ready(l.intake_id);
+  if not private.letter_file_ok(v_path, l.practice_id, l.id::text) then raise exception 'Upload the signed copy to the letter''s folder first.'; end if;
   if v_sha !~ '^[0-9a-f]{64}$' then raise exception 'The signed copy''s SHA-256 fingerprint is missing.'; end if;
   update engagement_letters set
     source = case when status = 'draft' then 'signed_upload' else source end,
@@ -925,7 +981,8 @@ end $$;
 -- 8. The practice function's calls (service role)
 -- ---------------------------------------------------------------------------
 -- The partner has signed: the letter as rendered (in the letter's folder; a PDF letter is its own file), its SHA-256, and
--- the partner's signature. p: {doc_path, doc_sha256, by_user (the signed-in partner), signature_name?, ip?, ua?}.
+-- the partner's signature, name and email as they are now (the completion certificate shows them).
+-- p: {doc_path, doc_sha256, by_user (the signed-in partner), signature_name?, ip?, ua?}.
 create or replace function public.svc_letter_frozen(p_letter uuid, p jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare l public.engagement_letters; pm public.practice_members; v_path text := nullif(trim(coalesce(p->>'doc_path', '')), '');
@@ -940,7 +997,7 @@ begin
   perform private.letter_intake_ready(l.intake_id);
   if l.source = 'pdf' then
     if v_path is distinct from l.doc_path then raise exception 'A PDF letter is signed as it stands: its file cannot change.'; end if;
-  elsif v_path is null or v_path not like 'practice/' || l.practice_id || '/letters/' || l.id || '/_%' or length(v_path) > 500 then
+  elsif not private.letter_file_ok(v_path, l.practice_id, l.id::text) then
     raise exception 'The signed letter must be stored in the letter''s folder.';
   end if;
   if v_sha !~ '^[0-9a-f]{64}$' then raise exception 'The letter''s SHA-256 fingerprint is missing.'; end if;
@@ -952,14 +1009,16 @@ begin
   if length(v_sig) not between 2 and 120 then raise exception 'Type the partner''s name to sign (2 to 120 characters).'; end if;
   perform private.set_actor(pm.user_id);
   update engagement_letters set status = 'partner_signed', doc_path = v_path, doc_sha256 = v_sha, partner_id = pm.id, partner_signature = v_sig,
-    partner_signed_at = now(), partner_ip = left(nullif(trim(p->>'ip'), ''), 64), partner_ua = left(nullif(p->>'ua', ''), 300), updated_at = now()
+    partner_name = pm.display_name, partner_email = lower(trim(pm.email)), partner_signed_at = now(), partner_ip = left(nullif(trim(p->>'ip'), ''), 64),
+    partner_ua = left(nullif(p->>'ua', ''), 300), updated_at = now()
   where id = l.id
   returning * into l;
   perform private.letter_event(l.id, 'partner_signed', pm.display_name, l.partner_ip, l.partner_ua, jsonb_build_object('signature', v_sig));
   return private.letter_json(l);
 end $$;
 
--- The signing page opens a link: the letter to read (the signed copy once both have signed). Never raises.
+-- The signing page opens a link: the letter to read (the signed copy once both have signed). Never raises. The opening is
+-- recorded once a Lagos day per signer.
 create or replace function public.svc_sign_open(p_token text, p_ip text, p_ua text) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare s public.engagement_letter_signers; l public.engagement_letters; v_state text;
@@ -968,7 +1027,10 @@ begin
   select * into l from engagement_letters where id = s.letter_id;
   v_state := private.letter_signer_state(s, l);
   if v_state is not null and v_state <> 'signed' then return jsonb_build_object('ok', false, 'reason', v_state); end if;
-  if v_state is null then
+  if v_state is null and not exists (
+       select 1 from engagement_letter_events e
+       where e.letter_id = l.id and e.kind = 'opened' and e.detail->>'signer_id' = s.id::text
+         and (e.at at time zone 'Africa/Lagos')::date = (now() at time zone 'Africa/Lagos')::date) then
     perform private.letter_event(l.id, 'opened', s.name, p_ip, p_ua, jsonb_build_object('signer_id', s.id));
   end if;
   return jsonb_build_object('ok', true, 'letter_id', l.id, 'title', l.title, 'firm_name', (select name from practices where id = l.practice_id),
@@ -998,7 +1060,7 @@ end $$;
 -- next 15 minutes, and the practice function gets what the completion certificate needs. Never raises, so the counts stay.
 create or replace function public.svc_sign_verify(p_token text, p_code text, p_ip text, p_ua text) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
-declare s public.engagement_letter_signers; l public.engagement_letters; pm public.practice_members; v_state text; r jsonb;
+declare s public.engagement_letter_signers; l public.engagement_letters; v_state text; r jsonb;
 begin
   s := private.letter_signer_by_token(p_token);
   select * into l from engagement_letters where id = s.letter_id;
@@ -1018,11 +1080,10 @@ begin
   if not (r->>'ok')::boolean then
     return jsonb_build_object('ok', false, 'reason', r->>'reason', 'tries_left', (r->>'tries_left')::int, 'locked', (r->>'locked')::boolean);
   end if;
-  select * into pm from practice_members where id = l.partner_id;
   return jsonb_build_object('ok', true, 'reason', null, 'tries_left', (r->>'tries_left')::int, 'locked', false,
     'letter', jsonb_build_object('letter_id', l.id, 'signer_id', s.id, 'doc_path', l.doc_path, 'doc_sha256', l.doc_sha256, 'title', l.title,
-      'practice_id', l.practice_id, 'partner_name', coalesce(pm.display_name, l.partner_signature), 'partner_signature', l.partner_signature,
-      'partner_email', pm.email, 'partner_signed_at', l.partner_signed_at, 'partner_ip', l.partner_ip, 'partner_ua', l.partner_ua,
+      'practice_id', l.practice_id, 'partner_name', l.partner_name, 'partner_signature', l.partner_signature,
+      'partner_email', l.partner_email, 'partner_signed_at', l.partner_signed_at, 'partner_ip', l.partner_ip, 'partner_ua', l.partner_ua,
       'signer_name', s.name, 'signer_email', s.email, 'signer_title', s.title, 'code_verified_at', s.code_verified_at, 'white_label', l.white_label));
 end $$;
 
@@ -1031,20 +1092,19 @@ end $$;
 -- is completed and both sides are emailed. A link or state that does not allow it is a reason, not an error.
 create or replace function public.svc_sign_complete(p_token text, p jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
-declare s public.engagement_letter_signers; l public.engagement_letters; v_state text; v_folder text;
+declare s public.engagement_letter_signers; l public.engagement_letters; v_state text;
   v_sig text := trim(coalesce(p->>'signature_path', '')); v_final text := trim(coalesce(p->>'final_path', ''));
   v_sha text := lower(trim(coalesce(p->>'final_sha256', ''))); v_name text := trim(coalesce(p->>'typed_name', ''));
 begin
   s := private.letter_signer_by_token(p_token);
-  select * into l from engagement_letters where id = s.letter_id for update;
+  select * into l from engagement_letters where id = s.letter_id;
   v_state := private.letter_signer_state(s, l);
   if v_state is not null then return jsonb_build_object('ok', false, 'reason', v_state); end if;
   if s.locked_at is not null then return jsonb_build_object('ok', false, 'reason', 'locked'); end if;
   if s.code_verified_at is null or s.code_verified_at <= now() - interval '15 minutes' then
     return jsonb_build_object('ok', false, 'reason', 'not_verified');
   end if;
-  v_folder := 'practice/' || l.practice_id || '/letters/' || l.id || '/';
-  if v_sig not like v_folder || '_%' or v_final not like v_folder || '_%' or length(v_sig) > 500 or length(v_final) > 500 then
+  if not private.letter_file_ok(v_sig, l.practice_id, l.id::text) or not private.letter_file_ok(v_final, l.practice_id, l.id::text) then
     raise exception 'The signature and the signed letter must be stored in the letter''s folder.';
   end if;
   if v_sha !~ '^[0-9a-f]{64}$' then raise exception 'The signed letter''s SHA-256 fingerprint is missing.'; end if;
@@ -1065,16 +1125,16 @@ end $$;
 -- signed letter.
 create or replace function public.svc_practice_mail(p_kind text, p_id uuid) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
-declare s public.engagement_letter_signers; l public.engagement_letters; pr public.practices; pm public.practice_members; v_app text; v_client text;
-  v_reply text; t jsonb;
+declare s public.engagement_letter_signers; l public.engagement_letters; pr public.practices; v_app text; v_client text; v_reply text; t jsonb;
 begin
+  -- The letter, then its signer, locked in that order.
   if p_kind in ('letter_sign', 'letter_code') then
-    select * into s from engagement_letter_signers where id = p_id for update;
-    select * into l from engagement_letters where id = s.letter_id;
+    select * into l from engagement_letters where id = (select letter_id from engagement_letter_signers where id = p_id) for update;
+    select * into s from engagement_letter_signers where id = p_id and letter_id = l.id for update;
     if s.id is null or l.status is distinct from 'sent' or s.signed_at is not null then return null; end if;
     if p_kind = 'letter_code' and s.locked_at is not null then return null; end if;
   elsif p_kind = 'letter_done' then
-    select * into l from engagement_letters where id = p_id;
+    select * into l from engagement_letters where id = p_id for update;
     if l.id is null or l.status <> 'completed' then return null; end if;
     select * into s from engagement_letter_signers where letter_id = l.id and signed_at is not null for update;
     if s.id is null then return null; end if;
@@ -1083,9 +1143,9 @@ begin
   end if;
   v_app := coalesce((select value from private.config where key = 'app_url'), 'https://counta-taxstreem.netlify.app');
   select * into pr from practices where id = l.practice_id;
-  select * into pm from practice_members where id = l.partner_id;
   select legal_name into v_client from practice_intakes where id = l.intake_id;
-  v_reply := coalesce(pm.email, pr.email);
+  -- Replies go to the partner who signed (at their address now while they are in the practice), else the practice.
+  v_reply := coalesce((select email from practice_members where id = l.partner_id and status = 'active'), l.partner_email, pr.email);
 
   if p_kind = 'letter_sign' then
     t := private.token_new('es');
@@ -1111,7 +1171,7 @@ begin
   end if;
   t := private.token_new('es');
   update engagement_letter_signers set token_hash = t->>'hash', token_expires = now() + interval '14 days', updated_at = now() where id = s.id;
-  return jsonb_build_object('to', s.email, 'cc', coalesce(pm.email, pr.email), 'reply_to', v_reply, 'from_name', pr.name,
+  return jsonb_build_object('to', s.email, 'cc', v_reply, 'reply_to', v_reply, 'from_name', pr.name,
     'subject', 'Letter of engagement signed: ' || v_client,
     'heading', 'Your letter of engagement is signed',
     'greet', split_part(trim(s.name), ' ', 1),
@@ -1121,11 +1181,29 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- 9. Grants
+-- 9. Letter files are for partners and managers, as intake files are
+-- ---------------------------------------------------------------------------
+-- (Redefined from 20261124000600_intake_conflicts.sql.) practice/<pid>/intake/... and practice/<pid>/letters/...: the
+-- practice's active partners and managers, who keep the intakes and the letters (signed letters and their certificates
+-- are there, and the practice function writes them under names it chooses); practice/<pid>/exports/...: its active
+-- partners. Called by the bucket's policies as the signed-in person, so it reads the practice as its owner.
+create or replace function private.practice_file_ok(p_name text) returns boolean
+language sql stable security definer set search_path = public, private as $$
+  select coalesce(p_name ~ '^practice/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(intake|letters|exports)/[^/]', false)
+    and exists (select 1 from practice_members pm
+                where pm.practice_id::text = split_part(p_name, '/', 2) and pm.user_id = auth.uid() and pm.status = 'active'
+                  and case split_part(p_name, '/', 3) when 'exports' then pm.role = 'partner' else pm.role in ('partner', 'manager') end)
+$$;
+revoke execute on function private.practice_file_ok(text) from public, anon;
+grant execute on function private.practice_file_ok(text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 10. Grants
 -- ---------------------------------------------------------------------------
 -- core.sql grants every private function to authenticated: the helpers this migration creates are not callable by the
 -- signed-in person.
-revoke all on function private.letter_fields(), private.letter_defaults(), private.letter_body_ok(jsonb), private.letter_merge_ok(jsonb),
+revoke all on function private.letter_file_ok(text, uuid, text), private.letter_years(jsonb), private.letter_fields(), private.letter_defaults(),
+  private.letter_body_ok(jsonb), private.letter_merge_ok(jsonb),
   private.letter_default_body(), private.token_new(text), private.otp_send_ok(date, int), private.otp_new(uuid),
   private.otp_check(uuid, text, text, timestamptz, int, int, timestamptz), private.letter_event(uuid, text, text, text, text, jsonb),
   private.practice_mail(text, uuid), private.engagement_letters_freeze(), private.engagement_letter_events_guard(),

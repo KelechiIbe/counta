@@ -126,6 +126,17 @@ begin
   assert private.letter_body_ok('{"version":1,"blocks":[{"id":"a","kind":"table","level":1,"text":"x"}]}') like '%heading, clause%', 'letter_body_rejects: kind';
   assert private.letter_body_ok('{"version":1,"blocks":[{"id":"a","kind":"paragraph","level":5,"text":"x"}]}') like '%level%', 'letter_body_rejects: level';
   assert private.letter_body_ok('{"version":1,"blocks":[{"id":"a","kind":"paragraph","level":"1","text":"x"}]}') like '%level%', 'letter_body_rejects: level as text';
+  assert private.letter_body_ok('{"version":1,"blocks":[{"id":"a","kind":"paragraph","level":1.0,"text":"x"}]}') like '%level from 1 to 4%', 'letter_body_rejects: level 1.0';
+  -- Each kind at the level the renderer numbers it at.
+  assert private.letter_body_ok('{"version":1,"blocks":[{"id":"a","kind":"heading","level":2,"text":"x"}]}') like '%a heading at level 2%', 'letter_body_rejects: heading level';
+  assert private.letter_body_ok('{"version":1,"blocks":[{"id":"h","kind":"heading","level":1,"text":"x"},{"id":"a","kind":"clause","level":1,"text":"x"}]}')
+    like '%a clause at level 1%', 'letter_body_rejects: clause level';
+  assert private.letter_body_ok('{"version":1,"blocks":[{"id":"a","kind":"list","level":2,"text":"x"}]}') like '%a list at level 2%', 'letter_body_rejects: list level';
+  assert private.letter_body_ok('{"version":1,"blocks":[{"id":"a","kind":"signature","level":2,"text":"firm"}]}') like '%a signature at level 2%',
+    'letter_body_rejects: signature level';
+  assert private.letter_body_ok('{"version":1,"blocks":[{"id":"h","kind":"heading","level":1,"text":"x"},{"id":"c","kind":"clause","level":2,"text":"x"},
+    {"id":"a","kind":"list","level":3,"text":"x"},{"id":"i","kind":"list","level":4,"text":"x"},{"id":"p","kind":"paragraph","level":4,"text":"x"}]}') is null,
+    'letter_body_rejects: each kind at its level';
   assert private.letter_body_ok(jsonb_build_object('version', 1, 'blocks', jsonb_build_array(jsonb_build_object('id', 'a', 'kind', 'paragraph', 'level', 1, 'text', repeat('x', 4001)))))
     like '%4,000%', 'letter_body_rejects: long text';
   assert private.letter_body_ok('{"version":1,"blocks":[{"id":"a","kind":"paragraph","level":1,"text":"  "}]}') like '%no text%', 'letter_body_rejects: empty text';
@@ -185,6 +196,12 @@ begin
     '%letters folder%');
   perform tests.throws(format($q$select public.practice_letter_template_save(%L, '{"name":"Our PDF","kind":"pdf","pdf_path":"practice/%s/letters/templates/our.docx"}')$q$, pr, pr),
     '%PDF%');
+  perform tests.throws(format($q$select public.practice_letter_template_save(%L, '{"name":"Our PDF","kind":"pdf","pdf_path":"practice/%s/letters/our.pdf"}')$q$, pr, pr),
+    '%letters folder%');
+  perform tests.throws(format($q$select public.practice_letter_template_save(%L, '{"name":"Our PDF","kind":"pdf","pdf_path":"practice/%s/letters/templates/old/our.pdf"}')$q$, pr, pr),
+    '%letters folder%');
+  perform tests.throws(format($q$select public.practice_letter_template_save(%L, '{"name":"Our PDF","kind":"pdf","pdf_path":"practice/%s/letters/templates/../x/our.pdf"}')$q$, pr, pr),
+    '%letters folder%');
   r := public.practice_letter_template_save(pr, jsonb_build_object('name', 'Our PDF', 'kind', 'pdf', 'pdf_path', 'practice/' || pr || '/letters/templates/our.pdf'));
   perform tests.remember('pdf_template', (r->>'id')::uuid);
   assert r->>'kind' = 'pdf' and r->'body' = 'null'::jsonb and not (r->>'is_default')::boolean, 'templates_partner_only: a PDF template';
@@ -260,6 +277,10 @@ begin
      and (r->'merge'->>'fees.amount')::numeric = 250000 and r->'merge'->>'contact.name' = 'Ada Eze', 'letter_draft_defaults: the caller''s values';
   r := public.practice_letter_draft(i, '{"merge":{"retention.years":8}}');
   assert (r->>'retention_years')::int = 8, 'letter_draft_defaults: retention from the merge values';
+  perform tests.throws(format($q$select public.practice_letter_draft(%L, '{"retention_years":4}')$q$, i), '23514: %at least 5 years%');
+  perform tests.throws(format($q$select public.practice_letter_draft(%L, '{"retention_years":7.5}')$q$, i), '%whole number of years%');
+  perform tests.throws(format($q$select public.practice_letter_draft(%L, '{"retention_years":"seven"}')$q$, i), '%whole number of years%');
+  perform tests.throws(format($q$select public.practice_letter_draft(%L, '{"merge":{"retention.years":"x"}}')$q$, i), '%whole number of years%');
   perform tests.throws(format($q$select public.practice_letter_draft(%L, '{"merge":{"client.nickname":"Dee"}}')$q$, i), '%client.nickname%');
   perform tests.throws(format($q$select public.practice_letter_draft(%L, '{"merge":{"client.name":{"a":1}}}')$q$, i), '%client.name%');
   perform tests.throws(format($q$select public.practice_letter_draft(%L, '{"merge":{"client.name":"<script>x</script>"}}')$q$, i), '%client.name%');
@@ -312,6 +333,7 @@ begin
     'letter_save_rules: a lead changes the merge values';
   perform tests.throws(format($q$select public.practice_letter_save(%L, '{"merge":{"client.nickname":"Dee"}}')$q$, l), '%client.nickname%');
   perform tests.throws(format($q$select public.practice_letter_save(%L, '{"retention_years":3}')$q$, l), '23514%');
+  perform tests.throws(format($q$select public.practice_letter_save(%L, '{"retention_years":"6 years"}')$q$, l), '%whole number of years%');
   perform tests.throws(format($q$select public.practice_letter_save(%L, '{"title":"x"}')$q$, l), '%2 to 160%');
   perform tests.as_user(tests.id('partner'));
   r := public.practice_letter_save(l, jsonb_build_object('blocks', v_body));
@@ -368,6 +390,10 @@ begin
     l, v_path, tests.id('other_partner')), '%partner%');
   perform tests.throws(format($q$select public.svc_letter_frozen(%L, jsonb_build_object('doc_path', %L, 'doc_sha256', repeat('ab', 32), 'by_user', %L::uuid))$q$,
     l, 'practice/' || pr || '/letters/elsewhere/letter.pdf', tests.id('partner')), '%letter''s folder%');
+  perform tests.throws(format($q$select public.svc_letter_frozen(%L, jsonb_build_object('doc_path', %L, 'doc_sha256', repeat('ab', 32), 'by_user', %L::uuid))$q$,
+    l, 'practice/' || pr || '/letters/' || l || '/draft/letter.pdf', tests.id('partner')), '%letter''s folder%');
+  perform tests.throws(format($q$select public.svc_letter_frozen(%L, jsonb_build_object('doc_path', %L, 'doc_sha256', repeat('ab', 32), 'by_user', %L::uuid))$q$,
+    l, 'practice/' || pr || '/letters/' || l || '/../letter.pdf', tests.id('partner')), '%letter''s folder%');
   perform tests.throws(format($q$select public.svc_letter_frozen(%L, jsonb_build_object('doc_path', %L, 'doc_sha256', 'abc', 'by_user', %L::uuid))$q$,
     l, v_path, tests.id('partner')), '%SHA-256%');
   perform tests.throws(format($q$select public.svc_letter_frozen(%L, jsonb_build_object('doc_path', %L, 'doc_sha256', repeat('ab', 32), 'by_user', %L::uuid))$q$,
@@ -378,7 +404,19 @@ begin
   assert r->>'status' = 'partner_signed', 'letter_freeze: signed by the firm';
   assert (select status = 'partner_signed' and doc_path = v_path and doc_sha256 = repeat('ab', 32) and partner_id = tests.id('partner_pm')
             and partner_signature = 'Bisi Partner' and partner_signed_at = now() and partner_ip = '203.0.113.5' and partner_ua = 'Test browser'
+            and partner_name = 'Bisi Partner' and partner_email = 'bisi.partner@firm.example.test'
           from engagement_letters where id = l), 'letter_freeze: the firm''s signature recorded';
+  -- A signed letter never goes back to a draft (to be changed and sent as if the firm had signed it).
+  perform tests.throws(format($q$update engagement_letters set status = 'draft' where id = %L$q$, l), '%cannot be edited%');
+  perform tests.throws(format($q$update engagement_letters set status = 'draft', blocks = '{}', doc_sha256 = repeat('cd', 32) where id = %L$q$, l), '%cannot be edited%');
+  perform tests.throws(format($q$update engagement_letters set status = 'completed', final_path = doc_path, final_sha256 = doc_sha256 where id = %L$q$, l),
+    '%cannot go from partner_signed to completed%');
+  -- Who signed for the firm, and the practice, stay.
+  perform tests.throws(format($q$update engagement_letters set partner_id = %L where id = %L$q$, tests.id('partner2_pm'), l), '%cannot be edited%');
+  perform tests.throws(format($q$update engagement_letters set partner_id = null where id = %L$q$, l), '%cannot be edited%');
+  perform tests.throws(format($q$update engagement_letters set partner_name = 'Kunle Partner', partner_email = 'kunle.partner@firm.example.test' where id = %L$q$, l),
+    '%cannot be edited%');
+  perform tests.throws(format($q$update engagement_letters set practice_id = %L where id = %L$q$, tests.id('pr2'), l), '%stays with its practice%');
   perform tests.throws(format($q$update engagement_letters set blocks = '{}' where id = %L$q$, l), '%cannot be edited%');
   perform tests.throws(format($q$update engagement_letters set merge = merge || '{"fees.amount":1}' where id = %L$q$, l), '%cannot be edited%');
   perform tests.throws(format($q$update engagement_letters set variant = 'full', white_label = true where id = %L$q$, l), '%cannot be edited%');
@@ -569,6 +607,20 @@ begin
   assert (r->>'ok')::boolean and r->>'letter_id' = l::text and r->>'title' = 'Letter of engagement: Dayo Foods Ltd' and r->>'firm_name' = 'Letter Partners'
      and r->>'signer_name' = 'Dayo Client' and r->>'doc_path' = 'practice/' || pr || '/letters/' || l || '/letter.pdf' and r->>'status' = 'sent'
      and not (r->>'white_label')::boolean, 'sign_complete: opened';
+  -- Opened once a Lagos day, however often the page loads.
+  perform public.svc_sign_open(tok, '203.0.113.9', 'UA');
+  perform tests.as_postgres();
+  assert (select count(*) from engagement_letter_events where letter_id = l and kind = 'opened') = 1, 'sign_complete: opened once today';
+  alter table engagement_letter_events disable trigger engagement_letter_events_kept;
+  update engagement_letter_events set at = at - interval '1 day' where letter_id = l and kind = 'opened';
+  alter table engagement_letter_events enable trigger engagement_letter_events_kept;
+  perform tests.as_service();
+  perform public.svc_sign_open(tok, '203.0.113.9', 'UA');
+  perform tests.as_postgres();
+  assert (select count(*) from engagement_letter_events where letter_id = l and kind = 'opened') = 2, 'sign_complete: and again the next day';
+  -- The partner's name and email change after signing: the certificate keeps those they signed with.
+  update practice_members set email = 'bisi.renamed@firm.example.test', display_name = 'Bisi Renamed' where id = tests.id('partner_pm');
+  perform tests.as_service();
   assert (public.svc_sign_code(tok, '203.0.113.9', 'UA')->>'ok')::boolean, 'sign_complete: code asked for';
   c := public.svc_practice_mail('letter_code', s)->>'code';
   assert public.svc_sign_complete(tok, '{}')->>'reason' = 'not_verified', 'sign_complete: not before the code';
@@ -578,7 +630,10 @@ begin
   assert r->'letter' @> jsonb_build_object('letter_id', l, 'signer_id', s, 'doc_path', 'practice/' || pr || '/letters/' || l || '/letter.pdf', 'doc_sha256', repeat('ab', 32),
        'title', 'Letter of engagement: Dayo Foods Ltd', 'practice_id', pr, 'partner_name', 'Bisi Partner', 'partner_email', 'bisi.partner@firm.example.test',
        'partner_ip', '203.0.113.5', 'partner_ua', 'Test browser', 'signer_name', 'Dayo Client', 'signer_email', 'dayo@client.example.test', 'signer_title', 'Director')
-     and r->'letter'->>'partner_signed_at' is not null, 'sign_complete: what the certificate needs';
+     and r->'letter'->>'partner_signed_at' is not null, 'sign_complete: what the certificate needs, as the partner signed';
+  perform tests.as_postgres();
+  update practice_members set email = 'bisi.partner@firm.example.test', display_name = 'Bisi Partner' where id = tests.id('partner_pm');
+  perform tests.as_service();
   -- The code confirms the signer for 15 minutes.
   perform tests.as_postgres();
   update engagement_letter_signers set code_verified_at = now() - interval '16 minutes' where id = s;
@@ -591,6 +646,10 @@ begin
   assert (public.svc_sign_verify(tok, c, '203.0.113.9', 'UA')->>'ok')::boolean, 'sign_complete: verified again';
   perform tests.throws(format($q$select public.svc_sign_complete(%L, jsonb_build_object('signature_path', 'practice/%s/letters/elsewhere/sig.png', 'final_path', %L,
     'final_sha256', repeat('cd', 32), 'typed_name', 'Dayo Client'))$q$, tok, pr, v_final), '%letter''s folder%');
+  perform tests.throws(format($q$select public.svc_sign_complete(%L, jsonb_build_object('signature_path', %L, 'final_path', %L, 'final_sha256', repeat('cd', 32), 'typed_name', 'Dayo Client'))$q$,
+    tok, 'practice/' || pr || '/letters/' || l || '/sig/sig.png', v_final), '%letter''s folder%');
+  perform tests.throws(format($q$select public.svc_sign_complete(%L, jsonb_build_object('signature_path', %L, 'final_path', %L, 'final_sha256', repeat('cd', 32), 'typed_name', 'Dayo Client'))$q$,
+    tok, 'practice/' || pr || '/letters/' || l || '/sig.png', 'practice/' || pr || '/letters/' || l || '/..final.pdf'), '%letter''s folder%');
   perform tests.throws(format($q$select public.svc_sign_complete(%L, jsonb_build_object('signature_path', %L, 'final_path', %L, 'final_sha256', 'zz', 'typed_name', 'Dayo Client'))$q$,
     tok, 'practice/' || pr || '/letters/' || l || '/sig.png', v_final), '%SHA-256%');
   perform tests.throws(format($q$select public.svc_sign_complete(%L, jsonb_build_object('signature_path', %L, 'final_path', %L, 'final_sha256', repeat('cd', 32), 'typed_name', ' '))$q$,
@@ -637,8 +696,15 @@ begin
   perform tests.as_user(tests.id('partner'));
   perform tests.throws(format($q$select public.practice_letter_upload_signed(%L, jsonb_build_object('path', 'practice/%s/letters/other/signed.pdf', 'sha256', repeat('ef', 32)))$q$, l2, pr),
     '%letter''s folder%');
+  perform tests.throws(format($q$select public.practice_letter_upload_signed(%L, jsonb_build_object('path', 'practice/%s/letters/%s/copies/signed.pdf', 'sha256', repeat('ef', 32)))$q$,
+    l2, pr, l2), '%letter''s folder%');
+  perform tests.throws(format($q$select public.practice_letter_upload_signed(%L, jsonb_build_object('path', 'practice/%s/letters/%s/../%s/signed.pdf', 'sha256', repeat('ef', 32)))$q$,
+    l2, pr, l2, l2), '%letter''s folder%');
   perform tests.throws(format($q$select public.practice_letter_upload_signed(%L, jsonb_build_object('path', 'practice/%s/letters/%s/signed.pdf', 'sha256', 'nope'))$q$, l2, pr, l2),
     '%SHA-256%');
+  -- Not before the intake's conflicts check is clear: the letter says it was done.
+  perform tests.throws(format($q$select public.practice_letter_upload_signed(%L, jsonb_build_object('path', 'practice/%s/letters/%s/signed.pdf', 'sha256', repeat('ef', 32)))$q$,
+    tests.id('u_letter'), pr, tests.id('u_letter')), '%conflicts check%');
   assert public.practice_letter_upload_signed(l2, jsonb_build_object('path', 'practice/' || pr || '/letters/' || l2 || '/signed.pdf', 'sha256', repeat('ef', 32)))->>'status' = 'uploaded',
     'upload_signed_copy';
   perform tests.as_postgres();
@@ -781,6 +847,48 @@ begin
     'otp_helpers: a code is for its holder only';
 end $$;
 
+-- test: letter_files_for_leads
+-- Letter files (rendered and signed letters, signatures, certificates) are for the practice's partners and managers, like
+-- intake files: staff neither read nor put them; nobody deletes them.
+do $$
+declare pr uuid := tests.id('pr'); l uuid := tests.id('l_done'); v_letter text; v_sig text;
+begin
+  v_letter := 'practice/' || pr || '/letters/' || l || '/final.pdf';
+  v_sig := 'practice/' || pr || '/letters/' || l || '/signature.png';
+  perform tests.as_definer(tests.id('manager'));
+  assert private.practice_file_ok(v_letter), 'letter_files_for_leads: a manager';
+  perform tests.as_definer(tests.id('staff'));
+  assert not private.practice_file_ok(v_letter) and not private.practice_file_ok('practice/' || pr || '/letters/templates/our.pdf'),
+    'letter_files_for_leads: not staff';
+  perform tests.as_postgres();
+  grant select, insert, delete on storage.objects to authenticated;
+  perform tests.as_user(tests.id('partner'));
+  assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', %L)$q$, v_letter)) is null,
+    'letter_files_for_leads: a partner puts a letter file';
+  perform tests.as_user(tests.id('manager'));
+  assert (select count(*) from storage.objects where name = v_letter) = 1, 'letter_files_for_leads: a manager reads it';
+  assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', %L)$q$, v_sig)) is null,
+    'letter_files_for_leads: a manager puts one';
+  perform tests.as_user(tests.id('staff'));
+  assert (select count(*) from storage.objects where name like 'practice/' || pr || '/letters/%') = 0, 'letter_files_for_leads: staff read none';
+  assert tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', %L)$q$,
+    'practice/' || pr || '/letters/' || l || '/certificate.pdf')) like '%row-level security%', 'letter_files_for_leads: staff put none';
+  perform tests.as_user(tests.id('other_partner'));
+  assert (select count(*) from storage.objects where name = v_letter) = 0, 'letter_files_for_leads: not another practice';
+  perform tests.as_user(tests.id('partner'));
+  delete from storage.objects where name = v_letter;
+  perform tests.as_postgres();
+  assert (select count(*) from storage.objects where name = v_letter) = 1, 'letter_files_for_leads: no one deletes them';
+  update practice_members set status = 'disabled' where id = tests.id('manager_pm');
+  perform tests.as_user(tests.id('manager'));
+  assert (select count(*) from storage.objects where name = v_letter) = 0
+     and tests.error_of(format($q$insert into storage.objects (bucket_id, name) values ('documents', %L)$q$, 'practice/' || pr || '/letters/' || l || '/x.pdf'))
+       like '%row-level security%', 'letter_files_for_leads: not a manager who has left';
+  perform tests.as_postgres();
+  update practice_members set status = 'active' where id = tests.id('manager_pm');
+  revoke select, insert, delete on storage.objects from authenticated;
+end $$;
+
 -- test: letters_go_with_their_records
 -- Letters, signers and events go only with the records they belong to: a practice deleted once its due-diligence records
 -- are past their retention date takes its templates and letters with it, signed ones included.
@@ -809,7 +917,8 @@ begin
     'private.letter_merge_ok(jsonb)', 'private.letter_require(uuid, boolean)', 'private.letter_json(engagement_letters)',
     'private.letter_template_ensure(uuid)', 'private.letter_template_json(practice_letter_templates)', 'private.letter_signer_by_token(text)',
     'private.engagement_letters_freeze()', 'private.engagement_letter_events_guard()',
-    'private.letter_signer_state(engagement_letter_signers, engagement_letters)', 'private.letter_intake_ready(uuid)'] loop
+    'private.letter_signer_state(engagement_letter_signers, engagement_letters)', 'private.letter_intake_ready(uuid)',
+    'private.letter_file_ok(text, uuid, text)', 'private.letter_years(jsonb)'] loop
     assert not has_function_privilege('authenticated', f, 'execute') and not has_function_privilege('anon', f, 'execute'), format('letter_helpers_revoked: %s', f);
   end loop;
   foreach f in array array['public.svc_letter_frozen(uuid, jsonb)', 'public.svc_sign_open(text, text, text)', 'public.svc_sign_code(text, text, text)',
