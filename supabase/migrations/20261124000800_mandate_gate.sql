@@ -397,7 +397,8 @@ $$;
 
 -- The practice's partners and managers ask a director of a business the firm runs to confirm, once its identity is
 -- verified. p: {name (as on the CAC record), email (the director's own), phone?}. A request waiting is replaced (its link
--- stops working); five requests a day for a business. The link goes out by email (svc_practice_mail director_confirm).
+-- stops working); none while TaxStreem checks a confirmation; five requests a day for a business. The link goes out by
+-- email (svc_practice_mail director_confirm).
 create or replace function public.practice_director_request(p_client uuid, p jsonb) returns jsonb
 language plpgsql security definer set search_path = public, private as $$
 declare c public.practice_clients; m public.practice_members; o public.orgs; d public.practice_director_confirmations;
@@ -412,6 +413,10 @@ begin
   end if;
   if o.director_confirmed_at is not null then raise exception 'A director of the business has confirmed already.'; end if;
   if o.identity_status not in ('verified', 'approved') then raise exception 'Verify the business''s identity first.'; end if;
+  -- A confirmation TaxStreem is checking is not gone round by asking again.
+  if exists (select 1 from practice_director_confirmations where client_id = c.id and status = 'review') then
+    raise exception 'TaxStreem is checking the director''s last confirmation. Wait for its decision.';
+  end if;
   if jsonb_typeof(p) is distinct from 'object' then raise exception 'Enter the director''s name and email address.'; end if;
   v_name := trim(coalesce(p->>'name', ''));
   v_email := lower(trim(coalesce(p->>'email', '')));

@@ -472,6 +472,10 @@ begin
     'director_ip_review';
   assert public.svc_director_open(tok, null, null)->>'status' = 'review' and public.svc_director_code(tok, null, null)->>'reason' = 'review',
     'director_ip_review: waiting';
+  -- The firm cannot go round TaxStreem's check by asking again.
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"tunde@director.example.test"}')$q$, c2),
+    '%TaxStreem is checking%');
   perform tests.as_postgres();
   assert exists (select 1 from net._requests where url = 'http://functions.test/messaging' and body->>'action' = 'practice_mail' and body->>'kind' = 'director_admin'
                  and body->>'id' = dc2::text), 'director_ip_review: TaxStreem reviewers told';
