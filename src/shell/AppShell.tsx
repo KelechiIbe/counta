@@ -1,11 +1,12 @@
 import { Suspense, createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { actsAsOwner, can, useInventory, useSession } from '../state/session';
 import { Icon } from '../components/Icon';
 import { Popover, Seg, Spinner } from '../components/ui';
 import { fmtDay, initials } from '../lib/format';
 import { useNeedsAction } from './needsAction';
 import { InstallBanner } from '../components/InstallBanner';
+import { minutesLeft, useHolderRecovery } from '../components/RecoveryHolder';
 import { store } from '../lib/pwa';
 import { useAttention, useInbox } from '../lib/api';
 import { useAdminMe } from '../admin/api';
@@ -281,6 +282,25 @@ function Header({ onMenu }: { onMenu: () => void }) {
   );
 }
 
+// A director proved with their NIN that they are on the company's CAC record and asked to take it over: the owner is told on
+// every screen while the 30 minutes run (a business a firm runs shows it on the firm's client page instead).
+function RecoveryBanner() {
+  const { data: inv } = useInventory();
+  const owner = inv?.me.role === 'owner' && !inv?.org.managed_by;
+  const r = useHolderRecovery(inv?.org.id, owner).data;
+  if (!owner || !r || r.status !== 'verified') return null;
+  const left = minutesLeft(r.handover_due);
+  return (
+    <div className="alert alert-amber row" role="alert" style={{ gap: 10, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }} data-testid="recovery-banner">
+      <Icon name="alert" size={16} color="#B54708" />
+      <span style={{ minWidth: 0, flex: '1 1 260px', lineHeight: 1.5 }}>
+        {r.claimant?.name || 'A director'} asked to take {inv!.org.name} over. {left > 0 ? `Answer within ${left} minute${left === 1 ? '' : 's'}.` : 'Answer now.'} No money leaves the business meanwhile.
+      </span>
+      <Link to="/settings#ownership" className="btn btn-primary btn-sm">Answer it</Link>
+    </div>
+  );
+}
+
 // A business a practice runs under full mandate, or one kept read-only after its engagement ended: said on every screen,
 // so nobody working in it forgets for whom they act or why nothing can be changed.
 function MandateBanner() {
@@ -333,6 +353,7 @@ export default function AppShell() {
               <>
                 <InstallBanner />
                 <MandateBanner />
+                <RecoveryBanner />
                 <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: 320 }}><Spinner /></div>}><Outlet /></Suspense>
               </>
             )}

@@ -156,3 +156,10 @@ public.waive_close_step	perm_of	if m.role <> 'owner' then raise exception 'Only 
 private.company_taken	keep	or exists (select 1 from members x where x.org_id = o.id and x.role = 'owner' and x.status = 'active' and x.user_id is not null))
 public.practice_handover_accept	keep	update members set user_id = v_uid, email = v_email, role = 'owner', title = 'Owner', status = 'active', practice_id = null, acts_as_owner = false,
 public.practice_firm_business	keep	if o.id is null or not exists (select 1 from members where org_id = o.id and user_id = auth.uid() and role = 'owner' and status = 'active') then
+# Account recovery (20261125000200): the holder of a business no firm runs is its real owner; a firm's acting owners answer through the firm.
+private.holder_emails	keep	where m.org_id = p_org and m.status = 'active' and m.role = 'owner' and m.user_id is not null
+private.recovery_tell_holder	keep	for u in select user_id from members where org_id = o.id and role = 'owner' and status = 'active' and user_id is not null loop
+private.holder_require	keep	elsif not exists (select 1 from members where org_id = p_org and user_id = auth.uid() and role = 'owner' and status = 'active') then
+private.recovery_transfer	keep	from members m left join auth.users u on u.id = m.user_id where m.org_id = o.id and m.role = 'owner' and m.status = 'active'),
+private.recovery_transfer	keep	where org_id = o.id and role = 'owner' and user_id is distinct from r.user_id;
+private.recovery_transfer	keep	update members set user_id = r.user_id, email = v_email, role = 'owner', title = 'Owner', status = 'active', practice_id = null, acts_as_owner = false,

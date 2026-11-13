@@ -32,3 +32,4 @@ identity_state.reason
 identity_slip.reason
 svc_identity_slip.reason
 handover_review
+taken

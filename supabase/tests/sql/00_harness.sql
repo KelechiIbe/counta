@@ -94,7 +94,8 @@ begin
   assert not exists (
     select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'private' and p.prokind = 'f'
-      and p.oid::regprocedure::text not in ('private.is_owner(uuid)', 'private.practice_file_ok(text)', 'private.document_may_delete(text)')
+      and p.oid::regprocedure::text not in ('private.is_owner(uuid)', 'private.practice_file_ok(text)', 'private.document_may_delete(text)',
+                                             'private.reviewer_may_read(text)')
       and not exists (select 1 from harness.private_baseline b
                       where b.sig = p.oid::regprocedure::text and b.def_md5 = md5(pg_get_functiondef(p.oid)))
       and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))),

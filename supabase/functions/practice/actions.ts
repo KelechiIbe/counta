@@ -13,7 +13,8 @@ import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { deriveMerge, type LetterBody, renderModel } from '../_shared/letter.ts';
 import { appendCompletion, pngDrawable, renderLetterPdf } from './pdf.ts';
 import { buildExport } from './export.ts';
-import { clientIp, dbFailure, pngFromDataUrl, refusedForSure, sha256Hex, tokenOk, userAgent, UserError } from './util.ts';
+import { clientIp, dbFailure, fileFromDataUrl, pngFromDataUrl, refusedForSure, sha256Hex, tokenOk, userAgent, UserError } from './util.ts';
+import { cacContacts, LookupError, lookupWith, ninDigits, ninLookup } from '../_shared/mono_lookup.ts';
 import { PDFDocument } from 'npm:pdf-lib@1.17.1';
 
 export type Deps = {
@@ -50,13 +51,20 @@ export const REASONS: Record<string, string> = {
   closed: 'Nothing more is needed on this link.',
   locked: 'Too many wrong codes were entered. Ask the firm to send the link again.',
   too_many_today: 'That is five codes today. Try again tomorrow.',
-  wrong_code: 'That code is not right. Check the latest email and try again.',
+  wrong_code: 'That code is not right. Check the latest code you were sent and try again.',
   code_expired: 'That code has expired or has been used already. Ask for a new code.',
   used_up: 'That code has been tried five times. Ask for a new code.',
   not_verified: 'Enter a new code: the last one was confirmed more than 15 minutes ago.',
   review: 'This confirmation is being checked by TaxStreem.',
   confirmed: 'This confirmation is done already.',
   declined: 'This request was declined.',
+  nin_first: 'Enter your NIN first.',
+  no_match: 'That NIN does not match a director on the company\'s CAC record. Check the 11 digits, or ask the firm which director should confirm.',
+  too_many_nin: 'That is three NIN checks today. Try again tomorrow.',
+  no_cac: 'The firm has not added the company\'s CAC record yet. Ask the firm to add it, then open the link again.',
+  nin_not_found: 'NIMC has no record of that NIN. Check the 11 digits.',
+  nin_failed: 'The NIN check did not go through just now. Try again in a minute.',
+  lookup_off: 'The NIN check is not switched on yet. Ask the firm about it.',
 };
 const refusal = (reason: unknown): Result => {
   const r = typeof reason === 'string' && reason ? reason : 'invalid';
@@ -354,10 +362,69 @@ async function directorCode(req: Request, b: Body, d: Deps): Promise<Result> {
   const r = await rpc(d.admin, 'svc_director_code', ask(req, token));
   return r?.ok ? r : refusal(r?.reason);
 }
+// The director's NIN: looked up at Mono (counted by the database first, three a day), the directors' contacts read from
+// the company's CAC record, and both handed to svc_director_identity, which matches the names and sends the code. Only
+// the names, the NIN's phone and its last four digits go on; the NIN is never stored or logged.
+async function directorNin(req: Request, b: Body, d: Deps): Promise<Result> {
+  const token = String(b.token ?? '');
+  if (!tokenOk(token, 'dc')) return refusal('invalid');
+  const nin = ninDigits(b.nin);
+  if (!nin) return { ok: false, reason: 'nin_shape', error: 'An NIN has 11 digits. Check it and try again.' };
+  const key = (await d.secret('MONO_LOOKUP_SECRET_KEY')) || (await d.secret('MONO_SECRET_KEY'));
+  if (!key) return refusal('lookup_off');
+  const begin = await rpc(d.admin, 'svc_director_nin_begin', ask(req, token));
+  if (!begin?.ok) return refusal(begin?.reason);
+  const lookup = lookupWith(d.fetch ?? fetch, d.monoUrl, key);
+  let person;
+  try {
+    person = await ninLookup(lookup, nin);
+  } catch (e) {
+    if (!(e instanceof LookupError)) throw e;
+    await noteLookup(d, e);
+    return refusal(/not found|no record|does not exist|invalid/i.test(e.reason) ? 'nin_not_found' : 'nin_failed');
+  }
+  if (!person.found) return refusal('nin_not_found');
+  const cac = await cacContacts(lookup, String(begin.cac_id), typeof begin.classification === 'string' ? begin.classification : null);
+  const r = await rpc(d.admin, 'svc_director_identity', { p_token: token, p_ip: clientIp(req), p_ua: userAgent(req),
+    p: { first: person.first, middle: person.middle, last: person.last, last4: nin.slice(-4), nin_phone: person.phone, cac } });
+  return r?.ok ? r : refusal(r?.reason);
+}
+// A lookup Mono did not answer properly, for TaxStreem's admin portal (no number longer than four digits). Best effort.
+async function noteLookup(d: Deps, e: LookupError) {
+  try {
+    await d.admin.rpc('svc_lookup_failure', { p: { kind: 'nin', outcome: 'failed', http_status: e.status, seconds: e.secs,
+      message: `Director's NIN: ${e.reason}`.replace(/\d{5,}/g, (x) => '•••' + x.slice(-4)).slice(0, 300) } });
+  } catch { /* a help, never a reason to fail */ }
+}
+// With no phone or email to send a code to, the director's NIN slip: stored write-once where the database says
+// (svc_director_slip_target), then handed to svc_director_slip for TaxStreem to check. A slip the database then refused
+// for certain is removed again.
+async function directorSlip(req: Request, b: Body, d: Deps): Promise<Result> {
+  const token = String(b.token ?? '');
+  if (!tokenOk(token, 'dc')) return refusal('invalid');
+  const file = fileFromDataUrl(String(b.file ?? ''));
+  if (!file) throw new UserError('Upload the NIN slip as a PDF or a photo (JPG, PNG or WebP) of at most 5 MB.');
+  const target = await rpc(d.admin, 'svc_director_slip_target', { p_token: token, p_ext: file.ext });
+  if (!target?.ok) return refusal(target?.reason);
+  const path = String(target.path || '');
+  await upload(d, path, file.bytes, file.type, 'The slip could not be stored. Try again.');
+  let r: any;
+  try {
+    r = await rpc(d.admin, 'svc_director_slip', { ...ask(req, token), p_path: path });
+  } catch (e) {
+    if (refusedForSure(e)) await remove(d, [path]);
+    throw e;
+  }
+  if (!r?.ok) {
+    await remove(d, [path]);
+    return refusal(r?.reason);
+  }
+  return r;
+}
 async function directorConfirm(req: Request, b: Body, d: Deps): Promise<Result> {
   const token = String(b.token ?? '');
   if (!tokenOk(token, 'dc')) return refusal('invalid');
-  if (!codeShape(b.code)) return { ok: false, reason: 'wrong_code', error: 'Enter the 6-digit code from the email.' };
+  if (!codeShape(b.code)) return { ok: false, reason: 'wrong_code', error: 'Enter the 6-digit code you were sent.' };
   const r = await rpc(d.admin, 'svc_director_confirm', { ...ask(req, token), p_code: String(b.code) });
   return r?.ok ? r : codeRefusal(r);
 }
@@ -374,7 +441,8 @@ async function directorDecline(req: Request, b: Body, d: Deps): Promise<Result> 
 // (Maps, so an action named after an object property, "constructor" say, is simply unknown.)
 const PUBLIC = new Map<string, (req: Request, b: Body, d: Deps) => Promise<Result>>([
   ['sign_open', signOpen], ['sign_code', signCode], ['sign_submit', signSubmit],
-  ['director_open', directorOpen], ['director_code', directorCode], ['director_confirm', directorConfirm], ['director_decline', directorDecline],
+  ['director_open', directorOpen], ['director_nin', directorNin], ['director_slip', directorSlip], ['director_code', directorCode],
+  ['director_confirm', directorConfirm], ['director_decline', directorDecline],
 ]);
 const SIGNED_IN = new Map<string, (req: Request, b: Body, d: Deps, sb: SupabaseClient, user: User) => Promise<Result>>([
   ['letter_freeze', letterFreeze], ['export', exportRecords], ['end_mandate', endMandate], ['unlink_feeds', unlinkFeeds],

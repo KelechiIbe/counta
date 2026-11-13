@@ -492,3 +492,112 @@ Deno.test('export_keeps_the_file_when_the_log_answer_is_lost', async () => {
   await assertRejects(() => buildExport(admin as unknown as SupabaseClient, b, new Date(Date.now() + 5000)), Error, 'not an export path');
   assertEquals(admin.removed.length, 1);
 });
+
+// Mono's NIN and CAC answers, by path; each call recorded (the NIN's body too, to show where it went and nowhere else).
+function monoFake(answers: Record<string, { status: number; body: unknown }>) {
+  const asked: { path: string; key: string | null; body: string | null }[] = [];
+  const f = (async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url).replace('https://mono.example.test', '');
+    asked.push({ path, key: new Headers(init?.headers).get('mono-sec-key'), body: typeof init?.body === 'string' ? init.body : null });
+    const a = answers[path] ?? { status: 404, body: { message: 'Not found' } };
+    return new Response(JSON.stringify(a.body), { status: a.status, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+  return { f, asked };
+}
+const NIN_OK = { status: 200, body: { status: 'successful', data: { firstname: 'ADA', middlename: 'GRACE', surname: 'OBI', telephoneno: '08031234567',
+  birthdate: '01-01-1980', photo: 'base64…', residence_address: '1 Home Street', nin: '12345678901' } } };
+const DIRECTORS = { status: 200, body: { data: [
+  { firstname: 'ADA', other_name: 'GRACE', surname: 'OBI', email: 'Ada.Obi@Director.example.test', phone_number: '+234 803 999 8888', identity_number: 'A123' },
+  { firstname: 'TUNDE', surname: 'BELLO', email: 'not an email', phone_number: '12' }] } };
+
+Deno.test('director_nin_looks_up_matches_and_keeps_nothing_else', async () => {
+  const admin = new Fake();
+  admin.rpcs.svc_director_nin_begin = () => ({ ok: true, cac_id: '7701', classification: 'COMPANY', tries_left: 2 });
+  admin.rpcs.svc_director_identity = () => ({ ok: true, step: 'code', route: 'code', sms: '+234 803 *** **67', email: 'a***@d***.test', matched: 'Ada Grace Obi' });
+  const m = monoFake({ '/v3/lookup/nin': NIN_OK, '/v3/lookup/cac/company/7701/directors': DIRECTORS });
+  const d = deps(admin, new Fake(), { fetch: m.f });
+  const r = await call(d, { action: 'director_nin', token: DC, nin: '123 4567 8901' });
+  assertEquals(r.body, { ok: true, step: 'code', route: 'code', sms: '+234 803 *** **67', email: 'a***@d***.test', matched: 'Ada Grace Obi' });
+  assertEquals(m.asked.map((a) => a.path), ['/v3/lookup/nin', '/v3/lookup/cac/company/7701/directors']);
+  assertEquals(m.asked[0].body, JSON.stringify({ nin: '12345678901' }));
+  assert(m.asked.every((a) => a.key === 'mono-test-key'));
+  const ident = admin.calls.find((c) => c.fn === 'svc_director_identity')!.args;
+  assertEquals(ident, { p_token: DC, p_ip: '203.0.113.9', p_ua: 'TestBrowser/1.0', p: { first: 'ADA', middle: 'GRACE', last: 'OBI', last4: '8901',
+    nin_phone: '08031234567', cac: [{ surname: 'OBI', given: 'ADA GRACE', email: 'ada.obi@director.example.test', phone: '08039998888' },
+      { surname: 'BELLO', given: 'TUNDE', email: null, phone: null }] } });
+  // The NIN itself, the photo, birth date and address go nowhere.
+  const sent = JSON.stringify(admin.calls);
+  assert(!sent.includes('12345678901') && !sent.includes('base64') && !sent.includes('1980') && !sent.includes('Home Street'));
+});
+
+Deno.test('director_nin_refusals', async () => {
+  const admin = new Fake();
+  const m = monoFake({});
+  const d = deps(admin, new Fake(), { fetch: m.f });
+  assertEquals((await call(d, { action: 'director_nin', token: DC, nin: '1234' })).body.reason, 'nin_shape');
+  assertEquals((await call(d, { action: 'director_nin', token: ES, nin: '12345678901' })).body.reason, 'invalid');
+  // No lookup key: the database is not asked, so no try is used.
+  const off = await call(deps(admin, new Fake(), { secret: async () => '' }), { action: 'director_nin', token: DC, nin: '12345678901' });
+  assertEquals(off.body.reason, 'lookup_off');
+  assertEquals(admin.calls.length, 0);
+  // Three a day: Mono is not asked.
+  admin.rpcs.svc_director_nin_begin = () => ({ ok: false, reason: 'too_many_nin' });
+  const many = await call(d, { action: 'director_nin', token: DC, nin: '12345678901' });
+  assertEquals([many.body.reason, many.body.error], ['too_many_nin', 'That is three NIN checks today. Try again tomorrow.']);
+  assertEquals(m.asked.length, 0);
+  // Not on NIMC's register: the CAC record is not read.
+  admin.rpcs.svc_director_nin_begin = () => ({ ok: true, cac_id: '7701', classification: 'COMPANY', tries_left: 1 });
+  assertEquals((await call(d, { action: 'director_nin', token: DC, nin: '12345678901' })).body.reason, 'nin_not_found');
+  assertEquals(m.asked.map((a) => a.path), ['/v3/lookup/nin']);
+  // Mono failing: noted for TaxStreem (last four digits at most), and the director told to try again.
+  const down = monoFake({ '/v3/lookup/nin': { status: 503, body: { message: 'Provider timed out for 12345678901' } } });
+  admin.rpcs.svc_lookup_failure = () => null;
+  const r = await call(deps(admin, new Fake(), { fetch: down.f }), { action: 'director_nin', token: DC, nin: '12345678901' });
+  assertEquals(r.body.reason, 'nin_failed');
+  const noted = admin.calls.find((c) => c.fn === 'svc_lookup_failure')!.args.p;
+  assertEquals([noted.kind, noted.outcome, noted.http_status], ['nin', 'failed', 503]);
+  assert(!JSON.stringify(noted).includes('12345678901') && JSON.stringify(noted).includes('8901'));
+  // No match on the record.
+  admin.rpcs.svc_director_identity = () => ({ ok: false, reason: 'no_match' });
+  const ok = monoFake({ '/v3/lookup/nin': NIN_OK });
+  const nm = await call(deps(admin, new Fake(), { fetch: ok.f }), { action: 'director_nin', token: DC, nin: '12345678901' });
+  assertMatch(String(nm.body.error), /does not match a director/);
+});
+
+Deno.test('director_nin_reads_a_business_names_proprietors', async () => {
+  const admin = new Fake();
+  admin.rpcs.svc_director_nin_begin = () => ({ ok: true, cac_id: '88', classification: 'BUSINESS_NAME', tries_left: 2 });
+  admin.rpcs.svc_director_identity = () => ({ ok: true, step: 'code' });
+  const m = monoFake({ '/v3/lookup/nin': NIN_OK, '/v3/lookup/cac/company/88': { status: 200, body: { data: [{ firstname: 'ADA', surname: 'OBI', phone_number: '08031110000' }] } } });
+  await call(deps(admin, new Fake(), { fetch: m.f }), { action: 'director_nin', token: DC, nin: '12345678901' });
+  assertEquals(m.asked.map((a) => a.path).sort(), ['/v3/lookup/cac/company/88', '/v3/lookup/cac/company/88/directors', '/v3/lookup/cac/company/88/psc', '/v3/lookup/nin']);
+  assertEquals(admin.calls.find((c) => c.fn === 'svc_director_identity')!.args.p.cac, [{ surname: 'OBI', given: 'ADA', email: null, phone: '08031110000' }]);
+});
+
+Deno.test('director_slip_stores_once_and_removes_a_refused_one', async () => {
+  const admin = new Fake();
+  const PDF = 'data:application/pdf;base64,' + btoa('%PDF-1.4 a NIN slip');
+  const path = `${ORG}/kyc/director-slip-77777777-7777-4777-8777-777777777777.pdf`;
+  admin.rpcs.svc_director_slip_target = (a) => a.p_ext === 'pdf' ? { ok: true, path } : { ok: false, reason: 'invalid' };
+  admin.rpcs.svc_director_slip = () => ({ ok: true, status: 'review' });
+  const d = deps(admin, new Fake());
+  assertMatch(String((await call(d, { action: 'director_slip', token: DC, file: 'data:text/html;base64,' + btoa('<html>') })).body.error), /PDF or a photo/);
+  assertMatch(String((await call(d, { action: 'director_slip', token: DC, file: 'data:application/pdf;base64,' + btoa('not a pdf at all') })).body.error), /PDF or a photo/);
+  assertEquals(admin.calls.length, 0);
+  const r = await call(d, { action: 'director_slip', token: DC, file: PDF });
+  assertEquals(r.body, { ok: true, status: 'review' });
+  assertEquals(admin.uploads, [{ path, upsert: false, contentType: 'application/pdf' }]);
+  assertEquals(admin.calls.map((c) => c.fn), ['svc_director_slip_target', 'svc_director_slip']);
+  assertEquals(admin.calls[1].args, { p_token: DC, p_ip: '203.0.113.9', p_ua: 'TestBrowser/1.0', p_path: path });
+  // Refused by the database: the file goes again.
+  const admin2 = new Fake();
+  admin2.rpcs.svc_director_slip_target = () => ({ ok: true, path });
+  admin2.rpcs.svc_director_slip = () => ({ ok: false, reason: 'nin_first' });
+  const r2 = await call(deps(admin2, new Fake()), { action: 'director_slip', token: DC, file: PDF });
+  assertEquals([r2.body.reason, admin2.removed], ['nin_first', [path]]);
+  // Not at the slip step: nothing stored.
+  const admin3 = new Fake();
+  admin3.rpcs.svc_director_slip_target = () => ({ ok: false, reason: 'nin_first' });
+  assertEquals((await call(deps(admin3, new Fake()), { action: 'director_slip', token: DC, file: PDF })).body.reason, 'nin_first');
+  assertEquals(admin3.uploads.length, 0);
+});

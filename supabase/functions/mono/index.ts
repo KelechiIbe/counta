@@ -16,6 +16,15 @@
 //                                                          and the last four digits are kept
 //   verify_tin { org_id, vendor_id? }                   -> the business's Tax ID (or a supplier's) checked with the NRS: found, and the
 //                                                          NRS name matches; the outcome goes on the business or the supplier
+//   intake_cac_search { practice_id, query }            -> a practice's intake: the business searched for on CAC (a partner or manager,
+//                                                          within their daily lookups). {lookup_id, candidates}
+//   intake_cac_select { practice_id, lookup_id, cac_id } -> one of those: its record and Tax ID kept with the search, and the intake's
+//                                                          fields from it (svc_practice_cac_record) for the person to save
+//   intake_nin { practice_id, intake_id, nin }          -> a person's NIN checked from the intake: the name NIMC holds and the last four
+//                                                          digits are kept with the intake
+//   recovery_nin { recovery_id, nin }                   -> a director recovering a business proves who they are: recovery_nin_begin (as
+//                                                          them), the NIN looked up and the directors' contacts read from the CAC record
+//                                                          (_shared/mono_lookup.ts), then svc_recovery_identity matches and sends the code
 // Mono:
 //   POST /mono/webhook                                  -> header mono-webhook-secret must equal MONO_WEBHOOK_SECRET
 // Database cron (header x-counta-hook: <PUSH_HOOK_SECRET>):
@@ -31,6 +40,7 @@
 // status, how long it took and its message, long numbers cut to their last four digits. TaxStreem's admin portal shows them.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { fetchStart, isDay, windows } from './history.ts';
+import { cacContacts, ninDigits, ninLookup } from '../_shared/mono_lookup.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -506,12 +516,9 @@ async function cacSearch(user: string, query: unknown, orgId: string | null) {
     ...(orgId ? { p_org: orgId } : {}) });
 }
 
-async function cacSelect(user: string, draft: any, cacId: unknown, orgId: string | null) {
-  const c = (draft?.search?.candidates || []).find((x: any) => String(x.id) === String(cacId ?? ''));
-  if (!c) throw new UserError('Search for the business again and pick it from the list.');
-  if (!(await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'profile' }))) {
-    throw new UserError('That is a lot of company lookups for one day. Type the business details in yourself, or try again tomorrow.');
-  }
+// The company record for a candidate from a search: its profile, people with significant control, secretary, and the
+// directors and shareholders from their own lookups when the profile leaves them out (contacts dropped).
+async function cacRecord(user: string, c: any) {
   const id = encodeURIComponent(String(c.id));
   const ctx: Ctx = { kind: 'cac_record', user };
   const soft = (p: Promise<LookupResult>) => p.then((r) => (r.status === 404 ? null : r.body)).catch(async (e) => { await noteFailed(ctx, e); return null; });
@@ -526,7 +533,7 @@ async function cacSelect(user: string, draft: any, cacId: unknown, orgId: string
     raw && Array.isArray(raw.directors) && raw.directors.length ? null : soft(lookup(`/v3/lookup/cac/company/${id}/directors`)),
     raw && Array.isArray(raw.shareholders) && raw.shareholders.length ? null : soft(lookup(`/v3/lookup/cac/company/${id}`)),
   ]);
-  const record = {
+  return {
     cac_id: c.id,
     profile: companyProfile(raw || {}, c, { directors: rows(directors), shareholders: rows(shareholders) }),
     psc: people(rows(psc)),
@@ -534,26 +541,136 @@ async function cacSelect(user: string, draft: any, cacId: unknown, orgId: string
     found_profile: Boolean(raw),
     at: new Date().toISOString(),
   };
+}
+
+// The Tax ID the NRS holds for an RC number, or null (with why, for the person) when it has none or did not answer.
+async function rcTax(user: string, rcNumber: unknown): Promise<{ tin: Record<string, unknown> | null; note: string | null }> {
+  const rcDigits = digits(rcNumber);
+  if (!rcDigits || !(await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'tin' }))) return { tin: null, note: null };
+  const tctx: Ctx = { kind: 'tin', user };
+  try {
+    const { status, body, secs } = await lookup('/v3/lookup/tin', { method: 'POST', body: JSON.stringify({ number: rcDigits, channel: 'cac' }) });
+    const t = status === 404 ? null : taxRecord(body);
+    if (t && (t.nrs_tin || t.firstin || t.jittin)) return { tin: t, note: null };
+    await noteLookup(tctx, 'no_record', status, `RC number ${rcDigits}: ${reasonOf(body, status === 404 ? 'Not found' : 'An empty record')}`, secs);
+    return { tin: null, note: 'The NRS did not return a Tax ID for this RC number.' };
+  } catch (e) {
+    await noteFailed(tctx, e);
+    return { tin: null, note: (e as Error).message };
+  }
+}
+
+async function cacSelect(user: string, draft: any, cacId: unknown, orgId: string | null) {
+  const c = (draft?.search?.candidates || []).find((x: any) => String(x.id) === String(cacId ?? ''));
+  if (!c) throw new UserError('Search for the business again and pick it from the list.');
+  if (!(await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'profile' }))) {
+    throw new UserError('That is a lot of company lookups for one day. Type the business details in yourself, or try again tomorrow.');
+  }
+  const record = await cacRecord(user, c);
   const forOrg = orgId ? { p_org: orgId } : {};
   let kyc = await svc('svc_kyc_store', { p_user: user, p_part: 'cac', p_data: record, ...forOrg });
-
   // The Tax ID the NRS holds for the RC number. A business name or a company the NRS does not know is not an error here.
-  let taxNote: string | null = null;
-  const rcDigits = digits(record.profile.rc_number);
-  if (rcDigits && await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'tin' })) {
-    const tctx: Ctx = { kind: 'tin', user };
-    try {
-      const { status, body, secs } = await lookup('/v3/lookup/tin', { method: 'POST', body: JSON.stringify({ number: rcDigits, channel: 'cac' }) });
-      const t = status === 404 ? null : taxRecord(body);
-      if (t && (t.nrs_tin || t.firstin || t.jittin)) kyc = await svc('svc_kyc_store', { p_user: user, p_part: 'tin', p_data: t, ...forOrg });
-      else {
-        taxNote = 'The NRS did not return a Tax ID for this RC number.';
-        await noteLookup(tctx, 'no_record', status, `RC number ${rcDigits}: ${reasonOf(body, status === 404 ? 'Not found' : 'An empty record')}`, secs);
-      }
-    } catch (e) { taxNote = (e as Error).message; await noteFailed(tctx, e); }
-  }
-  return { kyc, tax_note: taxNote };
+  const tax = await rcTax(user, record.profile.rc_number);
+  if (tax.tin) kyc = await svc('svc_kyc_store', { p_user: user, p_part: 'tin', p_data: tax.tin, ...forOrg });
+  return { kyc, tax_note: tax.note };
 }
+
+// ------------------------------------------------------------------ a practice's intake, and a director's recovery
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const idOf = (v: unknown, what: string) => {
+  const s = String(v ?? '');
+  if (!UUID_RE.test(s)) throw new UserError(`Choose the ${what}.`);
+  return s;
+};
+type Mine = <T = any>(fn: string, args: Record<string, unknown>) => Promise<T>;
+const TOO_MANY: Record<string, string> = {
+  search: 'That is a lot of searching for one day. Type the business details in yourself, or try again tomorrow.',
+  profile: 'That is a lot of company lookups for one day. Type the business details in yourself, or try again tomorrow.',
+  nin: 'That is enough NIN checks for today. Try again tomorrow.',
+};
+// A partner's or manager's lookup from the intake, counted against their own daily lookups.
+async function intakeTake(mine: Mine, practiceId: string, kind: 'search' | 'profile' | 'tin' | 'nin') {
+  if (!(await mine<boolean>('practice_lookup_take', { p_practice: practiceId, p_kind: kind }))) throw new UserError(TOO_MANY[kind] || TOO_MANY.profile);
+}
+
+async function intakeCacSearch(mine: Mine, user: string, body: any) {
+  const practiceId = idOf(body.practice_id, 'practice');
+  const q = String(body.query ?? '').replace(/\s+/g, ' ').trim();
+  if (q.length < 2 || q.length > 100) throw new UserError('Type at least two letters of the business name, or its RC number.');
+  await intakeTake(mine, practiceId, 'search');
+  const rc = q.match(/^(?:rc|bn|it)?\s*-?\s*(\d{3,9})$/i);
+  let res: LookupResult;
+  try { res = await lookup(`/v3/lookup/cac?${new URLSearchParams({ search: rc ? rc[1] : q })}`); }
+  catch (e) {
+    if (e instanceof LookupFailed) await noteLookup({ kind: 'cac_search', user }, 'failed', e.status, `Intake search for "${q.slice(0, 60)}": ${e.reason}`, e.secs);
+    throw e;
+  }
+  const found = res.status === 404 ? [] : rows(res.body).map(candidate).filter((c) => c.id !== null && c.name);
+  const want = q.toLowerCase();
+  found.sort((a: any, b: any) => (Number(b.name?.toLowerCase() === want || b.rc_number === rc?.[1]) - Number(a.name?.toLowerCase() === want || a.rc_number === rc?.[1]))
+    || (Number(b.active !== false) - Number(a.active !== false)));
+  return await svc('svc_practice_cac_search', { p_user: user, p_practice: practiceId, p_query: q, p_candidates: found.slice(0, 10) });
+}
+
+async function intakeCacSelect(mine: Mine, user: string, body: any) {
+  const practiceId = idOf(body.practice_id, 'practice'), lookupId = idOf(body.lookup_id, 'search');
+  // The candidate as the search found it (the database checks the person leads that practice).
+  const c = await svc<any>('svc_practice_cac_candidate', { p_user: user, p_lookup: lookupId, p_cac_id: String(body.cac_id ?? '') });
+  await intakeTake(mine, practiceId, 'profile');
+  const record = await cacRecord(user, c);
+  const tax = await rcTax(user, record.profile.rc_number);
+  const fields = await svc('svc_practice_cac_record', { p_user: user, p_lookup: lookupId, p_record: record, p_tin: tax.tin });
+  return { fields, tax_note: tax.note };
+}
+
+// A NIN looked up for the intake or a recovery: the names and phone (or a plain answer when NIMC has none or Mono failed).
+async function ninFor(ctx: Ctx, nin: string) {
+  try {
+    const p = await ninLookup(lookup, nin);
+    if (!p.found) throw new UserError('NIMC has no record of that NIN. Check the 11 digits.');
+    return p;
+  } catch (e) {
+    if (e instanceof UserError && !(e instanceof LookupFailed)) {
+      if (e.message.startsWith('NIMC')) await noteLookup(ctx, 'no_record', 404, 'No record', 0);
+      throw e;
+    }
+    const r = e as { status?: number | null; reason?: string; secs?: number };
+    const none = /not found|invalid|no record|does not exist/i.test(String(r.reason || ''));
+    await noteLookup(ctx, none ? 'no_record' : 'failed', r.status ?? null, String(r.reason || (e as Error).message), Number(r.secs || 0));
+    throw new UserError(none ? 'NIMC has no record of that NIN. Check the 11 digits.' : 'The NIN check did not go through just now. Try again in a minute.');
+  }
+}
+
+async function intakeNin(mine: Mine, user: string, body: any) {
+  const practiceId = idOf(body.practice_id, 'practice'), intakeId = idOf(body.intake_id, 'intake');
+  const nin = ninDigits(body.nin);
+  if (!nin) throw new UserError('An NIN has 11 digits. Check it and try again.');
+  if (!(await lookupKey())) throw new UserError('The NIN check is not switched on yet.');
+  await intakeTake(mine, practiceId, 'nin');
+  const p = await ninFor({ kind: 'nin', user }, nin);
+  return await svc('svc_practice_intake_nin', { p_user: user, p_intake: intakeId, p: { first: p.first, middle: p.middle, last: p.last, last4: nin.slice(-4) } });
+}
+
+async function recoveryNin(mine: Mine, user: string, body: any) {
+  const id = idOf(body.recovery_id, 'recovery');
+  const nin = ninDigits(body.nin);
+  if (!nin) throw new UserError('An NIN has 11 digits. Check it and try again.');
+  if (!(await lookupKey())) throw new UserError('The NIN check is not switched on yet. Ask TaxStreem\'s support for help.');
+  const begin = await mine<any>('recovery_nin_begin', { p_id: id });
+  if (!(await svc<boolean>('svc_kyc_take', { p_user: user, p_kind: 'nin' }))) throw new UserError(TOO_MANY.nin);
+  const p = await ninFor({ kind: 'nin', user }, nin);
+  const cac = await cacContacts(lookup, String(begin.cac_id), typeof begin.classification === 'string' ? begin.classification : null);
+  const r = await svc<any>('svc_recovery_identity', { p_user: user, p_id: id,
+    p: { first: p.first, middle: p.middle, last: p.last, last4: nin.slice(-4), nin_phone: p.phone, cac } });
+  if (r?.ok === false) throw new UserError(RECOVERY_REASONS[String(r.reason)] || 'Your identity could not be checked just now. Try again.');
+  return r;
+}
+const RECOVERY_REASONS: Record<string, string> = {
+  no_match: 'That NIN does not match a director on the company\'s CAC record. Check the 11 digits.',
+  too_many_today: 'That is five codes today. Try again tomorrow.',
+  locked: 'Too many wrong codes were entered. Ask TaxStreem\'s support for help.',
+  expired: 'Enter your NIN again.',
+};
 
 async function cacStatusReport(user: string, orgId: string, draft: any) {
   const cacId = draft?.business?.cac_id;
@@ -716,6 +833,10 @@ Deno.serve(async (req) => {
         return json({ ok: true, ...(await svc('svc_tin_number_result', { p_org: orgId, p: {
           check_id: target.check_id, found: Boolean(rec), nrs_tin: rec?.nrs_tin ?? null, taxpayer_name: rec?.taxpayer_name ?? null, name } })) });
       }
+      case 'intake_cac_search': return json({ ok: true, ...(await intakeCacSearch(mine, u.user.id, body)) });
+      case 'intake_cac_select': return json({ ok: true, ...(await intakeCacSelect(mine, u.user.id, body)) });
+      case 'intake_nin': return json({ ok: true, result: await intakeNin(mine, u.user.id, body) });
+      case 'recovery_nin': return json({ ok: true, ...(await recoveryNin(mine, u.user.id, body)) });
       case 'cac_status_report': {
         const orgId = String(body.org_id || '');
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgId)) throw new UserError('Choose the business first.');

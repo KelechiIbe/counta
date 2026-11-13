@@ -6,18 +6,22 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { cleanError, rpc } from '../../lib/supabase';
+import { cleanError, rpc, supabase } from '../../lib/supabase';
 import { when } from '../../lib/format';
 import { useToast } from '../../state/session';
 import { Icon } from '../../components/Icon';
 import { Alert, Spinner } from '../../components/ui';
 import { Card, PageHead } from '../ui';
-import { type AdminMandates, useAdminMandates } from '../api';
+import { type AdminMandates, skippedText, useAdminMandates } from '../api';
 
 const REVIEW_WHY: Record<string, string> = {
+  no_nin_phone: 'The NIN matched a director on the CAC record and the code was entered, but NIMC holds no phone for the NIN: the code went only to the CAC record\'s contacts.',
+  sms_not_ready: 'The NIN matched a director on the CAC record and the code was entered, but SMS is not set up (Keys and services, SMS): the code went by email only.',
+  no_channel: 'The NIN matched a director on the CAC record, but there was no phone or email to send a code to, so the director sent their NIN slip.',
   firm_ip: 'Answered from an address the firm\'s people signed in from in the last 30 days.',
   ip_unreadable: 'The address it was answered from could not be read.',
 };
+
 const FLAG: Record<AdminMandates['flags'][number]['kind'], [string, string]> = {
   duplicate_company: ['Company already on Counta', 't-red'], director_declined: ['Director declined', 't-amber'],
   director_review: ['Director confirmation to check', 't-blue'], handover: ['Handover to someone else', 't-amber'],
@@ -104,17 +108,38 @@ function DirectorReview({ r }: { r: AdminMandates['reviews'][number] }) {
       <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, fontSize: 14, lineHeight: 1.6 }}>
         <div>
           <div className="mini-label">The director</div>
-          <div>{r.director.name}</div>
-          <div className="faint" style={{ wordBreak: 'break-all' }}>{r.director.email}{r.director.phone ? ` · ${r.director.phone}` : ''}</div>
+          <div>{r.director.name}{r.director.matched_name && r.director.matched_name !== r.director.name ? <> (NIN matched {r.director.matched_name})</> : null}</div>
+          {r.director.nin_last4 && <div className="faint">NIN ending {r.director.nin_last4}</div>}
+          <div className="faint" style={{ wordBreak: 'break-all' }}>{[r.director.email, r.director.phone].filter(Boolean).join(' · ') || 'Link sent by the firm'}</div>
         </div>
         <div>
           <div className="mini-label">Why it is here</div>
           <div>{REVIEW_WHY[r.reason || ''] || 'Flagged for a check.'}</div>
+          {(r.director.sms || r.director.code_email) && <div className="faint">The code went to {[r.director.sms, r.director.code_email].filter(Boolean).join(' and ')}.</div>}
+          {skippedText(r.director.skipped) && <div className="faint">{skippedText(r.director.skipped)}.</div>}
           <div className="faint" style={{ wordBreak: 'break-all' }}>{r.ip || 'No address'}{r.ua ? ` · ${r.ua.slice(0, 90)}` : ''}</div>
         </div>
       </div>
+      {r.slip_path && <SlipButton path={r.slip_path} />}
       <Decide placeholder="Note (what you checked, e.g. called the director on the CAC phone number)" testid="director-note"
         actions={[{ label: 'Accept', tone: 'primary', run: decide(true), testid: 'director-approve' }, { label: 'Decline', tone: 'danger', run: decide(false), testid: 'director-decline' }]} />
+    </div>
+  );
+}
+
+// The director's NIN slip, opened for five minutes (reviewers read it while the confirmation is with them).
+function SlipButton({ path }: { path: string }) {
+  const [err, setErr] = useState<string | null>(null);
+  async function open() {
+    setErr(null);
+    const { data, error } = await supabase.storage.from('documents').createSignedUrl(path, 300);
+    if (error || !data?.signedUrl) { setErr(cleanError(error) || 'The slip could not be opened.'); return; }
+    window.open(data.signedUrl, '_blank', 'noopener');
+  }
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <button type="button" className="btn btn-secondary btn-sm" style={{ alignSelf: 'flex-start', minHeight: 40 }} onClick={open} data-testid="director-slip-open"><Icon name="file" size={14} />Open the NIN slip</button>
+      {err && <Alert kind="red" icon="alert"><span role="alert">{err}</span></Alert>}
     </div>
   );
 }
@@ -122,7 +147,7 @@ function DirectorReview({ r }: { r: AdminMandates['reviews'][number] }) {
 function detailLines(f: AdminMandates['flags'][number]): string[] {
   const x = f.detail || {};
   if (f.kind === 'duplicate_company' && x.source === 'owner') return [
-    `${x.email || 'Someone'} tried to set up this company as its owner${x.name ? ` (as ${x.name})` : ''}, matched on the ${x.matched_on === 'tax_id' ? 'Tax ID' : 'RC number'}. They were told to ask the firm to hand it over, and nothing was set up.`,
+    `${x.email || 'Someone'} tried to set up this company as its owner${x.name ? ` (as ${x.name})` : ''}, matched on the ${x.matched_on === 'tax_id' ? 'Tax ID' : 'RC number'}. They were told it is on Counta already and may recover it as a director, and nothing was set up.`,
   ];
   if (f.kind === 'duplicate_company') return [
     `Matched on the ${x.matched_on === 'tax_id' ? 'Tax ID' : 'RC number'}${f.intake?.rc_number ? ` (${f.intake.rc_number})` : f.intake?.tax_id ? ` (${f.intake.tax_id})` : ''}${x.source === 'cac' ? ', when the firm chose the CAC record' : ', at intake'}.`,

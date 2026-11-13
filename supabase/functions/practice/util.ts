@@ -77,6 +77,28 @@ export function pngFromDataUrl(s: string): Uint8Array | null {
   return bytes;
 }
 
+// An uploaded file sent as a data URL (a NIN slip): a PDF or a JPG, PNG or WebP picture of at most 5 MB, whose first bytes
+// are what its type says. Its bytes, type and extension, or null.
+const FILE_TYPES: Record<string, { ext: string; magic: (b: Uint8Array) => boolean }> = {
+  'application/pdf': { ext: 'pdf', magic: (b) => b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46 },
+  'image/jpeg': { ext: 'jpg', magic: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  'image/png': { ext: 'png', magic: (b) => PNG_SIGNATURE.every((v, i) => b[i] === v) },
+  'image/webp': { ext: 'webp', magic: (b) => String.fromCharCode(b[0], b[1], b[2], b[3]) === 'RIFF' && String.fromCharCode(b[8], b[9], b[10], b[11]) === 'WEBP' },
+};
+export const FILE_MAX = 5 * 1024 * 1024;
+export function fileFromDataUrl(s: string): { bytes: Uint8Array; type: string; ext: string } | null {
+  const m = typeof s === 'string' ? s.match(/^data:([a-z/]+);base64,([A-Za-z0-9+/]+={0,2})$/) : null;
+  if (!m) return null;
+  const kind = FILE_TYPES[m[1] === 'image/jpg' ? 'image/jpeg' : m[1]];
+  if (!kind || m[2].length > Math.ceil(FILE_MAX / 3) * 4) return null;
+  let bin: string;
+  try { bin = atob(m[2]); } catch { return null; }
+  if (bin.length < 12 || bin.length > FILE_MAX) return null;
+  const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+  if (!kind.magic(bytes)) return null;
+  return { bytes, type: m[1] === 'image/jpg' ? 'image/jpeg' : m[1], ext: kind.ext };
+}
+
 // Whether a stored file (a documents-bucket path) leaves in the business's export: anything under the business's own
 // folder, <org id>/..., except its kyc/ folder (CAC documents and NIN slips stay with the owner and never leave).
 export function exportable(path: string, orgId: string): boolean {

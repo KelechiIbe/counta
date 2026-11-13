@@ -20,13 +20,20 @@
 //                                                    if it changed since the firm signed, a signature page and completion
 //                                                    certificate added (pdf.ts), stored write-once as signature-<signer>.png
 //                                                    and final.pdf, svc_sign_complete. {status, doc_url}
-//   director_open { token }, director_code { token }, director_confirm { token, code }, director_decline { token, reason }
-//                                                 -> svc_director_open, _code, _confirm, _decline
+//   director_open { token }                       -> svc_director_open: who asks, for which business, and the step (nin, code, slip)
+//   director_nin { token, nin }                   -> svc_director_nin_begin (three a day), the NIN looked up at Mono and the
+//                                                    directors' contacts read from the CAC record (_shared/mono_lookup.ts),
+//                                                    then svc_director_identity: the code to the NIN's phone and the CAC email
+//   director_slip { token, file }                 -> with nothing to send a code to, the NIN slip (a PDF or picture data URL,
+//                                                    5 MB at most) stored write-once where svc_director_slip_target says, then
+//                                                    svc_director_slip: TaxStreem checks it
+//   director_code { token }, director_confirm { token, code }, director_decline { token, reason }
+//                                                 -> svc_director_code (the code again), _confirm, _decline
 // Public actions check the token's form first and send the caller's IP address and browser with every call; tokens are
 // never logged; answers carry Referrer-Policy: no-referrer.
 //
-// Secrets: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY; MONO_SECRET_KEY (Vault first, as the mono function
-// reads it). MONO_BASE_URL is for tests.
+// Secrets: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY; MONO_SECRET_KEY, and MONO_LOOKUP_SECRET_KEY when the
+// lookups sit on another Mono app (Vault first, as the mono function reads them). MONO_BASE_URL is for tests.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { handle } from './actions.ts';
 

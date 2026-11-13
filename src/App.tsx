@@ -65,6 +65,9 @@ const Referral = lazy(() => import('./pages/public/Referral'));
 const InvoicePortal = lazy(() => import('./pages/public/InvoicePortal'));
 const SignPage = lazy(() => import('./pages/public/Sign'));
 const DirectorConfirm = lazy(() => import('./pages/public/DirectorConfirm'));
+const RecoverStart = lazy(() => import('./pages/recover/Recover').then((m) => ({ default: m.RecoverStart })));
+const RecoverPage = lazy(() => import('./pages/recover/Recover').then((m) => ({ default: m.RecoverPage })));
+const RecoverAccept = lazy(() => import('./pages/recover/Recover').then((m) => ({ default: m.RecoverAccept })));
 
 function Loading() {
   return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><Spinner /></div>;
@@ -167,6 +170,9 @@ export default function App() {
       <Route path="/sign" element={<Suspense fallback={<Loading />}><SignPage /></Suspense>} />
       <Route path="/confirm/:token" element={<Suspense fallback={<Loading />}><DirectorConfirm /></Suspense>} />
       <Route path="/confirm" element={<Suspense fallback={<Loading />}><DirectorConfirm /></Suspense>} />
+      <Route path="/recover" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><RecoverStart /></Suspense></RequireAuth>} />
+      <Route path="/recover/accept/:token" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><RecoverAccept /></Suspense></RequireAuth>} />
+      <Route path="/recover/:id" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><RecoverPage /></Suspense></RequireAuth>} />
       <Route path="/sso" element={<Suspense fallback={<Loading />}><Sso /></Suspense>} />
       <Route path="/sla" element={<Suspense fallback={<Loading />}><LegalPage page="/sla" /></Suspense>} />
       <Route path="/developers" element={<Suspense fallback={<Loading />}><LegalPage page="/developers" /></Suspense>} />

@@ -2,7 +2,8 @@
 -- risk rating, a conflicts check with nothing found), an engagement letter for a full mandate signed by the firm and
 -- e-signed by the client through the link and the code, the partner's declaration of written authority, the gate, and the
 -- business set up with the firm acting as its owner. Counta stays silent to the client (an alert goes to the firm instead).
--- The business's identity is verified against its CAC record, a director confirms the wallets, and payments open. The firm
+-- The business's identity is verified against its CAC record, a director confirms the wallets with their NIN and a code
+-- to the NIN's phone, and payments open. The firm
 -- bills its fees from its own business on a schedule: the hourly tick issues the invoice, unbranded, and posts it as a
 -- bill in the client's books. Finally the business is handed to its owner. Only fake people (example.test addresses); the
 -- edge-function calls are only recorded in net._requests.
@@ -81,7 +82,7 @@ begin
   perform tests.as_postgres();
   assert (select for_business and status = 'draft' from kyc_profiles where org_id = o), 'e2e_full_mandate: the business''s own profile';
   update kyc_profiles set status = 'submitted', source = 'cac', submitted_at = now(),
-    cac = '{"profile": {"classification": "COMPANY", "rc_number": "RC 7654321", "directors": [{"firstname": "TUNDE", "surname": "BELLO"}]}}'
+    cac = '{"cac_id": 5151, "profile": {"classification": "COMPANY", "rc_number": "RC 7654321", "directors": [{"firstname": "TUNDE", "surname": "BELLO"}]}}'
   where org_id = o;
   perform tests.as_service();
   r := public.svc_identity_nin(partner, o, '1234', 'Tunde', null, 'Bello');
@@ -89,13 +90,18 @@ begin
   perform tests.as_postgres();
   assert not private.payments_open(o), 'e2e_full_mandate: still locked until a director confirms';
 
-  -- 6. The director confirms the wallets from their own email and connection: money opens.
+  -- 6. The director confirms the wallets: their NIN matches the director on the CAC record, and the code goes to the
+  -- NIN's phone (Termii is set up) and their CAC email. Money opens.
+  insert into vault.secrets (name, secret) values ('TERMII_API_KEY', 'test-termii-key'), ('TERMII_SENDER_ID', 'TaxStreem');
   perform tests.as_user(partner);
   dc := (public.practice_director_request(c, '{"name":"Tunde Bello","email":"tunde.bello@director.example.test"}')->>'id')::uuid;
   perform tests.as_service();
   tok := substring(public.svc_practice_mail('director_confirm', dc)->>'link' from 'dc_[0-9a-f]{48}$');
-  assert (public.svc_director_code(tok, '198.51.100.30', 'Director phone')->>'ok')::boolean, 'e2e_full_mandate: director''s code sent';
-  code := public.svc_practice_mail('director_code', dc)->>'code';
+  assert (public.svc_director_nin_begin(tok, '198.51.100.30', 'Director phone')->>'cac_id') = '5151', 'e2e_full_mandate: the NIN lookup''s turn';
+  r := public.svc_director_identity(tok, '{"first": "TUNDE", "last": "BELLO", "last4": "9876", "nin_phone": "0803 123 4567",
+    "cac": [{"surname": "BELLO", "given": "TUNDE", "email": "tunde.bello@director.example.test", "phone": null}]}', '198.51.100.30', 'Director phone');
+  assert (r->>'ok')::boolean and r->>'route' = 'code', format('e2e_full_mandate: director''s code sent, got %s', r);
+  code := public.svc_identity_mail('identity_code', (select check_id from practice_director_confirmations where id = dc))->>'code';
   r := public.svc_director_confirm(tok, code, '198.51.100.30', 'Director phone');
   assert r->>'status' = 'confirmed', format('e2e_full_mandate: director confirmed, got %s', r);
   perform tests.as_postgres();
