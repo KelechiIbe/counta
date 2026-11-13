@@ -131,7 +131,7 @@ end $$;
 -- The firm's addresses, whatever their case or spacing: its people's, its own, the mandate's alert address, and its
 -- people's linked WhatsApp numbers.
 do $$
-declare o uuid := tests.id('o'); c uuid := tests.id('c'); v_other uuid; v_off uuid;
+declare o uuid := tests.id('o'); c uuid := tests.id('c'); v_off uuid;
 begin
   insert into messages (org_id, channel, to_address, template, subject, params) values (o, 'email', ' Partner@Firm.Example.Test ', 'alert', 'Case', '{}');
   assert (select status = 'queued' and coalesce(params->>'readdressed', '') = '' from messages where org_id = o and subject = 'Case'),
@@ -150,7 +150,7 @@ begin
   v_off := tests.user('ob.former@firm.example.test', 'Femi Former');
   perform tests.practice_member(tests.id('pr'), v_off, 'staff');
   update practice_members set status = 'disabled' where user_id = v_off;
-  v_other := tests.practice(tests.id('stranger'), 'Elsewhere Partners', true);
+  perform tests.practice(tests.id('stranger'), 'Elsewhere Partners', true);
   assert not (private.firm_addresses(o) && array['ob.former@firm.example.test', 'ob.stranger@example.test']),
     'outbound_firm_address_case: not a disabled member or another practice''s';
   insert into messages (org_id, channel, to_address, template, subject, params) values (o, 'email', 'ob.former@firm.example.test', 'alert', 'Former', '{}');
