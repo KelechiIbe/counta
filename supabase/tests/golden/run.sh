@@ -10,7 +10,8 @@
 #   -- callers: owner admin accountant staff        (optional; defaults below)
 #   -- setup                                        (optional SQL run as postgres before the caller acts)
 #   -- exec                                         (optional statements run as the caller, one per line)
-#   -- call                                         (SELECTs run as the caller, one per line)
+#   -- call                                         (SELECTs run as the caller, one per line; golden.readback(sql)
+#                                                    reads back rows the call wrote, whatever the caller may see)
 # Callers: owner admin accountant staff partner platform (aal2) service anon, and definer:<caller> (the caller's claims
 # while staying postgres). Default: svc_* -> service; private.* -> definer:owner..staff; others -> owner admin accountant staff.
 set -euo pipefail
@@ -86,9 +87,17 @@ begin
 exception when others then
   return false;
 end $$;
+-- One physical line per result: a newline (or carriage return) inside an error message is written as \n (\r).
 create function golden.line(p_line text) returns text language sql immutable as $$
-  select case when golden.vacuous(p_line) then '0' else '1' end || coalesce(p_line, '<null>')
+  select case when golden.vacuous(p_line) then '0' else '1' end
+    || replace(replace(coalesce(p_line, '<null>'), E'\r', '\r'), E'\n', '\n')
 $$;
+-- Reads back what a call wrote, whatever the caller may see: a "-- call" line such as
+--   select golden.readback($r$select m.* from members m where m.org_id = tests.id('org') order by m.display_name$r$)
+create function golden.readback(p_sql text) returns setof jsonb language plpgsql security definer set search_path = public as $$
+begin
+  return query execute format('select to_jsonb(q) from (%s) q', regexp_replace(p_sql, ';\s*$', ''));
+end $$;
 grant usage on schema golden to anon, authenticated, service_role;
 grant execute on all functions in schema golden to anon, authenticated, service_role;
 select golden.seq_save('base');
@@ -96,7 +105,7 @@ SQL
 added_keys | pg -c "copy tests.golden_ignore (path) from stdin" >/dev/null
 
 # Turns one case file into the psql script that runs it. Every output line starts with one marker character:
-# '#' a caller heading, '0' a vacuous result, '1' any other result.
+# '#' a caller heading, '0' a vacuous result, '1' any other result; each result is one line (see golden.line).
 case_sql() {
   local file=$1 name=$2 default
   case "$name" in

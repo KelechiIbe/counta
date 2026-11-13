@@ -13,9 +13,11 @@ begin
   perform tests.remember('partner', tests.user('partner@example.test', 'Golden Partner'));
   perform tests.remember('platform', tests.admin_user('platform@example.test'));
 
-  -- The business and its team.
+  -- The business and its team. Its books start today, so no tax period has ended since they began: what Counta says is
+  -- due (CIT, VAT) is the same whatever the date of the run.
   v_org := tests.remember('org', tests.org(tests.id('owner'), 'Golden Foods Ltd'));
-  update orgs set phone = '+2348030000001', tin = '12345678-0001', rc_number = 'RC 123456', address = '1 Test Street, Lagos'
+  update orgs set phone = '+2348030000001', tin = '12345678-0001', rc_number = 'RC 123456', address = '1 Test Street, Lagos',
+    books_start = private.local_day(id, now())
   where id = v_org;
   update members set phone = '+2348030000001' where org_id = v_org and role = 'owner';
   perform tests.remember('m_owner', (select id from members where org_id = v_org and role = 'owner'));

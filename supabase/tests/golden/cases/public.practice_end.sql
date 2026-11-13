@@ -1,7 +1,7 @@
 -- The practice's lead or someone who manages the business's team ends the work; the practice's seats are switched off.
--- callers: definer:partner definer:owner definer:admin definer:accountant definer:staff
+-- callers: partner owner admin accountant staff
 -- call
 select public.practice_end(tests.id('client'))
-select display_name, role, status, practice_id is not null as practice_seat, p_keep_books, p_make_payments, p_manage_team from members where org_id = tests.id('org') order by display_name
-select status, ended_by is not null as ended_by from practice_clients where id = tests.id('client')
-select u.email, n.kind, n.title from notifications n join auth.users u on u.id = n.user_id order by u.email, n.kind, n.title
+select golden.readback($r$select m.* from members m where m.org_id = tests.id('org') order by m.display_name, m.email$r$)
+select golden.readback($r$select p.name as practice, c.status, c.initiated_by, c.via from practice_clients c join practices p on p.id = c.practice_id where c.org_id = tests.id('org') order by p.name, c.status$r$)
+select golden.readback($r$select u.email, n.kind, n.title from notifications n join auth.users u on u.id = n.user_id order by u.email, n.kind, n.title$r$)

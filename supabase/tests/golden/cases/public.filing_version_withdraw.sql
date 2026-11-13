@@ -1,6 +1,6 @@
 -- Withdrawing a practice's version tells the practice when the owner does it; withdrawing an accepted version tells
 -- the owner when someone else does.
--- callers: definer:owner definer:admin definer:accountant definer:staff definer:partner
+-- callers: owner admin accountant staff partner
 -- setup
 insert into filing_versions (org_id, kind, period, version, status, file_path, file_name, sha256, practice_id, practice_name, uploaded_member, uploader_name)
 values (tests.id('org'), 'vat', '2026-09', 1, 'review', tests.id('org')::text || '/tax/vat/2026-09/golden-v1.xlsx', 'golden-v1.xlsx', repeat('a', 64), tests.id('practice'), 'Golden Partners', tests.id('m_partner'), 'Golden Partner');
@@ -11,5 +11,5 @@ select tests.remember('version_wht', (select id from filing_versions where file_
 -- call
 select public.filing_version_withdraw(tests.id('version'), 'Golden reason one')->>'status'
 select public.filing_version_withdraw(tests.id('version_wht'), 'Golden reason two')->>'status'
-select file_name, status from filing_versions where org_id = tests.id('org') order by file_name
-select u.email, n.kind, n.title from notifications n join auth.users u on u.id = n.user_id order by u.email, n.kind, n.title
+select golden.readback($r$select file_name, status, withdrawn_reason from filing_versions where org_id = tests.id('org') order by file_name$r$)
+select golden.readback($r$select u.email, n.kind, n.title from notifications n join auth.users u on u.id = n.user_id order by u.email, n.kind, n.title$r$)

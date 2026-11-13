@@ -8,4 +8,4 @@ select private.practice_sync_seats(tests.id('client'))
 update practice_clients set status = 'ended', ended_at = now() where id = tests.id('client')
 select private.practice_sync_seats(tests.id('client'))
 -- call
-select display_name, role, status, practice_id is not null as practice_seat, p_keep_books, p_make_payments, p_manage_team from members where org_id = tests.id('org') order by display_name
+select golden.readback($r$select m.* from members m where m.org_id = tests.id('org') order by m.display_name, m.email$r$)
