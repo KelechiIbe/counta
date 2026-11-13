@@ -89,6 +89,10 @@ begin
     '%last 4 characters%');
   perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada Eze","role":"NIN 1234-5678-901"}]}')$q$, pr),
     '%last 4 characters%');
+  perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada Eze","nationality":"1234 5678 901"}]}')$q$, pr),
+    '%last 4 characters%');
+  perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"12345678901"}]}')$q$, pr),
+    '%last 4 characters%');
   perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada Eze","id_last4":"78901"}]}')$q$, pr),
     '%last 4 characters%');
   perform tests.throws(format($q$select public.practice_intake_save(%L, '{"legal_name":"X Ltd","people":[{"kind":"director","name":"Ada Eze","nin":"12345678901"}]}')$q$, pr),
@@ -105,7 +109,15 @@ begin
   perform tests.as_user(tests.id('partner'));
   assert tests.error_of(format($q$select public.practice_intake_save(%L, '{"legal_name":"Y Ltd","people":[{"kind":"director","name":"Ada Eze","id_type":"nin","id_last4":"8901"}]}')$q$, pr)) is null,
     'intake_rejects_full_id_numbers: last 4 accepted';
+  -- Years are not ID numbers.
+  assert tests.error_of(format($q$select public.practice_intake_save(%L, '{"legal_name":"W Ltd","people":[{"kind":"director","name":"Ada Eze","role":"Director 2019-2024"}]}')$q$, pr)) is null,
+    'intake_rejects_full_id_numbers: a range of years accepted';
   perform tests.as_postgres();
+  assert (select role = 'Director 2019-2024' from practice_intake_people p join practice_intakes x on x.id = p.intake_id where x.legal_name = 'W Ltd'),
+    'intake_rejects_full_id_numbers: the role kept';
+  assert private.has_id_number('12345678901') and private.has_id_number('NIN 1234 5678 901') and private.has_id_number('BVN 2234-5678-901')
+     and not private.has_id_number('Director 2019-2024') and not private.has_id_number('Director 2015 - 2019, 2020 - 2024') and private.has_id_number(null) is null,
+    'intake_rejects_full_id_numbers: NIN and BVN, not years';
   y := (select id from practice_intakes where legal_name = 'Y Ltd');
   assert (select count(*) = 1 and bool_and(p.id_type = 'nin' and p.id_last4 = '8901' and p.practice_id = pr) from practice_intake_people p where p.intake_id = y),
     'intake_rejects_full_id_numbers: last 4 kept';
@@ -495,6 +507,36 @@ begin
   assert (select retain_until = private.retain_date(null) and retain_until = (current_date + interval '5 years')::date from practice_intakes where id = u),
     'invite_needs_cleared_intake: kept five years after the end';
   assert (select count(*) = 1 and bool_and(name = 'Ife Adeyemi') from practice_intake_people where intake_id = u), 'invite_needs_cleared_intake: the people survive';
+  -- Nor is it sent out again.
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.practice_invite_client(%L, '{"email":"im.owner@example.test","intake_id":"%s"}')$q$, pr, u), '%kept as the record%');
+  perform tests.as_postgres();
+end $$;
+
+-- test: invitation_withdrawn_editable
+-- An invitation withdrawn (or declined by the owner) before anything was engaged leaves a draft the firm can change,
+-- check again and send again; nothing about it is dated for keeping.
+do $$
+declare pr uuid := tests.id('pr'); u uuid; c uuid; c2 uuid; r jsonb;
+begin
+  u := tests.cleared_intake(pr, 'Willow Crafts Ltd');
+  perform tests.as_user(tests.id('partner'));
+  c := public.practice_invite_client(pr, jsonb_build_object('email', 'wc.owner@example.test', 'intake_id', u));
+  perform tests.throws(format($q$select public.practice_intake_save(%L, jsonb_build_object('id', %L::uuid, 'legal_name', 'Willow Crafts Nigeria Ltd'))$q$, pr, u),
+    '%withdraw the invitation%');
+  perform public.practice_withdraw(c);
+  perform tests.as_postgres();
+  assert (select status = 'draft' and retain_until is null and client_id is null from practice_intakes where id = u)
+     and not private.intake_kept((select x from practice_intakes x where id = u)), 'invitation_withdrawn_editable: still a draft';
+  perform tests.as_user(tests.id('partner'));
+  r := public.practice_intake_save(pr, jsonb_build_object('id', u, 'legal_name', 'Willow Crafts Nigeria Ltd'));
+  assert r->>'conflict_status' = 'pending' and r->>'legal_name' = 'Willow Crafts Nigeria Ltd', 'invitation_withdrawn_editable: edited';
+  r := public.practice_conflict_run(u);
+  assert r->>'conflict_status' = 'none' and (r->>'cleared')::boolean, 'invitation_withdrawn_editable: checked again';
+  c2 := public.practice_invite_client(pr, jsonb_build_object('email', 'wc.owner@example.test', 'intake_id', u));
+  perform tests.as_postgres();
+  assert (select intake_id = u and status = 'invited' and business_name = 'Willow Crafts Nigeria Ltd' from practice_clients where id = c2)
+     and (select status = 'declined' from practice_clients where id = c), 'invitation_withdrawn_editable: invited again';
 end $$;
 
 -- test: invitation_holds_the_gate
@@ -537,6 +579,9 @@ begin
   assert (select status = 'declined' and conflict_status = 'refused' and retain_until = private.retain_date(5) and client_id is null and org_id is null
           from practice_intakes where id = u), 'invitation_holds_the_gate: intake stays declined with retain_until';
   assert not exists (select 1 from practice_clients where org_id = o), 'invitation_holds_the_gate: the business is not connected';
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.practice_invite_client(%L, '{"email":"rf.owner@example.test","intake_id":"%s"}')$q$, pr, u), '%due diligence%');
+  perform tests.as_postgres();
   -- A link only goes ahead on this practice's intake, and never on a declined one.
   perform tests.throws(format($q$insert into practice_clients (practice_id, org_id, status, initiated_by, intake_id) values (%L, %L, 'active', 'practice', %L)$q$, pr, o, u),
     '%not finished its checks%');

@@ -9,8 +9,8 @@
 --                               partner's declaration of the client's written authority (full mandate). Status draft;
 --                               engaged once the client link is active; declined when a partner refuses it.
 --   practice_intake_people      directors, beneficial owners and related people. An ID number only as its last 4
---                               characters: a longer run of digits (spaces and dashes aside) anywhere in a person's
---                               details is refused.
+--                               characters: an NIN or BVN (ten or more digits, spaces and dashes aside) anywhere in a
+--                               person's details is refused.
 --   practice_intake_docs        supporting documents in the documents bucket under practice/<pid>/intake/<iid>/.
 --   practice_opposing_parties   the other side of the firm's matters for its clients.
 --   practice_conflict_hits      what the last conflicts check found.
@@ -76,17 +76,17 @@ create index practice_intakes_created_by on public.practice_intakes(created_by);
 alter table public.practice_intakes enable row level security;
 revoke all on public.practice_intakes from anon, authenticated;
 
--- A run of five or more digits (spaces and dashes aside) in a name, role or nationality is an ID number pasted in the
--- wrong place.
+-- A run of ten or more digits (spaces and dashes aside) in a name, role or nationality is an NIN or BVN pasted in the
+-- wrong place; years and ranges of years ("Director 2019-2024") are not.
 create table public.practice_intake_people (
   id uuid primary key default gen_random_uuid(),
   intake_id uuid not null references public.practice_intakes(id) on delete cascade,
   practice_id uuid not null references public.practices(id) on delete cascade,
   kind text not null check (kind in ('director', 'beneficial_owner', 'related')),
-  name text not null check (length(trim(name)) between 2 and 120 and regexp_replace(name, '[[:space:]-]', '', 'g') !~ '[0-9]{5,}'),
-  role text check (length(role) <= 80 and regexp_replace(role, '[[:space:]-]', '', 'g') !~ '[0-9]{5,}'),
+  name text not null check (length(trim(name)) between 2 and 120 and regexp_replace(name, '[[:space:]-]', '', 'g') !~ '[0-9]{10,}'),
+  role text check (length(role) <= 80 and regexp_replace(role, '[[:space:]-]', '', 'g') !~ '[0-9]{10,}'),
   ownership_pct numeric(5,2) check (ownership_pct between 0 and 100),
-  nationality text check (length(nationality) <= 60 and regexp_replace(nationality, '[[:space:]-]', '', 'g') !~ '[0-9]{5,}'),
+  nationality text check (length(nationality) <= 60 and regexp_replace(nationality, '[[:space:]-]', '', 'g') !~ '[0-9]{10,}'),
   is_pep boolean not null default false,
   id_type text check (id_type in ('nin', 'bvn', 'passport', 'drivers_licence', 'voters_card', 'cac', 'other')),
   id_last4 text check (id_last4 ~ '^[A-Za-z0-9]{4}$'),
@@ -178,11 +178,12 @@ language sql immutable set search_path = '' as $$
   select nullif(regexp_replace(regexp_replace(upper(coalesce(p, '')), '[^A-Z0-9]', '', 'g'), '^(RC|BN|IT)', ''), '')
 $$;
 
--- Whether a text holds an ID number: five or more digits in a row once spaces and dashes are taken out, so
--- "1234 5678 901" and "1234-5678-901" count.
+-- Whether a text holds an ID number (an 11-digit NIN or BVN): ten or more digits in a row once spaces and dashes are taken
+-- out, so "12345678901", "1234 5678 901" and "1234-5678-901" count and "Director 2019-2024" does not. (The last-4 field
+-- takes four letters or digits and nothing else.)
 create or replace function private.has_id_number(p text) returns boolean
 language sql immutable set search_path = '' as $$
-  select regexp_replace(p, '[[:space:]-]', '', 'g') ~ '[0-9]{5,}'
+  select regexp_replace(p, '[[:space:]-]', '', 'g') ~ '[0-9]{10,}'
 $$;
 
 -- How alike two company names are (0 to 1), either way round, without accents. 1 when every word that tells one of them
@@ -236,7 +237,7 @@ language sql set search_path = public, private as $$
 $$;
 
 -- An intake kept as it is: the record of an engagement once its due diligence is done, or anything with a retention
--- date (the engagement ended, the invitation was withdrawn or declined). Changes then go on a new intake.
+-- date (the engagement ended, a partner refused it, or the business was deleted). Changes then go on a new intake.
 create or replace function private.intake_kept(i public.practice_intakes) returns boolean
 language sql immutable set search_path = public, private as $$
   select i.retain_until is not null or (i.status = 'engaged' and private.intake_cleared(i))
@@ -438,7 +439,9 @@ end $$;
 -- A client link that becomes active engages its intake, which must be this practice's and cleared (not declined, and
 -- not changed or found to conflict since) unless the link was engaged on it before: otherwise the link does not go ahead.
 -- A link with no intake gets a draft one.
--- A link that ends or is declined dates its intake's retention (never earlier than a date it already has).
+-- A link that ends dates the retention of the intake it engaged (never earlier than a date it already has). An invitation
+-- withdrawn or declined before anything was engaged leaves its intake as it was: a draft the firm can change, check again
+-- and send again (a partner's refusal of the intake is what keeps it).
 create or replace function private.practice_clients_intake() returns trigger
 language plpgsql security definer set search_path = public, private as $$
 declare x public.practice_intakes;
@@ -459,7 +462,7 @@ begin
     perform private.intake_settle(x.id);
   elsif new.status in ('ended', 'declined') and new.intake_id is not null then
     update practice_intakes set retain_until = greatest(retain_until, private.retain_date(new.retention_years)), updated_at = now()
-    where id = new.intake_id;
+    where id = new.intake_id and status = 'engaged';
   end if;
   return null;
 end $$;
@@ -799,8 +802,8 @@ end $$;
 -- 7. Inviting a business owner needs the due diligence done
 -- ---------------------------------------------------------------------------
 -- p: {email, name, business_name, services, billing, note, intake_id}: the practice asks a business owner to connect
--- their business, once its intake (involved) is cleared. The invitation carries the intake; the business name defaults
--- to the intake's.
+-- their business, once its intake (involved) is cleared and not kept as an engagement's record. The invitation carries
+-- the intake; the business name defaults to the intake's.
 create or replace function public.practice_invite_client(p_practice uuid, p jsonb) returns uuid
 language plpgsql security definer set search_path = public, private as $$
 declare m public.practice_members; i public.practice_intakes; v_email text := lower(trim(coalesce(p->>'email', ''))); v_id uuid; v_services text[];
@@ -810,6 +813,7 @@ begin
   if i.id is null or i.mode_requested <> 'involved' or i.status = 'declined' or not private.intake_cleared(i) then
     raise exception 'Finish the due diligence and conflicts check first.';
   end if;
+  if private.intake_kept(i) then raise exception 'This intake is kept as the record of the engagement. Start a new intake to invite the business.'; end if;
   if exists (select 1 from practice_clients where intake_id = i.id and status in ('invited', 'active')) then
     raise exception 'This business has been invited already.';
   end if;
