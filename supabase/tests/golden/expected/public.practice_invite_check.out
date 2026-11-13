@@ -1,0 +1,15 @@
+== partner
+[{"?column?": {"ok": true, "kind": "client"}}]
+ERROR 42501: Your role does not allow this (manage team).
+== owner
+ERROR 42501: You are not on this practice.
+[{"?column?": {"ok": true, "kind": "accountant"}}]
+== admin
+ERROR 42501: You are not on this practice.
+[{"?column?": {"ok": true, "kind": "accountant"}}]
+== accountant
+ERROR 42501: You are not on this practice.
+ERROR 42501: Your role does not allow this (manage team).
+== staff
+ERROR 42501: You are not on this practice.
+ERROR 42501: Your role does not allow this (manage team).

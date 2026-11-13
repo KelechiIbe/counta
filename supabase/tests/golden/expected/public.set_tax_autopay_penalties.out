@@ -1,0 +1,8 @@
+== owner
+[{"set_tax_autopay_penalties": {"autopay_penalties": false}}]
+== admin
+[{"set_tax_autopay_penalties": {"autopay_penalties": false}}]
+== accountant
+ERROR 42501: Only the owner changes this.
+== staff
+ERROR 42501: Only the owner changes this.

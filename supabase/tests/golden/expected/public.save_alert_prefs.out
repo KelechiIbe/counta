@@ -1,0 +1,12 @@
+== owner
+[{"save_alert_prefs": {"email": false, "platform": {"calls": {"hours": [9, 17]}, "confirm": {"email": true, "whatsapp": true, "message_days": [15, 19], "push_from_day": 10}, "invoices": {"push": true, "email": true, "whatsapp": true, "due_soon_days": 3, "digest_weekday": 1}, "tax_deadline": {"call": true, "push": true, "email": true, "whatsapp": true, "days_before": [7, 3, 1], "call_days_before": 1, "message_days_before": [3, 1]}, "customer_calls": {"enabled": true, "min_amount": 10000, "repeat_days": 7, "weekdays_only": true, "per_org_per_day": 5, "min_days_overdue": 7}}, "whatsapp": true, "owner_calls": true, "customer_calls": false}}]
+[{"alert_prefs": {"email": false}}]
+== admin
+[{"save_alert_prefs": {"email": false, "platform": {"calls": {"hours": [9, 17]}, "confirm": {"email": true, "whatsapp": true, "message_days": [15, 19], "push_from_day": 10}, "invoices": {"push": true, "email": true, "whatsapp": true, "due_soon_days": 3, "digest_weekday": 1}, "tax_deadline": {"call": true, "push": true, "email": true, "whatsapp": true, "days_before": [7, 3, 1], "call_days_before": 1, "message_days_before": [3, 1]}, "customer_calls": {"enabled": true, "min_amount": 10000, "repeat_days": 7, "weekdays_only": true, "per_org_per_day": 5, "min_days_overdue": 7}}, "whatsapp": true, "owner_calls": true, "customer_calls": false}}]
+[{"alert_prefs": {"email": false}}]
+== accountant
+ERROR 42501: Only the owner or someone who manages settings changes alerts.
+[{"alert_prefs": {}}]
+== staff
+ERROR 42501: Only the owner or someone who manages settings changes alerts.
+[{"alert_prefs": {}}]

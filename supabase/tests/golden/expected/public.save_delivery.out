@@ -1,0 +1,8 @@
+== owner
+[{"?column?": {"notes": null, "number": "DN-00001", "org_id": "<uuid>", "status": "pending", "address": null, "driver_id": null, "created_at": "<ts>", "created_by": "<uuid>", "proof_path": null, "received_by": null, "delivered_at": null, "contact_phone": "+2348030000002", "dispatched_at": null, "scheduled_for": null, "collect_agreed_by": "<uuid>", "collect_on_delivery": true, "vehicle_location_id": null}}]
+== admin
+[{"?column?": {"notes": null, "number": "DN-00001", "org_id": "<uuid>", "status": "pending", "address": null, "driver_id": null, "created_at": "<ts>", "created_by": "<uuid>", "proof_path": null, "received_by": null, "delivered_at": null, "contact_phone": "+2348030000002", "dispatched_at": null, "scheduled_for": null, "collect_agreed_by": "<uuid>", "collect_on_delivery": true, "vehicle_location_id": null}}]
+== accountant
+ERROR 42501: Your role does not allow this (record sales).
+== staff
+ERROR P0001: Only a manager can agree payment on delivery.

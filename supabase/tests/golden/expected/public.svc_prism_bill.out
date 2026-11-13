@@ -1,0 +1,5 @@
+== service
+[{"?column?": false}]
+[{"total": 1075.00, "created_by": null, "external_ref": "PR-GOLD-1"}]
+[{"name": "Golden Prism Vendor", "nin_recorded_by": "Golden Owner"}]
+[{"readback": {"kind": "bill", "email": "accountant@example.test", "title": "New bill from Prism: Golden Prism Vendor"}}, {"readback": {"kind": "bill", "email": "admin@example.test", "title": "New bill from Prism: Golden Prism Vendor"}}, {"readback": {"kind": "bill", "email": "owner@example.test", "title": "New bill from Prism: Golden Prism Vendor"}}, {"readback": {"kind": "bill", "email": "partner@example.test", "title": "New bill from Prism: Golden Prism Vendor"}}]

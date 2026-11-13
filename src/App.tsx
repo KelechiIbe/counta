@@ -43,6 +43,7 @@ const Customers = lazy(() => import('./pages/sell/Customers'));
 const Orders = lazy(() => import('./pages/sell/Orders'));
 const PriceLists = lazy(() => import('./pages/sell/PriceLists'));
 const Shop = lazy(() => import('./pages/sell/Shop'));
+const Recurring = lazy(() => import('./pages/sell/Recurring'));
 const Payments = lazy(() => import('./pages/payments/Payments'));
 const Bills = lazy(() => import('./pages/purchases/Bills'));
 const Vendors = lazy(() => import('./pages/purchases/Vendors'));
@@ -62,6 +63,8 @@ const Sso = lazy(() => import('./pages/public/Sso'));
 const LegalPage = lazy(() => import('./pages/public/Legal'));
 const Referral = lazy(() => import('./pages/public/Referral'));
 const InvoicePortal = lazy(() => import('./pages/public/InvoicePortal'));
+const SignPage = lazy(() => import('./pages/public/Sign'));
+const DirectorConfirm = lazy(() => import('./pages/public/DirectorConfirm'));
 
 function Loading() {
   return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><Spinner /></div>;
@@ -160,6 +163,10 @@ export default function App() {
       <Route path="/r/:code" element={<Suspense fallback={<Loading />}><Referral /></Suspense>} />
       <Route path="/shop/:slug" element={<Suspense fallback={<Loading />}><ShopPage /></Suspense>} />
       <Route path="/v/:token" element={<Suspense fallback={<Loading />}><InvoicePortal /></Suspense>} />
+      <Route path="/sign/:token" element={<Suspense fallback={<Loading />}><SignPage /></Suspense>} />
+      <Route path="/sign" element={<Suspense fallback={<Loading />}><SignPage /></Suspense>} />
+      <Route path="/confirm/:token" element={<Suspense fallback={<Loading />}><DirectorConfirm /></Suspense>} />
+      <Route path="/confirm" element={<Suspense fallback={<Loading />}><DirectorConfirm /></Suspense>} />
       <Route path="/sso" element={<Suspense fallback={<Loading />}><Sso /></Suspense>} />
       <Route path="/sla" element={<Suspense fallback={<Loading />}><LegalPage page="/sla" /></Suspense>} />
       <Route path="/developers" element={<Suspense fallback={<Loading />}><LegalPage page="/developers" /></Suspense>} />
@@ -174,6 +181,7 @@ export default function App() {
         <Route path="/sell/orders" element={<Orders />} />
         <Route path="/sell/price-lists" element={<PriceLists />} />
         <Route path="/sell/shop" element={<Shop />} />
+        <Route path="/sell/recurring" element={<Recurring />} />
         <Route path="/payments" element={<Payments />} />
         <Route path="/purchases/bills" element={<Bills />} />
         <Route path="/purchases/vendors" element={<Vendors />} />

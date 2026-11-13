@@ -1,0 +1,8 @@
+== definer:owner
+[{"doc_can": {"tax": true, "bank": true, "other": true, "sales": true, "company": true, "purchases": true, "accountant": true}}]
+== definer:admin
+[{"doc_can": {"tax": true, "bank": true, "other": true, "sales": true, "company": true, "purchases": true, "accountant": true}}]
+== definer:accountant
+[{"doc_can": {"tax": true, "bank": true, "other": true, "sales": true, "company": false, "purchases": true, "accountant": true}}]
+== definer:staff
+[{"doc_can": {"tax": false, "bank": false, "other": true, "sales": true, "company": false, "purchases": true, "accountant": false}}]

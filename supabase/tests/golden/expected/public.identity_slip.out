@@ -1,0 +1,8 @@
+== owner
+[{"identity_slip": {"at": null, "slip": {"at": "<ts>", "path": "<uuid>/kyc/nin-slip-golden.jpg", "read": false, "file_name": "nin-slip.jpg"}, "last4": null, "method": null, "people": [], "review": null, "status": "pending", "matched": null, "attempts": 0, "can_check": true, "registered": false, "matched_role": null, "payments_open": false}}]
+== admin
+ERROR 42501: Only the owner adds the NIN slip.
+== accountant
+ERROR 42501: Only the owner adds the NIN slip.
+== staff
+ERROR 42501: Only the owner adds the NIN slip.

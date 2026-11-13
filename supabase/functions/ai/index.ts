@@ -996,6 +996,12 @@ async function readNinSlip(sb: SupabaseClient, admin: SupabaseClient, body: any,
   const { data: st, error } = await sb.rpc('identity_state', { p_org: orgId });
   if (error) return json({ ok: false, error: error.message });
   if (!st?.can_check) return json({ ok: false, error: 'Only the owner adds the NIN slip.' });
+  // A handover TaxStreem has not approved: no slip counts until it has, so none is read (or paid for).
+  if (st?.handover_review) {
+    return json({ ok: false, reason: 'handover_review', error: st.status === 'rejected'
+      ? 'Payments are locked: TaxStreem did not accept the handover of the business. Contact TaxStreem about it.'
+      : 'Payments open once TaxStreem has checked the handover. This usually takes a working day.' });
+  }
   const path = String(st?.slip?.path || '');
   if (!path.startsWith(`${orgId}/kyc/nin-slip-`)) return json({ ok: false, error: 'Add the NIN slip first.' });
   const { data: allowed } = await admin.rpc('svc_kyc_take', { p_user: userId, p_kind: 'nin_slip' });

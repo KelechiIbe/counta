@@ -1,0 +1,8 @@
+== owner
+[{"update_payment_settings": {"payment_rail": "flutterwave", "payment_methods": ["account", "link", "qr"], "payout_approval_threshold": 50000.00}}]
+== admin
+ERROR 42501: Only the owner changes payment settings.
+== accountant
+ERROR 42501: Only the owner changes payment settings.
+== staff
+ERROR 42501: Only the owner changes payment settings.

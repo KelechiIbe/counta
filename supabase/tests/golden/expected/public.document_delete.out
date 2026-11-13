@@ -1,0 +1,8 @@
+== owner
+[{"?column?": "true"}]
+== admin
+[{"?column?": "true"}]
+== accountant
+ERROR 42501: Only the person who uploaded it, or the owner, takes it out.
+== staff
+ERROR 42501: Only the person who uploaded it, or the owner, takes it out.

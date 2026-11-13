@@ -1,6 +1,7 @@
-// The page the accountant portal's emails open: /practice/join?t=<token>. Three kinds of invitation share it: joining a
-// practice's team, a business owner connecting a business to a practice, and an accountant taking on a business that
-// asked for them. Each says what it is before anyone signs in.
+// The page the accountant portal's emails open: /practice/join?t=<token>. Four kinds of invitation share it: joining a
+// practice's team, a business owner connecting a business to a practice, an accountant taking on a business that asked
+// for them, and the owner-to-be taking over a business the firm ran under full mandate (a ph_ link). Each says what it is
+// before anyone signs in.
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,7 +13,7 @@ import { BrandSide } from '../pages/auth/Auth';
 import { ROLE_WORD, savePractice, servicesText, usePracticesMine } from './api';
 
 type Preview = {
-  kind?: 'member' | 'client' | 'accountant'; status: 'open' | 'used' | 'expired' | 'invalid'; practice?: string; practice_verified?: boolean; business?: string | null;
+  kind?: 'member' | 'client' | 'accountant' | 'handover'; status: 'open' | 'used' | 'expired' | 'invalid'; practice?: string; practice_verified?: boolean; business?: string | null;
   email?: string; name?: string; role?: 'partner' | 'manager' | 'staff'; services?: string[]; billing?: string; note?: string | null;
   partners?: { name: string; licence: string }[];
 };
@@ -20,7 +21,7 @@ type Preview = {
 export default function PracticeJoin() {
   const [params] = useSearchParams();
   const token = (params.get('t') || '').trim().toLowerCase();
-  const valid = /^p[mc]_[0-9a-f]{48}$/.test(token);
+  const valid = /^p[mch]_[0-9a-f]{48}$/.test(token);
   const { session, ready, memberships, refreshMemberships, setOrgId, signOut } = useSession();
   const qc = useQueryClient();
   const nav = useNavigate();
@@ -48,6 +49,17 @@ export default function PracticeJoin() {
       nav('/settings#accountant', { replace: true });
     } catch (e) { setErr(cleanError(e)); setBusy(false); }
   }
+  // The person the firm named takes the business over: its owner from now on, with the firm as its accountant.
+  async function takeOver() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await rpc<{ org_id: string }>('practice_handover_accept', { p_token: token });
+      qc.clear();
+      await refreshMemberships().catch(() => []);
+      setOrgId(r.org_id);
+      nav('/home', { replace: true });
+    } catch (e) { setErr(cleanError(e)); setBusy(false); }
+  }
   async function decline() {
     setBusy(true); setErr(null);
     try { await rpc('practice_decline', { p_token: token }); await preview.refetch(); } catch (e) { setErr(cleanError(e)); }
@@ -55,10 +67,11 @@ export default function PracticeJoin() {
   }
 
   const title = !p || p.status !== 'open' ? 'Your invitation'
-    : p.kind === 'member' ? `Join ${p.practice}` : p.kind === 'client' ? `Work with ${p.practice}` : `Be ${p.business}'s accountant`;
+    : p.kind === 'member' ? `Join ${p.practice}` : p.kind === 'client' ? `Work with ${p.practice}` : p.kind === 'handover' ? `Take over ${p.business}` : `Be ${p.business}'s accountant`;
   let lead = '';
   if (p?.status === 'open') {
     lead = p.kind === 'member' ? `${p.practice} has added you to its accountant portal as ${p.role === 'staff' ? 'a member of staff' : `a ${ROLE_WORD[p.role || 'staff'].toLowerCase()}`}.`
+      : p.kind === 'handover' ? `${p.practice} has run ${p.business} on Counta for you. Accept to become its owner; ${p.practice} keeps an accountant's place.`
       : p.kind === 'client' ? `${p.practice} would like to keep your books and handle your tax in Counta${p.services?.length ? `: ${servicesText(p.services)}` : ''}. Their accountants get an Accountant's place in the business you choose, and never move money. You can end it at any time.`
       : `${p.business} has invited you to look after its books and tax in Counta's accountant portal${p.services?.length ? `: ${servicesText(p.services)}` : ''}.`;
   }
@@ -85,6 +98,20 @@ export default function PracticeJoin() {
       <>
         <Alert kind="amber" icon="alert">You are signed in as {session.user.email}. This invitation is for {p.email}. Sign out, then open the link again and sign in with that address.</Alert>
         <button className="btn btn-secondary btn-block" onClick={async () => { await signOut(); qc.clear(); }}>Sign out</button>
+      </>
+    );
+  } else if (p.kind === 'handover') {
+    body = (
+      <>
+        <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
+          You see everything the firm did in the business under Settings, Your accountant. If you are not the director who confirmed its wallets, TaxStreem checks the
+          handover before payments open again; the books work meanwhile.
+        </div>
+        {err && <Alert kind="red" icon="alert">{err}</Alert>}
+        <button className="btn btn-primary btn-block" disabled={busy} onClick={takeOver} style={{ padding: '12px 16px' }} data-testid="handover-accept">
+          {busy ? <Spinner small /> : <Icon name="check" size={16} color="#fff" />}Take over {p.business}
+        </button>
+        <div className="faint" style={{ fontSize: 12 }}>Not expecting this? Do nothing, and ask {p.practice} about it.</div>
       </>
     );
   } else if (p.kind === 'client' && !owned.length) {

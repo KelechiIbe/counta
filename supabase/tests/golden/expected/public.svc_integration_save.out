@@ -1,0 +1,4 @@
+== service
+[{"?column?": "Owner Slack"}]
+[{"?column?": "Admin Slack"}]
+ERROR P0001: Only the owner or someone who manages settings connects tools.

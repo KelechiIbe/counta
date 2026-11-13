@@ -1,0 +1,10 @@
+== platform
+[{"admin_businesses": {"rows": [{"id": "<uuid>", "name": "Golden Foods Ltd", "owner": {"name": "Golden Owner", "email": "owner@example.test"}, "paused": [], "people": 5, "industry": "retail", "offering": null, "is_sample": false, "rc_number": "RC 123456", "created_at": "<ts>", "last_activity": "<ts>", "identity_status": "not_required"}], "total": 1}}]
+== owner
+ERROR 42501: This is only for TaxStreem's admins.
+== admin
+ERROR 42501: This is only for TaxStreem's admins.
+== accountant
+ERROR 42501: This is only for TaxStreem's admins.
+== staff
+ERROR 42501: This is only for TaxStreem's admins.

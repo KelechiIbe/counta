@@ -1,0 +1,4 @@
+== definer:owner
+[{"pit_pay_remind": 2}]
+[{"status": "queued", "channel": "email", "template": "alert", "to_address": "admin@example.test"}, {"status": "queued", "channel": "email", "template": "alert", "to_address": "owner@example.test"}]
+[{"kind": "books", "email": "admin@example.test"}, {"kind": "books", "email": "owner@example.test"}]

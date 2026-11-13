@@ -1,0 +1,3 @@
+== definer:owner
+[{"match_bank_line": "pending_payment"}]
+[{"status": "confirmed", "posted_by": "Golden Owner"}]

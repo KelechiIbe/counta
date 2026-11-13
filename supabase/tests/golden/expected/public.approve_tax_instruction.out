@@ -1,0 +1,8 @@
+== owner
+ERROR P0001: The tax wallet can pay ₦0.00; ₦7,500.00 is due. Top it up first.
+== admin
+ERROR P0001: The tax wallet can pay ₦0.00; ₦7,500.00 is due. Top it up first.
+== accountant
+ERROR 42501: Your role does not allow this (make payments).
+== staff
+ERROR 42501: Your role does not allow this (make payments).

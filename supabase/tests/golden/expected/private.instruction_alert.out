@@ -1,0 +1,4 @@
+== definer:owner
+[{"instruction_alert": ""}]
+[{"status": "queued", "channel": "email", "greeting": null, "template": "alert", "to_address": "owner@example.test", "wa_template": null}, {"status": "queued", "channel": "whatsapp", "greeting": "Golden", "template": "alert", "to_address": "+2348030000001", "wa_template": "counta_tax_deadline"}]
+[{"kind": "tax_payment", "email": "admin@example.test"}, {"kind": "tax_payment", "email": "owner@example.test"}]

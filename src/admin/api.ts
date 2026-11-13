@@ -8,6 +8,21 @@ export type AdminMe = { admin: boolean; reviewer: boolean; staff: boolean; aal2:
 export const useAdminMe = (enabled = true) =>
   useQuery({ queryKey: ['admin-me'], enabled, staleTime: 60_000, queryFn: () => rpc<AdminMe>('admin_me').catch(() => ({ admin: false, reviewer: false, staff: false, aal2: false })) });
 
+// Full mandates (admin_mandates): director confirmations TaxStreem checks before payments open, the practices that may
+// run or run full mandates (an admin pauses them), the open flags (a company already on Counta, a director who declined, a
+// handover to someone other than the confirmed director), and the extra free-mail domains.
+export type AdminMandates = {
+  reviews: { id: string; status: string; created_at: string; practice: { id: string; name: string }; business: { client_id: string; org_id: string; name: string };
+    director: { name: string; email: string; phone: string | null }; ip: string | null; ua: string | null; reason: string | null }[];
+  practices: { id: string; name: string; full_clients: number; suspended_at: string | null; partner_verified: boolean }[];
+  flags: { id: string; kind: 'duplicate_company' | 'director_declined' | 'director_review' | 'handover'; detail: Record<string, any>; created_at: string;
+    practice: { id: string; name: string }; intake: { id: string; legal_name: string; rc_number: string | null; tax_id: string | null } | null;
+    business: { client_id: string; org_id: string; name: string } | null;
+    identity: { status: string; pending: boolean; status_before: string | null } | null }[];
+  settings: { free_mail_domains: string[] };
+};
+export const useAdminMandates = () => useQuery({ queryKey: ['admin-mandates'], queryFn: () => rpc<AdminMandates>('admin_mandates') });
+
 export type KeyRow = {
   name: string; group: string; label: string; secret: boolean; hint: string | null; set: boolean; shown: string | null; set_at: string | null; set_by: string | null;
   env: boolean;

@@ -1,0 +1,8 @@
+== owner
+[{"get_attention": {"cit": 0, "vat": 0, "wht": 0, "tax_id": 1, "proposals": 0, "bank_lines": 0, "tax_wallet": 0, "receipts_vat": 0, "bills_overdue": 0, "schedules_draft": 0, "invoices_overdue": 0, "orders_to_confirm": 0, "accountant_requests": 1, "payments_to_confirm": 0}}]
+== admin
+[{"get_attention": {"cit": 0, "vat": 0, "wht": 0, "tax_id": 1, "proposals": 0, "bank_lines": 0, "tax_wallet": 0, "receipts_vat": 0, "bills_overdue": 0, "schedules_draft": 0, "invoices_overdue": 0, "orders_to_confirm": 0, "accountant_requests": 1, "payments_to_confirm": 0}}]
+== accountant
+[{"get_attention": {"cit": 0, "vat": 0, "wht": 0, "tax_id": 0, "proposals": 0, "bank_lines": 0, "tax_wallet": 0, "receipts_vat": 0, "bills_overdue": 0, "schedules_draft": 0, "invoices_overdue": 0, "orders_to_confirm": 0, "accountant_requests": 0, "payments_to_confirm": 0}}]
+== staff
+[{"get_attention": {"cit": 0, "vat": 0, "wht": 0, "tax_id": 0, "proposals": 0, "bank_lines": 0, "tax_wallet": 0, "receipts_vat": 0, "bills_overdue": 0, "schedules_draft": 0, "invoices_overdue": 0, "orders_to_confirm": 0, "accountant_requests": 0, "payments_to_confirm": 0}}]

@@ -1,0 +1,158 @@
+# Every owner comparison in a public or private function: <schema.function> TAB <category> TAB <the line holding it>.
+# Categories: perm_of, acts_as_owner, org_contact (swept onto the resolver; the line as it read before), keep (left as it is).
+# `bash supabase/tests/golden/run.sh sweep` checks that every comparison in the latest definitions is listed here as keep,
+# apart from one that already counts acting owners (immediately followed by `or [alias.]acts_as_owner`).
+private.is_owner	acts_as_owner	where m.org_id = p_org and m.user_id = auth.uid() and m.status = 'active' and m.role = 'owner')
+private.acts_as_owner	keep	where m.org_id = p_org and m.user_id = p_user and m.status = 'active' and (m.role = 'owner' or m.acts_as_owner))
+private.alert_send	org_contact	select * into ow from members where org_id = p_org and role = 'owner' and status = 'active' order by created_at limit 1;
+private.alert_send	keep	for m in select * from members where org_id = p_org and status = 'active' and user_id is not null order by role = 'owner' desc, created_at loop
+private.alerts_tick	org_contact	for o in select x.* from orgs x where exists (select 1 from members m where m.org_id = x.id and m.role = 'owner' and m.status = 'active') loop
+private.alerts_tick	org_contact	select * into ow from members where org_id = o.id and role = 'owner' and status = 'active' order by created_at limit 1;
+private.bulk_check	perm_of	'needs_approval', o.payout_approval_threshold > 0 and v_total >= o.payout_approval_threshold and m.role <> 'owner',
+private.business_purge_plan	keep	when accountant then 'In an accountant practice' end) order by (role = 'owner') desc, name), '[]'::jsonb),
+private.chat_context	perm_of	'perms', case when mb.role = 'owner' then private.role_template('owner') else private.member_perms(mb) end,
+private.check_grantable	perm_of	if m.role = 'owner' then return; end if;
+private.check_split	keep	if p_role not in ('owner', 'admin') and coalesce((p->>'record_sales')::boolean, false)
+private.create_payout	perm_of	v_status := case when o.payout_approval_threshold > 0 and v_amt >= o.payout_approval_threshold and m.role <> 'owner' then 'pending_approval' else 'approved' end;
+private.doc_can	perm_of	'company', m.role = 'owner' or private.perm_of(m, 'manage_settings'),
+private.doc_rows	perm_of	if m.role = 'owner' and p_undated then
+private.document_may_delete	perm_of	where d.path = p_path and d.source = 'upload' and (d.uploaded_by = mm.id or mm.role = 'owner'))
+private.einvoice_issue_held	org_contact	if m.id is null then select * into m from members where org_id = s.org_id and role = 'owner' order by created_at limit 1; end if;
+private.einvoice_issue_held	keep	if m.id is null then select * into m from members where org_id = s.org_id and (role = 'owner' or id = (private.org_contact(s.org_id)).id) order by created_at limit 1; end if;
+private.enforce_plan	keep	if new.role <> 'owner' and new.status in ('active', 'invited') then perform private.check_quota(new.org_id, 'users'); end if;
+private.instruction_alert	org_contact	select * into ow from members where org_id = i.org_id and role = 'owner' and status = 'active' order by created_at limit 1;
+private.instruction_block	org_contact	if not exists (select 1 from members where org_id = i.org_id and role = 'owner' and status = 'active') then return 'The business has no owner to pay it for.'; end if;
+private.match_bank_line	org_contact	select * into m from members where org_id = bl.org_id and role = 'owner' and status = 'active' order by created_at limit 1;
+private.mfa_required	perm_of	where m.user_id = p_user and m.status = 'active' and (m.role = 'owner' or coalesce(m.p_manage_settings, false)))
+private.migration_member	perm_of	if not (m.role = 'owner' or private.perm_of(m, 'keep_books')) then
+private.notify_perm	perm_of	and (p_location is null or m.location_id is null or m.location_id = p_location or m.role = 'owner') then
+private.org_contact	keep	select * into c from members where org_id = p_org and role = 'owner' and status = 'active' order by created_at limit 1;
+private.partner_referral_start	keep	where m.org_id = c.org_id and m.role = 'owner' and m.user_id is not null and pm.practice_id = c.practice_id and pm.status = 'active');
+private.perm_of	keep	when m.role = 'owner' or m.acts_as_owner then true
+private.pit_access	perm_of	'me', v_me, 'owner', m.role = 'owner');
+private.pit_pay_remind	org_contact	where mb.org_id = y.org_id and mb.status = 'active' and (mb.id = v_asker or mb.role = 'owner')
+private.plan_spot_checks	keep	order by (mb.user_id is null), (mb.role = 'owner'),
+private.pos_owner_member	org_contact	select * from members where org_id = p_org and role = 'owner' and status = 'active' order by created_at limit 1
+private.pos_require_manager	perm_of	if not (m.role = 'owner' or coalesce(private.perm_of(m, 'manage_settings'), false)) then
+private.pos_require_owner	perm_of	if m.role <> 'owner' then raise exception 'Only the owner connects a POS provider or changes its key.' using errcode = '42501'; end if;
+private.practice_sync_seats	keep	where org_id = c.org_id and practice_id = c.practice_id and (status <> 'disabled' or acts_as_owner) and role <> 'owner'
+private.practice_sync_seats	keep	elsif ex.role <> 'owner' and (ex.practice_id = c.practice_id or (ex.practice_id is null and (ex.role = 'accountant' or ex.user_id is null))) then
+private.prism_owner	org_contact	select * from public.members where org_id = p_org and role = 'owner' and status <> 'disabled' order by (status = 'active') desc, created_at limit 1
+private.prism_owner	keep	select * from public.members where org_id = p_org and (role = 'owner' or id = (private.org_contact(p_org)).id) and status <> 'disabled' order by (status = 'active') desc, created_at limit 1
+private.role_perms	keep	select case when p_role = 'owner' then private.role_template('owner')
+private.si_apply	org_contact	if m.id is null then select * into m from members where org_id = si.org_id and role = 'owner' and status = 'active' order by created_at limit 1; end if;
+private.user_org	keep	select org_id from members where user_id = p_user order by (role = 'owner') desc, created_at limit 1
+private.vat_threshold_tick	org_contact	perform private.notify(o.id, (select user_id from members where org_id = o.id and role = 'owner' and status = 'active' order by created_at limit 1), 'tax',
+public.admin_business	keep	select user_id into v_owner from members where org_id = p_org and role = 'owner' order by created_at limit 1;
+public.admin_business	keep	'email', coalesce(mb.email, u.email), 'joined', mb.created_at, 'last_sign_in', u.last_sign_in_at) order by mb.role = 'owner' desc, mb.created_at), '[]'::jsonb)
+public.admin_businesses	keep	where mb.org_id = b.id and mb.role = 'owner' order by mb.created_at limit 1),
+public.approve_payout	perm_of	if po.requested_by = m.id and m.role <> 'owner' then raise exception 'Someone other than the person who asked must approve it.'; end if;
+public.approve_payout_batch	perm_of	if pb.requested_by = m.id and m.role <> 'owner' then raise exception 'Someone other than the person who asked must approve it.'; end if;
+public.approve_tax_instruction	perm_of	if not (m.role = 'owner' or private.perm_of(m, 'approve_payments')) then
+public.bujeti_overview	perm_of	if not (m.role = 'owner' or private.perm_of(m, 'keep_books') or private.perm_of(m, 'manage_settings')) then
+public.bujeti_overview	perm_of	'can_map', m.role = 'owner' or private.perm_of(m, 'keep_books'),
+public.bujeti_overview	perm_of	'accounts', case when m.role = 'owner' or private.perm_of(m, 'keep_books') then private.bujeti_accounts(p_org) else '[]'::jsonb end);
+public.cit_pack	perm_of	and private.perm_of(m, 'keep_books') and (m.role = 'owner' or private.perm_of(m, 'approve_adjustments')));
+public.cit_year	perm_of	'can_approve', private.perm_of(m, 'keep_books') and (m.role = 'owner' or private.perm_of(m, 'approve_adjustments')),
+public.close_books	perm_of	if m.role <> 'owner' then raise exception 'Only the owner closes the books.' using errcode = '42501'; end if;
+public.close_year	perm_of	if m.role <> 'owner' then raise exception 'Only the owner closes the year.' using errcode = '42501'; end if;
+public.compliance_score	perm_of	if m.role <> 'owner' and not private.perm_of(m, 'keep_books') then raise exception 'Only the owner and the bookkeepers see the compliance score.' using errcode = '42501'; end if;
+public.document_delete	perm_of	if d.uploaded_by is distinct from m.id and m.role <> 'owner' then raise exception 'Only the person who uploaded it, or the owner, takes it out.' using errcode = '42501'; end if;
+public.filing_version	perm_of	'can_withdraw', v.status in ('review', 'in_use') and (m.role = 'owner' or (m.role = 'accountant' and private.perm_of(m, private.filing_perm(v.kind)))),
+public.filing_version_withdraw	perm_of	if not (m.role = 'owner' or (m.role = 'accountant' and private.perm_of(m, private.filing_perm(v.kind)))) then
+public.filing_version_withdraw	perm_of	if m.role = 'owner' and v.practice_id is not null then
+public.filing_version_withdraw	perm_of	elsif m.role <> 'owner' and v.accepted_at is not null then
+public.get_alert_prefs	perm_of	return private.alert_prefs(p_org) || jsonb_build_object('can_change', m.role = 'owner' or private.perm_of(m, 'manage_settings'),
+public.get_alert_prefs	org_contact	'owner', (select jsonb_build_object('name', display_name, 'phone', phone, 'email', email) from members where org_id = p_org and role = 'owner' and status = 'active'
+public.get_attention	perm_of	'tax_id', case when m.role = 'owner' or private.perm_of(m, 'manage_settings') then
+public.get_attention	perm_of	'accountant_requests', case when m.practice_id is null and m.role in ('owner', 'admin') then
+public.get_flux_tax	perm_of	'approve', m.role = 'owner' or (private.perm_of(m, 'make_payments') and private.perm_of(m, 'approve_payments')),
+public.get_flux_tax	perm_of	'autopay', m.role = 'owner' or private.perm_of(m, 'manage_settings')));
+public.get_inventory	keep	'perms', case when mb.role = 'owner' then private.role_template('owner') else private.member_perms(mb) end,
+public.get_inventory	keep	) order by (mb.role = 'owner') desc, mb.created_at), '[]'::jsonb) from members mb where mb.org_id = p_org and mb.status <> 'disabled'),
+public.get_payments	perm_of	'settings', m.role = 'owner'),
+public.get_payout_batch	perm_of	'approve', private.perm_of(m, 'make_payments') and (pb.requested_by is distinct from m.id or m.role = 'owner')));
+public.get_tax_wallet	perm_of	'can', jsonb_build_object('open', m.role = 'owner' or private.perm_of(m, 'keep_books') or private.perm_of(m, 'make_payments'),
+public.get_tax_wallet	perm_of	'pay', private.perm_of(m, 'make_payments') and (m.role = 'owner' or private.perm_of(m, 'approve_payments'))));
+public.get_team	perm_of	'is_owner', m.role = 'owner',
+public.get_team	perm_of	'my_perms', case when m.role = 'owner' then private.role_template('owner') else private.member_perms(m) end,
+public.get_team	keep	'perms', case when mb.role = 'owner' then private.role_template('owner') else private.member_perms(mb) end,
+public.get_team	keep	order by (mb.role = 'owner') desc, mb.status = 'disabled', mb.created_at), '[]'::jsonb)
+public.guide_language	perm_of	if g.org_id is not null and exists (select 1 from members where org_id = g.org_id and user_id = v_uid and role in ('owner', 'manager')) then
+public.guide_state	perm_of	where m.user_id = v_uid and m.role = 'owner' and not coalesce(x.is_sample, false)
+public.guide_state	perm_of	and exists (select 1 from members where org_id = v_org and user_id = v_uid and role = 'owner');
+public.guide_state	perm_of	'voice_id', o.voice_id, 'voice_lang', o.voice_lang, 'is_owner', exists (select 1 from members where org_id = o.id and user_id = v_uid and role = 'owner')) end,
+public.identity_reviews	keep	where mb.org_id = o.id and mb.role = 'owner' limit 1))
+public.identity_slip	perm_of	if m.role <> 'owner' then raise exception 'Only the owner adds the NIN slip.' using errcode = '42501'; end if;
+public.identity_state	perm_of	return private.identity_json(p_org, m.role = 'owner');
+public.invite_member	perm_of	if p_role = 'admin' and m.role <> 'owner' then raise exception 'Only the owner makes someone an admin.' using errcode = '42501'; end if;
+public.leak_radar	perm_of	v_owner := m.role = 'owner';
+public.org_integrations	perm_of	'can_manage', (m.role = 'owner' or private.perm_of(m, 'manage_settings')) and not (select is_sample from orgs where id = p_org),
+public.org_whatsapp	perm_of	'can_change', m.role = 'owner' or private.perm_of(m, 'manage_settings'));
+public.pit_setup	keep	select * into ow from members where org_id = p_org and role = 'owner' and status = 'active' order by created_at limit 1;
+public.portal_login_begin	perm_of	if m.role <> 'owner' then raise exception 'Only the owner saves or removes the business''s tax portal logins.' using errcode = '42501'; end if;
+public.portal_logins	perm_of	if not (m.role = 'owner' or private.perm_of(m, 'file_tax')) then
+public.portal_logins	perm_of	return jsonb_build_object('can_manage', m.role = 'owner',
+public.pos_overview	perm_of	v_owner := m.role = 'owner';
+public.practice_accept	perm_of	if mb.role <> 'owner' then raise exception 'Only the owner of the business connects it to an accountant.' using errcode = '42501'; end if;
+public.practice_client	keep	where mb.org_id = o.id and mb.role = 'owner' order by mb.created_at limit 1)) end,
+public.prepare_reminder_call	perm_of	if m.role not in ('owner', 'manager') and m.id <> t.id then raise exception 'Only owners and managers can send reminder calls.' using errcode = '42501'; end if;
+public.record_takings	perm_of	if m.role not in ('owner', 'manager') then raise exception 'Only the owner or a manager records takings.'; end if;
+public.referral_connect	perm_of	if m.role <> 'owner' then raise exception 'Only the owner of the business connects it to an accountant.' using errcode = '42501'; end if;
+public.referral_offer	perm_of	if m.role <> 'owner' or (select is_sample from orgs where id = p_org) or not (s->>'enabled')::boolean then return null; end if;
+public.request_payout	perm_of	if not (private.perm_of(m, 'approve_adjustments') or m.role = 'owner') then raise exception 'Only a manager or the owner refunds customers.'; end if;
+public.request_tax_payment	perm_of	if not (m.role = 'owner' or private.perm_of(m, 'approve_payments')) then
+public.reverse_books_migration	perm_of	if m.role <> 'owner' then raise exception 'Only the owner undoes a migration.' using errcode = '42501'; end if;
+public.save_alert_prefs	perm_of	if not (m.role = 'owner' or private.perm_of(m, 'manage_settings')) then raise exception 'Only the owner or someone who manages settings changes alerts.' using errcode = '42501'; end if;
+public.save_delivery	perm_of	v_manager := m.role in ('owner', 'manager') or private.perm_of(m, 'approve_adjustments');
+public.save_income_tax_setup	perm_of	if m.role <> 'owner' then raise exception 'Only the owner changes how the business is taxed.' using errcode = '42501'; end if;
+public.save_role_permissions	perm_of	if p_role = 'admin' and m.role <> 'owner' then raise exception 'Only the owner changes what admins can do.' using errcode = '42501'; end if;
+public.save_role_permissions	perm_of	if p_role = m.role and m.role <> 'owner' then raise exception 'Ask the owner to change your own role.' using errcode = '42501'; end if;
+public.save_voice_settings	perm_of	if m.role not in ('owner', 'manager') then
+public.set_tax_autopay	perm_of	if not (m.role = 'owner' or private.perm_of(m, 'manage_settings')) then raise exception 'Only the owner changes this.' using errcode = '42501'; end if;
+public.set_tax_autopay_penalties	perm_of	if not (m.role = 'owner' or private.perm_of(m, 'manage_settings')) then raise exception 'Only the owner changes this.' using errcode = '42501'; end if;
+public.set_transfer_settings	perm_of	if m.role <> 'owner' then raise exception 'Only the owner changes payment settings.' using errcode = '42501'; end if;
+public.set_vat_charging	perm_of	if m.role <> 'owner' then raise exception 'Only the owner turns VAT on or off.' using errcode = '42501'; end if;
+public.subscription_cancel	perm_of	if m.role not in ('owner', 'admin') then raise exception 'Only the owner or an admin of the business changes its plan.' using errcode = '42501'; end if;
+public.subscription_method	perm_of	if m.role not in ('owner', 'admin') then raise exception 'Only the owner or an admin of the business changes its plan.' using errcode = '42501'; end if;
+public.subscription_start	perm_of	if m.role not in ('owner', 'admin') then raise exception 'Only the owner or an admin of the business changes its plan.' using errcode = '42501'; end if;
+public.subscription_state	perm_of	'can_change', m.role in ('owner', 'admin'), 'is_sample', (select is_sample from orgs where id = p_org));
+public.svc_bujeti_invoices	org_contact	select * into m from members where org_id = i.org_id and role = 'owner' and status = 'active' order by created_at limit 1;
+public.svc_bujeti_payments	org_contact	perform private.integration_account(i, coalesce(i.connected_by, (select id from members where org_id = i.org_id and role = 'owner' and status = 'active' order by created_at limit 1)));
+public.svc_identity_nin	acts_as_owner	if not exists (select 1 from members where org_id = p_org and user_id = p_user and role = 'owner' and status = 'active') then
+public.svc_identity_slip	acts_as_owner	if not exists (select 1 from members where org_id = p_org and user_id = p_user and role = 'owner' and status = 'active') then
+public.svc_integration_sale	org_contact	select * into m from members where org_id = i.org_id and role = 'owner' and status = 'active' order by created_at limit 1;
+public.svc_integration_save	acts_as_owner	if not found or not (m.role = 'owner' or private.perm_of(m, 'manage_settings')) then raise exception 'Only the owner or someone who manages settings connects tools.'; end if;
+public.svc_lines_for_ai	keep	'directors', (select coalesce(jsonb_agg(display_name), '[]'::jsonb) from members where org_id = p_org and role = 'owner'))
+public.svc_pos_connection_save	acts_as_owner	if not found or m.role <> 'owner' then raise exception 'Only the owner connects a POS provider.'; end if;
+public.svc_prism_bill	org_contact	select * into m from members where org_id = p_org and role = 'owner' and status = 'active' order by created_at limit 1;
+public.svc_questions_for_ai	keep	'directors', (select coalesce(jsonb_agg(display_name), '[]'::jsonb) from members where org_id = p_org and role = 'owner'))
+public.svc_si_open	acts_as_owner	if not (private.perm_of(m, 'keep_books') or m.role = 'owner') then raise exception 'Your role does not enter bills.' using errcode = '42501'; end if;
+public.svc_subscription_charge	org_contact	'email', coalesce((select coalesce(mb.email, u.email) from members mb left join auth.users u on u.id = mb.user_id where mb.org_id = o.id and mb.role = 'owner'
+public.svc_subscription_charge	keep	'email', coalesce((select coalesce(mb.email, u.email) from members mb left join auth.users u on u.id = mb.user_id where mb.org_id = o.id and (mb.role = 'owner' or mb.id = (private.org_contact(o.id)).id)
+public.svc_tax_instruction_decide	org_contact	select * into ow from members where org_id = i.org_id and role = 'owner' and status = 'active' order by created_at limit 1;
+public.svc_tax_transfer_update	org_contact	select * into v_owner from members where org_id = tr.org_id and role = 'owner' and status = 'active' order by created_at limit 1;
+public.svc_tax_wallet_to_open	acts_as_owner	if m.id is null or not (private.perm_of(m, 'keep_books') or private.perm_of(m, 'make_payments') or m.role = 'owner') then
+public.svc_wallet_to_open	acts_as_owner	if m.id is null or not (private.perm_of(m, 'keep_books') or private.perm_of(m, 'make_payments') or m.role = 'owner') then
+public.tax_profile	perm_of	'can_edit', private.perm_of(m, 'keep_books'), 'is_owner', m.role = 'owner',
+public.transfer_name_check_start	perm_of	if m.role <> 'owner' then raise exception 'Only the owner changes payment settings.' using errcode = '42501'; end if;
+public.transfer_settings	perm_of	'can_change', m.role = 'owner');
+public.update_corporate_info	perm_of	if not (m.role = 'owner' or private.perm_of(m, 'keep_books')) then raise exception 'Only the owner or the bookkeeper changes the corporate information.' using errcode = '42501'; end if;
+public.update_member	keep	if t.role = 'owner' and (p_patch ? 'role' or p_patch ? 'perms' or p_patch ? 'status' or p_patch ? 'reset_perms') then
+public.update_member	perm_of	if t.id = m.id and m.role <> 'owner' and (p_patch ? 'role' or p_patch ? 'perms' or p_patch ? 'status' or p_patch ? 'reset_perms') then
+public.update_member	perm_of	if t.role = 'admin' and m.role <> 'owner' and (p_patch ? 'role' or p_patch ? 'perms' or p_patch ? 'status' or p_patch ? 'reset_perms') then
+public.update_member	keep	if v_role not in ('owner', 'admin', 'manager', 'staff', 'cashier', 'accountant') then raise exception 'Unknown role.'; end if;
+public.update_member	keep	if v_role = 'owner' and t.role <> 'owner' then raise exception 'Ownership transfer is not available here.'; end if;
+public.update_member	keep	if v_role = 'owner' and t.role <> 'owner' then raise exception 'Ownership transfer is not available here.'; end if;
+public.update_member	perm_of	if v_role = 'admin' and t.role <> 'admin' and m.role <> 'owner' then raise exception 'Only the owner makes someone an admin.' using errcode = '42501'; end if;
+public.update_member	keep	if v_role <> 'owner' then
+public.update_member	keep	if v_role <> 'owner' then perform private.apply_member_perms(p_member); end if;
+public.update_member	keep	v_set := v_role <> 'owner';
+public.update_payment_settings	perm_of	if m.role <> 'owner' then raise exception 'Only the owner changes payment settings.' using errcode = '42501'; end if;
+public.update_sales_settings	perm_of	if m.role <> 'owner' then raise exception 'Only the owner changes these settings.' using errcode = '42501'; end if;
+public.vat_status	perm_of	'can_change', m.role = 'owner');
+public.voice_settings	perm_of	'can_edit', m.role in ('owner', 'manager'),
+public.waive_close_step	perm_of	if m.role <> 'owner' then raise exception 'Only the owner can waive a close step.' using errcode = '42501'; end if;
+private.company_taken	keep	or exists (select 1 from members x where x.org_id = o.id and x.role = 'owner' and x.status = 'active' and x.user_id is not null))
+public.practice_handover_accept	keep	update members set user_id = v_uid, email = v_email, role = 'owner', title = 'Owner', status = 'active', practice_id = null, acts_as_owner = false,
+public.practice_firm_business	keep	if o.id is null or not exists (select 1 from members where org_id = o.id and user_id = auth.uid() and role = 'owner' and status = 'active') then

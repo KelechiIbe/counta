@@ -1,0 +1,12 @@
+== owner
+[{"invited": true}]
+[{"role": "admin", "status": "invited", "display_name": "Golden Newcomer"}]
+== admin
+ERROR 42501: Only the owner makes someone an admin.
+[]
+== accountant
+ERROR 42501: Your role does not allow this (manage team).
+[]
+== staff
+ERROR 42501: Your role does not allow this (manage team).
+[]

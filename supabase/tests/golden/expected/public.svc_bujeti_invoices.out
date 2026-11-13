@@ -1,0 +1,3 @@
+== service
+[{"svc_bujeti_invoices": {"paid": 0, "seen": 0, "failed": 0, "skipped": 0, "recorded": 0}}]
+[{"kind": "wallet", "name": "Bujeti balance", "created_by": "Golden Owner"}]

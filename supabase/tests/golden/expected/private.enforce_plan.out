@@ -1,0 +1,4 @@
+== definer:owner
+ERROR P0001: Your plan (Standard) includes 4 people. The owner can move to a bigger plan in Settings, Subscription.
+ok
+[{"role": "owner", "status": "invited", "display_name": "Co Owner"}, {"role": "accountant", "status": "active", "display_name": "Golden Accountant"}, {"role": "admin", "status": "active", "display_name": "Golden Admin"}, {"role": "owner", "status": "active", "display_name": "Golden Owner"}, {"role": "accountant", "status": "active", "display_name": "Golden Partner"}, {"role": "staff", "status": "active", "display_name": "Golden Staff"}]

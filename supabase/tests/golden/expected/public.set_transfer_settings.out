@@ -1,0 +1,8 @@
+== owner
+[{"set_transfer_settings": {"mode": "one_time", "name": "Golden", "seen": null, "label": "TaxStreem Golden", "prefix": "TaxStreem", "separator": " ", "can_change": true, "checks_today": 0, "default_name": "Golden Foods"}}]
+== admin
+ERROR 42501: Only the owner changes payment settings.
+== accountant
+ERROR 42501: Only the owner changes payment settings.
+== staff
+ERROR 42501: Only the owner changes payment settings.

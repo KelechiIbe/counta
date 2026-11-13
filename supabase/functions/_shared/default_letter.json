@@ -1,0 +1,740 @@
+{
+    "blocks": [
+        {
+            "id": "date",
+            "kind": "paragraph",
+            "text": "{{letter.date}}",
+            "level": 1
+        },
+        {
+            "id": "addressee",
+            "kind": "paragraph",
+            "text": "{{contact.title}}\n{{client.name}}\n{{client.address}}",
+            "level": 1
+        },
+        {
+            "id": "attention",
+            "kind": "paragraph",
+            "text": "Attention: {{contact.name}}",
+            "level": 1
+        },
+        {
+            "id": "salutation",
+            "kind": "paragraph",
+            "text": "Dear {{contact.salutation}},",
+            "level": 1
+        },
+        {
+            "id": "subject",
+            "kind": "paragraph",
+            "text": "LETTER OF ENGAGEMENT FOR THE PROVISION OF {{engagement.title_upper}} TO {{client.name_upper}}",
+            "level": 1
+        },
+        {
+            "id": "introduction",
+            "kind": "paragraph",
+            "text": "We write further to our recent discussions{{#proposal.date}} and our proposal dated {{proposal.date}}{{/proposal.date}}. This letter sets out the terms on which {{firm.name}} (\"we\", \"us\" or \"our\") will act for {{client.name}} ({{client.reg_label}} {{client.rc_number}}) (\"you\" or the \"Client\").",
+            "level": 1
+        },
+        {
+            "id": "understanding",
+            "kind": "paragraph",
+            "text": "We understand that the Client {{client.description}} and requires {{engagement.title_lower}} in Nigeria on an ongoing basis.",
+            "level": 1
+        },
+        {
+            "id": "scope",
+            "kind": "heading",
+            "text": "Scope of Engagement",
+            "level": 1
+        },
+        {
+            "id": "scope_services",
+            "kind": "clause",
+            "text": "This engagement runs on a {{fees.frequency}} basis. Our role will include the services below.",
+            "level": 2
+        },
+        {
+            "id": "svc_advisory",
+            "kind": "list",
+            "text": "Tax review and advisory. We will review the Client's current and recent commercial arrangements and contracts, assess the tax issues they raise, and issue a memorandum of advice covering:",
+            "level": 3,
+            "optional": "service.advisory"
+        },
+        {
+            "id": "svc_advisory_structure",
+            "kind": "list",
+            "text": "the most tax-efficient structure for the Client's operations and transactions, taking account of any related entities;",
+            "level": 4,
+            "optional": "service.advisory"
+        },
+        {
+            "id": "svc_advisory_transaction_taxes",
+            "kind": "list",
+            "text": "the transaction taxes (value added tax (VAT), withholding tax (WHT), stamp duties and similar taxes) that apply to each arrangement, and lawful measures to manage them; and",
+            "level": 4,
+            "optional": "service.advisory"
+        },
+        {
+            "id": "svc_advisory_obligations",
+            "kind": "list",
+            "text": "the Client's tax obligations as a business operating in Nigeria, including income tax, monthly VAT and WHT, employee taxes, pensions and other statutory contributions, and transfer pricing where relevant.",
+            "level": 4,
+            "optional": "service.advisory"
+        },
+        {
+            "id": "svc_bookkeeping",
+            "kind": "list",
+            "text": "Accounting setup, tax registrations and bookkeeping. We will set up and maintain an accounting system for the Client to support bookkeeping, financial reporting and internal controls. Under this workstream we will:",
+            "level": 3,
+            "optional": "service.bookkeeping"
+        },
+        {
+            "id": "svc_bookkeeping_invoices",
+            "kind": "list",
+            "text": "issue and track invoices for payment;",
+            "level": 4,
+            "optional": "service.bookkeeping"
+        },
+        {
+            "id": "svc_bookkeeping_supplier_invoices",
+            "kind": "list",
+            "text": "review supplier invoices for settlement;",
+            "level": 4,
+            "optional": "service.bookkeeping"
+        },
+        {
+            "id": "svc_bookkeeping_reconciliation",
+            "kind": "list",
+            "text": "record transactions in the accounting system and reconcile the books each month;",
+            "level": 4,
+            "optional": "service.bookkeeping"
+        },
+        {
+            "id": "svc_bookkeeping_reports",
+            "kind": "list",
+            "text": "provide reports on financial performance and business health;",
+            "level": 4,
+            "optional": "service.bookkeeping"
+        },
+        {
+            "id": "svc_bookkeeping_controls",
+            "kind": "list",
+            "text": "recommend internal control measures; and",
+            "level": 4,
+            "optional": "service.bookkeeping"
+        },
+        {
+            "id": "svc_bookkeeping_registration",
+            "kind": "list",
+            "text": "register the Client for tax with the Nigeria Revenue Service (NRS) and the relevant State Internal Revenue Service (SIRS), and obtain its Tax ID, as required to file returns and obtain a Tax Clearance Certificate.",
+            "level": 4,
+            "optional": "service.bookkeeping"
+        },
+        {
+            "id": "svc_monthly",
+            "kind": "list",
+            "text": "Monthly tax compliance (VAT, WHT and PAYE). For each monthly filing we will:",
+            "level": 3,
+            "optional": "service.monthly"
+        },
+        {
+            "id": "svc_monthly_review",
+            "kind": "list",
+            "text": "review the relevant information from the Client's accounting records;",
+            "level": 4,
+            "optional": "service.monthly"
+        },
+        {
+            "id": "svc_monthly_prepare",
+            "kind": "list",
+            "text": "prepare the returns and supporting schedules;",
+            "level": 4,
+            "optional": "service.monthly"
+        },
+        {
+            "id": "svc_monthly_approval",
+            "kind": "list",
+            "text": "send the draft returns and our observations to you for review and approval;",
+            "level": 4,
+            "optional": "service.monthly"
+        },
+        {
+            "id": "svc_monthly_advice",
+            "kind": "list",
+            "text": "discuss the returns with you and advise on the tax payable, if any; and",
+            "level": 4,
+            "optional": "service.monthly"
+        },
+        {
+            "id": "svc_monthly_filing",
+            "kind": "list",
+            "text": "file the approved returns and send you copies of the filed returns for your records.",
+            "level": 4,
+            "optional": "service.monthly"
+        },
+        {
+            "id": "svc_annual",
+            "kind": "list",
+            "text": "Annual income tax compliance. For each year of assessment we will:",
+            "level": 3,
+            "optional": "service.annual"
+        },
+        {
+            "id": "svc_annual_auditors",
+            "kind": "list",
+            "text": "liaise with the Client's auditors on the preparation of audited financial statements, where required;",
+            "level": 4,
+            "optional": "service.annual"
+        },
+        {
+            "id": "svc_annual_computations",
+            "kind": "list",
+            "text": "review the audit work papers and prepare the income tax computations, including capital allowance schedules and supporting documents;",
+            "level": 4,
+            "optional": "service.annual"
+        },
+        {
+            "id": "svc_annual_approval",
+            "kind": "list",
+            "text": "send the computations and our observations to you for review and approval;",
+            "level": 4,
+            "optional": "service.annual"
+        },
+        {
+            "id": "svc_annual_filing",
+            "kind": "list",
+            "text": "file the approved returns on the NRS online tax portal (currently Rev360) or the portal of the relevant SIRS; and",
+            "level": 4,
+            "optional": "service.annual"
+        },
+        {
+            "id": "svc_annual_copies",
+            "kind": "list",
+            "text": "send you copies of the filed documents for your records.",
+            "level": 4,
+            "optional": "service.annual"
+        },
+        {
+            "id": "svc_other",
+            "kind": "list",
+            "text": "{{service.other_text}}",
+            "level": 3,
+            "optional": "service.other"
+        },
+        {
+            "id": "scope_exclusions",
+            "kind": "clause",
+            "text": "Exclusions. Our services do not include statutory audit, representation in a tax audit or investigation, payroll processing, physical inventory counts, forecasting, or system implementation or migration beyond the initial accounting setup, or any service not listed in paragraph {{ref:scope_services}}. If the Client needs any of these, we will agree the scope and fees separately in writing.",
+            "level": 2
+        },
+        {
+            "id": "scope_service_levels",
+            "kind": "clause",
+            "text": "Service levels. We will deliver monthly work (including reports, reconciliations and statutory returns) within {{service.days}} days of receiving all the documents and information we need. Annual work will be completed within the deadlines set by the relevant tax authorities, provided you and your auditors give us information in good time.",
+            "level": 2
+        },
+        {
+            "id": "authority",
+            "kind": "heading",
+            "text": "Our Authority to Act",
+            "level": 1
+        },
+        {
+            "id": "authority_appointment",
+            "kind": "clause",
+            "text": "By signing this letter, the Client appoints us as its tax agent and authorises us, for the purposes of this engagement, to:",
+            "level": 2
+        },
+        {
+            "id": "authority_tax_authorities",
+            "kind": "list",
+            "text": "correspond with, file returns with, and receive notices from the NRS and any SIRS on the Client's behalf;",
+            "level": 3
+        },
+        {
+            "id": "authority_registration",
+            "kind": "list",
+            "text": "register the Client for any tax it is required to register for;",
+            "level": 3
+        },
+        {
+            "id": "authority_books",
+            "kind": "list",
+            "text": "keep the Client's books and records in an accounting system we select, maintained in the Client's name; and",
+            "level": 3
+        },
+        {
+            "id": "authority_invoices",
+            "kind": "list",
+            "text": "issue invoices, receipts and credit notes in the Client's name, where paragraph {{ref:svc_bookkeeping}} applies.",
+            "level": 3,
+            "optional": "service.bookkeeping"
+        },
+        {
+            "id": "authority_full_mandate",
+            "kind": "clause",
+            "text": "Full mandate. The Client further authorises us to set up and administer its accounting records and related systems without the Client's day-to-day involvement, and to act as administrator of those systems on the Client's behalf. This includes verifying the Client's identity with service providers using information and documents the Client gives us for that purpose. This authority does not extend to opening any payment or collection account in the Client's name, or to moving the Client's funds, unless a director of the Client separately authorises it in writing.",
+            "level": 2,
+            "variant": "full"
+        },
+        {
+            "id": "authority_access",
+            "kind": "clause",
+            "text": "Access and credentials. The Client may give us access to its tax portal accounts and view-only access to its bank accounts. We will keep any credentials secure and use them only for this engagement. The Client remains the owner of those accounts and should change the credentials when the engagement ends.",
+            "level": 2
+        },
+        {
+            "id": "authority_duration",
+            "kind": "clause",
+            "text": "This authority continues until the engagement ends under paragraph {{ref:term}} or the Client withdraws it in writing.",
+            "level": 2
+        },
+        {
+            "id": "responsibilities",
+            "kind": "heading",
+            "text": "Your Responsibilities",
+            "level": 1
+        },
+        {
+            "id": "resp_client",
+            "kind": "clause",
+            "text": "The Client is responsible for:",
+            "level": 2
+        },
+        {
+            "id": "resp_information",
+            "kind": "list",
+            "text": "giving us complete and accurate information and documents, in good time;",
+            "level": 3
+        },
+        {
+            "id": "resp_decisions",
+            "kind": "list",
+            "text": "the management decisions of its business, including whether to accept our advice;",
+            "level": 3
+        },
+        {
+            "id": "resp_approval",
+            "kind": "list",
+            "text": "reviewing and approving returns and computations before we file them, except where it has asked us in writing to file without prior review;",
+            "level": 3
+        },
+        {
+            "id": "resp_tax_payments",
+            "kind": "list",
+            "text": "paying taxes when due, unless we have agreed in writing to arrange payment from funds the Client provides;",
+            "level": 3
+        },
+        {
+            "id": "resp_records",
+            "kind": "list",
+            "text": "keeping original records and documents as required by law; and",
+            "level": 3
+        },
+        {
+            "id": "resp_changes",
+            "kind": "list",
+            "text": "telling us promptly of any change in its business, ownership, directors or contact details.",
+            "level": 3
+        },
+        {
+            "id": "resp_reliance",
+            "kind": "clause",
+            "text": "We will rely on the information the Client gives us. We are not responsible for errors or delays that result from information that is incomplete, inaccurate or late.",
+            "level": 2
+        },
+        {
+            "id": "team",
+            "kind": "heading",
+            "text": "Our Team",
+            "level": 1
+        },
+        {
+            "id": "team_core",
+            "kind": "clause",
+            "text": "We will set up a core team with relevant experience for this engagement, led by the engagement partner named below. Other members and resources of the firm will be available as needed.",
+            "level": 2
+        },
+        {
+            "id": "team_partner",
+            "kind": "clause",
+            "text": "{{partner.name}}, {{partner.title}}, has overall responsibility for this engagement{{#team.assistant}} and will be assisted by {{team.assistant}}{{/team.assistant}}.",
+            "level": 2
+        },
+        {
+            "id": "team_contact",
+            "kind": "clause",
+            "text": "If you have difficulty reaching our team, please email {{firm.email}}{{#firm.phone}} or call our office on {{firm.phone}} during business hours{{/firm.phone}}.",
+            "level": 2
+        },
+        {
+            "id": "team_designated_contact",
+            "kind": "clause",
+            "text": "We understand that {{contact.name}} (the \"Designated Client Contact\") is authorised to instruct us on this engagement and to approve costs within its scope. We will assume this remains the case until you tell us otherwise. Where we act on instructions from other people at the Client who have taken part in correspondence with the Designated Client Contact, we will make sure the Designated Client Contact knows.",
+            "level": 2
+        },
+        {
+            "id": "fees",
+            "kind": "heading",
+            "text": "Professional Fees and Expenses",
+            "level": 1
+        },
+        {
+            "id": "fees_amount",
+            "kind": "clause",
+            "text": "Our fee for this engagement is a consolidated {{fees.frequency}} fee of {{fees.amount}} ({{fees.amount_words}}), covering the scope of work in paragraph {{ref:scope_services}}.",
+            "level": 2
+        },
+        {
+            "id": "fees_assumptions",
+            "kind": "clause",
+            "text": "Assumptions. Our fee assumes that:",
+            "level": 2
+        },
+        {
+            "id": "fees_assume_scope",
+            "kind": "list",
+            "text": "the scope of work will not change materially during the engagement; if we are asked to do work outside it, we will tell you and obtain your written approval, and that work will be charged separately;",
+            "level": 3
+        },
+        {
+            "id": "fees_assume_instructions",
+            "kind": "list",
+            "text": "we will receive timely and clear instructions, and the documents and information we ask for within a reasonable time;",
+            "level": 3
+        },
+        {
+            "id": "fees_assume_meetings",
+            "kind": "list",
+            "text": "instructions will be given by email and video or telephone calls, and we will not be required to attend in-person meetings; travel outside {{firm.city}} at your request will be charged in addition to our fee; and",
+            "level": 3
+        },
+        {
+            "id": "fees_assume_expenses",
+            "kind": "list",
+            "text": "out-of-pocket expenses and administrative costs are charged separately, at cost.",
+            "level": 3
+        },
+        {
+            "id": "fees_assumptions_wrong",
+            "kind": "paragraph",
+            "text": "If any of these assumptions proves wrong, either of us should tell the other promptly.",
+            "level": 2
+        },
+        {
+            "id": "fees_deposit",
+            "kind": "clause",
+            "text": "Expenses. To avoid consulting you on every small out-of-pocket expense (such as printing, courier charges and statutory filing fees), we ask for a deposit on account of {{fees.deposit}} ({{fees.deposit_words}}). When the deposit is used up we will send a detailed statement of expenses, supported by receipts where available, and may ask for a further deposit. We will obtain your approval before incurring any large individual expense.",
+            "level": 2,
+            "optional": "fees.deposit"
+        },
+        {
+            "id": "fees_taxes",
+            "kind": "clause",
+            "text": "Taxes. Our fees are exclusive of VAT, which we will add to our invoices at the applicable rate (currently 7.5%). Where the Client deducts withholding tax from our fees, it should remit the tax and give us the credit note or receipt promptly.",
+            "level": 2
+        },
+        {
+            "id": "fees_billing",
+            "kind": "clause",
+            "text": "Billing and payment. We will invoice our fee{{#fees.deposit}} and the expense deposit{{/fees.deposit}} when this letter is signed, and then on day {{fees.billing_day}} of each {{fees.billing_period}}. Invoices are payable within {{fees.payment_days}} days. We may pause work on the engagement while any invoice remains unpaid {{fees.suspend_days}} days after its due date.",
+            "level": 2
+        },
+        {
+            "id": "confidentiality",
+            "kind": "heading",
+            "text": "Confidentiality",
+            "level": 1
+        },
+        {
+            "id": "conf_our_duty",
+            "kind": "clause",
+            "text": "We will keep confidential all information about the Client's affairs that we receive in this engagement, except where the Client authorises disclosure, where the law or a regulator requires it, or where the information is already public. We may also disclose information to our professional indemnity insurers and professional advisers on a confidential basis.",
+            "level": 2
+        },
+        {
+            "id": "conf_publicity",
+            "kind": "clause",
+            "text": "We may say that we have acted for the Client on a matter that is already public, and identify the Client by name or logo and the general nature of our work. Where the matter is not public, we will only say the Client is our client with its consent.",
+            "level": 2
+        },
+        {
+            "id": "conf_other_clients",
+            "kind": "clause",
+            "text": "We also owe a duty of confidentiality to our other clients. If we hold confidential information about another client that may be relevant to you, we will not disclose it to you or use it for your benefit, and we will treat your information the same way. You agree that we may act for another client whose interests are not adverse to yours without your consent, provided we keep your information confidential, using a separate team where appropriate.",
+            "level": 2
+        },
+        {
+            "id": "conflicts",
+            "kind": "heading",
+            "text": "Conflicts of Interest",
+            "level": 1
+        },
+        {
+            "id": "conflicts_rules",
+            "kind": "clause",
+            "text": "Professional rules of ethics that govern accountants and tax practitioners prohibit us from acting where there is a conflict of interest, or a significant risk of one.",
+            "level": 2
+        },
+        {
+            "id": "conflicts_definition",
+            "kind": "clause",
+            "text": "A conflict of interest arises where:",
+            "level": 2
+        },
+        {
+            "id": "conflicts_adverse",
+            "kind": "list",
+            "text": "the work we are asked to do for one client is against the interests of another client, for example advising on a claim against that other client; or",
+            "level": 3
+        },
+        {
+            "id": "conflicts_information",
+            "kind": "list",
+            "text": "as described in paragraph {{ref:conf_other_clients}}, we hold confidential information from acting for one client that is relevant to a matter we are asked to handle for another.",
+            "level": 3
+        },
+        {
+            "id": "conflicts_checks",
+            "kind": "clause",
+            "text": "We check for actual and potential conflicts before accepting new instructions. If we identify a potential conflict, we will try to resolve it with the parties concerned, subject to our duty of confidentiality.",
+            "level": 2
+        },
+        {
+            "id": "conflicts_confirmation",
+            "kind": "clause",
+            "text": "We have carried out a conflicts check and confirm that no conflict of interest arises from this engagement{{#conflicts.note}}, {{conflicts.note}}{{/conflicts.note}}.",
+            "level": 2
+        },
+        {
+            "id": "aml",
+            "kind": "heading",
+            "text": "Anti-Money Laundering",
+            "level": 1
+        },
+        {
+            "id": "aml_identification",
+            "kind": "clause",
+            "text": "As a designated non-financial business under the Money Laundering (Prevention and Prohibition) Act 2022, we must identify and verify our clients and their beneficial owners before and during an engagement, and keep those records for at least five years after the engagement ends. The Client agrees to give us the information and documents we need for this.",
+            "level": 2
+        },
+        {
+            "id": "aml_reporting",
+            "kind": "clause",
+            "text": "The law may require us to report a suspicion of money laundering or terrorist financing to the authorities without telling the Client. A report made in good faith is not a breach of our duty of confidentiality, and we will not be liable for any loss that results from it.",
+            "level": 2
+        },
+        {
+            "id": "personal_data",
+            "kind": "heading",
+            "text": "Personal Data",
+            "level": 1
+        },
+        {
+            "id": "data_processing",
+            "kind": "clause",
+            "text": "In this engagement we will process personal data about the Client's directors, shareholders, employees, customers and suppliers, such as names, contact details and identification and transaction information. We will process it in line with the Nigeria Data Protection Act 2023, only for the purposes of this engagement and to meet our legal and professional obligations.",
+            "level": 2
+        },
+        {
+            "id": "data_security",
+            "kind": "clause",
+            "text": "We will keep the personal data secure, limit access to the people who need it, and use service providers (including our accounting software providers) only under terms that protect it. Where data is stored or processed outside Nigeria, we will make sure it is protected as the Act requires.",
+            "level": 2
+        },
+        {
+            "id": "data_breach",
+            "kind": "clause",
+            "text": "We will tell the Client without undue delay if we become aware of a breach affecting personal data we hold for it, and will help it meet its own obligations under the Act. The Client confirms it has the right to give us the personal data it shares with us.",
+            "level": 2
+        },
+        {
+            "id": "liability",
+            "kind": "heading",
+            "text": "Limitation of Liability",
+            "level": 1
+        },
+        {
+            "id": "liability_cap",
+            "kind": "clause",
+            "text": "We will not be liable for any loss, damage, cost or expense suffered by the Client or any other party in connection with our information, advice or other work under this engagement, unless a Nigerian court finally establishes that it arose from our negligence. In that case our total liability is limited to the amount of our professional indemnity insurance cover or the total fees paid to us under this engagement, whichever is {{liability.cap_basis}}.",
+            "level": 2
+        },
+        {
+            "id": "liability_third_parties",
+            "kind": "clause",
+            "text": "Our advice is for the Client's use only. A third party may rely on it only with our express written consent, and the Client will indemnify {{firm.name}} and its personnel against claims arising from any third party's reliance on our advice.",
+            "level": 2
+        },
+        {
+            "id": "liability_firm_only",
+            "kind": "clause",
+            "text": "{{firm.name}} alone is responsible for the services under this letter. No individual partner, employee or adviser has any personal liability to the Client for them.",
+            "level": 2
+        },
+        {
+            "id": "liability_contribution",
+            "kind": "clause",
+            "text": "Where we are jointly liable with another person, our liability is reduced by any contribution we would have recovered from another adviser but cannot recover because the Client agreed to limit that adviser's liability.",
+            "level": 2
+        },
+        {
+            "id": "copyright",
+            "kind": "heading",
+            "text": "Copyright",
+            "level": 1
+        },
+        {
+            "id": "copyright_terms",
+            "kind": "paragraph",
+            "text": "Original materials we produce for the Client remain our copyright. The fees paid give the Client a licence to use them for the purposes for which they were produced and related purposes. The Client does not own the copyright in our work unless we agree in writing. The Client's own books, records and data remain the Client's property.",
+            "level": 2
+        },
+        {
+            "id": "retention",
+            "kind": "heading",
+            "text": "Retention of Documents",
+            "level": 1
+        },
+        {
+            "id": "retention_terms",
+            "kind": "paragraph",
+            "text": "We will keep our files for this engagement for {{retention.years}} years after it ends. After that period, provided we have returned the Client's original documents, we may destroy the files without further reference to the Client. The Client may ask us before then to keep them for longer.",
+            "level": 2
+        },
+        {
+            "id": "term",
+            "kind": "heading",
+            "text": "Term and Termination",
+            "level": 1
+        },
+        {
+            "id": "term_start",
+            "kind": "clause",
+            "text": "This engagement starts on the date this letter is signed{{#engagement.start_date}} and covers work from {{engagement.start_date}}{{/engagement.start_date}}, and continues until either party ends it.",
+            "level": 2
+        },
+        {
+            "id": "term_notice",
+            "kind": "clause",
+            "text": "Either party may end the engagement by giving the other {{termination.notice_days}} days' written notice.",
+            "level": 2
+        },
+        {
+            "id": "term_immediate",
+            "kind": "clause",
+            "text": "We may end the engagement immediately by written notice if fees remain unpaid {{fees.suspend_days}} days after their due date, or if continuing to act would breach the law or our professional rules.",
+            "level": 2
+        },
+        {
+            "id": "term_handover",
+            "kind": "clause",
+            "text": "When the engagement ends, the Client will pay our fees and expenses up to the date it ends. We will return the Client's original documents and hand over its books, records and data, including access to the accounting system we maintained for it, within {{termination.handover_days}} days.",
+            "level": 2
+        },
+        {
+            "id": "problems",
+            "kind": "heading",
+            "text": "Resolving Problems",
+            "level": 1
+        },
+        {
+            "id": "problems_contact",
+            "kind": "paragraph",
+            "text": "To discuss any aspect of this engagement, please contact {{partner.name}}, {{partner.title}}, at {{partner.email}}. We will deal with any concern promptly and professionally.",
+            "level": 2
+        },
+        {
+            "id": "governing_law",
+            "kind": "heading",
+            "text": "Governing Law and Dispute Resolution",
+            "level": 1
+        },
+        {
+            "id": "law_nigerian",
+            "kind": "clause",
+            "text": "This letter, and any non-contractual obligations arising from or connected with it, are governed by Nigerian law.",
+            "level": 2
+        },
+        {
+            "id": "law_negotiation",
+            "kind": "clause",
+            "text": "The parties will first try to settle any dispute, controversy or claim arising from or relating to this letter (including its breach, existence, validity or termination) through good-faith negotiation.",
+            "level": 2
+        },
+        {
+            "id": "law_arbitration",
+            "kind": "clause",
+            "text": "Any dispute not settled within 30 days after negotiations begin, or any longer period the parties agree in writing, will be referred to and finally resolved by arbitration under the Arbitration Rules in the First Schedule to the Arbitration and Mediation Act 2023. The tribunal will be a sole arbitrator appointed by agreement of the parties or, failing agreement within 14 days, in accordance with that Act. The seat of arbitration is {{arbitration.seat}} and the language is English.",
+            "level": 2
+        },
+        {
+            "id": "law_confidentiality",
+            "kind": "clause",
+            "text": "The parties will keep confidential the existence and substance of any dispute and arbitration, the materials used and created for it, and any award, unless the information is already public (other than through a breach of this paragraph) or must be disclosed by law, to a party's professional advisers or insurers, or to protect a legal right or enforce or challenge an award.",
+            "level": 2
+        },
+        {
+            "id": "signing",
+            "kind": "heading",
+            "text": "Signature and Entire Agreement",
+            "level": 1
+        },
+        {
+            "id": "signing_electronic",
+            "kind": "clause",
+            "text": "This letter may be signed electronically and in counterparts. An electronic signature has the same effect as a handwritten one.",
+            "level": 2
+        },
+        {
+            "id": "signing_entire_agreement",
+            "kind": "clause",
+            "text": "This letter is the entire agreement between the parties about its subject matter and replaces any earlier understanding or agreement, written or oral. It may be amended only in writing signed by both parties.",
+            "level": 2
+        },
+        {
+            "id": "closing",
+            "kind": "paragraph",
+            "text": "If you agree with these terms, please confirm by signing below. We look forward to working with you.",
+            "level": 1
+        },
+        {
+            "id": "closing_firm",
+            "kind": "paragraph",
+            "text": "Yours faithfully,\nFor: {{firm.name}}",
+            "level": 1
+        },
+        {
+            "id": "signature_firm",
+            "kind": "signature",
+            "text": "firm",
+            "level": 1
+        },
+        {
+            "id": "firm_signatory",
+            "kind": "paragraph",
+            "text": "{{partner.name}}\n{{partner.title}}",
+            "level": 1
+        },
+        {
+            "id": "acceptance",
+            "kind": "paragraph",
+            "text": "The above terms are accepted by the authorised representative of {{client.name}}:",
+            "level": 1
+        },
+        {
+            "id": "signature_client",
+            "kind": "signature",
+            "text": "client",
+            "level": 1
+        },
+        {
+            "id": "client_signatory",
+            "kind": "paragraph",
+            "text": "Name: {{signer.name}}\nDesignation: {{signer.title}}\nDate: {{signer.date}}",
+            "level": 1
+        }
+    ],
+    "version": 1
+}

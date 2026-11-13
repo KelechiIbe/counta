@@ -1,0 +1,3 @@
+== definer:owner
+[{"role_perms": {"file_tax": true, "add_items": true, "keep_books": true, "approve_pos": true, "count_stock": true, "edit_prices": true, "issue_stock": true, "manage_team": true, "see_margins": true, "record_sales": true, "make_payments": true, "receive_stock": true, "transfer_stock": true, "manage_settings": true, "approve_payments": true, "approve_adjustments": true}}]
+[{"role_perms": {"file_tax": true, "add_items": true, "keep_books": true, "approve_pos": true, "count_stock": true, "edit_prices": true, "issue_stock": true, "manage_team": true, "see_margins": true, "record_sales": true, "make_payments": true, "receive_stock": true, "transfer_stock": true, "manage_settings": false, "approve_payments": true, "approve_adjustments": true}}]

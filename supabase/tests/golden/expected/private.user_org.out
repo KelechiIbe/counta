@@ -1,0 +1,8 @@
+== definer:owner
+[{"first_is_golden": true}]
+== definer:admin
+[{"first_is_golden": false}]
+== definer:accountant
+[{"first_is_golden": false}]
+== definer:staff
+[{"first_is_golden": false}]

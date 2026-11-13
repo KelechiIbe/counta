@@ -1,4 +1,6 @@
 // What each customer message says, shared by email and WhatsApp so the two always agree.
+import { waFormat } from './openwa.ts';
+
 export const naira = (v: unknown) => {
   const n = Number(v);
   if (!Number.isFinite(n)) return '₦0.00';
@@ -16,7 +18,7 @@ export const first = (name: unknown) => String(name || '').trim().split(/\s+/)[0
 
 export type Msg = { id: string; org_id?: string; channel: 'email' | 'whatsapp'; to_address: string; template: string; subject?: string; params: Record<string, any>;
   org: { name: string; email?: string; phone?: string; address?: string; tin?: string; website?: string; brand_color?: string; logo_path?: string;
-    logo_url?: string | null; reply_to_email?: string; invoice_footer?: string } };
+    logo_url?: string | null; reply_to_email?: string; invoice_footer?: string; white_label?: boolean } };
 
 // The business's colour when it is a usable hex colour, Counta blue otherwise.
 export const brandColor = (c?: string) => (/^#[0-9a-f]{6}$/i.test(String(c || '')) ? String(c) : '#0072F5');
@@ -91,7 +93,7 @@ export function wording(m: Msg) {
       const one = issues.join(' ').slice(0, 900) || 'some details need checking';
       return {
         heading: `Your invoice ${p.number} needs a look`,
-        lines: [`${biz} has received your invoice ${p.number}${Number(p.total) ? ` for ${naira(p.total)}` : ''}. Counta checked it and found:`,
+        lines: [`${biz} has received your invoice ${p.number}${Number(p.total) ? ` for ${naira(p.total)}` : ''}. ${m.org?.white_label ? 'It was checked and found:' : 'Counta checked it and found:'}`,
           ...issues.map((x: string) => `• ${x}`),
           'Please reply to this email with a corrected invoice, or send it again on the link you used. Invoices without a Tax ID (where withholding tax applies) or a business address cannot be paid.'],
         button: '', link: '',
@@ -116,7 +118,8 @@ export function wording(m: Msg) {
       const wa = p.wa && typeof p.wa.name === 'string' && /^counta_[a-z_]+$/.test(p.wa.name) && Array.isArray(p.wa.params)
         ? { name: p.wa.name, params: p.wa.params.map((x: unknown) => String(x ?? '')) } : null;
       // A reminder that is not one of the chosen alerts (a tax payment Counta set up that has not gone through) says so.
-      const footer = typeof p.footer === 'string' && p.footer.trim() ? p.footer.trim().slice(0, 200) : `Counta sends these for ${biz}. Choose which you get in Settings, Alerts.`;
+      const footer = typeof p.footer === 'string' && p.footer.trim() ? p.footer.trim().slice(0, 200)
+        : m.org?.white_label ? `Sent for ${biz}. Choose which alerts you get in Settings, Alerts.` : `Counta sends these for ${biz}. Choose which you get in Settings, Alerts.`;
       return { heading: String(p.heading || m.subject || 'Something needs doing in Counta'), lines, button: String(p.button || 'Open Counta'), link: p.link, wa,
         greet: first(p.person_name), from: 'Counta', footer };
     }
@@ -124,8 +127,11 @@ export function wording(m: Msg) {
       // The accountant portal's invitations (a practice to its staff or to a business owner, a business to its accountant):
       // email only, the words written by the database and the one-time link made as it is sent.
       const lines = (Array.isArray(p.lines) ? p.lines : []).map((l: unknown) => String(l ?? '').trim()).filter(Boolean).slice(0, 6);
+      // (Counta's own email, to TaxStreem's reviewers, says "Sent by Counta", not "for Counta".)
+      const sender = String(p.from_name || 'Counta');
       return { heading: String(p.heading || m.subject || 'Counta'), lines, button: String(p.button || 'Open Counta'), link: p.link, wa: null,
-        greet: p.greet ? first(p.greet) : 'there', footer: `Sent by Counta for ${p.from_name || 'Counta'}. If you were not expecting this, you can ignore the email.` };
+        greet: p.greet ? first(p.greet) : 'there', footer: m.org?.white_label || p.white_label === true ? 'If you were not expecting this, you can ignore the email.'
+          : `Sent by Counta${sender === 'Counta' ? '' : ` for ${sender}`}. If you were not expecting this, you can ignore the email.` };
     }
     default:
       return { heading: m.subject || biz, lines: [String(p.body || '')], button: p.link ? 'Open' : '', link: p.link, wa: null };
@@ -144,6 +150,8 @@ export function emailHtml(m: Msg) {
     : '';
   const contact = [p.business_phone, p.reply_to].filter(Boolean).map(esc).join(' · ');
   const footer = [m.org?.address, m.org?.tin ? `Tax ID ${m.org.tin}` : '', m.org?.website].filter(Boolean).map((x) => esc(x)).join(' · ');
+  // A white-labelled business's message carries no "by Counta" line (a footer the wording itself wrote stays).
+  const sentLine = w.footer || (m.org?.white_label ? '' : `Sent for ${biz} by Counta`);
   const logo = m.org?.logo_url ? `<img src="${esc(m.org.logo_url)}" alt="${esc(biz)}" style="max-height:48px;max-width:180px;display:block;margin:0 0 14px" />` : '';
   return `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">
@@ -155,7 +163,7 @@ ${body}${button}
 ${contact ? `<p style="margin:20px 0 0;font-size:13px;color:#52606d">Questions? ${contact}</p>` : ''}
 ${footer ? `<p style="margin:14px 0 0;font-size:12px;color:#829ab1">${footer}</p>` : ''}
 </td></tr></table>
-<p style="font-size:12px;color:#829ab1;margin:14px 0 0">${esc(w.footer || `Sent for ${biz} by Counta`)}</p>
+${sentLine ? `<p style="font-size:12px;color:#829ab1;margin:14px 0 0">${esc(sentLine)}</p>` : ''}
 </td></tr></table></body></html>`;
 }
 
@@ -165,3 +173,28 @@ export function emailText(m: Msg) {
     '', [p.business_phone, p.reply_to].filter(Boolean).join(' · '), w.footer || ''].join('\n').trim();
 }
 
+// A managed (full-mandate) business only sends to an address the database allowed: anything else fails closed.
+export const mandateBlocked = (m: { managed?: boolean; alert_to_allowed?: boolean }): boolean => m.managed === true && m.alert_to_allowed !== true;
+
+// The address inside RESEND_FROM, whatever surrounds it: "billing@x.ng", "TaxStreem <billing@x.ng>", or either wrapped in quotes or spaces.
+export function senderAddress(raw: string): string {
+  const m = String(raw || '').match(/[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/i);
+  return m ? m[0].toLowerCase() : '';
+}
+// A display name Resend accepts without quoting: no commas, quotes, brackets or @. "via Counta" unless the business is white-labelled.
+export function displayName(name: string, whiteLabel?: boolean): string {
+  const n = String(name || 'Counta').replace(/[",;:<>()[\]\\@]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Counta';
+  return whiteLabel ? n : `${n} via Counta`;
+}
+
+// The same words as the email, as WhatsApp text. An alert to someone whose Martina chat is on the same business says that
+// a reply reaches her. A white-labelled business's message has no footer line.
+export function waText(m: Msg): string {
+  const w = wording(m) as ReturnType<typeof wording> & { greet?: string; footer?: string };
+  const p = m.params || {};
+  const hello = `Hello ${w.greet ?? first(p.customer_name)},`;
+  const biz = p.business || m.org?.name || '';
+  const reply = m.template === 'alert' && p.reply_hint === true ? ['Reply here to ask Martina about it.'] : [];
+  const footer = w.footer || (m.org?.white_label ? '' : biz ? `Sent for ${biz} by Counta` : 'Sent by Counta');
+  return waFormat(w.heading, [hello, '', ...w.lines, ...reply], w.link, w.button, footer);
+}

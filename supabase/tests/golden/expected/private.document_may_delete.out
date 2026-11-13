@@ -1,0 +1,8 @@
+== owner
+[{"document_may_delete": true}]
+== admin
+[{"document_may_delete": true}]
+== accountant
+[{"document_may_delete": false}]
+== staff
+[{"document_may_delete": false}]

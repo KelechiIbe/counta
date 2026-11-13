@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { useInventory, useSession, useToast } from '../../state/session';
+import { actsAsOwner, useInventory, useSession, useToast } from '../../state/session';
 import { guideConsent, guideMark, openWallet, stepText, useGuide, type GuideStep } from '../../lib/onboard';
 import { useMode } from '../../lib/wording';
 import { localPhone } from '../../lib/format';
@@ -31,7 +31,7 @@ export function GuideChecklist() {
   const [showDone, setShowDone] = useState(false);
   const mode = useMode();
   const gs = guide.data;
-  if (!inv || inv.me.role !== 'owner' || inv.org.is_sample || !gs || gs.completed || gs.dismissed || gs.org?.id !== orgId) return null;
+  if (!inv || !actsAsOwner(inv) || inv.org.is_sample || !gs || gs.completed || gs.dismissed || gs.org?.id !== orgId) return null;
   const refresh = () => { void qc.invalidateQueries({ queryKey: ['guide'] }); void qc.invalidateQueries({ queryKey: ['compliance'] }); };
   const pct = Math.round((gs.done / Math.max(1, gs.total)) * 100);
   const steps = gs.steps;

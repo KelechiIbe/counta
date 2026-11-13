@@ -369,6 +369,36 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
   .adm-nav .nav-item { white-space: nowrap; width: auto; flex: none; }
   .adm-row { grid-template-columns: minmax(0, 1fr) !important; gap: 6px; }
 }
+/* The accountant portal's add-client wizard (src/practice/pages/Intake.tsx): numbered steps along the top, one step at a
+   time below, every control at least 44px tall. On a phone only the current step keeps its name. */
+.wiz .btn, .wiz .input:not(textarea), .wiz .check { min-height: 44px; }
+.wiz .acct-opt { align-items: flex-start; padding: 12px 14px; }
+.wiz .acct-opt:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
+.wiz .acct-opt input[type=radio] { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--primary); box-shadow: none; }
+.wiz-steps { display: flex; gap: 4px; list-style: none; margin: 0; padding: 2px; overflow-x: auto; scrollbar-width: none; }
+.wiz-steps::-webkit-scrollbar { display: none; }
+.wiz-step { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.wiz-step:hover:not(:disabled) { background: #fff; color: var(--ink); }
+.wiz-step:disabled { cursor: default; opacity: .5; }
+.wiz-step[aria-current=step] { background: #fff; color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--line); }
+.wiz-num { width: 24px; height: 24px; border-radius: 12px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: var(--row); color: var(--ink-3); flex: none; }
+.wiz-step.done .wiz-num { background: var(--green-bg); color: var(--green); }
+.wiz-step[aria-current=step] .wiz-num { background: var(--primary); color: #fff; }
+.wiz-gate { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.wiz-gate li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--row); font-size: 14px; line-height: 1.45; }
+.wiz-gate li:first-child { border-top: 0; padding-top: 0; }
+.wiz-mark { width: 20px; height: 20px; border-radius: 10px; display: grid; place-items: center; flex: none; margin-top: 1px; background: var(--row); }
+.wiz-gate li.met .wiz-mark { background: var(--green-bg); }
+.wiz-quote { border-left: 3px solid var(--line); padding: 4px 0 4px 12px; font-size: 14px; line-height: 1.55; color: var(--ink-2); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+/* Hints in the wizard carry instructions: the darker grey (4.5:1 or better), not the faint one. */
+.wiz .hint { color: var(--muted); }
+/* On a phone the other steps' names are clipped from view, not removed, so each button keeps its name for screen readers. */
+@media (max-width: 760px) {
+  .wiz-step { position: relative; padding: 6px 8px; }
+  .wiz-step:not([aria-current=step]) .wiz-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+}
+
 /* VAT explanations behind a small icon */
 .vat-info { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; margin: -3px 0 -3px 2px; border: 0; border-radius: 50%; background: transparent; color: var(--placeholder); cursor: pointer; vertical-align: middle; flex: none; }
 .vat-info:hover, .vat-info[aria-expanded="true"] { color: var(--primary); background: var(--primary-soft); }
@@ -470,3 +500,50 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
   .legal-body h2 { font-size: 19px; margin-top: 32px; }
   .legal-table th, .legal-table td { padding: 8px 10px; }
 }
+
+/* Engagement letters: the block editor beside its numbered preview, and the public signing pages. */
+.letter-ed { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@media (min-width: 1100px) { .letter-ed { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; } }
+.letter-blk { border: 1px solid var(--line, #E5E7EB); border-radius: 10px; padding: 10px 12px; background: #fff; }
+.letter-blk.open { border-color: var(--blue, #2563EB); box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+.letter-blk-text { font-size: 14px; color: #374151; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.letter-preview { border: 1px solid var(--line, #E5E7EB); border-radius: 12px; padding: 20px 22px; background: #fff; font-size: 14px; line-height: 1.6;
+  position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+.letter-ed .btn-sm { min-height: 36px; }
+.sign-wrap { min-height: 100vh; background: #F4F6F8; padding: 24px 16px 48px; }
+.sign-card { max-width: 640px; margin: 0 auto; background: #fff; border: 1px solid var(--line, #E5E7EB); border-radius: 14px; padding: 24px; }
+.sign-card .btn { min-height: 44px; }
+.sign-pad { width: 100%; height: 180px; border: 1px dashed #9CA3AF; border-radius: 10px; background: #fff; touch-action: none; display: block; }
+.sign-code { font-size: 22px; letter-spacing: 6px; text-align: center; max-width: 220px; }
+
+/* Activity log (portal mandate panel, Settings, Your accountant) */
+.act-list { list-style: none; margin: 0; padding: 0; }
+.act-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; padding: 10px 0; border-top: 1px solid var(--row); font-size: 14px; line-height: 1.5; }
+.act-row:first-child { border-top: 0; }
+.act-what { min-width: 0; overflow-wrap: anywhere; }
+.act-who { font-size: 12px; text-align: right; white-space: nowrap; }
+@media (max-width: 640px) {
+  .act-row { grid-template-columns: minmax(0, 1fr); }
+  .act-who { text-align: left; white-space: normal; }
+}
+
+/* Recurring invoice lines */
+.rec-line { display: grid; grid-template-columns: minmax(0, 1fr) 64px 120px 118px auto 32px; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--row); }
+.rec-once { font-size: 12px; white-space: nowrap; }
+@media (max-width: 720px) {
+  .rec-line { grid-template-columns: 64px minmax(0, 1fr) 32px; }
+  .rec-desc { grid-column: 1 / -1; }
+  .rec-vat { grid-column: 1 / 3; }
+  .rec-once { grid-column: 1 / -1; }
+  .rec-x { grid-row: 2; grid-column: 3; }
+}
+
+/* Portal fees: one client per row, opened for its invoices, retainers and bills */
+.fee-row { border-top: 1px solid var(--row); }
+.fee-row:first-child { border-top: 0; }
+.fee-sum { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; padding: 12px 16px; cursor: pointer; list-style: none; min-height: 44px; }
+.fee-sum::-webkit-details-marker { display: none; }
+.fee-row[open] > .fee-sum { background: var(--canvas); }
+.fee-row[open] .fee-chev { transform: rotate(180deg); }
+.fee-chev { transition: transform .15s ease; }
+@media (prefers-reduced-motion: reduce) { .fee-chev { transition: none; } }

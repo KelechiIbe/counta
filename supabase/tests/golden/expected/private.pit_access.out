@@ -1,0 +1,8 @@
+== definer:owner
+[{"?column?": {"me": null, "all": true, "books": true, "money": true, "owner": true}}]
+== definer:admin
+[{"?column?": {"me": null, "all": true, "books": true, "money": true, "owner": false}}]
+== definer:accountant
+[{"?column?": {"me": null, "all": true, "books": true, "money": true, "owner": false}}]
+== definer:staff
+ERROR 42501: Income tax returns need File tax, or Keep the books, See margins or Make payments.

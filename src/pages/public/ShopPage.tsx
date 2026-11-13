@@ -184,7 +184,7 @@ export function ShopPage() {
         {!shown.length && <div className="empty">Nothing matches.</div>}
         <footer className="faint" style={{ fontSize: 12, textAlign: 'center', marginTop: 28 }}>
           {[shop.address, shop.phone, shop.email].filter(Boolean).join(' · ')}
-          <div style={{ marginTop: 4 }}>Shop powered by Counta · TaxStreem</div>
+          {!shop.white_label && <div data-testid="shop-powered-by" style={{ marginTop: 4 }}>Shop powered by Counta · TaxStreem</div>}
         </footer>
       </main>
       {view && (() => {

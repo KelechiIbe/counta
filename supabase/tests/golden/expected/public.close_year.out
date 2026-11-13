@@ -1,0 +1,8 @@
+== owner
+ERROR P0001: That is not the last day of a financial year.
+== admin
+ERROR 42501: Only the owner closes the year.
+== accountant
+ERROR 42501: Only the owner closes the year.
+== staff
+ERROR 42501: Only the owner closes the year.

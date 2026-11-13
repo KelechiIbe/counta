@@ -1,0 +1,8 @@
+== definer:owner
+[{"role": "owner"}]
+== definer:admin
+[{"role": "admin"}]
+== definer:accountant
+[{"role": "accountant"}]
+== definer:staff
+ERROR 42501: Only the owner or the bookkeeper moves the books into Counta.

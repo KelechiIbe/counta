@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { can, useInventory, useSession, useToast } from '../state/session';
+import { actsAsOwner, can, useInventory, useSession, useToast } from '../state/session';
 import { useAction } from '../lib/queries';
 import { must, rpc, supabase } from '../lib/supabase';
 import { localPhone } from '../lib/format';
@@ -234,7 +234,7 @@ export default function Settings() {
   const nav = useNavigate();
   const { hash } = useLocation();
   const qc = useQueryClient();
-  const owner = inv?.me.role === 'owner';
+  const owner = actsAsOwner(inv);
   // A business that sells services only keeps no stock, so it has no stock rules.
   const mode = useMode();
   // Changing the business's settings is a permission of its own (owners and admins by default).

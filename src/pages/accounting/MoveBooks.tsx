@@ -4,7 +4,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { can, useInventory, useSession, useToast } from '../../state/session';
+import { actsAsOwner, can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { edge, useChart } from '../../lib/api';
 import { N2, addDays, fmtDay, num, when } from '../../lib/format';
@@ -38,7 +38,7 @@ export default function MoveBooks() {
   const [vendorsImport] = useState(() => newImportId());
   const options = useMemo(() => accountOptions(chart.data?.accounts || []), [chart.data]);
   if (!inv) return null;
-  if (!can(inv, 'keep_books') && inv.me.role !== 'owner') return <div className="container"><Alert kind="yellow" icon="shield">Moving the books needs the Keep the books permission. Ask the owner.</Alert></div>;
+  if (!can(inv, 'keep_books') && !actsAsOwner(inv)) return <div className="container"><Alert kind="yellow" icon="shield">Moving the books needs the Keep the books permission. Ask the owner.</Alert></div>;
   const g = state.data;
   const mig = g?.migration && g.migration.status === 'draft' ? g.migration : null;
   const posted = g?.migration && g.migration.status === 'posted' ? g.migration : null;
@@ -72,7 +72,7 @@ export default function MoveBooks() {
               {history.map((h) => (
                 <div key={h.id} className="row wrap" style={{ justifyContent: 'space-between', fontSize: 13.5 }}>
                   <span>From {bookSystem(h.source).name} at {fmtDay(h.as_of)} · {h.journal_ref || h.summary?.journal_ref}{h.summary?.invoices != null ? ` · ${h.summary.invoices} invoices, ${h.summary.bills} bills` : ''}{h.posted_at ? ` · ${when(h.posted_at)}` : ''}</span>
-                  {inv.me.role === 'owner' && <button className="btn btn-ghost btn-xs" onClick={() => setUndo(h)}><Icon name="undo" size={13} />Undo</button>}
+                  {actsAsOwner(inv) && <button className="btn btn-ghost btn-xs" onClick={() => setUndo(h)}><Icon name="undo" size={13} />Undo</button>}
                 </div>
               ))}
             </div>

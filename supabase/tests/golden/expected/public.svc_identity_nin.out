@@ -1,0 +1,4 @@
+== service
+ERROR 42501: Only the owner confirms a director's identity.
+[{"svc_identity_nin": {"role": "owner", "matched": "Golden Owner", "verified": true}}]
+[{"matched": "Golden Owner", "identity_status": "verified"}]

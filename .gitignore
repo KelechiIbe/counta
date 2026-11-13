@@ -6,3 +6,5 @@ dev-dist
 .netlify
 .DS_Store
 *.log
+
+.superpowers/

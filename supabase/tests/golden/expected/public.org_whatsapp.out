@@ -1,0 +1,8 @@
+== owner
+[{"org_whatsapp": {"own": null, "counta": null, "sender": "counta", "can_change": true}}]
+== admin
+[{"org_whatsapp": {"own": null, "counta": null, "sender": "counta", "can_change": true}}]
+== accountant
+[{"org_whatsapp": {"own": null, "counta": null, "sender": "counta", "can_change": false}}]
+== staff
+[{"org_whatsapp": {"own": null, "counta": null, "sender": "counta", "can_change": false}}]

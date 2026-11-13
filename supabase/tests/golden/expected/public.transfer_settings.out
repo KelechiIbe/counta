@@ -1,0 +1,8 @@
+== owner
+[{"transfer_settings": {"mode": "wallet", "name": null, "seen": null, "label": "TaxStreem Golden Foods", "prefix": "TaxStreem", "separator": " ", "can_change": true, "checks_today": 0, "default_name": "Golden Foods"}}]
+== admin
+[{"transfer_settings": {"mode": "wallet", "name": null, "seen": null, "label": "TaxStreem Golden Foods", "prefix": "TaxStreem", "separator": " ", "can_change": false, "checks_today": 0, "default_name": "Golden Foods"}}]
+== accountant
+[{"transfer_settings": {"mode": "wallet", "name": null, "seen": null, "label": "TaxStreem Golden Foods", "prefix": "TaxStreem", "separator": " ", "can_change": false, "checks_today": 0, "default_name": "Golden Foods"}}]
+== staff
+[{"transfer_settings": {"mode": "wallet", "name": null, "seen": null, "label": "TaxStreem Golden Foods", "prefix": "TaxStreem", "separator": " ", "can_change": false, "checks_today": 0, "default_name": "Golden Foods"}}]

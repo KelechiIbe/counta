@@ -1,0 +1,8 @@
+== definer:owner
+[{"mfa_required": true}]
+== definer:admin
+[{"mfa_required": true}]
+== definer:accountant
+[{"mfa_required": false}]
+== definer:staff
+[{"mfa_required": false}]

@@ -1,0 +1,12 @@
+== definer:owner
+[{"amount": 5000.00, "status": "approved"}]
+[]
+== definer:admin
+[{"amount": 5000.00, "status": "pending_approval"}]
+[{"kind": "payout", "email": "owner@example.test"}]
+== definer:accountant
+[{"amount": 5000.00, "status": "pending_approval"}]
+[{"kind": "payout", "email": "admin@example.test"}, {"kind": "payout", "email": "owner@example.test"}]
+== definer:staff
+[{"amount": 5000.00, "status": "pending_approval"}]
+[{"kind": "payout", "email": "admin@example.test"}, {"kind": "payout", "email": "owner@example.test"}]

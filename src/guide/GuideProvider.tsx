@@ -8,7 +8,7 @@ import { rpc } from '../lib/supabase';
 import { localPhone } from '../lib/format';
 import { useSession } from '../state/session';
 import {
-  cacSearch, cacSelect, cacStatusReport, classLabel, guideConsent, guideLanguage, guideMark, kycAnswer, kycManual, kycSubmit, openWallet, QUESTION_ORDER, readCacDocument, saveVoice,
+  cacSearch, cacSelect, cacStatusReport, classLabel, guideConsent, guideLanguage, guideMark, kycAnswer, kycManual, kycSubmit, onboardOrg, openWallet, QUESTION_ORDER, readCacDocument, saveVoice,
   webInsights, type Answers, type Category, type GuideState, type Kyc, type Score, type WebInsights,
 } from '../lib/onboard';
 import { fetchSpeech, playAudio } from '../lib/speech';
@@ -202,7 +202,8 @@ export function GuideProvider({ children }: { children: ReactNode }) {
         return 'On screen.';
       }),
       show_summary: safe(async () => {
-        const k = await rpc<Kyc>('kyc_draft', {});
+        const target = onboardOrg();
+        const k = await rpc<Kyc>('kyc_draft', target ? { p_org: target } : {});
         goOnboard('summary');
         return { business: businessBrief(k), category: k.category?.label, answers: k.answers, still_missing: k.missing.length ? k.missing : 'nothing, all answered' };
       }),
@@ -281,7 +282,14 @@ export function GuideProvider({ children }: { children: ReactNode }) {
         const r = await checkNin(o, String(nin || ''), conv.current?.getId?.() || null);
         refresh(); void qc.invalidateQueries({ queryKey: ['identity'] }); void qc.invalidateQueries({ queryKey: ['inv'] });
         if (r.result.verified) celebrate();
-        return r.result.verified ? { verified: true, director: r.result.matched, note: 'Payments can now be switched on.' }
+        if (r.result.reason === 'handover_review') {
+          return { verified: false, why: 'handover_review', next: 'Nothing to do: TaxStreem is checking the handover of the business, and no NIN or slip counts until it decides. Payments stay locked meanwhile; the books work.' };
+        }
+        if (r.result.reason === 'cac_required') {
+          return { verified: false, why: 'cac_required', next: 'The business must be found on CAC first (Settings, Business profile). Then check a director\'s NIN.' };
+        }
+        const managed = !!qc.getQueryData<Inventory>(['inv', o])?.org.managed_by;
+        return r.result.verified ? { verified: true, director: r.result.matched, note: managed ? 'Payments open once a director confirms the wallets from the email the firm sends.' : 'Payments can now be switched on.' }
           : { verified: false, why: r.result.reason, directors_on_record: r.result.people, next: 'Ask them to add their NIN slip (open_nin_upload), or skip if they are not a director.' };
       }),
       open_nin_upload: safe(async () => {

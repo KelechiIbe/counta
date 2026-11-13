@@ -1,0 +1,2 @@
+== definer:owner
+[{"name": "Golden Approved", "payments_open": true, "identity_status": "approved"}, {"name": "Golden Foods Ltd", "payments_open": true, "identity_status": "not_required"}, {"name": "Golden Pending", "payments_open": false, "identity_status": "pending"}, {"name": "Golden Rejected", "payments_open": false, "identity_status": "rejected"}, {"name": "Golden Review", "payments_open": false, "identity_status": "review"}, {"name": "Golden Verified", "payments_open": true, "identity_status": "verified"}]

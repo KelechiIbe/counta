@@ -1,0 +1,8 @@
+== owner
+[{"save_voice_settings": {"events": {"sale_recorded": true, "payment_received": true}, "voices": [], "can_edit": true, "voice_id": null, "voice_lang": "en"}}]
+== admin
+ERROR 42501: Only the owner or a manager chooses the voice.
+== accountant
+ERROR 42501: Only the owner or a manager chooses the voice.
+== staff
+ERROR 42501: Only the owner or a manager chooses the voice.

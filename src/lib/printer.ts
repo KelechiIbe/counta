@@ -80,7 +80,7 @@ export function receiptText(s: Sale, width = 32): string[] {
     out.push(rule);
   }
   if (s.org?.receipt_footer) out.push(center(s.org.receipt_footer));
-  out.push(center('Powered by Counta'));
+  if (!s.org?.white_label) out.push(center('Powered by Counta'));
   return out;
 }
 

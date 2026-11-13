@@ -4,7 +4,7 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { useInventory } from '../../state/session';
+import { actsAsOwner, useInventory } from '../../state/session';
 import { edge, edgeOk } from '../../lib/api';
 import { rpc, supabase } from '../../lib/supabase';
 import { Icon } from '../../components/Icon';
@@ -16,7 +16,11 @@ export type Identity = {
   people: { name: string; role: string }[];
   slip: { path: string; file_name: string; at: string; read: boolean; name?: string; last4?: string; is_nin_document?: boolean; warnings?: string[] } | null;
   review: { approved: boolean; note: string | null; at: string } | null;
+  // A handover TaxStreem has not approved: no NIN check or slip counts until it has.
+  reason?: string | null; handover_review?: boolean;
 };
+
+const HANDOVER_WAIT = 'Payments open once TaxStreem has checked the handover of the business. This usually takes a working day. Your books work meanwhile.';
 
 export function useIdentity(orgId: string | null | undefined) {
   return useQuery({ queryKey: ['identity', orgId], enabled: !!orgId, queryFn: () => rpc<Identity>('identity_state', { p_org: orgId }) });
@@ -47,11 +51,13 @@ const listNames = (names: string[]) => names.length <= 1 ? names.join('') : `${n
 export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }: { orgId: string; onDone?: () => void; onSkip?: () => void; live?: boolean; askOpen?: number;
   onResult?: (said: string, note?: string) => void }) {
   const id = useIdentity(orgId);
+  const { data: inv } = useInventory();
   const qc = useQueryClient();
   const [nin, setNin] = useState('');
   const [busy, setBusy] = useState<'nin' | 'slip' | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [miss, setMiss] = useState<string | null>(null);
+  const [held, setHeld] = useState<string | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const s = id.data;
   if (id.isLoading || !s) return <div className="row" style={{ justifyContent: 'center', padding: 30 }}><Spinner /></div>;
@@ -59,20 +65,41 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }
   const directors = s.people.filter((p) => p.role === 'director').map((p) => p.name);
   const names = directors.length ? directors : s.people.map((p) => p.name);
   const ok = s.status === 'verified' || s.status === 'approved' || s.status === 'not_required';
+  // Under full mandate the firm checks a director's NIN, and a director then confirms the wallets from an email.
+  const org = inv?.org;
+  const managed = !!org?.managed_by;
+  const opened = s.payments_open ? ' Payments are open.' : org?.read_only_at ? ' Payments are closed: the engagement has ended.'
+    : managed && !org?.director_confirmed_at ? ' Payments open once a director of the business confirms the wallets, from the email the firm sends from the accountant portal.'
+    : managed ? ' Payments wait while TaxStreem has paused the firm\'s full mandates.' : ' Payments are open.';
 
   async function check() {
-    setErr(null); setMiss(null);
+    setErr(null); setMiss(null); setHeld(null);
     const d = nin.replace(/\D/g, '');
     if (d.length !== 11) { setErr('An NIN has 11 digits.'); return; }
     setBusy('nin');
     try {
       const r = await checkNin(orgId, d);
       setNin('');
+      if (!r.result.verified && r.result.reason === 'handover_review') {
+        // Not a name mismatch, and no slip helps: TaxStreem decides the handover first.
+        setHeld(HANDOVER_WAIT);
+        onResult?.('I checked my NIN on screen.', HANDOVER_WAIT);
+        await refresh();
+        setBusy(null);
+        return;
+      }
+      if (!r.result.verified && r.result.reason === 'cac_required') {
+        setHeld('Find the business on CAC first, in Settings, Business profile. Then check a director\'s NIN here.');
+        await refresh();
+        setBusy(null);
+        return;
+      }
       const why = r.result.verified ? '' : r.result.reason === 'not_account_holder' ? 'The name on that NIN is not the name on your Counta account.'
         : r.result.reason === 'no_directors_on_record' ? 'CAC has no directors on record for the business, so the NIN cannot be matched.'
         : `The name on that NIN does not match ${names.length ? listNames(names) : 'the directors CAC lists'}.`;
       if (!r.result.verified) setMiss(why);
-      onResult?.('I checked my NIN on screen.', r.result.verified ? `It matched ${r.result.matched || 'a director'}. Payments can open.` : `It did not match. ${why} Ask them to add the NIN slip.`);
+      onResult?.('I checked my NIN on screen.', r.result.verified ? `It matched ${r.result.matched || 'a director'}. ${managed ? 'A director still confirms the wallets from the firm\'s email before payments open.' : 'Payments can open.'}`
+        : `It did not match. ${why} Ask them to add the NIN slip.`);
       await refresh();
     } catch (e) { setErr((e as Error).message); }
     setBusy(null);
@@ -89,11 +116,23 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }
     return (
       <div className="stack" style={{ gap: 12 }}>
         <Alert kind="green" icon="check">
-          {s.status === 'not_required' ? 'Nothing to check for this business: payments are open.'
-            : s.status === 'approved' ? 'TaxStreem confirmed the director\'s identity. Payments are open.'
-            : `Confirmed: ${s.matched || 'a director'}${s.last4 ? `, NIN ending ${s.last4}` : ''}${s.method === 'slip' ? ', from the NIN slip' : ''}. Payments are open.`}
+          {s.status === 'not_required' ? `Nothing to check for this business.${opened}`
+            : s.status === 'approved' ? `TaxStreem confirmed the director's identity.${opened}`
+            : `Confirmed: ${s.matched || 'a director'}${s.last4 ? `, NIN ending ${s.last4}` : ''}${s.method === 'slip' ? ', from the NIN slip' : ''}.${opened}`}
         </Alert>
         {onDone && <div><button className="btn btn-primary" onClick={onDone}>Continue<Icon name="arrow" size={16} color="#fff" /></button></div>}
+      </div>
+    );
+  }
+  if (s.handover_review) {
+    const rejected = s.status === 'rejected';
+    return (
+      <div className="stack" style={{ gap: 12 }}>
+        <Alert kind={rejected ? 'red' : 'blue'} icon={rejected ? 'alert' : 'clock'}>
+          {rejected ? `TaxStreem did not accept the handover of the business${s.review?.note ? `: ${s.review.note}` : ''}. Payments stay locked; contact TaxStreem about it.`
+            : HANDOVER_WAIT}
+        </Alert>
+        {onDone && <div><button className="btn btn-primary" onClick={onDone}>Carry on<Icon name="arrow" size={16} color="#fff" /></button></div>}
       </div>
     );
   }
@@ -106,7 +145,8 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }
     );
   }
   if (!s.can_check) {
-    return <Alert kind="amber" icon="lock">Payments open once the owner, as a director, confirms their NIN. Ask them to do it in Settings, Business identity.</Alert>;
+    return <Alert kind="amber" icon="lock">{managed ? 'Payments open once a partner or manager of the firm checks a director\'s NIN here, and a director confirms the wallets.'
+      : 'Payments open once the owner, as a director, confirms their NIN. Ask them to do it in Settings, Business identity.'}</Alert>;
   }
   return (
     <div className="stack" style={{ gap: 14 }}>
@@ -129,6 +169,7 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }
         Counta asks NIMC for the name on the NIN and compares it with the directors on the CAC record. Only the result and the last four digits are kept.
         {live ? ' You can also read it out to Martina.' : ''}
       </div>
+      {held && <Alert kind="blue" icon="clock">{held}</Alert>}
       {miss && <Alert kind="amber" icon="alert">{miss} Add your NIN slip instead, and TaxStreem will check it if it still does not match.</Alert>}
       {err && <Alert kind="red" icon="alert">{err}</Alert>}
       <div className="row wrap" style={{ gap: 8 }}>
@@ -143,21 +184,35 @@ export function IdentityPanel({ orgId, onDone, onSkip, live, askOpen, onResult }
   );
 }
 
-// Shown on Home and Payments while the director's identity is not confirmed: the wallet, payment links and payouts wait.
+// Shown on Home and Payments while payments are shut: the director's identity is not confirmed, a handover waits for
+// TaxStreem, or, for a business a practice runs under full mandate, no director has confirmed the wallets yet. A business
+// kept read-only after its engagement ended says so in its own banner instead.
 export function PaymentsLock() {
   const { data: inv } = useInventory();
-  if (!inv || inv.org.payments_open !== false) return null;
-  const owner = inv.me.role === 'owner';
-  const st = inv.org.identity_status;
-  const text = st === 'review' ? 'TaxStreem is checking the NIN slip. The wallet, payment links and payouts open once it is approved; everything else works.'
-    : st === 'rejected' ? `TaxStreem could not confirm the NIN slip, so the wallet, payment links and payouts stay locked. ${owner ? 'Add a clearer slip or check your NIN again.' : 'The owner can add a clearer slip in Settings.'}`
+  const org = inv?.org;
+  const st = org?.identity_status;
+  const shut = !!org && org.payments_open === false && !org.read_only_at;
+  // Only identity_state tells a handover TaxStreem is checking from a NIN slip it is checking.
+  const id = useIdentity(shut && (st === 'review' || st === 'rejected') ? org!.id : null);
+  if (!inv || !org || !shut) return null;
+  const owner = actsAsOwner(inv);
+  const managed = !!org.managed_by;
+  const verified = st === 'verified' || st === 'approved' || st === 'not_required';
+  const handover = !!id.data?.handover_review;
+  const text = handover ? (st === 'rejected' ? 'TaxStreem did not accept the handover of the business, so the wallet, payment links and payouts stay locked. Contact TaxStreem about it.' : HANDOVER_WAIT)
+    : managed && verified ? (org.director_confirmed_at ? 'TaxStreem has paused the firm\'s full mandates, so the wallet, payment links and payouts wait. Everything else works.'
+      : 'The wallet, payment links and payouts open once a director of the business confirms them, from the email the firm sends from the accountant portal.')
+    : st === 'review' ? 'TaxStreem is checking the NIN slip. The wallet, payment links and payouts open once it is approved; everything else works.'
+    : st === 'rejected' ? `TaxStreem could not confirm the NIN slip, so the wallet, payment links and payouts stay locked. ${owner ? 'Add a clearer slip or check the NIN again.' : 'The owner can add a clearer slip in Settings.'}`
+    : managed ? 'The wallet, payment links and payouts open once the firm checks a director\'s NIN and a director confirms the wallets.'
     : owner ? 'The wallet, payment links and payouts open once a director confirms their NIN. It takes a minute.'
     : 'The wallet, payment links and payouts open once the owner, as a director, confirms their NIN in Settings.';
+  const button = owner && !handover && st !== 'review' && !(managed && verified);
   return (
-    <div className="alert alert-amber row wrap" role="status" style={{ gap: 10, alignItems: 'center' }}>
+    <div className="alert alert-amber row wrap" role="status" style={{ gap: 10, alignItems: 'center' }} data-testid="payments-lock">
       <Icon name="lock" size={16} color="#C2410C" />
       <span style={{ flex: '1 1 240px', minWidth: 0, lineHeight: 1.5 }}>{text}</span>
-      {owner && st !== 'review' && <Link className="btn btn-secondary btn-sm" to="/settings#identity">{st === 'rejected' ? 'Open identity' : 'Confirm my NIN'}</Link>}
+      {button && <Link className="btn btn-secondary btn-sm" to="/settings#identity">{st === 'rejected' ? 'Open identity' : managed ? 'Check a director\'s NIN' : 'Confirm my NIN'}</Link>}
     </div>
   );
 }

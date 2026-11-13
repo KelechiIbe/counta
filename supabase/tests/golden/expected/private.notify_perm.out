@@ -1,0 +1,3 @@
+== definer:owner
+[{"notify_perm": ""}]
+[{"kind": "golden", "email": "owner@example.test"}]

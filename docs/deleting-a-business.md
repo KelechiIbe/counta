@@ -30,6 +30,10 @@ sign-in.
 - Money on its way: a payout or bulk payment being sent, money moving between the wallets, a tax payment being made, or a
   subscription payment.
 - A sample business on its own. It goes when its owner's business is deleted.
+- Records still being kept. A business an accounting firm ran under full mandate, whose mandate ended without a handover, is
+  read-only and kept until its retention date (`orgs.retain_until`, at least five years, as its engagement letter says). The
+  preview says until when, and neither the admin portal nor a direct delete removes it before then (`orgs_retention_guard`).
+  Its stored files cannot be deleted meanwhile either.
 
 ## How it works
 

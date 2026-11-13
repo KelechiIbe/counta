@@ -1,0 +1,15 @@
+== owner
+[{"created": true}]
+[{"name": "Golden New Ltd", "role": "owner", "email": "owner@example.test", "title": "Owner", "display_name": "Golden Founder", "p_manage_team": true, "vat_registered": true, "identity_status": "not_required", "p_make_payments": true}]
+== admin
+[{"created": true}]
+[{"name": "Golden New Ltd", "role": "owner", "email": "admin@example.test", "title": "Owner", "display_name": "Golden Founder", "p_manage_team": true, "vat_registered": true, "identity_status": "not_required", "p_make_payments": true}]
+== accountant
+[{"created": true}]
+[{"name": "Golden New Ltd", "role": "owner", "email": "accountant@example.test", "title": "Owner", "display_name": "Golden Founder", "p_manage_team": true, "vat_registered": true, "identity_status": "not_required", "p_make_payments": true}]
+== staff
+[{"created": true}]
+[{"name": "Golden New Ltd", "role": "owner", "email": "staff@example.test", "title": "Owner", "display_name": "Golden Founder", "p_manage_team": true, "vat_registered": true, "identity_status": "not_required", "p_make_payments": true}]
+== anon
+ERROR 42501: permission denied for function create_org
+[]
