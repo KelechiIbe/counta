@@ -6,15 +6,20 @@
 // Database (header x-counta-hook: <PUSH_HOOK_SECRET>):
 //   { message_id }          -> sends one queued message
 //   { action: 'retry' }     -> sends messages that are still queued or failed and can be tried again
+//   { action: 'practice_mail', kind, id } -> a practice email (kinds letter_sign, letter_code, letter_done, director_confirm,
+//                                            director_code, director_admin): svc_practice_mail writes it and mints its link
+//                                            or code, sent in the firm's name only (no "via Counta"); director_admin goes
+//                                            to each of TaxStreem's reviewers, one email each (practice_mail.ts)
 // Signed-in callers (Authorization: Bearer <user JWT>):
 //   { action: 'status' }    -> which channels are switched on
 //   { action: 'wa_link', org_id }   -> links the business's own WhatsApp number on OpenWA (when TaxStreem allows it):
 //                                      starts its session and answers the QR code to scan
 //   { action: 'wa_status', org_id } -> the business's own number: its state, and the QR code while it waits for a scan
 //   { action: 'wa_unlink', org_id } -> unlinks it; messages go from TaxStreem's number again
-//   { action: 'practice_email', kind: 'member'|'client'|'accountant', id }
+//   { action: 'practice_email', kind: 'member'|'client'|'accountant'|'handover', id }
 //                                   -> emails an accountant-portal invitation (to a practice's new staff, from a practice to a
-//                                      business owner, or from a business to its accountant) with a fresh one-time link
+//                                      business owner, from a business to its accountant, or from a practice to the person
+//                                      taking over a business it ran under full mandate) with a fresh one-time link
 // Meta (WhatsApp delivery and read receipts):
 //   GET  /messaging/whatsapp   -> webhook verification (hub.verify_token must equal WHATSAPP_VERIFY_TOKEN)
 //   POST /messaging/whatsapp   -> header X-Hub-Signature-256 must be the HMAC of the body with WHATSAPP_APP_SECRET
@@ -31,6 +36,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { displayName, emailHtml, emailText, type Msg, mandateBlocked, senderAddress, waText, wording } from './wording.ts';
 import { ensureSession, type OpenWa, owa, owaError, RECEIPT_EVENTS, sendText, sessionState, setWebhooks, signatureOk, waDigits, waFormat } from './openwa.ts';
+import { PRACTICE_MAIL_KINDS, practiceMailMessages } from './practice_mail.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -85,11 +91,12 @@ async function hmacHex(key: string, body: string) {
 // ------------------------------------------------------------------ senders
 const storageUrl = (path?: string | null) => (path ? `${SUPABASE_URL}/storage/v1/object/public/item-photos/${path.split('/').map(encodeURIComponent).join('/')}` : null);
 
-async function sendEmail(m: Msg): Promise<string> {
+async function sendEmail(m: Msg, fromName?: string): Promise<string> {
   const key = await secret('RESEND_API_KEY');
   const from = await secret('RESEND_FROM');
   if (!key || !from) throw new Error('Email is not switched on yet. TaxStreem is setting it up; the message goes out once it is.');
-  // Shown as "Business name via Counta <billing@...>" (just the business name when white-labelled), replies go to the business.
+  // Shown as "Business name via Counta <billing@...>" (just the business name when white-labelled, or fromName when the
+  // caller chose the name), replies go to the business.
   const addr = senderAddress(from);
   if (!addr) throw new Error('Email is not switched on yet: the sending address TaxStreem set has no email address in it.');
   // Counta's own alerts to the owner come from Counta, with nowhere to reply to; customers' messages come from the business.
@@ -100,7 +107,7 @@ async function sendEmail(m: Msg): Promise<string> {
   const res = await fetch(`${RESEND_URL}/emails`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': `counta-${m.id}` },
-    body: JSON.stringify({ from: `${own ? 'Counta' : displayName(m.org?.name, m.org?.white_label === true)} <${addr}>`, to: [m.to_address], ...(cc.length && !own ? { cc } : {}),
+    body: JSON.stringify({ from: `${own ? 'Counta' : fromName || displayName(m.org?.name, m.org?.white_label === true)} <${addr}>`, to: [m.to_address], ...(cc.length && !own ? { cc } : {}),
       subject: m.subject || wording(m).heading, html: emailHtml(m), text: emailText(m),
       ...(replyTo ? { reply_to: replyTo } : {}), tags: [{ name: 'template', value: m.template }] }),
     signal: AbortSignal.timeout(20_000),
@@ -325,7 +332,7 @@ async function businessNumber(sb: any, orgId: string, action: string) {
 // ------------------------------------------------------------------ the accountant portal's invitations
 // The person asking must be allowed to send it (the database checks, as them); the link is made only now, as the email goes.
 async function practiceEmail(sb: any, kind: string, id: string) {
-  if (!['member', 'client', 'accountant'].includes(kind) || !/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, error: 'Unknown invitation.' };
+  if (!['member', 'client', 'accountant', 'handover'].includes(kind) || !/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, error: 'Unknown invitation.' };
   const { error: ce } = await sb.rpc('practice_invite_check', { p_kind: kind, p_id: id });
   if (ce) return { ok: false, error: ce.message };
   if (!(await channelOn(null, 'email'))) return { ok: false, error: 'Email is paused by TaxStreem for now. Try again later.' };
@@ -342,6 +349,34 @@ async function practiceEmail(sb: any, kind: string, id: string) {
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
+}
+
+// ------------------------------------------------------------------ the practice's own emails (the database asks)
+// Letters to sign, signing codes, signed letters, a director's confirmation and code, and TaxStreem's reviewers told of a
+// confirmation to check or a refusal. Checked before svc_practice_mail is asked, since asking mints a fresh link or code
+// (replacing the last): nothing is minted that cannot be sent. Sent from the firm's name alone.
+async function practiceMail(kind: string, id: string) {
+  if (!PRACTICE_MAIL_KINDS.includes(kind) || !/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, error: 'Unknown practice email.' };
+  if (!(await channelOn(null, 'email'))) return { ok: false, error: 'Email is paused by TaxStreem for now.' };
+  if (!(await secret('RESEND_API_KEY')) || !senderAddress(await secret('RESEND_FROM'))) {
+    return { ok: false, reason: 'not_configured', error: 'Email is not switched on yet. TaxStreem is setting it up.' };
+  }
+  const { data: r, error } = await admin.rpc('svc_practice_mail', { p_kind: kind, p_id: id });
+  if (error) return { ok: false, error: error.message };
+  if (!r) return { ok: true, skipped: true };
+  const msgs = practiceMailMessages(kind, id, r);
+  if (!msgs.length) return { ok: false, error: 'The email has no address to go to.' };
+  const sent: string[] = [], failed: string[] = [];
+  for (const m of msgs) {
+    try {
+      await sendEmail(m, displayName(String(r.from_name || 'Counta'), true));
+      sent.push(m.to_address);
+    } catch (e) {
+      failed.push((e as Error).message);
+    }
+  }
+  const sentTo = Array.isArray(r.to) ? sent : sent[0] ?? null;
+  return failed.length ? { ok: false, error: failed[0], sent_to: sentTo } : { ok: true, sent_to: sentTo };
 }
 
 // ------------------------------------------------------------------ entry
@@ -365,6 +400,7 @@ Deno.serve(async (req) => {
         for (const id of (ids as string[]) || []) results.push(await deliver(id));
         return json({ ok: true, results });
       }
+      if (body.action === 'practice_mail') return json(await practiceMail(String(body.kind || ''), String(body.id || '')));
       return json({ ok: false, error: 'Unknown action.' }, 400);
     }
 

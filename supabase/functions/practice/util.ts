@@ -1,6 +1,9 @@
 // Small helpers of the practice function: who is calling (IP address and browser), fingerprints, link tokens, a drawn
 // signature, and which of a business's stored files leave in an export.
 
+// An error whose message is for the person (shown as it is); anything else is answered "Something went wrong".
+export class UserError extends Error {}
+
 // The caller's IP address: the first address in x-forwarded-for (the client, as Supabase's gateway records it), else
 // x-real-ip, else nothing.
 export function clientIp(req: Request): string {
