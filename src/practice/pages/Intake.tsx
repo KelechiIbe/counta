@@ -76,11 +76,12 @@ function personProblem(p: PersonForm): string | null {
   if (pct && !(/^\d{1,3}(\.\d+)?$/.test(pct) && Number(pct) <= 100)) return 'Ownership is a percentage from 0 to 100.';
   return null;
 }
-function formProblem(f: Form): string | null {
+// The first thing to correct before saving, and the step it is on.
+function formProblem(f: Form): [string, number] | null {
   const n = f.legal_name.trim().length;
-  if (n < 2 || n > 160) return 'Enter the business\'s registered name (2 to 160 characters).';
+  if (n < 2 || n > 160) return ['Enter the business\'s registered name (2 to 160 characters).', 2];
   const bad = f.people.find((p) => personProblem(p));
-  return bad ? `${bad.name.trim() || 'A person'}: ${personProblem(bad)}` : null;
+  return bad ? [`${bad.name.trim() || 'A person'}: ${personProblem(bad)}`, 3] : null;
 }
 // The step to open an intake at: the first thing it still needs.
 const nextStep = (d: IntakeDetail) => (!d.risk_rating ? 4 : !d.cleared ? 5 : 6);
@@ -151,7 +152,7 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
   async function save(): Promise<IntakeDetail | null> {
     setTried(true);
     const problem = formProblem(f);
-    if (problem) { setErr(problem); return null; }
+    if (problem) { setErr(problem[0]); setStep(problem[1]); return null; }
     setBusy(true); setErr(null);
     try {
       const r = await rpc<IntakeDetail>('practice_intake_save', { p_practice: pid, p: payload(f, d?.id) });
@@ -164,12 +165,14 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
       return r;
     } catch (e) { setErr(cleanError(e)); return null; } finally { setBusy(false); }
   }
-  // Moving to another step saves the first four steps' changes on the way.
-  async function go(target: number) {
+  // The first four steps are one form: moving between them keeps what was typed. "Save and continue" saves it, and so does
+  // going on to the conflicts check or the last step, which work on the intake as saved. (A new intake is saved first
+  // from step 2, once it has a name.)
+  async function go(target: number, saving = false) {
     if (target === step || busy) return;
     if (!d && target > 2 && f.legal_name.trim().length < 2) { setStep(2); setTried(true); setErr('Enter the business\'s registered name first.'); return; }
-    if (editable && dirty && step >= 2 && step <= 4) { if (!(await save())) return; }
-    else if (editable && d && dirty && step === 1) { if (!(await save())) return; }
+    const mustSave = editable && dirty && (d ? saving || target >= 5 : target > 2);
+    if (mustSave && !(await save())) return;
     setErr(null);
     setStep(target);
   }
@@ -294,9 +297,12 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
         <div className="modal-ft m-wrap" style={{ justifyContent: 'space-between' }}>
           {step > 1 ? <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => go(step - 1)}><Icon name="chevL" size={14} />Back</button> : <span />}
           {step <= 4 && editable && (d || step > 1)
-            ? <button type="button" className="btn btn-primary" data-testid="intake-save" disabled={busy} onClick={() => go(step + 1)}>
-                {busy ? <Spinner small /> : null}{dirty ? 'Save and continue' : 'Continue'}<Icon name="chevR" size={14} color="#fff" />
-              </button>
+            ? <span className="row wrap" style={{ gap: 10, justifyContent: 'flex-end' }}>
+                {d && dirty && <span className="faint" style={{ fontSize: 13 }}>Changes not saved yet</span>}
+                <button type="button" className="btn btn-primary" data-testid="intake-save" disabled={busy} onClick={() => go(step + 1, true)}>
+                  {busy ? <Spinner small /> : null}{dirty ? 'Save and continue' : 'Continue'}<Icon name="chevR" size={14} color="#fff" />
+                </button>
+              </span>
             : step < 6 ? <button type="button" className="btn btn-primary" disabled={busy || (!d && step >= 2)} onClick={() => go(step + 1)}>Continue<Icon name="chevR" size={14} color="#fff" /></button>
             : <span />}
         </div>
@@ -359,7 +365,7 @@ function ModeChoice({ h, value, disabled, onChange }: { h: Home; value: IntakeMo
         <div className="stack" style={{ gap: 8 }}>
           {opt('full', 'Full mandate: your firm runs the business on Counta',
             'You set the business up and run it for the client. Counta never contacts the client. It needs a full-mandate engagement letter signed by both sides and a partner\'s declaration of the client\'s written authority. Wallets and payment links open only after a director confirms once.',
-            !h.can_full, 'mode-full', 'mode-full-locked')}
+            !h.can_full, 'mode-full', h.can_full ? undefined : 'mode-full-locked')}
           {!h.can_full && (
             <div id="mode-full-locked" className="row" style={{ gap: 8, alignItems: 'flex-start', fontSize: 13, color: 'var(--ink-3)' }}>
               <Icon name="lock" size={14} style={{ marginTop: 2 }} />
@@ -535,12 +541,14 @@ function Conflicts({ pid, h, d, partner, opposing, setOpposing }: {
       void qc.invalidateQueries({ queryKey: ['mandate-gate', d.id] });
       if (kind === 'refused') void qc.invalidateQueries({ queryKey: ['practice-home', pid] });
       if (kind !== 'run') { setNote(''); setRefusing(false); }
-      toast(kind === 'run' ? (r.conflict_status === 'hits' ? `${r.hits.length} possible ${r.hits.length === 1 ? 'conflict' : 'conflicts'} found` : 'Nothing found') : kind === 'cleared' ? 'Cleared' : 'Refused');
+      toast(kind === 'run' ? (r.conflict_status === 'hits' ? `${r.hits.length} possible ${r.hits.length === 1 ? 'conflict' : 'conflicts'} found` : 'Nothing found')
+        : kind === 'cleared' ? 'Recorded: cleared' : 'Recorded: refused');
     } catch (e) { setErr(cleanError(e)); }
     setBusy(null);
   }
   const n = d.hits.length;
   const stale = d.conflict_status === 'pending' && !!d.checked_at;
+  const showHits = n > 0 && d.conflict_status !== 'pending';
   return (
     <div data-testid="intake-step-5" className="stack" style={{ gap: 16 }}>
       <div className="muted" style={{ fontSize: 14, lineHeight: 1.5 }}>
@@ -565,7 +573,7 @@ function Conflicts({ pid, h, d, partner, opposing, setOpposing }: {
         </div>
       )}
 
-      {n > 0 && (
+      {showHits && (
         <div className="card" style={{ overflow: 'hidden' }}>
           {d.hits.map((x, i) => {
             const [kind, where] = HIT_KIND[x.kind];
@@ -598,7 +606,9 @@ function Conflicts({ pid, h, d, partner, opposing, setOpposing }: {
               <button type="button" className="btn btn-primary" data-testid="conflict-clear" disabled={busy !== null || note.trim().length < 10} onClick={() => act('cleared')}>
                 {busy === 'cleared' ? <Spinner small /> : <Icon name="check" size={14} color="#fff" />}Clear: no conflict
               </button>
-              <button type="button" className="btn btn-danger" data-testid="conflict-refuse" disabled={busy !== null || note.trim().length < 10} onClick={() => setRefusing(true)}>Refuse the client</button>
+              {d.status === 'engaged'
+                ? <span className="faint" style={{ fontSize: 13 }}>This business is already your client: to stop working for it, end the engagement from its page.</span>
+                : <button type="button" className="btn btn-danger" data-testid="conflict-refuse" disabled={busy !== null || note.trim().length < 10} onClick={() => setRefusing(true)}>Refuse the client</button>}
             </div>
           ) : (
             <div className="card card-pad stack" style={{ gap: 10, borderColor: '#FECACA' }}>
@@ -637,7 +647,7 @@ function OpposingParties({ pid, clientId, list, onChange }: { pid: string; clien
   }
   return (
     <details className="card card-pad" style={{ background: 'var(--canvas)' }}>
-      <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 600, minHeight: 24 }}>The other side of the work (optional)</summary>
+      <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 600, lineHeight: '20px', padding: '12px 0', margin: '-12px 0' }}>The other side of the work (optional)</summary>
       <div className="stack" style={{ gap: 10, marginTop: 10 }}>
         <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>If you act for this client in a dispute, a deal or a tax matter with someone else, record them. Later checks will find them, so you never act for both sides.</div>
         {list.map((o) => (
