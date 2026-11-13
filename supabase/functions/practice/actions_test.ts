@@ -144,12 +144,29 @@ Deno.test('sign_submit_checks_what_was_sent_before_using_the_code', async () => 
 Deno.test('sign_submit_refuses_a_changed_letter', async () => {
   const admin = new Fake();
   const { docPath, letter } = await signedLetter(admin);
-  admin.files.set(docPath, new TextEncoder().encode('%PDF-1.7 something else'));
+  const changed = new TextEncoder().encode('%PDF-1.7 something else');
+  admin.files.set(docPath, changed);
   admin.rpcs.svc_sign_verify = () => ({ ok: true, letter });
+  admin.rpcs.svc_letter_changed = () => ({ ok: true });
   const r = await call(deps(admin, new Fake()), { action: 'sign_submit', token: ES, code: '123 456', typed_name: 'Ada Obi', signature_png: PNG_URL });
   assertEquals(r.body, { ok: false, reason: 'changed', error: 'The letter has changed since it was signed by the firm.' });
   assertEquals(admin.uploads.length, 0);
   assert(!admin.calls.some((c) => c.fn === 'svc_sign_complete'));
+  // Recorded on the letter, with the fingerprint found and the signer's address.
+  const rec = admin.calls.find((c) => c.fn === 'svc_letter_changed');
+  assertEquals(rec?.args.p_letter, letter.letter_id);
+  assertEquals(rec?.args.p_found, await sha256Hex(changed));
+  assert('p_ip' in (rec?.args || {}) && 'p_ua' in (rec?.args || {}));
+});
+
+Deno.test('sign_submit_refuses_a_changed_letter_when_recording_fails', async () => {
+  const admin = new Fake();
+  const { docPath, letter } = await signedLetter(admin);
+  admin.files.set(docPath, new TextEncoder().encode('%PDF-1.7 something else'));
+  admin.rpcs.svc_sign_verify = () => ({ ok: true, letter });
+  admin.rpcs.svc_letter_changed = () => { throw new Error('connection reset'); };
+  const r = await call(deps(admin, new Fake()), { action: 'sign_submit', token: ES, code: '123 456', typed_name: 'Ada Obi', signature_png: PNG_URL });
+  assertEquals(r.body, { ok: false, reason: 'changed', error: 'The letter has changed since it was signed by the firm.' });
 });
 
 Deno.test('sign_submit_completes_with_certificate', async () => {

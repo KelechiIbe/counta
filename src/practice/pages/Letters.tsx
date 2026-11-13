@@ -25,6 +25,7 @@ export const LETTER_STATUS: Record<LetterStatus, [string, string]> = {
 const EVENT_WORD: Record<string, string> = {
   drafted: 'Drafted', partner_signed: 'Signed by the firm', sent: 'Sent for signing', opened: 'Opened by the signer', code_sent: 'Code sent to the signer',
   code_failed: 'Wrong code entered', signed: 'Signed by the client', uploaded: 'Signed copy recorded', voided: 'Voided',
+  document_changed: 'Signing refused: the stored letter no longer matches the one the firm signed',
 };
 // Fields worked out from others (capitals, amounts in words), filled at signing, or set by the letter's kind: not typed.
 const DERIVED = new Set(['client.name_upper', 'engagement.title_upper', 'fees.amount_words', 'fees.deposit_words', 'signer.name', 'signer.title',

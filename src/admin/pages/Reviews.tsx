@@ -1,8 +1,11 @@
-// TaxStreem's identity reviews: NIN slips whose name did not match a director on the CAC record. Approving opens the
-// business's payments; rejecting tells the owner why. Reviewers and admins see this, after an authenticator code.
+// TaxStreem's identity reviews: NIN slips whose name did not match a director on the CAC record, and businesses handed
+// over by a firm to someone other than the director who confirmed their wallets. Approving opens the business's payments
+// (a handed-over business never confirmed before goes back to the ordinary NIN check); rejecting tells the owner why. A
+// rejected handover can be decided again. Reviewers and admins see this, after an authenticator code.
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cleanError, rpc, supabase } from '../../lib/supabase';
+import { Link } from 'react-router-dom';
 import { when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Spinner } from '../../components/ui';
@@ -14,13 +17,16 @@ type Row = {
   slip: { path: string; file_name?: string; at?: string; read_at?: string; name?: string; last4?: string; is_nin_document?: boolean; warnings?: string[] } | null;
   review: { approved: boolean; note: string | null; at: string } | null;
   owner: { name: string; email: string | null } | null;
+  // reason 'handover' while a handover waits or was rejected; handover: its record (kept after it is approved).
+  reason?: string | null; handover?: { id: string; at: string; status_before: string | null } | null;
 };
+const BEFORE: Record<string, string> = { pending: 'not checked', review: 'in review', verified: 'verified', approved: 'approved', rejected: 'rejected', not_required: 'not needed' };
 
 export default function Reviews() {
   const list = useQuery({ queryKey: ['identity-reviews'], queryFn: () => rpc<Row[]>('identity_reviews') });
   return (
     <>
-      <PageHead title="Identity reviews" sub="NIN slips that did not match a director on the CAC record, and the decisions of the last 30 days." />
+      <PageHead title="Identity reviews" sub="NIN slips that did not match a director on the CAC record, businesses handed over by a firm, and the decisions of the last 30 days." />
       {list.isLoading ? <div className="row" style={{ justifyContent: 'center', padding: 40 }}><Spinner /></div>
         : list.isError ? <Alert kind="red" icon="alert">{cleanError(list.error)}</Alert>
         : !list.data?.length ? <Alert kind="green" icon="check">Nothing waiting. Slips that need a person to look at them appear here.</Alert>
@@ -52,6 +58,10 @@ function ReviewCard({ r }: { r: Row }) {
     setBusy(null);
   }
   const tone = r.status === 'review' ? 't-amber' : r.status === 'approved' ? 't-green' : 't-red';
+  const handover = r.reason === 'handover' && !!r.handover;
+  const confirmedBefore = ['verified', 'approved', 'not_required'].includes(r.handover?.status_before || '');
+  // A slip waits, or a handover waits or was rejected (TaxStreem may decide it again).
+  const decidable = r.status === 'review' || (handover && r.status === 'rejected');
   return (
     <div className="card card-pad stack" style={{ gap: 12 }}>
       <div className="row wrap" style={{ gap: 10, alignItems: 'flex-start' }}>
@@ -59,8 +69,16 @@ function ReviewCard({ r }: { r: Row }) {
           <div style={{ fontWeight: 700, fontSize: 16 }}>{r.business}</div>
           <div className="faint" style={{ fontSize: 13 }}>{[r.legal_form?.replace(/_/g, ' '), r.rc_number && `RC ${r.rc_number}`, r.owner && `${r.owner.name}${r.owner.email ? ` · ${r.owner.email}` : ''}`].filter(Boolean).join(' · ')}</div>
         </div>
+        {r.handover && <span className="chip t-blue">Handover</span>}
         <span className={'chip ' + tone}>{r.status === 'review' ? 'Waiting' : r.status === 'approved' ? 'Approved' : 'Rejected'}</span>
       </div>
+      {handover && (
+        <Alert kind="blue" icon="users">
+          A firm handed this business over {when(r.handover!.at)} to someone other than the director who confirmed its wallets. Its identity before the handover:
+          {' '}{BEFORE[r.handover!.status_before || ''] || 'unknown'}. {confirmedBefore ? 'Approving opens payments.' : 'Approving sends it to the ordinary NIN check, which the new owner then does.'}
+          {' '}<Link to="/admin/mandates">See the flag on Mandates</Link>
+        </Alert>
+      )}
       <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
         <div>
           <div className="mini-label">On the CAC record</div>
@@ -83,7 +101,7 @@ function ReviewCard({ r }: { r: Row }) {
       {err && <Alert kind="red" icon="alert">{err}</Alert>}
       <div className="row wrap" style={{ gap: 8 }}>
         <button className="btn btn-secondary btn-sm" disabled={!r.slip?.path || busy !== null} onClick={open}>{busy === 'open' ? <Spinner small /> : <Icon name="external" size={14} />}Open the slip</button>
-        {r.status === 'review' && (
+        {decidable && (
           <>
             <input className="input" style={{ flex: '1 1 220px', minWidth: 0, height: 34 }} placeholder="Note to the owner (needed to reject)" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} />
             <button className="btn btn-primary btn-sm" disabled={busy !== null} onClick={() => decide(true)}>{busy === 'yes' ? <Spinner small /> : <Icon name="check" size={14} color="#fff" />}Approve</button>

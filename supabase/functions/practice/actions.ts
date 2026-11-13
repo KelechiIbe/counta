@@ -280,9 +280,13 @@ async function signSubmit(req: Request, b: Body, d: Deps): Promise<Result> {
 
   const doc = await download(d, String(l.doc_path || ''), 'The letter could not be read. Ask the firm to send it again.');
   if ((await sha256Hex(doc)) !== String(l.doc_sha256 || '').toLowerCase()) {
-    // (No letter event records this: engagement_letter_events' kinds have none for it and its writer is private, so the
-    // function log is the record until the database gains one.)
+    // Recorded on the letter (document_changed) and the firm's leads told; the log keeps it too in case that write fails.
     console.error('practice: the stored letter does not match the fingerprint recorded when the firm signed it', l.letter_id);
+    try {
+      await rpc(d.admin, 'svc_letter_changed', { p_letter: l.letter_id, p_found: await sha256Hex(doc), p_ip: ip, p_ua: ua });
+    } catch (e) {
+      console.error('practice: could not record the changed letter', l.letter_id, (e as Error).message);
+    }
     return { ok: false, reason: 'changed', error: 'The letter has changed since it was signed by the firm.' };
   }
   const { data: pr, error: prErr } = await d.admin.from('practices').select('name').eq('id', l.practice_id).maybeSingle();

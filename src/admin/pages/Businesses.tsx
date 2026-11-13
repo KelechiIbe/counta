@@ -15,6 +15,8 @@ import { EInvoiceBusiness } from './EInvoiceBusiness';
 type Row = {
   id: string; name: string; rc_number: string | null; created_at: string; is_sample: boolean; identity_status: string; offering: string | null; industry: string | null;
   owner: { name: string; email: string | null } | null; people: number; paused: string[]; last_activity: string | null;
+  // Run by a practice under full mandate, kept read-only after it ended, or handed over and waiting for TaxStreem.
+  mandate?: { practice: string | null; read_only_at: string | null; retain_until: string | null; handover_review: boolean } | null;
 };
 const ID_TONE: Record<string, [string, string]> = {
   not_required: ['t-grey', 'Before the check'], pending: ['t-amber', 'NIN not checked'], review: ['t-amber', 'Slip waiting'],
@@ -56,7 +58,11 @@ export default function Businesses() {
                 <span className="m-main" style={{ minWidth: 0 }}>
                   <b className="ellipsis" style={{ display: 'block' }}>{r.name}</b>
                   <span className="faint" style={{ fontSize: 12 }}>{[r.rc_number && `RC ${r.rc_number}`, r.offering, r.is_sample && 'sample'].filter(Boolean).join(' · ') || '—'}
-                    {r.paused.map((p) => <span key={p} className="chip t-red" style={{ marginLeft: 6 }}>{featureLabel(p)} off</span>)}</span>
+                    {r.paused.map((p) => <span key={p} className="chip t-red" style={{ marginLeft: 6 }}>{featureLabel(p)} off</span>)}
+                    {r.mandate && <span className={'chip ' + (r.mandate.handover_review ? 't-amber' : r.mandate.read_only_at ? 't-grey' : 't-blue')} style={{ marginLeft: 6 }}
+                      title={r.mandate.retain_until ? `Kept until ${fmtDay(r.mandate.retain_until)}` : undefined} data-testid="business-mandate-chip">
+                      {r.mandate.handover_review ? 'Handover in review' : r.mandate.read_only_at ? 'Read-only, kept' : `Full mandate${r.mandate.practice ? ` · ${r.mandate.practice}` : ''}`}
+                    </span>}</span>
                 </span>
                 <span className="ellipsis" style={{ minWidth: 0 }}>{r.owner ? `${r.owner.name}${r.owner.email ? ` · ${r.owner.email}` : ''}` : '—'}</span>
                 <span data-label="People" className="num">{num(r.people)}</span>
