@@ -115,13 +115,15 @@ begin
 end $$;
 
 -- test: owner_profile_managed_elsewhere
--- An ordinary owner submitting the profile of a company a practice runs under full mandate is refused: no business is
--- made, the profile stays a draft, and TaxStreem is flagged once. A business name with the same digits is someone else's.
--- An org_id that is not one is answered plainly.
+-- An ordinary owner submitting the profile of a company a practice runs under full mandate is refused as a company already
+-- on Counta (20261125000200_account_recovery.sql), with the business's name and the holder's address masked: no business
+-- is made, the profile stays a draft, and the firm is flagged once. A business name with the same digits is someone
+-- else's. An org_id that is not one is answered plainly.
 do $$
 declare v_ans jsonb := '{"offering": "goods", "category": "food", "revenue_band": "0_50m", "receive_methods": ["bank_transfer"], "pay_methods": ["bank_transfer"], "reasons": ["tax_compliance"], "examples": ["gold"], "filing": {"vat": "always", "wht": "never", "cit": "always"}}';
-  r jsonb; n bigint; v_ngozi uuid := tests.id('ngozi'); f public.practice_mandate_flags;
+  r jsonb; n bigint; v_ngozi uuid := tests.id('ngozi'); f public.practice_mandate_flags; v_masked text;
 begin
+  v_masked := private.mask_email((select email from practice_members where id = (select engagement_partner_id from practice_clients where id = tests.id('cz'))));
   perform tests.as_user(v_ngozi);
   perform tests.throws($q$select public.kyc_submit('{"org_id": "not-a-uuid"}')$q$, '%Choose the business%');
   perform tests.as_postgres();
@@ -130,9 +132,11 @@ begin
   perform public.svc_kyc_store(v_ngozi, 'cac', '{"cac_id": 31, "profile": {"approved_name": "ZAMFARA GOLD LIMITED", "rc_number": "7171701", "classification": "COMPANY", "directors": [{"firstname": "NGOZI", "surname": "OWNER"}]}}', null);
   perform tests.as_user(v_ngozi);
   r := public.kyc_submit(jsonb_build_object('answers', v_ans));
-  assert r = '{"ok": false, "reason": "managed_elsewhere"}'::jsonb, format('owner_profile_managed_elsewhere, got %s', r);
+  assert r = jsonb_build_object('ok', false, 'reason', 'exists', 'business', 'Zamfara Gold Ltd', 'yours', false,
+      'masked_email', v_masked),
+    format('owner_profile_managed_elsewhere, got %s', r);
   r := public.kyc_submit('{}');
-  assert r->>'reason' = 'managed_elsewhere', 'owner_profile_managed_elsewhere: again';
+  assert r->>'reason' = 'exists', 'owner_profile_managed_elsewhere: again';
   perform tests.as_postgres();
   assert (select count(*) from members where user_id = v_ngozi and role = 'owner') = n, 'owner_profile_managed_elsewhere: no business made';
   assert (select status = 'draft' and org_id is null from kyc_profiles where user_id = v_ngozi and not for_business), 'owner_profile_managed_elsewhere: still a draft';
@@ -142,7 +146,9 @@ begin
   assert f.practice_id = tests.id('pr') and f.client_id = tests.id('cz') and f.detail->>'business_org_id' = tests.id('oz')::text
      and f.detail->>'matched_on' = 'rc_number' and f.detail->>'email' = 'ngozi@owner.example.test' and f.resolved_at is null,
     format('owner_profile_managed_elsewhere: the flag, got %s', to_jsonb(f));
-  -- A business name with the company's digits goes ahead.
+  -- A business name with the company's digits goes ahead. (The business name rc_bn_and_names set up with them moves to
+  -- another number first: a number is on Counta once in its registry.)
+  update orgs set rc_number = 'BN 7171709' where name = 'Lara Gold Enterprises';
   perform tests.as_service();
   perform public.svc_kyc_store(tests.id('lara'), 'cac', '{"cac_id": 32, "profile": {"approved_name": "ZAMFARA GOLDSMITHS", "rc_number": "7171701", "classification": "BUSINESS_NAME", "directors": [{"firstname": "LARA", "surname": "OWNER"}]}}', null);
   perform tests.as_user(tests.id('lara'));

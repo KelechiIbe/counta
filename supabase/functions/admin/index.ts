@@ -159,6 +159,18 @@ async function test(group: string, auth: string) {
       return { ok: Boolean(s && p), note: s && p ? `Keys are in place${w ? ' with the webhook secret' : ', but the webhook secret is missing, so new transactions arrive only on the four-hourly sync'}. Mono is checked when a business links a bank.`
         : 'Add the secret and public keys.' };
     }
+    case 'termii': {
+      // A balance check: harmless, free, and it proves the key. The sender ID is checked by name only; Termii approves it.
+      const k = await key('TERMII_API_KEY'), sender = await key('TERMII_SENDER_ID');
+      if (!k) return { ok: false, note: 'No API key yet. Until it is set, codes go by email only and TaxStreem checks each confirmation.' };
+      const base = ((await key('TERMII_BASE_URL')) || 'https://api.ng.termii.com').replace(/\/$/, '');
+      const r = await call(`${base}/api/get-balance?${new URLSearchParams({ api_key: k })}`, { headers: { accept: 'application/json' } });
+      if (!r.ok || typeof r.body !== 'object') return { ok: false, note: `Termii refused the key (${r.status}): ${why(r)}` };
+      const bal = Number(r.body?.balance);
+      const money = Number.isFinite(bal) ? ` Balance: ${r.body?.currency || 'NGN'} ${bal.toLocaleString('en-NG', { minimumFractionDigits: 2 })}.` : '';
+      if (!sender) return { ok: false, note: `The key works.${money} Add the sender ID Termii approved, or no SMS goes.` };
+      return { ok: true, note: `The key works.${money} Codes go from "${sender}" on the ${((await key('TERMII_CHANNEL')) || 'dnd').toLowerCase()} route.` };
+    }
     case 'taxstreem': {
       const s = await key('TAXSTREEM_SSO_SECRET'), f = await key('FLUX_URL'), fs = await key('FLUX_SECRET');
       return { ok: Boolean(s), note: [s ? 'Single sign-on is set.' : 'Single sign-on has no secret yet.',

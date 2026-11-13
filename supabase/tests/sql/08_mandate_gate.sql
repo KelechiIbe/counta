@@ -1,9 +1,9 @@
 -- Full mandate I: the gate (a partner with a verified licence, a firm TaxStreem lets run full mandates, a risk-rated and
 -- cleared intake, a signed full-mandate letter, the partner's declaration of written authority); the business the firm sets
--- up (no owner, identity pending, billed to the practice, refused when the company is already someone else's); the
--- director's one confirmation (a CAC director, their own email, a dc_ link and a code, held for TaxStreem when the
--- confirming IP is one the firm's people use); money locked until then and while TaxStreem lets the firm run full
--- mandates. Also: no partner-programme referral for a business the practice pays for itself, a business profile per
+-- up (no owner, identity pending, billed to the practice, refused when the company is already on Counta); the director's
+-- one confirmation (a director on the CAC record, a dc_ link, their NIN matched to that director, and a code to the NIN's
+-- phone and their CAC email, held for TaxStreem when NIMC has no phone for the NIN or there is no way to send a code);
+-- money locked until then and while TaxStreem lets the firm run full mandates. Also: no partner-programme referral for a business the practice pays for itself, a business profile per
 -- business the firm runs, and the firm's places outside the plan's limit on people. Edge-function calls are only recorded
 -- in net._requests.
 begin;
@@ -35,6 +35,8 @@ begin
   insert into platform_reviewers (user_id) values (tests.id('reviewer1'));
   insert into platform_settings (key, value) values ('mandates', '{"free_mail_domains": [" FreeMail.example.test "]}');
   perform tests.hooks_on();
+  -- Termii is set up, so a code can go by SMS.
+  insert into vault.secrets (name, secret) values ('TERMII_API_KEY', 'test-termii-key'), ('TERMII_SENDER_ID', 'TaxStreem');
   perform tests.remember('c', tests.full_client(v_pr, v_partner, 'Ikenna Textiles Ltd'));
   perform tests.remember('o', (select org_id from practice_clients where id = tests.id('c')));
 end $$;
@@ -43,7 +45,7 @@ end $$;
 -- business's own profile (as kyc_row makes it for a business the firm runs).
 create function pg_temp.verify_identity(p_org uuid) returns void language sql as $f$
   insert into kyc_profiles (user_id, org_id, status, source, cac, submitted_at, for_business)
-  values (tests.id('partner'), p_org, 'submitted', 'cac', '{"profile": {"classification": "COMPANY", "directors": [{"firstname": "TUNDE", "surname": "BELLO"}, {"firstname": "AMINA", "other_name": "BOLA", "surname": "YUSUF"}]}}', now(), true);
+  values (tests.id('partner'), p_org, 'submitted', 'cac', '{"cac_id": 4242, "profile": {"classification": "COMPANY", "directors": [{"firstname": "TUNDE", "surname": "BELLO"}, {"firstname": "AMINA", "other_name": "BOLA", "surname": "YUSUF"}]}}', now(), true);
   update orgs set identity_status = 'verified' where id = p_org;
 $f$;
 
@@ -68,16 +70,41 @@ begin
   return v;
 end $f$;
 
--- The director asks for a code; the code the messaging function would email.
-create function pg_temp.director_code(p_token text, p_dc uuid) returns text language plpgsql as $f$
-declare r jsonb; v text;
+-- The director proves who they are, as the practice function does it: the NIN lookup's turn, then the NIN's record (Tunde
+-- Bello, with the phone NIMC holds, or none) and the directors' contacts as CAC holds them. svc_director_identity's answer.
+create function pg_temp.director_nin(p_token text, p_phone text default '08031234567', p_cac_email text default 'tunde.cac@director.example.test',
+  p_cac_phone text default '08039876543', p_first text default 'TUNDE', p_last text default 'BELLO') returns jsonb language plpgsql as $f$
+declare r jsonb;
 begin
   perform tests.as_service();
-  r := public.svc_director_code(p_token, '203.0.113.1', 'Test browser');
-  if not coalesce((r->>'ok')::boolean, false) then raise exception 'pg_temp.director_code: no code: %', r; end if;
-  v := public.svc_practice_mail('director_code', p_dc)->>'code';
+  r := public.svc_director_nin_begin(p_token, '203.0.113.1', 'Test browser');
+  if coalesce((r->>'ok')::boolean, false) then
+    r := public.svc_director_identity(p_token, jsonb_build_object('first', p_first, 'last', p_last, 'last4', '4321', 'nin_phone', p_phone,
+      'cac', jsonb_build_array(jsonb_build_object('surname', 'BELLO', 'given', 'TUNDE', 'email', p_cac_email, 'phone', p_cac_phone),
+        jsonb_build_object('surname', 'YUSUF', 'given', 'AMINA BOLA', 'email', 'amina.cac@director.example.test', 'phone', '08021112222'))),
+      '203.0.113.1', 'Test browser');
+  end if;
+  perform tests.as_postgres();
+  return r;
+end $f$;
+
+-- The code the messaging function would send for the confirmation's check (each ask mints a new one).
+create function pg_temp.check_code(p_dc uuid) returns text language plpgsql as $f$
+declare v text;
+begin
+  perform tests.as_service();
+  v := public.svc_identity_mail('identity_code', (select check_id from practice_director_confirmations where id = p_dc))->>'code';
   perform tests.as_postgres();
   return v;
+end $f$;
+
+-- The director proves who they are through the NIN's phone, and the code sent.
+create function pg_temp.director_code(p_token text, p_dc uuid) returns text language plpgsql as $f$
+declare r jsonb;
+begin
+  r := pg_temp.director_nin(p_token);
+  if not coalesce((r->>'ok')::boolean, false) then raise exception 'pg_temp.director_code: no code: %', r; end if;
+  return pg_temp.check_code(p_dc);
 end $f$;
 
 -- test: mandate_gate_conditions
@@ -236,8 +263,9 @@ end $$;
 
 -- test: create_business_duplicate
 -- A company someone already owns on Counta, or that another practice runs, is not set up again: a plain refusal and a flag
--- for TaxStreem (once while it is open). The RC number and Tax ID are compared without prefixes and punctuation. The same
--- RC number on a business this practice itself runs is not a duplicate.
+-- for TaxStreem (once while it is open). The RC number and Tax ID are compared without prefixes and punctuation. A company
+-- is on Counta once, so the same RC number on a business this practice itself runs is refused too (orgs_reg_unique), with
+-- no flag.
 do $$
 declare pr uuid := tests.id('pr'); v_dup uuid; v_mg uuid; v_own uuid; i2 uuid; i3 uuid; i4 uuid; r jsonb; v_orgs int;
 begin
@@ -280,9 +308,11 @@ begin
   assert (select count(*) from orgs) = v_orgs and (select status = 'draft' and client_id is null from practice_intakes where id = i2),
     'create_business_duplicate: nothing set up';
   perform tests.as_user(tests.id('partner'));
-  r := public.practice_create_business(i4, '{"email":"b@firm.example.test"}');
+  perform tests.throws(format($q$select public.practice_create_business(%L, '{"email":"b@firm.example.test"}')$q$, i4),
+    '%registration number (9990001). A company is on Counta once.%');
   perform tests.as_postgres();
-  assert (r->>'ok')::boolean, 'create_business_duplicate: the practice''s own business is not another''s';
+  assert (select count(*) from orgs) = v_orgs and not exists (select 1 from practice_mandate_flags where intake_id = i4),
+    'create_business_duplicate: the practice''s own company is not set up twice, and TaxStreem is not flagged';
 end $$;
 
 -- test: director_email_free_mail_and_case
@@ -318,8 +348,8 @@ begin
 end $$;
 
 -- test: director_name_and_identity
--- The business's identity is verified first; the director is named as on the CAC record (accents, order and middle names
--- aside); only the practice's partners and managers ask, for a business it runs under full mandate; a new request
+-- The business's CAC record comes first (the director's NIN check verifies its identity); the director is named as on the
+-- CAC record (accents, order and middle names aside); the email is optional; only the practice's partners and managers ask, for a business it runs under full mandate; a new request
 -- replaces the one waiting, whose link stops working.
 do $$
 declare pr uuid := tests.id('pr'); c uuid := tests.id('c'); cp uuid; v_ord uuid; ic uuid; d1 uuid; d2 uuid; tok text; r jsonb;
@@ -327,7 +357,7 @@ begin
   cp := tests.full_client(pr, tests.id('partner'), 'Pending Shoes Ltd');
   perform tests.as_user(tests.id('partner'));
   perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"tunde@director.example.test"}')$q$, cp),
-    '%Verify the business''s identity first.');
+    '%Add the business''s CAC record first%');
   perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Someone Else","email":"tunde@director.example.test"}')$q$, c),
     '%not a director on the CAC record%');
   perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Bello","email":"tunde@director.example.test"}')$q$, c),
@@ -337,7 +367,7 @@ begin
   assert tests.error_of(format($q$select public.practice_director_request(%L, '{"name":"BELLO, Tunde","email":"tunde@director.example.test"}')$q$, c)) is null
      and tests.error_of(format($q$select public.practice_director_request(%L, '{"name":"Amina Yusuf","email":"amina@director.example.test"}')$q$, c)) is null,
     'director_name_and_identity: order and middle names';
-  perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"not-an-address"}')$q$, c), '%director''s email address%');
+  perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"not-an-address"}')$q$, c), '%email address is not valid%');
   perform tests.as_user(tests.id('ada'));
   perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"tunde@director.example.test"}')$q$, c), '%partners and managers%');
   perform tests.as_user(tests.id('other_partner'));
@@ -386,11 +416,13 @@ begin
 end $$;
 
 -- test: director_confirm_flow
--- The director opens the link, asks for a code, and confirms: a wrong code is counted and never raises; the right one from
--- an address the firm's people have not used in 30 days confirms the business's director, once. The emails go in the
--- firm's name only and name TaxStreem and Flutterwave as the wallet provider.
+-- The director opens the link, proves with their NIN that they are a director on the CAC record, and enters the code that
+-- went to the NIN's phone and their CAC email: a wrong code is counted and never raises; the right one confirms the
+-- business's director, once. The emails go in the firm's name only and name TaxStreem and Flutterwave as the wallet
+-- provider; the SMS comes from TaxStreem's sender. Counta keeps the NIN's last four digits and whom it matched, not where
+-- the code went.
 do $$
-declare c uuid := tests.id('c'); o uuid := tests.id('o'); dc uuid; tok text; code text; r jsonb; v_old bigint;
+declare c uuid := tests.id('c'); o uuid := tests.id('o'); dc uuid; tok text; code text; r jsonb; v_old bigint; k public.identity_checks;
 begin
   dc := pg_temp.director_request(c);
   assert exists (select 1 from net._requests where url = 'http://functions.test/messaging' and body->>'action' = 'practice_mail'
@@ -401,40 +433,55 @@ begin
   tok := substring(r->>'link' from 'dc_[0-9a-f]{48}$');
   assert r->>'link' ~ '/confirm/dc_[0-9a-f]{48}$' and r->>'to' = 'tunde.bello@director.example.test' and r->>'from_name' = 'Mandate Partners'
      and (r->>'white_label')::boolean and r->>'reply_to' = 'partner@firm.example.test' and (r->'lines')::text like '%TaxStreem through Flutterwave%'
-     and (r - 'link')::text not ilike '%counta%', format('director_confirm_flow: the link email, got %s', r);
+     and (r->'lines')::text like '%NIN%' and (r - 'link')::text not ilike '%counta%', format('director_confirm_flow: the link email, got %s', r);
   assert (select token_hash = private.sha256_hex(tok) and token_expires > now() + interval '13 days' from practice_director_confirmations where id = dc),
     'director_confirm_flow: only the hash kept, 14 days';
   perform tests.as_service();
   r := public.svc_director_open(tok, '203.0.113.2', 'Test browser');
-  assert r = jsonb_build_object('ok', true, 'firm_name', 'Mandate Partners', 'business_name', 'Ikenna Textiles Ltd', 'director_name', 'Tunde Bello', 'status', 'pending'),
+  assert r = jsonb_build_object('ok', true, 'firm_name', 'Mandate Partners', 'business_name', 'Ikenna Textiles Ltd', 'director_name', 'Tunde Bello',
+      'status', 'pending', 'step', 'nin', 'route', null, 'sms', null, 'email', null),
     format('director_confirm_flow: opened, got %s', r);
   assert public.svc_director_open('dc_' || repeat('0', 48), null, null) = '{"ok": false, "reason": "invalid"}'::jsonb
      and public.svc_director_open('nonsense', null, null)->>'reason' = 'invalid', 'director_confirm_flow: unknown links';
-  assert public.svc_director_confirm(tok, '123456', '198.51.100.7', 'UA')->>'reason' = 'expired', 'director_confirm_flow: no code yet';
-  r := public.svc_director_code(tok, '198.51.100.7', 'UA');
-  assert (r->>'ok')::boolean and (r->>'sends_left')::int = 4, 'director_confirm_flow: code sent';
+  assert public.svc_director_confirm(tok, '123456', '198.51.100.7', 'UA')->>'reason' = 'nin_first'
+     and public.svc_director_code(tok, null, null)->>'reason' = 'nin_first', 'director_confirm_flow: the NIN first';
+  -- A NIN that is not a director's.
   perform tests.as_postgres();
-  assert exists (select 1 from net._requests where body->>'action' = 'practice_mail' and body->>'kind' = 'director_code' and body->>'id' = dc::text),
-    'director_confirm_flow: code email queued';
+  r := pg_temp.director_nin(tok, p_first => 'CHIDI', p_last => 'OKAFOR');
+  assert r = '{"ok": false, "reason": "no_match"}'::jsonb and (select check_id is null and flags->'last_try'->>'last4' = '4321' from practice_director_confirmations where id = dc),
+    format('director_confirm_flow: not a director, got %s', r);
+  -- Tunde Bello's NIN: the code goes to the NIN's phone, and to his email on the CAC record.
+  v_old := (select coalesce(max(id), 0) from net._requests);
+  r := pg_temp.director_nin(tok);
+  assert r = '{"ok": true, "step": "code", "route": "code", "sms": "+234 803 *** **67", "email": "t********@d***************.test", "matched": "Tunde Bello"}'::jsonb,
+    format('director_confirm_flow: matched, got %s', r);
+  select * into k from identity_checks where id = (select check_id from practice_director_confirmations where id = dc);
+  assert k.purpose = 'director_confirm' and k.route = 'code' and k.sms_to = '2348031234567' and k.email_to = 'tunde.cac@director.example.test'
+     and k.nin_phone and k.nin_last4 = '4321' and k.matched_role = 'director' and k.org_id = o, format('director_confirm_flow: the check, got %s', to_jsonb(k));
+  assert (select count(*) from net._requests where id > v_old and body->>'action' = 'identity_mail' and body->>'kind' = 'identity_code'
+          and body->>'id' = k.id::text) = 1, 'director_confirm_flow: code queued';
   perform tests.as_service();
-  r := public.svc_practice_mail('director_code', dc);
+  r := public.svc_director_open(tok, null, null);
+  assert r->>'step' = 'code' and r->>'route' = 'code' and r->>'sms' = k.sms_masked and r->>'email' = k.email_masked, format('director_confirm_flow: the page, got %s', r);
+  r := public.svc_identity_mail('identity_code', k.id);
   code := r->>'code';
-  assert code ~ '^[0-9]{6}$' and (r->>'white_label')::boolean and (r - 'link')::text not ilike '%counta%', 'director_confirm_flow: the code email';
+  assert code ~ '^[0-9]{6}$' and r->>'to' = 'tunde.cac@director.example.test' and r->>'from_name' = 'Mandate Partners' and (r->>'white_label')::boolean
+     and r->'sms'->>'to' = '2348031234567' and r->'sms'->>'text' like code || ' is your code to confirm the wallets for Ikenna Textiles Ltd.%'
+     and r::text not ilike '%counta%', format('director_confirm_flow: the code, got %s', r);
   r := public.svc_director_confirm(tok, case when code = '000000' then '111111' else '000000' end, '198.51.100.7', 'UA');
   assert not (r->>'ok')::boolean and r->>'reason' = 'wrong_code' and (r->>'tries_left')::int = 4, 'director_confirm_flow: a wrong code';
   perform tests.as_postgres();
-  assert (select otp_failures = 1 and otp_tries = 1 and status = 'pending' from practice_director_confirmations where id = dc),
-    'director_confirm_flow: the failure is counted';
-  -- Sessions that do not count: a firm person's older than 30 days, and someone outside the firm.
-  insert into auth.sessions (user_id, ip, updated_at) values (tests.id('manager'), '198.51.100.7', now() - interval '31 days'),
-    (tests.id('owner'), '198.51.100.7', now());
+  assert (select otp_failures = 1 and otp_tries = 1 and status = 'open' from identity_checks where id = k.id)
+     and (select status = 'pending' from practice_director_confirmations where id = dc), 'director_confirm_flow: the failure is counted';
   v_old := (select coalesce(max(id), 0) from net._requests);
   perform tests.as_service();
   r := public.svc_director_confirm(tok, code, '198.51.100.7', 'UA');
   perform tests.as_postgres();
   assert r = '{"ok": true, "status": "confirmed"}'::jsonb and (select director_confirmed_at is not null from orgs where id = o), 'director_confirm_flow';
-  assert (select status = 'confirmed' and confirmed_at is not null and ip = '198.51.100.7' and ua = 'UA' and otp_hash is null
+  assert (select status = 'confirmed' and confirmed_at is not null and ip = '198.51.100.7' and ua = 'UA' and matched_name = 'Tunde Bello' and nin_last4 = '4321'
           from practice_director_confirmations where id = dc), 'director_confirm_flow: recorded';
+  assert (select status = 'verified' and sms_to is null and email_to is null and otp_hash is null and wiped_at is not null from identity_checks where id = k.id),
+    'director_confirm_flow: where the code went is wiped';
   assert exists (select 1 from activity_log where org_id = o and action = 'director_confirmed' and source = 'event'), 'director_confirm_flow: logged';
   assert exists (select 1 from notifications where kind = 'practice' and user_id = tests.id('partner') and title like '%Ikenna Textiles Ltd confirmed%'),
     'director_confirm_flow: the firm told';
@@ -442,8 +489,9 @@ begin
   -- Done once.
   perform tests.as_service();
   assert public.svc_director_code(tok, null, null) = '{"ok": false, "reason": "confirmed"}'::jsonb
-     and public.svc_director_open(tok, null, null)->>'status' = 'confirmed' and public.svc_practice_mail('director_code', dc) is null
-     and public.svc_director_confirm(tok, code, '198.51.100.7', 'UA')->>'reason' = 'confirmed', 'director_confirm_flow: once';
+     and public.svc_director_open(tok, null, null)->>'status' = 'confirmed' and public.svc_identity_mail('identity_code', k.id) is null
+     and public.svc_director_confirm(tok, code, '198.51.100.7', 'UA')->>'reason' = 'confirmed'
+     and public.svc_director_nin_begin(tok, null, null)->>'reason' = 'confirmed', 'director_confirm_flow: once';
   perform tests.as_user(tests.id('partner'));
   perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"tunde@director.example.test"}')$q$, c), '%confirmed already%');
   perform tests.as_postgres();
@@ -509,74 +557,153 @@ begin
   assert private.payments_open(o), 'money_locked_until_director: ordinary business';
 end $$;
 
--- test: director_ip_review
--- A confirmation from an address the firm's people have used in the last 30 days, or one that cannot be read, waits for
--- TaxStreem (a flag, and an email to its reviewers); a reviewer or admin decides, with a note.
+-- test: director_review
+-- Without a phone on the NIN record, the code goes to the director's email and phone on the CAC record (never a firm
+-- address), and the confirmation then waits for TaxStreem (a flag, and an email to its reviewers); a reviewer or admin
+-- decides, with a note. With no way to send a code at all, the director uploads their NIN slip for TaxStreem. The firm
+-- cannot go round the check by asking again. Three NIN lookups a day per request.
 do $$
-declare pr uuid := tests.id('pr'); c2 uuid; o2 uuid; dc1 uuid; dc2 uuid; tok text; code text; r jsonb;
+declare pr uuid := tests.id('pr'); c2 uuid; o2 uuid; dc1 uuid; dc2 uuid; tok text; code text; r jsonb; k public.identity_checks; v_path text;
 begin
   c2 := tests.full_client(pr, tests.id('partner'), 'Review Ceramics Ltd');
   o2 := (select org_id from practice_clients where id = c2);
   perform pg_temp.verify_identity(o2);
-  -- An address that cannot be read.
+  -- No phone on the NIN record.
   dc1 := pg_temp.director_request(c2);
   tok := pg_temp.director_link(dc1);
-  code := pg_temp.director_code(tok, dc1);
+  r := pg_temp.director_nin(tok, p_phone => null);
+  assert (r->>'ok')::boolean and r->>'step' = 'code' and r->>'route' = 'review', format('director_review: no NIN phone, got %s', r);
+  select * into k from identity_checks where id = (select check_id from practice_director_confirmations where id = dc1);
+  assert k.route = 'review' and k.why = 'no_nin_phone' and not k.nin_phone and k.sms_to = '2348039876543' and k.email_to = 'tunde.cac@director.example.test',
+    format('director_review: the CAC contacts, got %s', to_jsonb(k));
+  code := pg_temp.check_code(dc1);
   perform tests.as_service();
-  r := public.svc_director_confirm(tok, code, 'somewhere', 'UA');
+  r := public.svc_director_confirm(tok, code, '198.51.100.20', 'UA');
   perform tests.as_postgres();
-  assert r = '{"ok": true, "status": "review"}'::jsonb and (select director_confirmed_at is null from orgs where id = o2), 'director_ip_review: unreadable address';
-  assert (select flags->>'review_reason' = 'ip_unreadable' from practice_director_confirmations where id = dc1), 'director_ip_review: why';
+  assert r = '{"ok": true, "status": "review"}'::jsonb and (select director_confirmed_at is null from orgs where id = o2), 'director_review: waits';
+  assert (select status = 'review' and flags->>'review_reason' = 'no_nin_phone' from practice_director_confirmations where id = dc1), 'director_review: why';
+  assert exists (select 1 from practice_mandate_flags where kind = 'director_review' and client_id = c2 and detail->>'confirmation_id' = dc1::text
+                 and detail->>'reason' = 'no_nin_phone' and resolved_at is null), 'director_review: flag';
+  assert exists (select 1 from net._requests where url = 'http://functions.test/messaging' and body->>'action' = 'practice_mail' and body->>'kind' = 'director_admin'
+                 and body->>'id' = dc1::text), 'director_review: TaxStreem reviewers told';
+  perform tests.as_service();
+  r := public.svc_practice_mail('director_admin', dc1);
+  assert public.svc_director_open(tok, null, null)->>'status' = 'review' and public.svc_director_code(tok, null, null)->>'reason' = 'review',
+    'director_review: waiting';
+  perform tests.as_postgres();
+  assert r->>'subject' = 'Director confirmation to review: Review Ceramics Ltd' and r->>'link' like '%/admin/mandates' and not (r->>'white_label')::boolean
+     and (r->'lines')::text like '%no phone number for the NIN%' and r::text not like '%director.example.test%', format('director_review: the email to TaxStreem, got %s', r);
+  -- The firm cannot go round TaxStreem's check by asking again.
+  perform tests.as_user(tests.id('partner'));
+  perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"tunde@director.example.test"}')$q$, c2),
+    '%TaxStreem is checking%');
+  -- TaxStreem's reviewers see whom the NIN matched and where the code went, masked.
+  perform tests.as_user(tests.id('reviewer1'), 'aal2');
+  r := (select x from jsonb_array_elements(public.admin_mandates()->'reviews') x where x->>'id' = dc1::text);
+  assert r->'director'->>'matched_name' = 'Tunde Bello' and r->'director'->>'nin_last4' = '4321' and r->'director'->>'sms' = k.sms_masked
+     and r->'director'->>'code_email' = k.email_masked and r->>'reason' = 'no_nin_phone', format('director_review: the review, got %s', r);
   -- A reviewer declines it.
   perform tests.as_user(tests.id('partner'));
   perform tests.throws(format($q$select public.admin_director_decide(%L, true, 'Looks fine')$q$, dc1), '%only for TaxStreem%');
   perform tests.as_user(tests.id('reviewer1'), 'aal2');
   perform tests.throws(format($q$select public.admin_director_decide(%L, false, 'No')$q$, dc1), '%note%');
   r := public.admin_director_decide(dc1, false, 'Could not reach the director');
-  assert r->>'status' = 'declined', 'director_ip_review: declined';
+  assert r->>'status' = 'declined', 'director_review: declined';
   perform tests.throws(format($q$select public.admin_director_decide(%L, true, 'Changed my mind')$q$, dc1), '%waiting for review%');
   perform tests.as_postgres();
   assert (select status = 'declined' and decided_by = tests.id('reviewer1') and decided_at is not null from practice_director_confirmations where id = dc1)
      and (select director_confirmed_at is null from orgs where id = o2)
      and exists (select 1 from admin_audit where action = 'director_declined' and target = dc1::text)
      and (select resolved_at is not null and resolved_by = tests.id('reviewer1') from practice_mandate_flags where kind = 'director_review' and detail->>'confirmation_id' = dc1::text),
-    'director_ip_review: recorded, flag resolved';
+    'director_review: recorded, flag resolved';
 
-  -- An address a firm person signed in from: compared as hosts, so a netmask on the session's address or the IPv4 address
-  -- written as IPv6 by the director's connection still matches.
-  assert private.ip_host('::ffff:198.51.100.8') = '198.51.100.8'::inet and private.ip_host('198.51.100.8/24') = '198.51.100.8'::inet
-     and private.ip_host('2001:db8::1/64') = '2001:db8::1'::inet and private.ip_host(null) is null, 'director_ip_review: hosts';
-  insert into auth.sessions (user_id, ip, updated_at) values (tests.id('partner'), '198.51.100.8/24', now() - interval '2 days');
+  -- No phone on the NIN record, the CAC email is the firm's and no CAC phone: nothing to send a code to, so the NIN slip.
   dc2 := pg_temp.director_request(c2);
   tok := pg_temp.director_link(dc2);
-  code := pg_temp.director_code(tok, dc2);
+  r := pg_temp.director_nin(tok, p_phone => null, p_cac_email => 'Office@Firm.example.test', p_cac_phone => null);
+  assert r = '{"ok": true, "step": "slip", "route": "slip", "sms": null, "email": null, "matched": "Tunde Bello"}'::jsonb,
+    format('director_review: the slip, got %s', r);
+  select * into k from identity_checks where id = (select check_id from practice_director_confirmations where id = dc2);
+  assert k.route = 'slip' and k.why = 'no_channel' and k.email_to is null and k.sms_to is null and k.skipped->>'email' = 'firm_address',
+    format('director_review: never the firm''s address, got %s', to_jsonb(k));
+  assert not exists (select 1 from net._requests where body->>'action' = 'identity_mail' and body->>'id' = k.id::text), 'director_review: no code sent';
   perform tests.as_service();
-  assert public.svc_director_confirm(tok, code, '::ffff:198.51.100.8', 'UA')->>'status' = 'review' and (select director_confirmed_at is null from orgs where id = o2),
-    'director_ip_review';
-  assert public.svc_director_open(tok, null, null)->>'status' = 'review' and public.svc_director_code(tok, null, null)->>'reason' = 'review',
-    'director_ip_review: waiting';
-  -- The firm cannot go round TaxStreem's check by asking again.
-  perform tests.as_user(tests.id('partner'));
-  perform tests.throws(format($q$select public.practice_director_request(%L, '{"name":"Tunde Bello","email":"tunde@director.example.test"}')$q$, c2),
-    '%TaxStreem is checking%');
+  assert public.svc_director_open(tok, null, null)->>'step' = 'slip', 'director_review: the page asks for the slip';
+  assert public.svc_director_slip(tok, o2 || '/kyc/nin-slip-x.pdf', null, null)->>'reason' = 'invalid'
+     and public.svc_director_slip(tok, gen_random_uuid() || '/kyc/director-slip-' || gen_random_uuid() || '.pdf', null, null)->>'reason' = 'invalid',
+    'director_review: only a slip in the business''s own folder';
+  assert public.svc_director_slip_target(tok, 'exe')->>'reason' = 'invalid', 'director_review: only a PDF or a picture';
+  v_path := public.svc_director_slip_target(tok, 'pdf')->>'path';
+  assert v_path ~ ('^' || o2 || '/kyc/director-slip-[0-9a-f-]{36}\.pdf$'), format('director_review: where the slip goes, got %s', v_path);
+  r := public.svc_director_slip(tok, v_path, '198.51.100.21', 'UA');
+  assert public.svc_director_slip_target(tok, 'pdf')->>'reason' = 'review', 'director_review: one slip';
   perform tests.as_postgres();
-  assert exists (select 1 from net._requests where url = 'http://functions.test/messaging' and body->>'action' = 'practice_mail' and body->>'kind' = 'director_admin'
-                 and body->>'id' = dc2::text), 'director_ip_review: TaxStreem reviewers told';
-  assert exists (select 1 from practice_mandate_flags where kind = 'director_review' and client_id = c2 and detail->>'confirmation_id' = dc2::text
-                 and detail->>'reason' = 'firm_ip' and resolved_at is null), 'director_ip_review: flag';
-  perform tests.as_service();
-  r := public.svc_practice_mail('director_admin', dc2);
-  perform tests.as_postgres();
-  assert r->>'subject' = 'Director confirmation to review: Review Ceramics Ltd' and r->>'link' like '%/admin/mandates' and not (r->>'white_label')::boolean
-     and r::text not like '%director.example.test%', format('director_ip_review: the email to TaxStreem, got %s', r);
+  assert r = '{"ok": true, "status": "review"}'::jsonb and (select status = 'review' and slip_path = v_path and flags->>'review_reason' = 'no_channel'
+          from practice_director_confirmations where id = dc2), format('director_review: the slip sent, got %s', r);
+  -- A reviewer reads the slip while the confirmation is with them.
+  perform tests.as_user(tests.id('reviewer1'), 'aal2');
+  assert private.reviewer_may_read(v_path) and not private.reviewer_may_read(o2 || '/kyc/director-slip-' || gen_random_uuid() || '.pdf'),
+    'director_review: the reviewer reads the slip';
   perform tests.as_user(tests.id('admin1'), 'aal2');
-  perform public.admin_director_decide(dc2, true, 'Checked by phone');
+  perform public.admin_director_decide(dc2, true, 'Checked the slip by phone');
   perform tests.as_postgres();
-  assert (select director_confirmed_at is not null from orgs where id = o2), 'director_ip_review: admin approves';
+  assert (select director_confirmed_at is not null from orgs where id = o2), 'director_review: admin approves';
   assert (select status = 'confirmed' and confirmed_at is not null and decided_by = tests.id('admin1') from practice_director_confirmations where id = dc2)
      and exists (select 1 from admin_audit where action = 'director_confirmed' and target = dc2::text)
-     and exists (select 1 from activity_log where org_id = o2 and action = 'director_confirmed'), 'director_ip_review: recorded';
-  assert private.payments_open(o2), 'director_ip_review: money opens';
+     and exists (select 1 from activity_log where org_id = o2 and action = 'director_confirmed'), 'director_review: recorded';
+  assert private.payments_open(o2), 'director_review: money opens';
+
+  -- Hosts as the handover compares them (practice_handover_accept still reads the firm's sign-in addresses).
+  assert private.ip_host('::ffff:198.51.100.8') = '198.51.100.8'::inet and private.ip_host('198.51.100.8/24') = '198.51.100.8'::inet
+     and private.ip_host('2001:db8::1/64') = '2001:db8::1'::inet and private.ip_host(null) is null, 'director_review: hosts';
+end $$;
+
+-- test: director_nin_limits
+-- Three NIN lookups a Lagos day for a request, five codes a day for a check, and a request without an email: the firm gets
+-- the link to send itself, and no link email goes. The identity check's contacts are wiped within the hour.
+do $$
+declare pr uuid := tests.id('pr'); c4 uuid; o4 uuid; dc uuid; r jsonb; tok text; k public.identity_checks; i int;
+begin
+  c4 := tests.full_client(pr, tests.id('partner'), 'Limits Cables Ltd');
+  o4 := (select org_id from practice_clients where id = c4);
+  perform pg_temp.verify_identity(o4);
+  perform tests.as_user(tests.id('partner'));
+  r := public.practice_director_request(c4, '{"name":"Amina Bola Yusuf"}');
+  perform tests.as_postgres();
+  dc := (r->>'id')::uuid;
+  tok := substring(r->>'link' from 'dc_[0-9a-f]{48}$');
+  assert not (r->>'sent')::boolean and r->>'email' is null and tok is not null and r->>'link' like '%/confirm/dc_%', format('director_nin_limits: the link, got %s', r);
+  assert not exists (select 1 from net._requests where body->>'action' = 'practice_mail' and body->>'kind' = 'director_confirm' and body->>'id' = dc::text),
+    'director_nin_limits: no link email';
+  perform tests.as_service();
+  assert public.svc_practice_mail('director_confirm', dc) is null, 'director_nin_limits: nothing to email';
+  perform tests.as_postgres();
+  -- Amina's NIN matched to her place on the record.
+  r := pg_temp.director_nin(tok, p_first => 'AMINA', p_last => 'YUSUF');
+  assert (r->>'ok')::boolean and r->>'matched' = 'Amina Bola Yusuf' and r->>'email' = 'a********@d***************.test', format('director_nin_limits: Amina, got %s', r);
+  r := pg_temp.director_nin(tok, p_first => 'CHIDI', p_last => 'OKAFOR');
+  assert r->>'reason' = 'no_match', 'director_nin_limits: a second lookup';
+  r := pg_temp.director_nin(tok, p_first => 'CHIDI', p_last => 'OKAFOR');
+  assert r->>'reason' = 'no_match', 'director_nin_limits: a third lookup';
+  r := pg_temp.director_nin(tok);
+  assert r = '{"ok": false, "reason": "too_many_nin"}'::jsonb, format('director_nin_limits: three a day, got %s', r);
+  -- Five codes a day: the first went with the match.
+  perform tests.as_service();
+  for i in 1..4 loop
+    assert (public.svc_director_code(tok, null, null)->>'ok')::boolean, format('director_nin_limits: code %s', i + 1);
+  end loop;
+  r := public.svc_director_code(tok, null, null);
+  perform tests.as_postgres();
+  assert not (r->>'ok')::boolean, format('director_nin_limits: five a day, got %s', r);
+  -- The contacts go within the hour.
+  select * into k from identity_checks where id = (select check_id from practice_director_confirmations where id = dc);
+  update identity_checks set created_at = now() - interval '61 minutes' where id = k.id;
+  perform private.identity_wipe_tick();
+  assert (select status = 'expired' and sms_to is null and email_to is null and otp_hash is null and wiped_at is not null from identity_checks where id = k.id),
+    'director_nin_limits: wiped';
+  perform tests.as_service();
+  assert public.svc_director_open(tok, null, null)->>'step' = 'nin', 'director_nin_limits: the NIN again';
+  perform tests.as_postgres();
 end $$;
 
 -- test: director_decline
@@ -712,7 +839,10 @@ begin
   -- The right company, which someone else has since set up on Counta.
   perform tests.as_postgres();
   v_own := tests.org(tests.id('owner'), 'Sokoto Hides Owner Ltd');
+  -- (Two businesses with one number can only be left from before orgs_reg_unique: made here with it off.)
+  alter table public.orgs disable trigger orgs_reg_unique;
   update orgs set rc_number = '6060601' where id = v_own;
+  alter table public.orgs enable trigger orgs_reg_unique;
   perform tests.as_service();
   perform public.svc_kyc_store(tests.id('partner'), 'cac', '{"cac_id": 12, "profile": {"approved_name": "SOKOTO HIDES LIMITED", "rc_number": "6060601", "classification": "COMPANY", "directors": [{"firstname": "ABU", "surname": "SOKOTO"}]}}', ox);
   perform tests.as_user(tests.id('partner'));
@@ -728,7 +858,9 @@ begin
   assert (select status = 'draft' from kyc_profiles where org_id = ox) and (select name = 'Sokoto Hides Ltd' and rc_number = 'RC 6060601' from orgs where id = ox),
     'kyc_submit_same_company: nothing submitted';
   -- By Tax ID.
+  alter table public.orgs disable trigger orgs_reg_unique;
   update orgs set tin = '1234567890123' where id = v_own;
+  alter table public.orgs enable trigger orgs_reg_unique;
   perform tests.as_service();
   perform public.svc_kyc_store(tests.id('partner'), 'cac', '{"cac_id": 13, "profile": {"approved_name": "TARABA HONEY LIMITED", "rc_number": "RC6060602", "tax_id": "12345678-90123", "classification": "COMPANY", "directors": [{"firstname": "TANI", "surname": "TARABA"}]}}', oy);
   perform tests.as_user(tests.id('partner'));

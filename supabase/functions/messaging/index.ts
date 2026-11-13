@@ -10,6 +10,10 @@
 //                                            director_code, director_admin): svc_practice_mail writes it and mints its link
 //                                            or code, sent in the firm's name only (no "via Counta"); director_admin goes
 //                                            to each of TaxStreem's reviewers, one email each (practice_mail.ts)
+//   { action: 'identity_mail', kind, id } -> a director's or recovering director's code (by email and by SMS through
+//                                            Termii), and the recovery's messages to the holder, the director, the previous
+//                                            owner, TaxStreem's reviewers and the support address: svc_identity_mail writes
+//                                            each and mints the code or link as it goes (identity_mail.ts)
 // Signed-in callers (Authorization: Bearer <user JWT>):
 //   { action: 'status' }    -> which channels are switched on
 //   { action: 'wa_link', org_id }   -> links the business's own WhatsApp number on OpenWA (when TaxStreem allows it):
@@ -30,13 +34,14 @@
 // number) or meta (the official API). Empty means openwa once OPENWA_URL and OPENWA_API_KEY are set, else meta.
 // Secrets (Edge Function secrets or Vault): RESEND_API_KEY, RESEND_FROM ("Counta <billing@your-domain>"),
 // WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN, OPENWA_URL, OPENWA_API_KEY,
-// OPENWA_WEBHOOK_SECRET. Optional: WHATSAPP_TEMPLATE_LANG (default en), OPENWA_BUSINESS_NUMBERS (on lets businesses link
+// OPENWA_WEBHOOK_SECRET, TERMII_API_KEY and TERMII_SENDER_ID (TERMII_BASE_URL and TERMII_CHANNEL optional). Optional: WHATSAPP_TEMPLATE_LANG (default en), OPENWA_BUSINESS_NUMBERS (on lets businesses link
 // their own number). Messages through the official API use approved templates (docs/messaging.md); through OpenWA they
 // are plain text with the same wording.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { displayName, emailHtml, emailText, type Msg, mandateBlocked, senderAddress, waText, wording } from './wording.ts';
 import { ensureSession, type OpenWa, owa, owaError, RECEIPT_EVENTS, sendText, sessionState, setWebhooks, signatureOk, waDigits, waFormat } from './openwa.ts';
 import { practiceMail } from './practice_mail.ts';
+import { identityMail, type IdentityMailDeps, termiiSend } from './identity_mail.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -361,6 +366,20 @@ const practiceMailDeps = {
   send: (m: Msg, fromName: string) => sendEmail(m, fromName),
 };
 
+// ------------------------------------------------------------------ identity: codes by email and SMS, and recoveries
+const identityMailDeps: IdentityMailDeps = {
+  emailOn: () => channelOn(null, 'email'),
+  configured: practiceMailDeps.configured,
+  smsConfigured: async () => Boolean(await secret('TERMII_API_KEY')) && Boolean(await secret('TERMII_SENDER_ID')),
+  write: async (kind: string, id: string) => await admin.rpc('svc_identity_mail', { p_kind: kind, p_id: id }),
+  send: (m: Msg, fromName: string) => sendEmail(m, fromName),
+  sendSms: async (to: string, text: string) => termiiSend({ key: await secret('TERMII_API_KEY'), sender: await secret('TERMII_SENDER_ID'),
+    base: await secret('TERMII_BASE_URL'), channel: await secret('TERMII_CHANNEL') }, to, text),
+  meter: (orgId, item) => {
+    admin.rpc('svc_usage', { p: { org_id: orgId, service: 'termii', kind: 'sms', item, qty_out: 1 } }).then(() => {}, () => {});
+  },
+};
+
 // ------------------------------------------------------------------ entry
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -383,6 +402,7 @@ Deno.serve(async (req) => {
         return json({ ok: true, results });
       }
       if (body.action === 'practice_mail') return json(await practiceMail(String(body.kind || ''), String(body.id || ''), practiceMailDeps));
+      if (body.action === 'identity_mail') return json(await identityMail(String(body.kind || ''), String(body.id || ''), identityMailDeps));
       return json({ ok: false, error: 'Unknown action.' }, 400);
     }
 

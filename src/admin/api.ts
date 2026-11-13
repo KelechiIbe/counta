@@ -75,6 +75,7 @@ export const GROUPS: { id: string; title: string; what: string; test?: boolean; 
   { id: 'flutterwave', title: 'Flutterwave', what: 'Business account numbers, payment links, QR codes, payouts, and Counta plans paid by card or from the wallet.', test: true },
   { id: 'mono', title: 'Mono', what: 'Bank feeds, and the CAC, Tax ID and NIN lookups in onboarding.', test: true },
   { id: 'email', title: 'Email (Resend)', what: 'Invoices, receipts, reminders, invitations and these admin alerts.', test: true },
+  { id: 'termii', title: 'SMS (Termii)', what: 'The one-time codes a director gets on the phone NIMC holds for their NIN, to confirm a firm\'s wallets or to recover a business. Without it, codes go by email only and TaxStreem checks each one.', test: true },
   { id: 'whatsapp', title: 'WhatsApp Business (official API)', what: 'Invoices, receipts and reminders through Meta\'s official API, when "Which WhatsApp sends" below is meta.', test: true },
   { id: 'openwa', title: 'WhatsApp through OpenWA', what: 'TaxStreem\'s own WhatsApp number on its OpenWA server: invoices, receipts, reminders and alerts, and Martina on WhatsApp. Unofficial: WhatsApp may restrict a number linked to it.', test: true },
   { id: 'numens', title: 'Numens', what: 'TaxStreem\'s tax model for the VAT treatment of items. Gemini stands in without it.', test: true },
@@ -82,7 +83,7 @@ export const GROUPS: { id: string; title: string; what: string; test?: boolean; 
   { id: 'nrs', title: 'NRS e-invoicing (MBS)', what: 'TaxStreem as System Integrator and Access Point Provider on the NRS Merchant Buyer Solution. The test copies NRS\'s code lists, reads TaxStreem\'s entity record, checks the QR code keys and tries the exchange between access points (with the APP key and secret from NRS\'s APP portal, Developer section).', test: true },
   { id: 'kms', title: 'Google Cloud HSM', what: 'The hardware security module keys that hold each business\'s NRS credentials (nrs-credentials) and sign invoices (invoice-signing).', test: true,
     noKeys: 'Signs in as the Gemini service account' },
-  { id: 'counta', title: 'Counta', what: 'The web address in links, the contact for push notifications, and where word of a NIN slip to review goes.' },
+  { id: 'counta', title: 'Counta', what: 'The web address in links, the contact for push notifications, where word of a NIN slip to review goes, and where support requests go.' },
 ];
 
 export const pct = (v: number | null | undefined, dp = 2) => (v == null ? '—' : `${(Math.round(Number(v) * 100 * 10 ** dp) / 10 ** dp).toString()}%`);
