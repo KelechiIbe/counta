@@ -544,6 +544,8 @@ begin
      and v_row->'retain_until' = 'null'::jsonb, format('portal_reads: client row, got %s', v_row);
   select y into v_row from jsonb_array_elements(h->'clients') y where y->>'id' = tests.id('ec')::text;
   assert v_row->>'status' = 'ended' and v_row->>'read_only' = 'true' and (v_row->>'retain_until')::date = (current_date + interval '6 years')::date, 'portal_reads: kept client listed';
+  assert not exists (select 1 from jsonb_array_elements(h->'past_clients') y where y->>'id' = tests.id('ec')::text)
+     and exists (select 1 from jsonb_array_elements(h->'past_clients') y where y->>'id' = tests.id('hc')::text), 'portal_reads: past clients, not the kept one twice';
   m := public.practice_client(c);
   assert m->'mandate' ? 'director', 'portal_reads: client mandate';
   assert m->'client'->>'mode' = 'full' and m->'client' ? 'end_kind' and m->'client'->>'intake_id' = v_intake::text, 'portal_reads: client';
@@ -613,7 +615,7 @@ declare f text;
 begin
   foreach f in array array['private.org_pause_all(uuid)', 'private.export_tables()', 'private.seat_exempt(uuid, uuid)', 'private.require_not_kept(date)',
     'private.orgs_retention_guard()', 'private.outbound_check(uuid, text, text, text)', 'private.practice_sync_seats(uuid)', 'private.meter_usage(uuid, text)',
-    'private.enforce_plan()'] loop
+    'private.enforce_plan()', 'private.mandate_client_require(uuid)'] loop
     assert not has_function_privilege('authenticated', f, 'execute') and not has_function_privilege('anon', f, 'execute'), format('end_helpers_revoked: %s', f);
   end loop;
   foreach f in array array['public.svc_export_rows(uuid, text, text, integer)', 'public.svc_export_ledger(uuid)', 'public.svc_export_activity(uuid)',

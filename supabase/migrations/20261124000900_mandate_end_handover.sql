@@ -810,8 +810,8 @@ end $$;
 -- 8. The portal's reads
 -- ---------------------------------------------------------------------------
 -- practice_home: as before, each client also with its mode, intake, due-diligence state, read-only state and retention;
--- the full mandates kept read-only after they ended are listed too (status ended); and whether the firm may run full
--- mandates (can_full).
+-- the full mandates kept read-only after they ended are listed with them (status ended; not again under past_clients); and
+-- whether the firm may run full mandates (can_full).
 create or replace function public.practice_home(p_practice uuid) returns jsonb
 language plpgsql stable security definer set search_path = public, private as $$
 declare me public.practice_members; pr public.practices; v_lead boolean; v_email text;
@@ -843,7 +843,7 @@ begin
     'past_clients', case when v_lead then (select coalesce(jsonb_agg(jsonb_build_object('id', c.id, 'status', c.status, 'business_name', coalesce(o.name, c.business_name),
         'invite_email', c.invite_email, 'ended_at', c.ended_at) order by c.ended_at desc nulls last), '[]'::jsonb)
       from practice_clients c left join orgs o on o.id = c.org_id where c.practice_id = p_practice and c.status in ('ended', 'declined')
-        and coalesce(c.ended_at, c.created_at) > now() - interval '180 days') else '[]'::jsonb end,
+        and c.end_kind is distinct from 'ended' and coalesce(c.ended_at, c.created_at) > now() - interval '180 days') else '[]'::jsonb end,
     -- Businesses that asked this person to be their accountant: taken on into a practice from here.
     'business_invitations', case when v_lead then (select coalesce(jsonb_agg(jsonb_build_object('id', c.id, 'business', c.business_name, 'services', c.services,
         'billing', c.billing, 'note', c.note, 'created_at', c.created_at) order by c.created_at desc), '[]'::jsonb)
