@@ -20,6 +20,8 @@ begin
   v_o := tests.remember('o', tests.managed_org(v_pr, 'Outbound Managed Ltd'));
   perform tests.remember('c', (private.mandate(v_o)).id);
   perform tests.remember('partner_seat', (select id from members where org_id = v_o and user_id = v_partner));
+  -- The director who approves what the firm does (Release 2): the firm's invoice below waits for them, then is issued.
+  perform tests.remember('director', tests.director_approver(v_o));
   v_ord := tests.remember('ord', tests.org(v_owner, 'Outbound Ordinary Ltd'));
   v_firm := tests.remember('firm', tests.org(v_partner, 'Outbound Partners Business'));
   update orgs set shop_slug = 'outbound-managed', shop_enabled = true where id = v_o;
@@ -30,6 +32,10 @@ begin
   v_sale := public.save_sale_doc(v_o, jsonb_build_object('customer_id', v_cu, 'status', 'issue',
     'lines', '[{"description": "Catering", "qty": 1, "unit_price": 20000, "vat_treatment": "standard"}]'::jsonb));
   perform tests.remember('o_invoice', (v_sale->>'id')::uuid);
+  perform tests.as_postgres();
+  assert tests.director_approves(v_o) = 1, 'fixture: one request for the director';
+  assert (select status from sales where id = tests.id('o_invoice')) = 'open', 'fixture: the director approved the invoice';
+  perform tests.as_user(v_partner);
   v_bill := public.save_bill(v_o, jsonb_build_object('status', 'approve',
     'vendor', '{"name": "Outbound Supplier Ltd", "email": "supplier@example.test", "phone": "08030000003"}'::jsonb,
     'lines', '[{"description": "Flour", "account_code": "5101", "qty": 4, "unit_cost": 5000}]'::jsonb));

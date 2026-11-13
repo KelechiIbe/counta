@@ -43,7 +43,7 @@ export async function sha256Hex(b: Uint8Array): Promise<string> {
 
 // A link token as the database mints them (private.token_new): the prefix, an underscore and 48 lower-case hex characters.
 // Checked before anything else is done with it.
-export function tokenOk(t: string, prefix: 'es' | 'dc'): boolean {
+export function tokenOk(t: string, prefix: 'es' | 'dc' | 'ap'): boolean {
   return typeof t === 'string' && new RegExp(`^${prefix}_[0-9a-f]{48}$`).test(t);
 }
 

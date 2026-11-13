@@ -19,6 +19,7 @@ import { BatchList, BatchModal, BulkPayModal, TemplateButton } from './BulkPay';
 import { isOn, offNote, useFeatures } from '../../lib/features';
 import { TaxWalletPanel, walletError } from './TaxWallet';
 import { PosTerminals } from './PosTerminals';
+import { titleName, waitsFor } from '../../lib/approvals';
 
 export default function Payments() {
   const { data: inv } = useInventory();
@@ -137,14 +138,19 @@ export default function Payments() {
           {!(d?.payouts || []).length ? <div style={{ padding: 20 }}><Empty>No payouts yet.</Empty></div> : d.payouts.map((p: any) => (
             <div key={p.id} className="tr" style={{ gridTemplateColumns: 'minmax(0,1.4fr) 140px 130px auto' }}>
               <span className="ellipsis"><b>{p.account_name}</b><span className="faint" style={{ display: 'block', fontSize: 12 }}>{p.number} · {p.purpose} · {p.bank_name || p.bank_code} {p.account_number} · {p.narration}</span>
-                <span className="faint" style={{ display: 'block', fontSize: 12 }}>Asked by {p.requested_by_name || '—'}{p.approved_by_name ? ` · approved by ${p.approved_by_name}` : ''} · {when(p.created_at)}{p.journal_ref ? ` · ${p.journal_ref}` : ''}</span>
+                <span className="faint" style={{ display: 'block', fontSize: 12 }}>Asked by {p.requested_by_name || '—'}{p.approved_by_name ? ` · approved by ${p.approved_by_name}` : p.approval?.status === 'approved' && p.approval.decided_name ? ` · approved by ${titleName(p.approval.decided_name)}` : ''} · {when(p.created_at)}{p.journal_ref ? ` · ${p.journal_ref}` : ''}</span>
                 {p.error && <span style={{ display: 'block', fontSize: 12, color: '#DC2626' }}>{p.error}</span>}</span>
               <span><StatusChip s={p.status} /></span>
               <span className="right num">{N2(p.amount)}{Number(p.fee) ? <span className="faint" style={{ display: 'block', fontSize: 11 }}>+ {N2(p.fee)} fee</span> : null}</span>
               <span className="row" style={{ gap: 4 }}>
-                {p.status === 'pending_approval' && d.can?.pay_out && <>
+                {/* One the firm asked for is decided in approvals: by the director (their link), or the owner or an admin. */}
+                {p.status === 'pending_approval' && p.approval?.status === 'pending' && !p.approval.can_decide
+                  && <span className="faint" style={{ fontSize: 12, maxWidth: 220 }} data-testid="payout-waits">Waits for {waitsFor(p.approval)}</span>}
+                {p.status === 'pending_approval' && (p.approval?.status === 'pending' ? p.approval.can_decide : d.can?.pay_out) && <>
                   <button className="btn btn-primary btn-xs" onClick={() => act(() => rpc('approve_payout', { p_payout: p.id, p_approve: true }), 'Approved')}>Approve</button>
                   <button className="btn btn-ghost btn-xs" onClick={() => act(() => rpc('approve_payout', { p_payout: p.id, p_approve: false, p_note: 'Not approved' }), 'Declined')}>Decline</button></>}
+                {p.status === 'pending_approval' && p.approval?.status === 'pending' && d.can?.pay_out && !p.approval.can_decide
+                  && <button className="btn btn-ghost btn-xs" onClick={() => act(() => rpc('cancel_payout', { p_payout: p.id }), 'Cancelled')}>Cancel</button>}
                 {p.status === 'approved' && d.can?.pay_out && <>
                   <button className="btn btn-primary btn-xs" onClick={() => act(() => edgeOk('payments', { action: 'send_payout', payout_id: p.id }), 'Sent. It completes when the bank confirms.')}>Send now</button>
                   <button className="btn btn-ghost btn-xs" onClick={() => act(() => rpc('cancel_payout', { p_payout: p.id }), 'Cancelled')}>Cancel</button></>}
@@ -372,7 +378,7 @@ function PayoutModal({ onClose }: { onClose: () => void }) {
       if (po.status === 'approved') {
         const r = await edge('payments', { action: 'send_payout', payout_id: po.id });
         toast(r.ok === false ? `Saved but not sent: ${r.error}` : 'Sent. It completes when the bank confirms.', r.ok === false ? 'err' : undefined);
-      } else toast('Waiting for a second person to approve it');
+      } else toast('Waiting for approval. It is sent once it is approved.');
       await qc.invalidateQueries({ queryKey: ['payments'] }); onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);

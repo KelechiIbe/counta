@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { cleanError, rpc, supabase } from './supabase';
 import { useSession } from '../state/session';
 import { vatPct } from './vat';
+import type { ApprovalStatus, Relief, SaleApproval } from './approvals';
 
 // ---------------------------------------------------------------- edge functions
 export async function edge<T = any>(name: string, body: Record<string, unknown>): Promise<T & { ok?: boolean; reason?: string; error?: string }> {
@@ -68,6 +69,9 @@ export type RecurringSchedule = {
   day_of_month: number; start_date: string; end_date: string | null; next_run: string; due_days: number; lines: RecurringLine[]; auto_send: boolean;
   send_channel: 'email' | 'whatsapp'; notes: string | null; practice_client_id: string | null; failures: number; last_error: string | null;
   last_run_at: string | null; created_by: string | null; created_by_name: string | null; created_at: string; updated_at: string; runs: RecurringRun[];
+  // Set up or changed by the firm that keeps the books, a schedule waits for approval once; rejected, it is paused.
+  approval_state?: 'pending' | 'approved' | 'rejected';
+  approval?: { id: string; status: ApprovalStatus; approver: 'director' | 'owner'; note: string | null; error?: string | null; decided_name: string | null; decided_at: string | null; created_at: string } | null;
 };
 export const useRecurring = (orgId: string | null) => useQuery({ queryKey: ['recurring', orgId], enabled: !!orgId,
   queryFn: () => rpc<RecurringSchedule[]>('recurring_list', { p_org: orgId }) });
@@ -99,6 +103,10 @@ export interface Sale extends SaleRow {
   prices_include_vat: boolean; vat_registered: boolean; notes: string | null; terms: string | null; delivery_method: string | null; delivery_address: string | null;
   delivery_fee?: number; discount_total?: number; export_note?: string | null; journal_ref?: string | null; journal_id?: string | null; location_name?: string | null; original_sale_id?: string | null; converted_to?: string | null; change?: number;
   einvoice?: SaleEinvoice | null;
+  // Exempt from VAT as a supply to a diplomatic mission, a free trade zone entity or a humanitarian project (the customer's
+  // own, or marked on this document by vat_relief_by), and what waits or waited for approval on it.
+  vat_relief?: Relief | null; vat_relief_ref?: string | null; vat_relief_by?: string | null; relief_words?: string | null; relief_by_name?: string | null;
+  approvals?: SaleApproval[];
 }
 // A sale's e-invoice: cleared (signed by NRS before the buyer gets it) or reported (sent after, within the day). A held
 // invoice stays a draft until NRS signs it.
@@ -150,6 +158,7 @@ export interface Customer {
   credit_limit: number; terms_days: number; price_list_id: string | null; price_list_name: string | null; balance: number; receivable: number; advance: number;
   overdue: number; oldest_due: string | null; open_count: number; sales_12m: number; last_sale: string | null; whatsapp_opt_in: boolean; tags: string[]; notes: string | null;
   credit_notes: number; city?: string | null; state?: string | null; country?: string | null; contact_person?: string | null; cc_emails?: string[];
+  vat_relief?: Relief | null; vat_relief_ref?: string | null;
 }
 export interface PriceList { id: string; name: string; kind: 'wholesale' | 'distributor' | 'custom' | 'staff'; rule: 'fixed' | 'discount_on_retail' | 'markup_on_cost'; pct: number; active?: boolean; items: { item_id: string; price: number; min_qty: number }[] }
 export interface Shift {
@@ -196,7 +205,9 @@ export const useInbox = (enabled = true) => useOrgQuery<any>(['inbox'], (o) => r
 export type Attention = { invoices_overdue: number; orders_to_confirm: number; payments_to_confirm: number; bills_overdue: number; bank_lines: number; proposals: number;
   schedules_draft: number; vat: number; wht: number; cit: number; tax_wallet: number; tax_id: number;
   // Requests from the accountant waiting for an answer (owners and admins); payments taken as sales whose VAT a person should check.
-  accountant_requests?: number; receipts_vat?: number };
+  accountant_requests?: number; receipts_vat?: number;
+  // Requests waiting for this person's approval (owners and admins), and theirs that wait.
+  approvals?: number; approvals_mine?: number };
 export const useAttention = (enabled = true) => useOrgQuery<Attention>(['attention'], (o) => rpc('get_attention', { p_org: o }), enabled, 120_000);
 export const useAssets = (enabled = true) => useOrgQuery<any>(['assets'], (o) => rpc('get_assets', { p_org: o }), enabled);
 // Home's figures for a period (this month when none is given) and the balances at its end.

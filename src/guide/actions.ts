@@ -121,6 +121,12 @@ export function voiceActions(ctx: Ctx): Record<string, (p: any) => Promise<unkno
             prices_include_vat: Boolean(inv.org.prices_include_vat), delivery_fee: 0, notes: 'Raised by Martina on a spoken yes', terms: null, reference: null,
             lines: parsed.map((l) => (l.item_id ? { item_id: l.item_id, qty: l.qty, unit: 'selling', unit_price: Number(l.unit_price), discount: 0 }
               : { description: l.name, qty: l.qty, unit_price: Number(l.unit_price), discount: 0, vat_treatment: 'standard', revenue_account: null })) } });
+          // An invoice that needs approval (the firm's, or past the discount limit) waits for it, unsent.
+          const w = (s.approvals || []).find((a: any) => a.status === 'pending');
+          if (s.status === 'draft' && w) {
+            for (const k of ['sales', 'sale', 'approvals', 'attention']) void ctx.qc.invalidateQueries({ queryKey: [k] });
+            return { done: true, number: s.number, summary: `Invoice ${s.number} to ${c.name} for ${N2(s.total)} waits for ${w?.approver === 'director' ? 'the director who confirmed the wallets' : 'the owner or an admin'} to approve it${channel ? '. Send it from Sales once it is approved' : ''}.` };
+          }
           let sent = '';
           if (channel && to) {
             try { await rpc('send_document', { p_sale: s.id, p_channel: channel, p_to: to }); sent = ` and sent to ${c.name} by ${channel === 'whatsapp' ? 'WhatsApp' : 'email'}`; }

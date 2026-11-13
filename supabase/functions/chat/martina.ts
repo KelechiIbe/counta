@@ -394,6 +394,11 @@ async function run(e: Env, kind: string, p: any, actionId: string): Promise<unkn
       prices_include_vat: Boolean(p.prices_include_vat), delivery_fee: 0, notes: `Raised by Martina on ${via} on a yes`, terms: null, reference: null,
       lines: (p.lines || []).map((l: any) => (l.item_id ? { item_id: l.item_id, qty: l.qty, unit: 'selling', unit_price: Number(l.unit_price), discount: 0 }
         : { description: l.name, qty: l.qty, unit_price: Number(l.unit_price), discount: 0, vat_treatment: 'standard', revenue_account: null })) } });
+    // An invoice that needs approval (the firm's, or past the discount limit) waits for it, unsent.
+    const w = (s.approvals || []).find((a: any) => a.status === 'pending');
+    if (s.status === 'draft' && w) {
+      return { done: true, number: s.number, summary: `Invoice ${s.number} to ${p.customer_name} for ${naira(s.total)} waits for ${w?.approver === 'director' ? 'the director who confirmed the wallets' : 'the owner or an admin'} to approve it${p.channel ? '. Send it from Sales in Counta once it is approved' : ''}.` };
+    }
     let sent = '';
     if (p.channel && p.to) {
       try { await e.rpc('send_document', { sale_id: s.id, channel: p.channel, to: p.to }); sent = ` and sent to ${p.customer_name} by ${p.channel === 'whatsapp' ? 'WhatsApp' : 'email'}`; }

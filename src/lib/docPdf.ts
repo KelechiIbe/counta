@@ -3,7 +3,7 @@
 // bill that was typed in by hand (filed with the input VAT invoices once it is paid). Nothing is
 // stored; the same data always draws the same file. jsPDF's Helvetica covers Latin-1 only, so ₦ is written NGN.
 import type { DocData } from '../components/InvoiceDoc';
-import { cleanHex, inkOf, onColor } from '../components/InvoiceDoc';
+import { cleanHex, inkOf, onColor, reliefNote } from '../components/InvoiceDoc';
 import { latin1 } from './exporters';
 import { amountInWords } from './format';
 import { addressLines, countryName } from './countries';
@@ -172,7 +172,7 @@ export async function salePdf(d: DocData & { status?: string; original_number?: 
   const notes: string[] = [];
   if (show.amount_in_words) notes.push(`Amount in words: ${amountInWords(Number(d.total))}`);
   if (d.export) notes.push(`Zero-rated export. Supplied to a customer in ${countryName(d.customer?.country || d.customer_country)}. VAT is charged at 0% (VAT status 2).`);
-  if (exempt.length) notes.push(allExempt ? 'This supply is exempted from VAT.' : `This supply is exempted from VAT: ${exempt.slice(0, 3).map((l) => l.description).join(', ')}${exempt.length > 3 ? ` and ${exempt.length - 3} more` : ''}.`);
+  if (exempt.length) notes.push(allExempt && d.vat_relief ? reliefNote(d) : allExempt ? 'This supply is exempted from VAT.' : `This supply is exempted from VAT: ${exempt.slice(0, 3).map((l) => l.description).join(', ')}${exempt.length > 3 ? ` and ${exempt.length - 3} more` : ''}.`);
   if (show.vat_status) notes.push(`VAT status: 0 VATable (${vatPct(d.issue_date)}) · 1 Exempt · 2 Zero-rated`);
   const pay = String(o.payment_details || '').trim(), terms = String(d.terms || '').trim();
   const blocks: [string, string][] = [];

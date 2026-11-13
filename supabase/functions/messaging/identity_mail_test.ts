@@ -62,7 +62,7 @@ Deno.test('identity_mail_lists_and_nothing_to_send', async () => {
     heading: 'A director asked for the business', lines: ['…'], button: 'Open Counta', link: 'https://app.example.test/practice/clients', white_label: false });
   assertEquals(await identityMail('recovery_owner', ID, x.d), { ok: true, sent_to: ['bisi@firm.example.test', 'office@firm.example.test'], sms_to: null });
   assertEquals((await identityMail('recovery_done', ID, idDeps(null).d)), { ok: true, skipped: true });
-  assertEquals(IDENTITY_MAIL_KINDS.length, 6);
+  assertEquals(IDENTITY_MAIL_KINDS.length, 8);
 });
 
 Deno.test('termii_send_and_balance', async () => {
@@ -81,4 +81,25 @@ Deno.test('termii_send_and_balance', async () => {
   const bad = (async () => new Response(JSON.stringify({ message: 'Invalid sender id' }), { status: 400 })) as typeof fetch;
   const e = await assertRejects(() => termiiSend({ key: 'k', sender: 'S' }, '2348031234567', 'hi', bad));
   assertEquals((e as Error).message, 'Termii: Invalid sender id');
+});
+
+Deno.test('identity_mail_approval_link_and_code_go_by_sms_too', async () => {
+  const link = { to: 'dayo@director.example.test', reply_to: 'partner@firm.example.test', from_name: 'Fifteen Partners', org_id: ORG, purpose: 'approval',
+    subject: 'Fifteen Partners asks you to approve one item for Managed Foods Ltd', heading: 'Waiting for your approval', greet: 'Dayo',
+    lines: ['Fifteen Partners keeps the books of Managed Foods Ltd under your full mandate, and asks you to approve: Invoice INV-0001 to Chika Foods.'],
+    button: 'Review and approve', link: 'https://counta.example.test/approve/ap_' + 'ab'.repeat(24), code: null, white_label: true,
+    sms: { to: '2348031110000', text: 'Fifteen Partners asks you to approve one item for Managed Foods Ltd on Counta. The link is in your email d***@d***.test.' } };
+  const x = idDeps(link);
+  assertEquals(await identityMail('approval_link', ID, x.d), { ok: true, sent_to: 'dayo@director.example.test', sms_to: '2348031110000' });
+  assertEquals(x.asked, ['approval_link']);
+  assertEquals([x.mails[0].from, x.mails[0].m.subject], ['Fifteen Partners', link.subject]);
+  assert(emailText(x.mails[0].m).includes('/approve/ap_'));
+  assertEquals(x.metered, [[ORG, 'approval']]);
+  const y = idDeps({ ...CODE, purpose: 'approval', sms: { to: '2348031110000', text: '042917 is your code to approve for Managed Foods Ltd on Counta.' } });
+  assertEquals((await identityMail('approval_code', ID, y.d)).sms_to, '2348031110000');
+  assert(IDENTITY_MAIL_KINDS.includes('approval_link') && IDENTITY_MAIL_KINDS.includes('approval_code'));
+  // Email-only kinds never text, whatever the database answers.
+  const z = idDeps({ to: 'support@example.test', sms: { to: '2348031110000', text: 'x' } });
+  assertEquals((await identityMail('support_case', ID, z.d)).sms_to, null);
+  assertEquals(z.texts, []);
 });

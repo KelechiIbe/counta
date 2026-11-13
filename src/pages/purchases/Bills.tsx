@@ -348,7 +348,7 @@ function PayBill({ bill, onClose, onDone }: { bill: any; onClose: () => void; on
       if (f.method === 'wallet' && r?.payout?.status === 'approved') {
         const s = await edge('payments', { action: 'send_payout', payout_id: r.payout.id });
         toast(s.ok === false ? `Saved; not sent yet: ${s.error}` : 'Sent from the wallet. The bill clears when the bank confirms.', s.ok === false ? 'err' : undefined);
-      } else toast(f.method === 'wallet' ? 'Waiting for a second person to approve the payout' : 'Payment recorded');
+      } else toast(f.method === 'wallet' ? 'Waiting for approval. The payout is sent once it is approved.' : 'Payment recorded');
       onDone(); onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);

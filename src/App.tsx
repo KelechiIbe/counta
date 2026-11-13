@@ -65,6 +65,8 @@ const Referral = lazy(() => import('./pages/public/Referral'));
 const InvoicePortal = lazy(() => import('./pages/public/InvoicePortal'));
 const SignPage = lazy(() => import('./pages/public/Sign'));
 const DirectorConfirm = lazy(() => import('./pages/public/DirectorConfirm'));
+const ApprovePage = lazy(() => import('./pages/public/Approve'));
+const Approvals = lazy(() => import('./pages/approvals/Approvals'));
 const RecoverStart = lazy(() => import('./pages/recover/Recover').then((m) => ({ default: m.RecoverStart })));
 const RecoverPage = lazy(() => import('./pages/recover/Recover').then((m) => ({ default: m.RecoverPage })));
 const RecoverAccept = lazy(() => import('./pages/recover/Recover').then((m) => ({ default: m.RecoverAccept })));
@@ -170,6 +172,8 @@ export default function App() {
       <Route path="/sign" element={<Suspense fallback={<Loading />}><SignPage /></Suspense>} />
       <Route path="/confirm/:token" element={<Suspense fallback={<Loading />}><DirectorConfirm /></Suspense>} />
       <Route path="/confirm" element={<Suspense fallback={<Loading />}><DirectorConfirm /></Suspense>} />
+      <Route path="/approve/:token" element={<Suspense fallback={<Loading />}><ApprovePage /></Suspense>} />
+      <Route path="/approve" element={<Suspense fallback={<Loading />}><ApprovePage /></Suspense>} />
       <Route path="/recover" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><RecoverStart /></Suspense></RequireAuth>} />
       <Route path="/recover/accept/:token" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><RecoverAccept /></Suspense></RequireAuth>} />
       <Route path="/recover/:id" element={<RequireAuth needOrg={false}><Suspense fallback={<Loading />}><RecoverPage /></Suspense></RequireAuth>} />
@@ -189,6 +193,7 @@ export default function App() {
         <Route path="/sell/shop" element={<Shop />} />
         <Route path="/sell/recurring" element={<Recurring />} />
         <Route path="/payments" element={<Payments />} />
+        <Route path="/approvals" element={<Approvals />} />
         <Route path="/purchases/bills" element={<Bills />} />
         <Route path="/purchases/vendors" element={<Vendors />} />
         <Route path="/accounting" element={<Navigate to="/accounting/inbox" replace />} />

@@ -601,3 +601,54 @@ Deno.test('director_slip_stores_once_and_removes_a_refused_one', async () => {
   assertEquals((await call(deps(admin3, new Fake()), { action: 'director_slip', token: DC, file: PDF })).body.reason, 'nin_first');
   assertEquals(admin3.uploads.length, 0);
 });
+
+// ------------------------------------------------------------------ the director's approvals
+const AP = 'ap_' + 'ef'.repeat(24);
+const AID = '77777777-7777-4777-8777-777777777777', AID2 = '88888888-8888-4888-8888-888888888888';
+
+Deno.test('approval_actions_check_the_token_and_pass_ip_and_browser', async () => {
+  const admin = new Fake();
+  const d = deps(admin, new Fake());
+  for (const body of [{ action: 'approval_open', token: DC }, { action: 'approval_code', token: 'ap_123' },
+    { action: 'approval_verify', token: ES, code: '123456' }, { action: 'approval_decide', token: '', ids: [AID], approve: true }]) {
+    assertEquals([(await call(d, body)).body.reason], ['invalid'], body.action);
+  }
+  assertEquals(admin.calls.length, 0);
+  admin.rpcs.svc_approval_open = () => ({ ok: true, business: 'Ada Foods Ltd', firm: 'Ṣọlá & Co', items: [], verified: false });
+  admin.rpcs.svc_approval_code = () => ({ ok: true, sends_left: 4 });
+  admin.rpcs.svc_approval_verify = () => ({ ok: true, verified: true, items: [] });
+  admin.rpcs.svc_approval_decide = () => ({ ok: true, results: [{ id: AID, status: 'approved' }], items: [] });
+  for (const body of [{ action: 'approval_open', token: AP }, { action: 'approval_code', token: AP }, { action: 'approval_verify', token: AP, code: '654 321' },
+    { action: 'approval_decide', token: AP, ids: [AID.toUpperCase(), AID2], approve: false, note: '  Wrong   customer ' }]) {
+    assertEquals((await call(d, body)).body.ok, true, body.action);
+  }
+  const who = { p_token: AP, p_ip: '203.0.113.9', p_ua: 'TestBrowser/1.0' };
+  assertEquals(admin.calls.map((c) => [c.fn, c.args]), [['svc_approval_open', who], ['svc_approval_code', who],
+    ['svc_approval_verify', { p_token: AP, p_code: '654 321', p_ip: '203.0.113.9', p_ua: 'TestBrowser/1.0' }],
+    ['svc_approval_decide', { ...who, p_ids: [AID, AID2], p_approve: false, p_note: 'Wrong customer' }]]);
+});
+
+Deno.test('approval_decide_refusals', async () => {
+  const admin = new Fake();
+  const d = deps(admin, new Fake());
+  assertEquals((await call(d, { action: 'approval_decide', token: AP, ids: [], approve: true })).body.error, 'Choose what to approve or reject.');
+  assertEquals((await call(d, { action: 'approval_decide', token: AP, ids: ['nope'], approve: true })).body.error, 'Choose what to approve or reject.');
+  assertEquals((await call(d, { action: 'approval_decide', token: AP, ids: Array(51).fill(AID), approve: true })).body.error, 'Choose what to approve or reject.');
+  assertEquals((await call(d, { action: 'approval_decide', token: AP, ids: [AID], approve: 'yes' })).body.reason, 'choose');
+  assertEquals((await call(d, { action: 'approval_decide', token: AP, ids: [AID], approve: false, note: ' no ' })).body.reason, 'note');
+  assertEquals((await call(d, { action: 'approval_decide', token: AP, ids: [AID], approve: false, note: 'x'.repeat(501) })).body.reason, 'note_long');
+  assertEquals(admin.calls.length, 0);
+  admin.rpcs.svc_approval_decide = () => ({ ok: false, reason: 'not_verified' });
+  const r = await call(d, { action: 'approval_decide', token: AP, ids: [AID], approve: true });
+  assertEquals([r.body.reason, r.body.error], ['approval_code_first', 'Ask for a code and enter it first. A code lets you decide for 15 minutes.']);
+  admin.rpcs.svc_approval_open = () => ({ ok: false, reason: 'closed' });
+  assertMatch((await call(d, { action: 'approval_open', token: AP })).body.error, /mandate ended, or another director/);
+  admin.rpcs.svc_approval_verify = () => ({ ok: false, reason: 'wrong_code', tries_left: 3, locked: false });
+  assertEquals((await call(d, { action: 'approval_verify', token: AP, code: '111111' })).body, { ok: false, reason: 'wrong_code',
+    error: 'That code is not right. Check the latest code you were sent and try again.', tries_left: 3, locked: false });
+  admin.rpcs.svc_approval_verify = () => ({ ok: false, reason: 'expired', tries_left: 0, locked: false });
+  assertEquals((await call(d, { action: 'approval_verify', token: AP, code: '111111' })).body.reason, 'code_expired');
+  admin.rpcs.svc_approval_verify = () => ({ ok: false, reason: 'expired', tries_left: 0 }); // the link's
+  assertEquals((await call(d, { action: 'approval_verify', token: AP, code: '111111' })).body.reason, 'expired');
+  assertEquals((await call(d, { action: 'approval_verify', token: AP, code: '12345' })).body.reason, 'wrong_code');
+});

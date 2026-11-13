@@ -16,6 +16,7 @@ import { N2, fmtDay, lagosToday } from '../../lib/format';
 import { useVatRate } from '../../lib/vat';
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Empty, Field, SkeletonRows, Spinner } from '../../components/ui';
+import { decidedText, waitsFor } from '../../lib/approvals';
 
 const FREQ: Record<RecurringSchedule['frequency'], string> = { monthly: 'Monthly', quarterly: 'Every three months', annually: 'Every year' };
 const STATUS: Record<RecurringSchedule['status'], [string, string]> = { active: ['Active', 't-green'], paused: ['Paused', 't-amber'], ended: ['Ended', 't-grey'] };
@@ -71,7 +72,8 @@ export default function Recurring() {
                   <span className="m-main" style={{ minWidth: 0 }}><b>{s.customer_name}</b><span className="faint" style={{ display: 'block', fontSize: 12 }}>{scheduleText(s)}{s.end_date ? ` · until ${fmtDay(s.end_date)}` : ''}</span></span>
                   <span className="muted">{s.status === 'ended' ? '—' : fmtDay(s.next_run)}</span>
                   <span className="right num">{N2(eachTotal(s.lines, !!inv.org.vat_registered, vat.on(s.next_run)))}</span>
-                  <span className="right"><span className={'chip ' + tone}>{s.failures > 0 && s.status === 'active' ? `${s.failures} failed` : label}</span></span>
+                  <span className="right"><span className={'chip ' + (s.approval_state === 'pending' ? 't-amber' : s.approval_state === 'rejected' ? 't-red' : tone)}>
+                    {s.approval_state === 'pending' ? 'To approve' : s.approval_state === 'rejected' ? 'Not approved' : s.failures > 0 && s.status === 'active' ? `${s.failures} failed` : label}</span></span>
                 </button>
               );
             })}
@@ -133,7 +135,8 @@ function Editor({ s, preset, onClose, onSaved }: { s: RecurringSchedule | null; 
         lines: clean.map((l) => ({ description: l.description.trim(), qty: Number(l.qty), unit_price: money(l.unit_price), vat_treatment: l.vat_treatment, once: l.once })),
       } });
       await refresh();
-      toast(s ? 'Saved' : `Set up: the first invoice is on ${fmtDay(x.next_run)}`);
+      toast(x.approval_state === 'pending' ? `Saved. It runs once ${waitsFor(x.approval || { approver: 'owner' })} approves it.`
+        : s ? 'Saved' : `Set up: the first invoice is on ${fmtDay(x.next_run)}`);
       onSaved(x);
     } catch (e) { setErr(cleanError(e)); }
     setBusy(null);
@@ -169,6 +172,10 @@ function Editor({ s, preset, onClose, onSaved }: { s: RecurringSchedule | null; 
         <button className="x-btn" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button>
       </div>
       <div className="drawer-body stack" style={{ gap: 14 }}>
+        {s?.approval_state === 'pending' && <Alert kind="amber" icon="clock"><span data-testid="recurring-approval">Waiting for {waitsFor(s.approval || { approver: 'owner' })} to approve this
+          schedule. Once approved it runs on its own; it waits again only if the firm changes it.</span></Alert>}
+        {s?.approval_state === 'rejected' && s.approval && <Alert kind="red" icon="alert"><span data-testid="recurring-approval">{decidedText(s.approval)}. The schedule is paused.
+          Change it and save it to ask again.</span></Alert>}
         {s?.status === 'paused' && s.last_error && (
           <Alert kind="amber" icon="alert">
             Paused after {s.failures >= 3 ? 'three failures in a row' : 'a failure'}: {s.last_error} Put the cause right and save the schedule (whoever saves it issues its invoices), then resume it.
@@ -273,10 +280,10 @@ function Editor({ s, preset, onClose, onSaved }: { s: RecurringSchedule | null; 
         {s && s.status !== 'ended' && (
           <>
             {s.status === 'active' && <button className="btn btn-ghost btn-sm" disabled={disabled} onClick={() => status('paused')} data-testid="recurring-pause">{busy === 'paused' ? <Spinner small /> : null}Pause</button>}
-            {s.status === 'paused' && <button className="btn btn-ghost btn-sm" disabled={disabled} onClick={() => status('active')} data-testid="recurring-resume">{busy === 'active' ? <Spinner small /> : null}Resume</button>}
+            {s.status === 'paused' && s.approval_state !== 'rejected' && <button className="btn btn-ghost btn-sm" disabled={disabled} onClick={() => status('active')} data-testid="recurring-resume">{busy === 'active' ? <Spinner small /> : null}Resume</button>}
             {!ending ? <button className="btn btn-ghost btn-sm" disabled={disabled} onClick={() => setEnding(true)}>End it</button>
               : <button className="btn btn-danger btn-sm" disabled={disabled} onClick={() => status('ended')}>{busy === 'ended' ? <Spinner small /> : null}Yes, end it</button>}
-            {!missed && <button className="btn btn-secondary btn-sm" disabled={disabled} onClick={runNow} data-testid="recurring-run-now">{busy === 'run' ? <Spinner small /> : <Icon name="zap" size={14} />}Issue the next invoice now</button>}
+            {!missed && (s.approval_state ?? 'approved') === 'approved' && <button className="btn btn-secondary btn-sm" disabled={disabled} onClick={runNow} data-testid="recurring-run-now">{busy === 'run' ? <Spinner small /> : <Icon name="zap" size={14} />}Issue the next invoice now</button>}
           </>
         )}
         <span className="grow" />

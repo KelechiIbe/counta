@@ -150,11 +150,13 @@ The business wallet and the tax wallet (Flutterwave, through TaxStreem) open onl
 1. The business's identity is verified. Its own business profile holds its CAC record. The director's confirmation below verifies it; a partner or manager can also check a director's NIN in Settings, Business identity.
 2. **A director of the company confirms the wallets.** A partner or manager picks a director from the CAC record (Full mandate tab, Ask a director) and sends the link to the director's own email, or, with no email, gets the link to send another way (`practice_director_link` makes a new one; 14 days). Whoever opens it (`/confirm`) reads which firm asks and that TaxStreem provides the wallets through Flutterwave, then proves they are that director:
    - Their **NIN** is looked up with NIMC (the `practice` function's `director_nin`, three a day) and must match a director (or, for a business name, a proprietor) on the CAC record, by name. Only the name it matched and the NIN's last four digits are kept.
-   - A **6-digit code** goes to the phone number NIMC holds for the NIN (by SMS through Termii) and to the director's email on the CAC record, never to one of the firm's addresses (`identity_checks`, `svc_identity_mail`). The code confirms. Where the code went is wiped once it is right, or within the hour.
+   - A **6-digit code** goes to the phone number NIMC holds for the NIN (by SMS through Termii) and to the director's email on the CAC record, never to one of the firm's addresses (`identity_checks`, `svc_identity_mail`). The code confirms. Where the code went is kept on the confirmation while the mandate lasts, because that director then approves what the firm asks for (see [Approvals and exempt buyers](approvals-and-exempt-buyers.md)); a check that does not confirm is wiped within the hour.
    - With **no phone on the NIN record** (or SMS not set up), the code goes to the director's email and phone on the CAC record, and once it is entered TaxStreem checks the confirmation (`director_review`, reason `no_nin_phone` or `sms_not_ready`).
    - With **no way to send a code** at all, the director uploads their NIN slip (`director_slip`) and TaxStreem checks it (reason `no_channel`).
    A decline tells TaxStreem (`director_declined`).
 3. TaxStreem has not paused the firm's full mandates (`practices.mandate_suspended_at`).
+
+After that, the director who confirmed approves the invoices, credit notes, refunds, payments out of the wallet and recurring invoices the firm asks for, from a link and a code ([Approvals and exempt buyers](approvals-and-exempt-buyers.md)). A confirmation TaxStreem accepted on a NIN slip leaves no way to reach the director: the Full mandate tab says so and lets the firm ask a director to confirm by code.
 
 ### What the firm sees
 

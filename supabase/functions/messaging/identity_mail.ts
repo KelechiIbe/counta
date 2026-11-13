@@ -8,6 +8,9 @@
 //   recovery_done      the previous owner told the business has a new owner
 //   recovery_admin     TaxStreem's reviewers asked to check a recovery
 //   support_case       a support request, to the support address (replies go to the person)
+//   approval_link      the director of a full-mandate client told what the firm asks them to approve, with the link to
+//                      /approve (by email; an SMS says where the link is, or carries it when there is no email)
+//   approval_code      the code that opens that page, by email and SMS
 //
 // The code is minted by svc_identity_mail as the message goes, so nothing usable is ever queued: everything that would
 // stop a send is checked before the database is asked. Where the code goes is wiped by the database once it is right, or
@@ -15,7 +18,10 @@
 import { displayName, type Msg } from './wording.ts';
 import { practiceMailMessages } from './practice_mail.ts';
 
-export const IDENTITY_MAIL_KINDS = ['identity_code', 'recovery_owner', 'recovery_handover', 'recovery_done', 'recovery_admin', 'support_case'];
+export const IDENTITY_MAIL_KINDS = ['identity_code', 'recovery_owner', 'recovery_handover', 'recovery_done', 'recovery_admin', 'support_case',
+  'approval_link', 'approval_code'];
+// The kinds that also go by SMS.
+const SMS_KINDS = ['identity_code', 'approval_link', 'approval_code'];
 
 export type IdentityMailDeps = {
   emailOn: () => Promise<boolean>; // not paused by TaxStreem
@@ -34,7 +40,7 @@ const SMS_TO = /^234[789][01]\d{8}$/;
 export async function identityMail(kind: string, id: string, d: IdentityMailDeps): Promise<Record<string, unknown>> {
   if (!IDENTITY_MAIL_KINDS.includes(kind) || !/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, error: 'Unknown identity message.' };
   const emailOk = (await d.emailOn()) && (await d.configured());
-  const smsOk = kind === 'identity_code' && (await d.smsConfigured());
+  const smsOk = SMS_KINDS.includes(kind) && (await d.smsConfigured());
   if (!emailOk && !smsOk) return { ok: false, reason: 'not_configured', error: 'Neither email nor SMS can go just now.' };
   const { data: r, error } = await d.write(kind, id);
   if (error) return { ok: false, error: error.message };

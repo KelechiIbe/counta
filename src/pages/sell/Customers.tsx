@@ -16,6 +16,7 @@ import { StatusChip, docUrl } from './common';
 import { COUNTRIES, countryName, isExport } from '../../lib/countries';
 import { StateLga } from '../../components/Places';
 import { SaleDrawer } from './Sales';
+import { RELIEF, RELIEFS, decidesApprovals, pendingNote, type Relief } from '../../lib/approvals';
 
 type Tab = 'all' | 'owing' | 'overdue' | 'credit';
 
@@ -84,7 +85,7 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   const qc = useQueryClient();
   const [tab, setTab] = useState<'details' | 'statement' | 'documents'>(customer ? 'statement' : 'details');
   const [f, setF] = useState({ name: '', phone: '', email: '', address: '', tin: '', kind: 'business', credit_limit: '', terms_days: '', price_list_id: '', whatsapp_opt_in: true, wvat_agent: false, ncd_levy: false, wht_rate: '',
-    city: '', state: '', lga: '', postcode: '', country: 'NG', contact_person: '', cc_emails: '' });
+    city: '', state: '', lga: '', postcode: '', country: 'NG', contact_person: '', cc_emails: '', vat_relief: '' as Relief | '', vat_relief_ref: '' });
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState<'pay' | 'refund' | null>(null);
   const [doc, setDoc] = useState<string | null>(null);
@@ -94,7 +95,8 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
     if (customer) setF({ name: customer.name, phone: customer.phone || '', email: customer.email || '', address: customer.address || '', tin: customer.tin || '', kind: customer.kind || 'business',
       credit_limit: String(Number(customer.credit_limit) || ''), terms_days: String(customer.terms_days || ''), price_list_id: customer.price_list_id || '', whatsapp_opt_in: customer.whatsapp_opt_in, wvat_agent: !!(customer as any).wvat_agent,
       ncd_levy: !!(customer as any).ncd_levy, wht_rate: (customer as any).wht_rate == null ? '' : String(Number((customer as any).wht_rate)),
-      city: customer.city || '', state: customer.state || '', lga: (customer as any).lga || '', postcode: (customer as any).postcode || '', country: customer.country || 'NG', contact_person: customer.contact_person || '', cc_emails: (customer.cc_emails || []).join(', ') });
+      city: customer.city || '', state: customer.state || '', lga: (customer as any).lga || '', postcode: (customer as any).postcode || '', country: customer.country || 'NG', contact_person: customer.contact_person || '', cc_emails: (customer.cc_emails || []).join(', '),
+      vat_relief: customer.vat_relief || '', vat_relief_ref: customer.vat_relief_ref || '' });
   }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const statement = useQuery({ queryKey: ['statement', customer?.id, range.from, range.to], enabled: !!customer && tab === 'statement', placeholderData: (prev, q) => (q?.queryKey[1] === customer?.id ? prev : undefined),
     queryFn: () => rpc<any>('customer_statement', { p_customer: customer!.id, p_from: range.from || null, p_to: range.to || null }) });
@@ -104,8 +106,11 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
   const abroad = (f.country || 'NG') !== 'NG';
   const tinErr = abroad ? null : taxIdError(f.tin, customer?.tin);
+  // Exempt from VAT (a diplomatic mission or diplomat, a free trade zone entity, a humanitarian project): the owner or an admin.
+  const marksRelief = decidesApprovals(inv);
   async function save() {
     if (tinErr) { toast(tinErr, 'err'); return; }
+    if (f.vat_relief && f.vat_relief_ref.trim().length < 2) { toast(`Add the ${RELIEF[f.vat_relief].ref.toLowerCase()} for the VAT exemption.`, 'err'); return; }
     setBusy(true);
     try {
       await rpc('save_customer', { p_org: orgId, p_customer: { id: customer?.id || null, name: f.name, phone: f.phone || null, email: f.email || null, address: f.address || null, tin: f.tin || null,
@@ -113,7 +118,8 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
         lga: abroad ? null : f.lga || null, postcode: f.postcode.trim() || null,
         contact_person: f.contact_person || null, cc_emails: f.cc_emails.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean),
         ...(canCredit ? { credit_limit: money(f.credit_limit) ?? 0, terms_days: Number(f.terms_days) || 0, wvat_agent: f.wvat_agent,
-          ...(f.kind === 'business' || f.kind === 'government' ? { ncd_levy: f.ncd_levy, wht_rate: f.wht_rate } : {}) } : {}) } });
+          ...(f.kind === 'business' || f.kind === 'government' ? { ncd_levy: f.ncd_levy, wht_rate: f.wht_rate } : {}) } : {}),
+        ...(marksRelief ? { vat_relief: abroad ? null : f.vat_relief || null, vat_relief_ref: abroad || !f.vat_relief ? null : f.vat_relief_ref.trim() } : {}) } });
       toast('Customer saved'); await qc.invalidateQueries({ queryKey: ['customers'] }); if (!customer) onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
@@ -167,6 +173,15 @@ function CustomerDrawer({ customer, priceLists, onClose }: { customer: Customer 
                 <option value="">Not known yet</option><option value="0">None</option><option value="0.02">2%</option><option value="0.05">5%</option><option value="0.1">10%</option>
                 {f.wht_rate && !['0', '0.02', '0.05', '0.1'].includes(f.wht_rate) && <option value={f.wht_rate}>{Math.round(Number(f.wht_rate) * 1000) / 10}%</option>}
               </select></Field>}
+            {!abroad && (marksRelief || f.vat_relief) && (
+              <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }} data-testid="customer-relief">
+                <Field label="Exempt from VAT" hint={marksRelief ? 'Every sale to this customer is exempt and says so on the document.' : 'Set by the owner or an admin.'}>
+                  <select className="input" disabled={!marksRelief} value={f.vat_relief} onChange={(e) => set('vat_relief', e.target.value)} data-testid="customer-relief-kind">
+                    <option value="">No, VAT applies as normal</option>{RELIEFS.map((k) => <option key={k} value={k}>{RELIEF[k].label}</option>)}</select></Field>
+                {f.vat_relief && <Field label={RELIEF[f.vat_relief].ref}><input className="input" disabled={!marksRelief} maxLength={120} value={f.vat_relief_ref}
+                  onChange={(e) => set('vat_relief_ref', e.target.value)} data-testid="customer-relief-ref" /></Field>}
+              </div>
+            )}
             <div><button className="btn btn-primary" disabled={busy || !f.name.trim()} onClick={save}>Save customer</button></div>
           </div>
         )}
@@ -279,8 +294,8 @@ function RefundCredit({ customer, onClose }: { customer: Customer; onClose: () =
   async function go() {
     setBusy(true);
     try {
-      await rpc('refund_customer', { p_org: orgId, p_customer: customer.id, p_amount: money(f.amount), p_method: f.method, p_bank_account: f.bank_account_id || null, p_reason: f.reason });
-      toast('Refund recorded'); await Promise.all(['customers', 'statement'].map((k) => qc.invalidateQueries({ queryKey: [k] }))); onClose();
+      const r = await rpc<any>('refund_customer', { p_org: orgId, p_customer: customer.id, p_amount: money(f.amount), p_method: f.method, p_bank_account: f.bank_account_id || null, p_reason: f.reason });
+      toast(pendingNote(r, 'The refund') || 'Refund recorded'); await Promise.all(['customers', 'statement'].map((k) => qc.invalidateQueries({ queryKey: [k] }))); onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
   }

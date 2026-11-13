@@ -48,11 +48,17 @@ const money = (n: unknown) => Number(n || 0).toLocaleString('en-NG', { minimumFr
 const statusOf = (t?: string) => (t === 'exempt' ? 1 : t === 'zero' ? 2 : 0);
 const STATUS_LABEL = ['VATable', 'Exempt', 'Zero-rated'];
 
+// The note on an exempt buyer's document: who it is for and the reference that makes it exempt.
+export const reliefNote = (d: { relief_words?: string | null; vat_relief_ref?: string | null }) =>
+  `This supply to ${d.relief_words || 'an exempt buyer'} is exempted from VAT${d.vat_relief_ref ? ` (reference ${d.vat_relief_ref})` : ''}.`;
+
 export interface DocData {
   doc_type: string; number: string; status?: string; issue_date: string; due_date?: string | null; reference?: string | null;
   customer_name?: string | null; customer_tin?: string | null; customer_address?: string | null; customer_email?: string | null; customer_phone?: string | null;
   customer?: { city?: string | null; state?: string | null; country?: string | null; contact_person?: string | null } | null;
   export?: boolean; customer_country?: string | null; prices_include_vat?: boolean;
+  // Exempt as a supply to a diplomatic mission, a free trade zone entity or a humanitarian project, with its reference.
+  vat_relief?: string | null; vat_relief_ref?: string | null; relief_words?: string | null;
   lines: { description: string; qty: number; unit_label?: string; unit_price: number; discount?: number; vat_treatment?: string; vat?: number; net?: number; gross: number; kind?: string }[];
   subtotal: number; vat_total: number; total: number; amount_paid?: number; credited?: number; balance?: number; notes?: string | null; terms?: string | null;
   org: Record<string, any>;
@@ -134,7 +140,7 @@ export function InvoiceDoc({ d, template, style, fixed }: { d: DocData; template
   // An exempt supply carries no VAT line and says so (VAT rule book, exempt supplies, rule 2).
   const exemptLines = d.lines.filter((l) => l.vat_treatment === 'exempt');
   const allExempt = d.lines.length > 0 && exemptLines.length === d.lines.length;
-  const exemptNote = !exemptLines.length ? null : allExempt ? 'This supply is exempted from VAT.'
+  const exemptNote = !exemptLines.length ? null : d.vat_relief && allExempt ? reliefNote(d) : allExempt ? 'This supply is exempted from VAT.'
     : `This supply is exempted from VAT: ${exemptLines.slice(0, 3).map((l) => l.description).join(', ')}${exemptLines.length > 3 ? ` and ${exemptLines.length - 3} more` : ''}.`;
   const totals = (
     <div className="inv-totals">
