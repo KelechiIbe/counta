@@ -330,8 +330,9 @@ begin
 end $$;
 
 -- test: kyc_row_other_drafts
--- A person has one draft at a time. It is never moved onto a business it was not started for: not a draft started for
--- another business, nor a personal draft with anything in it. An empty one still is, as before.
+-- A draft is never moved onto a business it was not started for. Each business the firm runs has its own draft (Task 10:
+-- a firm person works on several), apart from each person's own, which never becomes one of them. An ordinary business's
+-- owner keeps one draft: a personal draft with anything in it is not moved onto their business; an empty one is, as before.
 do $$
 declare v_a uuid; v_b uuid; v_draft uuid; r jsonb;
 begin
@@ -342,26 +343,33 @@ begin
   r := public.svc_kyc_store(tests.id('partner'), 'search', '{"query":"a"}', v_a);
   perform tests.as_postgres();
   v_draft := (select id from kyc_profiles where org_id = v_a);
-  -- Then business B: mono asks kyc_draft first, then stores; or the profile is submitted.
+  -- Then business B, its own draft: mono asks kyc_draft first, then stores; submitting it waits for CAC.
   perform tests.as_user(tests.id('partner'));
-  perform tests.throws(format('select public.kyc_draft(%L)', v_b), '%another business profile in progress%');
-  perform tests.throws(format($q$select public.kyc_submit('{"org_id":"%s"}')$q$, v_b),
-    'P0001: You have another business profile in progress. Finish it first, then come back to this business.');
+  r := public.kyc_draft(v_b);
+  assert (r->>'id')::uuid <> v_draft and (r->>'org_id')::uuid = v_b, 'kyc_row_other_drafts: B has its own draft';
+  perform tests.throws(format($q$select public.kyc_submit('{"org_id":"%s"}')$q$, v_b), '%Find the business on CAC first%');
   perform tests.as_service();
-  perform tests.throws(format($q$select public.svc_kyc_store(%L, 'search', '{"query":"b"}', %L)$q$, tests.id('partner'), v_b),
-    '%another business profile in progress%');
+  r := public.svc_kyc_store(tests.id('partner'), 'search', '{"query":"b"}', v_b);
   perform tests.as_postgres();
-  assert (select org_id = v_a and search->>'query' = 'a' and status = 'draft' from kyc_profiles where id = v_draft)
-     and not exists (select 1 from kyc_profiles where org_id = v_b), 'kyc_row_other_drafts: A''s draft untouched, nothing for B';
-  -- The manager's personal draft, with a search in it, is not moved onto B, where everyone acting as the owner would see it.
+  assert (select org_id = v_a and search->>'query' = 'a' and status = 'draft' and for_business from kyc_profiles where id = v_draft)
+     and (select search->>'query' = 'b' and for_business from kyc_profiles where org_id = v_b), 'kyc_row_other_drafts: A''s draft untouched, B''s its own';
+  -- The manager's personal draft, with a search in it, is not moved onto B: they work on B's own draft.
   perform tests.as_service();
   r := public.svc_kyc_store(tests.id('manager'), 'search', '{"query":"mine"}');
   perform tests.as_postgres();
   perform tests.as_user(tests.id('manager'));
-  perform tests.throws(format('select public.kyc_draft(%L)', v_b), '%another business profile in progress%');
+  r := public.kyc_draft(v_b);
   perform tests.as_postgres();
-  assert (select org_id is null and search->>'query' = 'mine' from kyc_profiles where user_id = tests.id('manager') and status = 'draft')
-     and not exists (select 1 from kyc_profiles where org_id = v_b), 'kyc_row_other_drafts: the personal draft stays personal';
+  assert r->'search'->>'query' = 'b' and (select org_id is null and search->>'query' = 'mine' from kyc_profiles
+                                          where user_id = tests.id('manager') and status = 'draft' and not for_business),
+    'kyc_row_other_drafts: the personal draft stays personal';
+  -- An ordinary business's owner with a personal draft holding a search: not moved onto their business.
+  insert into kyc_profiles (user_id, search) values (tests.id('owner'), '{"query":"elsewhere"}') returning id into v_draft;
+  perform tests.as_user(tests.id('owner'));
+  perform tests.throws(format('select public.kyc_draft(%L)', tests.id('ord')), '%another business profile in progress%');
+  perform tests.as_postgres();
+  assert not exists (select 1 from kyc_profiles where org_id = tests.id('ord')), 'kyc_row_other_drafts: nothing moved onto the ordinary business';
+  delete from kyc_profiles where id = v_draft;
   -- An owner's empty draft is bound to their business, as before.
   insert into kyc_profiles (user_id) values (tests.id('owner')) returning id into v_draft;
   perform tests.as_user(tests.id('owner'));

@@ -305,6 +305,26 @@ begin
   return l;
 end $$;
 
+-- A business the practice takes on under full mandate the way a firm does it: a cleared full-mandate intake, the partner's
+-- declaration of the client's written authority, a full-mandate letter signed by both sides, then practice_create_business
+-- as p_partner (who must be a partner with a verified licence). The name must not match another of the practice's
+-- clients or intakes (the conflicts check would stop it). Returns the client link's id.
+create function tests.full_client(p_practice uuid, p_partner uuid, p_name text default 'Full Client Ltd') returns uuid
+language plpgsql as $$
+declare v_intake uuid; r jsonb;
+begin
+  v_intake := tests.cleared_intake(p_practice, p_name, 'full');
+  perform tests.as_user(p_partner);
+  perform public.practice_intake_declare(v_intake, '{}');
+  perform tests.as_postgres();
+  perform tests.completed_letter(v_intake);
+  perform tests.as_user(p_partner);
+  r := public.practice_create_business(v_intake, '{"email":"books@firm.example.test"}');
+  perform tests.as_postgres();
+  if not coalesce((r->>'ok')::boolean, false) then raise exception 'tests.full_client: the business was not set up: %', r; end if;
+  return (r->>'client_id')::uuid;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Grants: every caller can switch identity, read ids and capture results.
 -- ---------------------------------------------------------------------------
