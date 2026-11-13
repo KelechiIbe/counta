@@ -4,7 +4,7 @@
 // (involved), or, where TaxStreem lets the firm run full mandates, it gets a full-mandate engagement letter signed, a partner
 // declares the client's written authority, and a verified partner sets the business up (full mandate). The database decides
 // every rule; this page says what each one needs before it is met. Partners and managers only.
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { cleanError, rpc, supabase } from '../../lib/supabase';
@@ -15,7 +15,7 @@ import { Alert, Field, SkeletonRows, Spinner } from '../../components/ui';
 import { Card, PageHead, grid } from '../../admin/ui';
 import {
   type ConflictHit, type Home, type IntakeDetail, type IntakeDoc, type IntakeMode, type IntakePerson, type LetterStatus,
-  openDoc, SERVICES, sendInvite, useMandateGate, usePracticeHome, usePracticeIntake,
+  openDoc, SERVICES, sendInvite, useMandateGate, usePracticeClient, usePracticeHome, usePracticeIntake,
 } from '../api';
 
 const ENTITY: [string, string][] = [['company', 'Company (RC number)'], ['business_name', 'Business name (BN number)'],
@@ -47,7 +47,7 @@ type Form = {
   mode_requested: IntakeMode; legal_name: string; entity_type: string; rc_number: string; tax_id: string; address: string; industry: string;
   risk_rating: string; risk_reason: string; people: PersonForm[];
 };
-type Opposing = { id: string; name: string; rc_number: string | null; client_id: string | null };
+type Opposing = { id: string; name: string; rc_number: string | null; note: string | null };
 
 const blankPerson = (): PersonForm => ({ key: uuid(), kind: 'director', name: '', role: '', ownership_pct: '', nationality: '', is_pep: false, id_type: '', id_last4: '' });
 function toForm(d: IntakeDetail | null, mode: IntakeMode = 'involved'): Form {
@@ -69,7 +69,14 @@ function payload(f: Form, id?: string) {
   };
 }
 const same = (a: Form, b: Form) => JSON.stringify(payload(a)) === JSON.stringify(payload(b));
+// The database's refusal of an ID number written anywhere but the last-4 field: ten or more digits in a row once spaces and
+// dashes are taken out (an NIN or BVN), so "Director 2019-2024" passes.
+const ID_REFUSAL = 'Record only the last 4 characters of an ID number.';
+const hasIdNumber = (s: string) => /[0-9]{10,}/.test(s.replace(/[\s-]/g, ''));
+// A refusal from the database about the people (step 3).
+const PEOPLE_ERROR = /ID number|person|people|director, beneficial owner|Ownership is|kind of ID|role under|nationality under/i;
 function personProblem(p: PersonForm): string | null {
+  if (hasIdNumber(p.name) || hasIdNumber(p.role) || hasIdNumber(p.nationality)) return ID_REFUSAL;
   if (p.name.trim().length < 2) return 'Enter the person\'s full name.';
   if (p.id_last4 && !/^[A-Za-z0-9]{4}$/.test(p.id_last4)) return 'Enter exactly the last 4 characters of the ID number.';
   const pct = p.ownership_pct.trim();
@@ -80,8 +87,15 @@ function personProblem(p: PersonForm): string | null {
 function formProblem(f: Form): [string, number] | null {
   const n = f.legal_name.trim().length;
   if (n < 2 || n > 160) return ['Enter the business\'s registered name (2 to 160 characters).', 2];
-  const bad = f.people.find((p) => personProblem(p));
-  return bad ? [`${bad.name.trim() || 'A person'}: ${personProblem(bad)}`, 3] : null;
+  const i = f.people.findIndex((p) => personProblem(p));
+  if (i < 0) return null;
+  const problem = personProblem(f.people[i])!;
+  // (Never the name back when it may hold an ID number.)
+  return [`${problem === ID_REFUSAL ? `Person ${i + 1}` : f.people[i].name.trim() || `Person ${i + 1}`}: ${problem}`, 3];
+}
+// An error or outcome, announced when it appears.
+function ErrorNote({ children }: { children: ReactNode }) {
+  return <div role="alert"><Alert kind="red" icon="alert">{children}</Alert></div>;
 }
 // The step to open an intake at: the first thing it still needs.
 const nextStep = (d: IntakeDetail) => (!d.risk_rating ? 4 : !d.cleared ? 5 : 6);
@@ -93,7 +107,7 @@ function latestLetter(d: IntakeDetail, variant: IntakeMode) {
 // The same words the database records when a partner declares the client's authority.
 const statementText = (firm: string, client: string) => `I confirm that ${firm} holds the written authority of ${client} to set up and run its accounting records and tax `
   + `affairs on its behalf under full mandate, as set out in the engagement letter, and that I am a partner of ${firm}.`;
-const fileName = (s: string) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(-100) || 'file';
+const fileName = (s: string) => s.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(-100) || 'file';
 async function sha256(f: File) {
   const buf = await crypto.subtle.digest('SHA-256', await f.arrayBuffer());
   return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
@@ -103,12 +117,17 @@ export default function IntakePage({ pid }: { pid: string }) {
   const { iid = 'new' } = useParams();
   const isNew = iid === 'new';
   const h = usePracticeHome(pid).data!;
-  const q = usePracticeIntake(isNew ? null : iid);
-  const back = <div><Link to={`/practice/${pid}`} className="faint" style={{ fontSize: 13 }}>← All clients</Link></div>;
-  if (h.me.role === 'staff') return <>{back}<Alert kind="amber" icon="lock">Only partners and managers add clients and keep their due-diligence records.</Alert></>;
+  const staff = h.me.role === 'staff';
+  const q = usePracticeIntake(isNew || staff ? null : iid);
+  const back = <BackLink pid={pid} />;
+  if (staff) return <>{back}<Alert kind="amber" icon="lock">Only partners and managers add clients and keep their due-diligence records.</Alert></>;
   if (!isNew && q.isLoading) return <>{back}<SkeletonRows n={8} /></>;
-  if (!isNew && (q.isError || !q.data)) return <>{back}<Alert kind="red" icon="alert">{q.isError ? cleanError(q.error) : 'That intake was not found.'}</Alert></>;
-  return <>{back}<Wizard pid={pid} h={h} d={isNew ? null : q.data!} /></>;
+  if (!isNew && (q.isError || !q.data)) return <>{back}<ErrorNote>{q.isError ? cleanError(q.error) : 'That intake was not found.'}</ErrorNote></>;
+  return <Wizard pid={pid} h={h} d={isNew ? null : q.data!} />;
+}
+
+function BackLink({ pid, onClick }: { pid: string; onClick?: (e: MouseEvent) => void }) {
+  return <div><Link to={`/practice/${pid}`} className="muted" style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', minHeight: 44 }} onClick={onClick}>← All clients</Link></div>;
 }
 
 function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null }) {
@@ -119,7 +138,6 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [tried, setTried] = useState(false);
-  const [opposing, setOpposing] = useState<Opposing[]>([]);
   const loaded = useRef<string | null>(d?.id ?? null);
   const heading = useRef<HTMLHeadingElement>(null);
   const first = useRef(true);
@@ -129,7 +147,7 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
     const id = d?.id ?? null;
     if (id === loaded.current) return;
     loaded.current = id;
-    setF(toForm(d)); setStep(d ? nextStep(d) : 1); setErr(null); setTried(false); setOpposing([]);
+    setF(toForm(d)); setStep(d ? nextStep(d) : 1); setErr(null); setTried(false);
   }, [d]);
   // Keyboard and screen-reader users land on the new step's heading.
   useEffect(() => {
@@ -143,11 +161,24 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
   const invitation = d ? h.clients.find((c) => c.intake_id === d.id && c.status === 'invited') : undefined;
   const editable = !declined && !kept && !invitation;
   const dirty = !d || !same(f, toForm(d));
+  const unsaved = editable && !same(f, toForm(d));
+  const ended = d?.status === 'engaged' && d.retain_until != null;
   const pep = f.people.some((p) => p.is_pep);
   const steps = ['How you will work', 'The business', 'Directors and owners', 'Risk and documents', 'Conflicts check',
     f.mode_requested === 'full' ? 'Letter and set-up' : 'Invite the owner'];
   const done = [!!d, !!d, !!d && d.people.length > 0, !!d?.risk_rating, !!d?.cleared, !!d?.client_id];
   const up = <K extends keyof Form>(k: K, v: Form[K]) => setF((x) => ({ ...x, [k]: v }));
+  // Unsaved changes: closing or reloading the tab asks first, and so do the links on this page (guard). (The portal's own
+  // menu cannot be held back: the app's router has no navigation blocker.)
+  useEffect(() => {
+    if (!unsaved) return;
+    const ask = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', ask);
+    return () => window.removeEventListener('beforeunload', ask);
+  }, [unsaved]);
+  const guard = (e: MouseEvent) => {
+    if (unsaved && !window.confirm('Leave this intake? Your changes are not saved yet.')) e.preventDefault();
+  };
 
   async function save(): Promise<IntakeDetail | null> {
     setTried(true);
@@ -161,9 +192,15 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
       setF(toForm(r)); setTried(false);
       void qc.invalidateQueries({ queryKey: ['practice-intakes', pid] });
       void qc.invalidateQueries({ queryKey: ['mandate-gate', r.id] });
+      void qc.invalidateQueries({ queryKey: ['practice-home', pid] });
       if (!d) nav(`/practice/${pid}/intake/${r.id}`, { replace: true });
       return r;
-    } catch (e) { setErr(cleanError(e)); return null; } finally { setBusy(false); }
+    } catch (e) {
+      const msg = cleanError(e);
+      setErr(msg);
+      if (PEOPLE_ERROR.test(msg)) setStep(3);
+      return null;
+    } finally { setBusy(false); }
   }
   // The first four steps are one form: moving between them keeps what was typed. "Save and continue" saves it, and so does
   // going on to the conflicts check or the last step, which work on the intake as saved. (A new intake is saved first
@@ -176,18 +213,17 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
     setErr(null);
     setStep(target);
   }
-  // A recorded opposing party follows the client once there is one.
-  async function linkOpposing(clientId: string) {
-    await Promise.all(opposing.filter((o) => !o.client_id).map((o) => rpc('practice_opposing_save', { p_practice: pid, p: { id: o.id, client_id: clientId } }).catch(() => null)));
-  }
 
   return (
     <div className="wiz stack" style={{ gap: 20 }}>
+      <BackLink pid={pid} onClick={guard} />
       <PageHead title={d?.legal_name || 'Add a client'}
         sub="Due diligence and a conflicts check come first, whichever way you work. The records stay with your practice for at least five years after the work ends."
         right={d && <span className="row wrap" style={{ gap: 6 }}><StatusChip d={d} invited={!!invitation} /><span className="chip t-grey">{d.mode_requested === 'full' ? 'Full mandate' : 'Involved'}</span></span>} />
       {declined && <Alert kind="red" icon="alert">A partner refused this client after the conflicts check{d?.conflict_note ? `: “${d.conflict_note}”` : '.'} The record is kept{d?.retain_until ? ` until ${fmtDay(d.retain_until)}` : ''} and cannot be changed.</Alert>}
-      {!declined && kept && <Alert kind="grey" icon="lock">This intake is the record of the engagement{d?.retain_until ? `, kept until ${fmtDay(d.retain_until)}` : ''}, so it cannot be changed. Start a new intake to record changes.</Alert>}
+      {!declined && kept && (ended
+        ? <Alert kind="grey" icon="history">The engagement with this business ended. Its due-diligence record is kept until {fmtDay(d!.retain_until)} and cannot be changed.</Alert>
+        : <Alert kind="grey" icon="lock">This intake is the record of the engagement{d?.retain_until ? `, kept until ${fmtDay(d.retain_until)}` : ''}, so it cannot be changed. Start a new intake to record changes.</Alert>)}
       {!declined && !kept && d?.dd_incomplete && <Alert kind="amber" icon="alert">Due diligence incomplete: this business is already your client. Complete the details, rate the risk and run the conflicts check.</Alert>}
       {invitation && <InvitationNotice pid={pid} id={invitation.id} email={invitation.invite_email} sentAt={invitation.sent_at} />}
 
@@ -198,10 +234,9 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
             return (
               <li key={n}>
                 <button type="button" className={'wiz-step' + (done[i] && n !== step ? ' done' : '')} aria-current={n === step ? 'step' : undefined}
-                  disabled={busy || (!d && n > 2)} onClick={() => go(n)}>
+                  aria-label={`Step ${n}: ${label}${done[i] && n !== step ? ' (done)' : ''}`} disabled={busy || (!d && n > 2)} onClick={() => go(n)}>
                   <span className="wiz-num" aria-hidden="true">{done[i] && n !== step ? <Icon name="check" size={13} /> : n}</span>
                   <span className="wiz-label">{label}</span>
-                  {done[i] && n !== step && <span className="sr-only"> (done)</span>}
                 </button>
               </li>
             );
@@ -220,7 +255,7 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
           {step === 1 && (
             <div data-testid="intake-step-1" className="stack" style={{ gap: 12 }}>
               <ModeChoice h={h} value={f.mode_requested} disabled={!editable || d?.status === 'engaged'} onChange={(m) => up('mode_requested', m)} />
-              {d?.status === 'engaged' && <div className="faint" style={{ fontSize: 13 }}>This business is already your client, so the way you work for it is set.</div>}
+              {d?.status === 'engaged' && !ended && <div className="muted" style={{ fontSize: 13 }}>This business is already your client, so the way you work for it is set.</div>}
               {editable && d?.authority_declared_at && f.mode_requested !== d.mode_requested && (
                 <Alert kind="amber" icon="alert">Changing how you work withdraws the partner's declaration. A partner declares again for a full mandate.</Alert>
               )}
@@ -255,7 +290,7 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
               <Field label="Registered address">
                 <textarea className="input" data-testid="intake-address" rows={2} value={f.address} maxLength={300} disabled={!editable} onChange={(e) => up('address', e.target.value)} />
               </Field>
-              {editable && d?.checked_at && <div className="faint" style={{ fontSize: 13 }}>A change to the name or numbers means running the conflicts check again{d.authority_declared_at ? ', and a new name withdraws the partner\'s declaration' : ''}.</div>}
+              {editable && d?.checked_at && <div className="muted" style={{ fontSize: 13 }}>A change to the name or numbers means running the conflicts check again{d.authority_declared_at ? ', and a new name withdraws the partner\'s declaration' : ''}.</div>}
             </div>
           )}
 
@@ -281,24 +316,24 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
             </div>
           )}
 
-          {step === 5 && d && <Conflicts pid={pid} h={h} d={d} partner={partner} opposing={opposing} setOpposing={setOpposing} />}
+          {step === 5 && d && <Conflicts pid={pid} h={h} d={d} partner={partner} guard={guard} />}
 
           {step === 6 && d && (
             <div data-testid="intake-step-6" className="stack" style={{ gap: 16 }}>
               {declined ? <Alert kind="red" icon="alert">A partner refused this client, so it cannot be taken on.</Alert>
                 : d.client_id ? <Engaged pid={pid} h={h} d={d} />
-                : d.mode_requested === 'full' ? <FullMandate pid={pid} h={h} d={d} linkOpposing={linkOpposing} />
-                : <Invite pid={pid} d={d} invited={!!invitation} linkOpposing={linkOpposing} />}
+                : d.mode_requested === 'full' ? <FullMandate pid={pid} h={h} d={d} />
+                : <Invite pid={pid} d={d} invited={!!invitation} />}
             </div>
           )}
 
-          {err && <div role="alert"><Alert kind="red" icon="alert">{err}</Alert></div>}
+          {err && <ErrorNote>{err}</ErrorNote>}
         </div>
         <div className="modal-ft m-wrap" style={{ justifyContent: 'space-between' }}>
           {step > 1 ? <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => go(step - 1)}><Icon name="chevL" size={14} />Back</button> : <span />}
           {step <= 4 && editable && (d || step > 1)
             ? <span className="row wrap" style={{ gap: 10, justifyContent: 'flex-end' }}>
-                {d && dirty && <span className="faint" style={{ fontSize: 13 }}>Changes not saved yet</span>}
+                {d && dirty && <span className="muted" style={{ fontSize: 13 }}>Changes not saved yet</span>}
                 <button type="button" className="btn btn-primary" data-testid="intake-save" disabled={busy} onClick={() => go(step + 1, true)}>
                   {busy ? <Spinner small /> : null}{dirty ? 'Save and continue' : 'Continue'}<Icon name="chevR" size={14} color="#fff" />
                 </button>
@@ -313,6 +348,7 @@ function Wizard({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail | null })
 
 function StatusChip({ d, invited }: { d: IntakeDetail; invited: boolean }) {
   if (d.status === 'declined') return <span className="chip t-red">Refused</span>;
+  if (d.status === 'engaged' && d.retain_until) return <span className="chip t-grey">Engagement ended</span>;
   if (d.status === 'engaged') return d.dd_incomplete ? <span className="chip t-amber">Due diligence incomplete</span> : <span className="chip t-green">Client</span>;
   if (invited) return <span className="chip t-blue">Invitation waiting</span>;
   return d.cleared ? <span className="chip t-green">Cleared</span> : <span className="chip t-grey">Draft</span>;
@@ -445,7 +481,7 @@ function People({ people, editable, tried, rechecks, onChange }: { people: Perso
             </div>
             <label className="check" style={{ alignSelf: 'flex-start' }}>
               <input type="checkbox" data-testid="person-pep" checked={p.is_pep} disabled={!editable} onChange={(e) => set(p.key, { is_pep: e.target.checked })} />
-              <span>Politically exposed person <span className="faint">(makes the risk high)</span></span>
+              <span>Politically exposed person <span className="muted">(makes the risk high)</span></span>
             </label>
             {problem && <div className="err-text" role="alert">{problem}</div>}
           </div>
@@ -454,7 +490,7 @@ function People({ people, editable, tried, rechecks, onChange }: { people: Perso
       {editable && (
         <div><button type="button" className="btn btn-secondary" data-testid="person-add" onClick={() => onChange([...people, blankPerson()])}><Icon name="plus" size={14} />Add a person</button></div>
       )}
-      {rechecks && <div className="faint" style={{ fontSize: 13 }}>A change to the people means running the conflicts check again.</div>}
+      {rechecks && <div className="muted" style={{ fontSize: 13 }}>A change to the people means running the conflicts check again.</div>}
     </div>
   );
 }
@@ -495,7 +531,7 @@ function Docs({ pid, d, disabled }: { pid: string; d: IntakeDetail; disabled: bo
             <div key={x.id} className="tr rsp" style={{ gridTemplateColumns: 'minmax(0,1fr) auto', borderTop: i ? undefined : 0 }}>
               <span className="m-main" style={{ minWidth: 0 }}>
                 <b className="ellipsis" style={{ display: 'block' }}>{x.name}</b>
-                <span className="faint" style={{ fontSize: 12 }}>{DOC_KIND.find(([k]) => k === x.kind)?.[1]} · {x.added_by_name || 'Added'} {when(x.created_at)} · <span className="mono" title={x.sha256}>SHA-256 {x.sha256.slice(0, 12)}</span></span>
+                <span className="muted" style={{ fontSize: 12 }}>{DOC_KIND.find(([k]) => k === x.kind)?.[1]} · {x.added_by_name || 'Added'} {when(x.created_at)} · <span className="mono" title={x.sha256}>SHA-256 {x.sha256.slice(0, 12)}</span></span>
               </span>
               <button type="button" className="btn btn-secondary btn-sm" onClick={() => openDoc(x.path).catch((e) => toast(e.message, 'err'))} aria-label={`Open ${x.name}`}>
                 <Icon name="eye" size={14} />Open
@@ -516,14 +552,12 @@ function Docs({ pid, d, disabled }: { pid: string; d: IntakeDetail; disabled: bo
           </button>
         </div>
       )}
-      {err && <Alert kind="red" icon="alert">{err}</Alert>}
+      {err && <ErrorNote>{err}</ErrorNote>}
     </div>
   );
 }
 
-function Conflicts({ pid, h, d, partner, opposing, setOpposing }: {
-  pid: string; h: Home; d: IntakeDetail; partner: boolean; opposing: Opposing[]; setOpposing: (o: Opposing[]) => void;
-}) {
+function Conflicts({ pid, h, d, partner, guard }: { pid: string; h: Home; d: IntakeDetail; partner: boolean; guard: (e: MouseEvent) => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
@@ -539,7 +573,7 @@ function Conflicts({ pid, h, d, partner, opposing, setOpposing }: {
       qc.setQueryData(['practice-intake', d.id], r);
       void qc.invalidateQueries({ queryKey: ['practice-intakes', pid] });
       void qc.invalidateQueries({ queryKey: ['mandate-gate', d.id] });
-      if (kind === 'refused') void qc.invalidateQueries({ queryKey: ['practice-home', pid] });
+      void qc.invalidateQueries({ queryKey: ['practice-home', pid] });
       if (kind !== 'run') { setNote(''); setRefusing(false); }
       toast(kind === 'run' ? (r.conflict_status === 'hits' ? `${r.hits.length} possible ${r.hits.length === 1 ? 'conflict' : 'conflicts'} found` : 'Nothing found')
         : kind === 'cleared' ? 'Recorded: cleared' : 'Recorded: refused');
@@ -557,12 +591,14 @@ function Conflicts({ pid, h, d, partner, opposing, setOpposing }: {
         {!h.practice.conflict_scan_books && <> Your clients' customers and suppliers can be included under <Link to={`/practice/${pid}/settings`}>Practice</Link>.</>}
       </div>
 
+      <div role="status" className="stack" style={{ gap: 16 }}>
       {d.conflict_status === 'pending' && <Alert kind={stale ? 'amber' : 'grey'} icon="info">{stale ? `The intake changed after the last check (${when(d.checked_at)}). Run it again.` : 'Not checked yet.'}</Alert>}
       {d.conflict_status === 'none' && <Alert kind="green" icon="check">Nothing found. Checked {when(d.checked_at)}.</Alert>}
       {d.conflict_status === 'hits' && <Alert kind="amber" icon="alert">{n} possible {n === 1 ? 'conflict' : 'conflicts'} found {when(d.checked_at)}. {partner ? 'Look at each one, then clear or refuse the client with a note.' : 'A partner looks at each one and clears or refuses the client with a note.'}</Alert>}
       {d.conflict_status === 'cleared' && <Alert kind="green" icon="check">Cleared by {d.conflict_decided_by_name || 'a partner'} {when(d.conflict_decided_at)}: “{d.conflict_note}”</Alert>}
       {d.conflict_status === 'refused' && <Alert kind="red" icon="alert">Refused by {d.conflict_decided_by_name || 'a partner'} {when(d.conflict_decided_at)}: “{d.conflict_note}”</Alert>}
-      {!d.risk_rating && !closed && <div className="faint" style={{ fontSize: 13 }}>Rate the risk too (step 4): a client is cleared only once its risk is rated and the check is clear.</div>}
+      </div>
+      {!d.risk_rating && !closed && <div className="muted" style={{ fontSize: 13 }}>Rate the risk too (step 4): a client is cleared only once its risk is rated and the check is clear.</div>}
 
       {!closed && (
         <div>
@@ -585,10 +621,10 @@ function Conflicts({ pid, h, d, partner, opposing, setOpposing }: {
                     <span className="chip t-grey">{MATCHED[x.matched_on]}{x.matched_on === 'name' && x.score != null && Number(x.score) < 1 ? ` · ${Math.round(Number(x.score) * 100)}% alike` : ''}</span>
                   </span>
                   <span style={{ fontSize: 14 }}><b>{x.subject}</b> <span className="muted">matches</span> <b>{x.match_name || 'a record'}</b></span>
-                  <span className="faint" style={{ fontSize: 12 }}>Found in {where}.</span>
+                  <span className="muted" style={{ fontSize: 12 }}>Found in {where}.</span>
                 </span>
-                {x.source_client_id ? <Link className="btn btn-ghost btn-sm" to={`/practice/${pid}/clients/${x.source_client_id}`}>Open the client<Icon name="chevR" size={14} /></Link>
-                  : x.source_intake_id ? <Link className="btn btn-ghost btn-sm" to={`/practice/${pid}/intake/${x.source_intake_id}`}>Open the intake<Icon name="chevR" size={14} /></Link>
+                {x.source_client_id ? <Link className="btn btn-ghost btn-sm" to={`/practice/${pid}/clients/${x.source_client_id}`} onClick={guard}>Open the client<Icon name="chevR" size={14} /></Link>
+                  : x.source_intake_id ? <Link className="btn btn-ghost btn-sm" to={`/practice/${pid}/intake/${x.source_intake_id}`} onClick={guard}>Open the intake<Icon name="chevR" size={14} /></Link>
                   : <span />}
               </div>
             );
@@ -607,7 +643,7 @@ function Conflicts({ pid, h, d, partner, opposing, setOpposing }: {
                 {busy === 'cleared' ? <Spinner small /> : <Icon name="check" size={14} color="#fff" />}Clear: no conflict
               </button>
               {d.status === 'engaged'
-                ? <span className="faint" style={{ fontSize: 13 }}>This business is already your client: to stop working for it, end the engagement from its page.</span>
+                ? <span className="muted" style={{ fontSize: 13 }}>This business is already your client: to stop working for it, end the engagement from its page.</span>
                 : <button type="button" className="btn btn-danger" data-testid="conflict-refuse" disabled={busy !== null || note.trim().length < 10} onClick={() => setRefusing(true)}>Refuse the client</button>}
             </div>
           ) : (
@@ -620,31 +656,33 @@ function Conflicts({ pid, h, d, partner, opposing, setOpposing }: {
             </div>
           )}
         </div>
-      ) : <div className="faint" style={{ fontSize: 13 }}>Only a partner records the outcome.</div>)}
+      ) : <div className="muted" style={{ fontSize: 13 }}>Only a partner records the outcome.</div>)}
 
-      {err && <Alert kind="red" icon="alert">{err}</Alert>}
-      {!closed && <OpposingParties pid={pid} clientId={d.client_id} list={opposing} onChange={setOpposing} />}
+      {err && <ErrorNote>{err}</ErrorNote>}
+      {!closed && d.client_id && <OpposingParties pid={pid} clientId={d.client_id} />}
     </div>
   );
 }
 
-// The other side of the work (a dispute, a deal, a tax matter): later checks find them, so the firm never acts for both sides.
-function OpposingParties({ pid, clientId, list, onChange }: { pid: string; clientId: string | null; list: Opposing[]; onChange: (o: Opposing[]) => void }) {
+// The other side of the work (a dispute, a deal, a tax matter) for a business that is already a client: saved on that client,
+// so later checks find them and the firm never acts for both sides. (A prospect's are recorded on its page once it is a client.)
+function OpposingParties({ pid, clientId }: { pid: string; clientId: string }) {
+  const qc = useQueryClient();
   const toast = useToast();
+  const c = usePracticeClient(clientId);
+  const list: Opposing[] = c.data?.opposing_parties || [];
   const [name, setName] = useState('');
   const [rc, setRc] = useState('');
   const [busy, setBusy] = useState(false);
-  async function add() {
+  async function save(p: Record<string, unknown>) {
     setBusy(true);
     try {
-      const r = await rpc<Opposing>('practice_opposing_save', { p_practice: pid, p: { name: name.trim(), rc_number: rc.trim() || null, ...(clientId ? { client_id: clientId } : {}) } });
-      onChange([...list, r]); setName(''); setRc('');
-    } catch (e) { toast(cleanError(e), 'err'); }
-    setBusy(false);
+      await rpc('practice_opposing_save', { p_practice: pid, p });
+      await qc.invalidateQueries({ queryKey: ['practice-client', clientId] });
+      return true;
+    } catch (e) { toast(cleanError(e), 'err'); return false; } finally { setBusy(false); }
   }
-  async function remove(o: Opposing) {
-    try { await rpc('practice_opposing_save', { p_practice: pid, p: { id: o.id, remove: true } }); onChange(list.filter((x) => x.id !== o.id)); } catch (e) { toast(cleanError(e), 'err'); }
-  }
+  async function add() { if (await save({ client_id: clientId, name: name.trim(), rc_number: rc.trim() || null })) { setName(''); setRc(''); } }
   return (
     <details className="card card-pad" style={{ background: 'var(--canvas)' }}>
       <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 600, lineHeight: '20px', padding: '12px 0', margin: '-12px 0' }}>The other side of the work (optional)</summary>
@@ -652,8 +690,8 @@ function OpposingParties({ pid, clientId, list, onChange }: { pid: string; clien
         <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>If you act for this client in a dispute, a deal or a tax matter with someone else, record them. Later checks will find them, so you never act for both sides.</div>
         {list.map((o) => (
           <div key={o.id} className="row" style={{ gap: 8, justifyContent: 'space-between', fontSize: 14 }}>
-            <span>{o.name}{o.rc_number ? <span className="faint"> · {o.rc_number}</span> : null}</span>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => remove(o)} aria-label={`Remove ${o.name}`}><Icon name="trash" size={14} /></button>
+            <span>{o.name}{o.rc_number ? <span className="muted"> · {o.rc_number}</span> : null}</span>
+            <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => save({ id: o.id, remove: true })} aria-label={`Remove ${o.name}`}><Icon name="trash" size={14} /></button>
           </div>
         ))}
         <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
@@ -666,8 +704,15 @@ function OpposingParties({ pid, clientId, list, onChange }: { pid: string; clien
   );
 }
 
+// The business this intake engaged: a client now, or an engagement that ended (the intake then has a retention date).
 function Engaged({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail }) {
   const c = h.clients.find((x) => x.id === d.client_id);
+  if (d.retain_until) return (
+    <Alert kind="grey" icon="history">
+      The engagement with {c?.business_name || d.legal_name} ended. Its due-diligence record is kept until {fmtDay(d.retain_until)}.{' '}
+      <Link to={`/practice/${pid}/clients/${d.client_id}`}>Open the client's page</Link>
+    </Alert>
+  );
   return (
     <Alert kind={d.dd_incomplete ? 'amber' : 'green'} icon={d.dd_incomplete ? 'alert' : 'check'}>
       {c?.business_name || d.legal_name} is your client{d.mode_requested === 'full' ? ' under full mandate' : ''}.
@@ -686,7 +731,7 @@ function readiness(d: IntakeDetail): string[] {
   return out;
 }
 
-function Invite({ pid, d, invited, linkOpposing }: { pid: string; d: IntakeDetail; invited: boolean; linkOpposing: (cid: string) => Promise<void> }) {
+function Invite({ pid, d, invited }: { pid: string; d: IntakeDetail; invited: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const nav = useNavigate();
@@ -700,7 +745,6 @@ function Invite({ pid, d, invited, linkOpposing }: { pid: string; d: IntakeDetai
     setBusy(true); setErr(null);
     try {
       const id = await rpc<string>('practice_invite_client', { p_practice: pid, p: { ...f, services, intake_id: d.id, business_name: d.legal_name } });
-      await linkOpposing(id);
       const r = await sendInvite('client', id);
       await Promise.all([qc.invalidateQueries({ queryKey: ['practice-home', pid] }), qc.invalidateQueries({ queryKey: ['practice-intakes', pid] })]);
       if (r.ok) toast(`Invitation sent to ${r.sent_to}`); else toast(`Saved, but the email did not go: ${r.error || 'try Send again from the list'}`, 'err');
@@ -741,11 +785,12 @@ function Invite({ pid, d, invited, linkOpposing }: { pid: string; d: IntakeDetai
                 </label>
               ))}
             </div>
+            {!services.length && <div className="err-text" role="alert">Choose at least one service.</div>}
           </fieldset>
           <Field label="A note to the owner"><textarea className="input" rows={2} maxLength={500} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} disabled={!ready} /></Field>
-          {err && <Alert kind="red" icon="alert">{err}</Alert>}
+          {err && <ErrorNote>{err}</ErrorNote>}
           <div>
-            <button type="button" className="btn btn-primary" data-testid="invite-owner" disabled={busy || !ready || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim())} onClick={send}>
+            <button type="button" className="btn btn-primary" data-testid="invite-owner" disabled={busy || !ready || !services.length || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim())} onClick={send}>
               {busy ? <Spinner small /> : <Icon name="send" size={14} color="#fff" />}Send the invitation
             </button>
           </div>
@@ -796,7 +841,7 @@ function LetterCard({ pid, d, variant, counts }: { pid: string; d: IntakeDetail;
           )}
         </span>
       </div>
-      {err && <Alert kind="red" icon="alert">{err}</Alert>}
+      {err && <ErrorNote>{err}</ErrorNote>}
     </Card>
   );
 }
@@ -811,7 +856,7 @@ function gateError(msg: string) {
   return `Full mandate still needs ${m[1].split(', ').map((k) => words[k] || k).join(', ')}.`;
 }
 
-function FullMandate({ pid, h, d, linkOpposing }: { pid: string; h: Home; d: IntakeDetail; linkOpposing: (cid: string) => Promise<void> }) {
+function FullMandate({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail }) {
   const g = useMandateGate(d.id);
   const qc = useQueryClient();
   const toast = useToast();
@@ -847,7 +892,6 @@ function FullMandate({ pid, h, d, linkOpposing }: { pid: string; h: Home; d: Int
         email: f.email.trim(), phone: f.phone.trim() || null, vat_registered: f.vat_registered, bank_details: f.bank_details.trim() || null,
         alert_email: f.alert_email.trim() || null, engagement_partner_id: f.engagement_partner_id || null } });
       if (!r.ok || !r.client_id) { if (r.reason === 'duplicate') setDup(true); else setErr('The business was not set up. Try again.'); setBusy(null); return; }
-      await linkOpposing(r.client_id);
       await Promise.all([qc.invalidateQueries({ queryKey: ['practice-home'] }), qc.invalidateQueries({ queryKey: ['practices-mine'] }), refresh()]);
       toast(`${d.legal_name} is set up under full mandate. Next: its identity check and a director's confirmation.`);
       nav(`/practice/${pid}/clients/${r.client_id}`);
@@ -872,7 +916,7 @@ function FullMandate({ pid, h, d, linkOpposing }: { pid: string; h: Home; d: Int
   return (
     <div className="stack" style={{ gap: 16 }}>
       <Card title="What full mandate needs" sub="Each of these must hold when you set the business up. They are checked again at that moment.">
-        {g.isLoading ? <SkeletonRows n={4} /> : g.isError || !gate ? <Alert kind="red" icon="alert">{cleanError(g.error)}</Alert> : (
+        {g.isLoading ? <SkeletonRows n={4} /> : g.isError || !gate ? <ErrorNote>{cleanError(g.error)}</ErrorNote> : (
           <ul className="wiz-gate" data-testid="mandate-gate">
             <li data-testid="gate-partner_verified" className={cls(gate.partner_verified)}>{item(gate.partner_verified, 'You are a partner, and TaxStreem has verified your licence.', yourLicence)}</li>
             <li data-testid="gate-practice_can_full" className={cls(gate.practice_can_full)}>{item(gate.practice_can_full, 'TaxStreem lets your firm run full mandates.', firmCan)}</li>
@@ -896,7 +940,7 @@ function FullMandate({ pid, h, d, linkOpposing }: { pid: string; h: Home; d: Int
         {d.authority_declared_at ? (
           <>
             <div className="wiz-quote" data-testid="declare-statement">{d.authority_statement}</div>
-            <div className="faint" style={{ fontSize: 13 }}>Declared by {d.authority_declared_by_name || 'a partner'} {when(d.authority_declared_at)}{d.authority_doc_path ? ', with the signed authority attached' : ''}. A new name or way of working withdraws it.</div>
+            <div className="muted" style={{ fontSize: 13 }}>Declared by {d.authority_declared_by_name || 'a partner'} {when(d.authority_declared_at)}{d.authority_doc_path ? ', with the signed authority attached' : ''}. A new name or way of working withdraws it.</div>
           </>
         ) : (
           <>
@@ -917,7 +961,7 @@ function FullMandate({ pid, h, d, linkOpposing }: { pid: string; h: Home; d: Int
                   </button>
                 </div>
               </>
-            ) : <div className="faint" style={{ fontSize: 13 }}>Only a partner makes this declaration.</div>}
+            ) : <div className="muted" style={{ fontSize: 13 }}>Only a partner makes this declaration.</div>}
           </>
         )}
       </Card>
@@ -944,13 +988,13 @@ function FullMandate({ pid, h, d, linkOpposing }: { pid: string; h: Home; d: Int
         <label className="check" style={{ alignSelf: 'flex-start' }}>
           <input type="checkbox" checked={f.vat_registered} onChange={(e) => setF({ ...f, vat_registered: e.target.checked })} />Registered for VAT
         </label>
-        {dup && <Alert kind="red" icon="alert">{DUPLICATE}</Alert>}
-        {err && <Alert kind="red" icon="alert">{err}</Alert>}
+        {dup && <ErrorNote>{DUPLICATE}</ErrorNote>}
+        {err && <ErrorNote>{err}</ErrorNote>}
         <div className="row wrap" style={{ gap: 10 }}>
           <button type="button" className="btn btn-primary" data-testid="create-business" disabled={busy !== null || !gate?.ok || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim())} onClick={create}>
             {busy === 'create' ? <Spinner small /> : <Icon name="building" size={14} color="#fff" />}Set up the business
           </button>
-          {gate && !gate.ok && <span className="faint" style={{ fontSize: 13 }}>Available once everything above is done.</span>}
+          {gate && !gate.ok && <span className="muted" style={{ fontSize: 13 }}>Available once everything above is done.</span>}
         </div>
       </Card>
     </div>

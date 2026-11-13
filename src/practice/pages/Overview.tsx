@@ -47,7 +47,7 @@ export default function Overview({ pid }: { pid: string }) {
   return (
     <>
       <PageHead title="Clients" sub={`${h.practice.name}: ${active.length} ${active.length === 1 ? 'business' : 'businesses'} you look after${h.me.role === 'staff' ? ' (the ones assigned to you)' : ''}.`}
-        right={lead && <Link to={`/practice/${pid}/intake/new`} className="btn btn-primary btn-sm" data-testid="add-client-open"><Icon name="plus" size={14} color="#fff" />Add a client</Link>} />
+        right={lead && <Link to={`/practice/${pid}/intake/new`} className="btn btn-primary btn-sm" style={{ minHeight: 44 }} data-testid="add-client-open"><Icon name="plus" size={14} color="#fff" />Add a client</Link>} />
       {lead && <RequestsNote pid={pid} />}
       {h.me.licence_status === 'rejected' && <Alert kind="red" icon="alert">TaxStreem could not confirm your licence number{h.me.licence_note ? `: ${h.me.licence_note}` : ''}. Correct it under Practice.</Alert>}
       <div style={grid(170)}>
@@ -173,17 +173,18 @@ function intakeNext(x: IntakeRow, invited: boolean): [string, string] {
   return ['Ready to invite the owner', 't-green'];
 }
 
-// Clients being taken on: intakes not yet engaged, and clients whose due diligence is incomplete. Partners and managers.
+// Clients being taken on: intakes not yet engaged, and current clients whose due diligence is incomplete. An intake with a
+// retention date (refused, or its engagement ended) is a kept record, not work in progress. Partners and managers.
 function InProgress({ pid, h }: { pid: string; h: Home }) {
   const q = usePracticeIntakes(pid);
-  const rows = (q.data || []).filter((x) => x.status === 'draft' || (x.status === 'engaged' && x.dd_incomplete));
+  const rows = (q.data || []).filter((x) => !x.retain_until && (x.status === 'draft' || (x.status === 'engaged' && x.dd_incomplete)));
   if (q.isError) return <Alert kind="red" icon="alert">{cleanError(q.error)}</Alert>;
   if (!rows.length) return null;
   return (
     <section className="card" style={{ overflow: 'hidden' }}>
       <div className="card-hd">
         <b>In progress</b>
-        <span className="faint" style={{ fontSize: 13 }}>Due diligence and conflicts checks before you take a client on</span>
+        <span className="muted" style={{ fontSize: 13 }}>Due diligence and conflicts checks before you take a client on</span>
       </div>
       {rows.map((x) => {
         const invited = h.clients.some((c) => c.intake_id === x.id && c.status === 'invited');

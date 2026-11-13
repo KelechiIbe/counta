@@ -76,7 +76,7 @@ export default function SettingsPage({ pid }: { pid: string }) {
             aria-describedby="conflict-scan-books-hint" style={{ marginTop: 1 }} />
           <span>Also look for the prospect among your clients' customers and suppliers</span>
         </label>
-        <div id="conflict-scan-books-hint" className="faint" style={{ fontSize: 13, lineHeight: 1.5 }}>Off unless a partner turns it on. The check then also compares each prospect with the customers and suppliers in the books of the clients you look after now.</div>
+        <div id="conflict-scan-books-hint" className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>Off unless a partner turns it on. The check then also compares each prospect with the customers and suppliers in the books of the clients you look after now.</div>
       </Card>
       <div><Link to="/practice/new" className="btn btn-ghost btn-sm"><Icon name="plus" size={14} />Set up another practice</Link></div>
     </>

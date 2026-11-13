@@ -391,7 +391,13 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 .wiz-gate li.met .wiz-mark { background: var(--green-bg); }
 .wiz-quote { border-left: 3px solid var(--line); padding: 4px 0 4px 12px; font-size: 14px; line-height: 1.55; color: var(--ink-2); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-@media (max-width: 760px) { .wiz-step:not([aria-current=step]) .wiz-label { display: none; } .wiz-step { padding: 6px 8px; } }
+/* Hints in the wizard carry instructions: the darker grey (4.5:1 or better), not the faint one. */
+.wiz .hint { color: var(--muted); }
+/* On a phone the other steps' names are clipped from view, not removed, so each button keeps its name for screen readers. */
+@media (max-width: 760px) {
+  .wiz-step { position: relative; padding: 6px 8px; }
+  .wiz-step:not([aria-current=step]) .wiz-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+}
 
 /* VAT explanations behind a small icon */
 .vat-info { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; margin: -3px 0 -3px 2px; border: 0; border-radius: 50%; background: transparent; color: var(--placeholder); cursor: pointer; vertical-align: middle; flex: none; }

@@ -97,6 +97,8 @@ export type ClientDetail = {
   me: Member; my_seat: { member_id: string; status: string; role: string } | null; health: Health | null;
   team: { member: Member; assigned: boolean; seat: string | null }[]; requests: RequestRow[];
   notes: { id: string; text: string; created_at: string; author: string | null; mine: boolean }[]; files: FileBrief[]; can_lead: boolean;
+  // The other side of the client's matters, for the conflicts check (partners and managers; empty for staff).
+  opposing_parties?: { id: string; name: string; rc_number: string | null; note: string | null }[];
 };
 export type Billing = {
   clients: { client_id: string; org_id: string; business_name: string; billing: string; plan: { id: string; name: string } | null;
