@@ -11,7 +11,7 @@ import { qrSvg } from '../../lib/labels';
 import { Icon } from '../../components/Icon';
 import { Alert, Spinner } from '../../components/ui';
 
-export function Frame({ children, org }: { children: React.ReactNode; org?: any }) {
+export function Frame({ children, org, whiteLabel }: { children: React.ReactNode; org?: any; whiteLabel?: boolean }) {
   // A logo that will not load (removed, or not yet uploaded) falls back to the business's initials.
   const [noLogo, setNoLogo] = useState(false);
   return (
@@ -23,7 +23,7 @@ export function Frame({ children, org }: { children: React.ReactNode; org?: any 
           <div><div style={{ fontWeight: 700, fontSize: 17 }}>{org.name}</div><div className="muted" style={{ fontSize: 12 }}>{[org.address, org.phone, org.email].filter(Boolean).join(' · ')}</div></div>
         </div>}
         {children}
-        <div className="faint" style={{ fontSize: 11, textAlign: 'center', marginTop: 24 }}>Powered by Counta · TaxStreem</div>
+        {!(whiteLabel ?? org?.white_label) && <div className="faint" data-testid="public-powered-by" style={{ fontSize: 11, textAlign: 'center', marginTop: 24 }}>Powered by Counta · TaxStreem</div>}
       </div>
     </div>
   );
@@ -69,7 +69,7 @@ export function PublicDoc() {
   const owe = !paid && balance > 0.004 && !['void', 'cancelled', 'credited', 'converted', 'expired'].includes(d.status) && d.doc_type !== 'quote' && d.doc_type !== 'credit_note';
   const tracking = d.tracking;
   return (
-    <Frame>
+    <Frame whiteLabel={d.org?.white_label === true}>
       {d.status === 'void' && <Alert kind="grey" icon="info">This document was cancelled.</Alert>}
       {tracking && <OrderTracking t={tracking} brand={d.org?.brand_color} />}
       {paid ? <Alert kind="green" icon="check">Paid. Thank you.</Alert> : owe && (
@@ -80,7 +80,12 @@ export function PublicDoc() {
             {d.pay_later && <div className="muted" style={{ fontSize: 13, flexBasis: '100%' }}>Or pay now online and skip the wait.</div>}
           </div>
           {err && <Alert kind="red" icon="alert">{err}</Alert>}
-          {req && req.status === 'pending' && req.method === 'account' ? (
+          {!d.org?.pay_online ? (
+            <div data-testid="public-bank-details" style={{ background: '#F8FAFC', borderRadius: 12, padding: 16 }}>
+              <div className="muted" style={{ fontSize: 13 }}>Pay by bank transfer to {d.org?.name || 'the business'}</div>
+              <div style={{ whiteSpace: 'pre-wrap', fontWeight: 600, marginTop: 4 }}>{String(d.org?.payment_details || '').trim() || 'Ask the business for its bank details.'}</div>
+            </div>
+          ) : req && req.status === 'pending' && req.method === 'account' ? (
             <div style={{ textAlign: 'center', background: '#F8FAFC', borderRadius: 12, padding: 16 }}>
               <div className="muted" style={{ fontSize: 13 }}>Transfer exactly {N2(req.amount)} to</div>
               <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: '.06em', margin: '6px 0' }}>{req.account_number}</div>
@@ -95,7 +100,7 @@ export function PublicDoc() {
               {req.qr_image ? <img src={req.qr_image} alt="QR code to pay" style={{ width: 200 }} /> : <div style={{ width: 200, margin: '0 auto' }} dangerouslySetInnerHTML={{ __html: qr }} />}
             </div>
           ) : waiting ? <div className="row" style={{ gap: 8, color: '#6B7280', fontSize: 13 }}><Spinner small />Checking your payment…</div> : (
-            <div className="row wrap">
+            <div className="row wrap" data-testid="public-pay-online">
               <button className="btn btn-primary" style={brandBtn(d.org?.brand_color)} disabled={!!busy} onClick={() => pay('account')}><Icon name="building" size={16} color={onColor(cleanHex(d.org?.brand_color))} />{busy === 'account' ? 'Getting an account…' : 'Pay by bank transfer'}</button>
               <button className="btn btn-secondary" disabled={!!busy} onClick={() => pay('link')}><Icon name="card" size={16} />{busy === 'link' ? 'Opening…' : 'Card or USSD'}</button>
             </div>

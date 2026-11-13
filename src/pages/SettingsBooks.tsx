@@ -120,7 +120,7 @@ export function MessagesSection() {
       <div className="row wrap" style={{ gap: 8 }}>
         <span className={'chip ' + (status.data?.email ? 't-green' : 't-grey')}>Email {status.data?.email ? 'on' : 'off'}</span>
         <span className={'chip ' + (status.data?.whatsapp ? 't-green' : 't-grey')}>WhatsApp {status.data?.whatsapp ? 'on' : 'off'}</span>
-        {status.data?.sender && <span className="chip t-grey" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>Sends from {inv.org.name} via Counta &lt;{status.data.sender}&gt;</span>}
+        {status.data?.sender && <span className="chip t-grey" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>Sends from {inv.org.name}{inv.org.managed_by ? '' : ' via Counta'} &lt;{status.data.sender}&gt;</span>}
       </div>
       {status.data && (status.data.paused?.email || status.data.paused?.whatsapp)
         ? <Alert kind="amber" icon="info">TaxStreem has paused {status.data.paused?.email && status.data.paused?.whatsapp ? 'email and WhatsApp' : status.data.paused?.email ? 'email' : 'WhatsApp'} messages for now. They wait and go out once it is back.</Alert>

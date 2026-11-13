@@ -59,6 +59,8 @@ const alignHead = (cols: Record<number, { halign?: string }>) => (data: any) => 
 const METHOD: Record<string, string> = { cash: 'Cash', transfer: 'Transfer', pos: 'POS', card: 'Card', flutterwave: 'Flutterwave', paystack: 'Paystack', wallet: 'Wallet', other: 'Other' };
 const methods = (s?: string | null) => String(s || '').split(/,\s*/).filter(Boolean).map((m) => METHOD[m] || m.replace(/_/g, ' ')).join(', ');
 
+// " · made by Counta" unless the business is white-labelled.
+const madeBy = (o: any) => (o?.white_label ? '' : ' · made by Counta');
 function footer(doc: Doc, left: string) {
   const n = doc.getNumberOfPages(), W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
   for (let i = 1; i <= n; i++) {
@@ -219,7 +221,7 @@ export async function salePdf(d: DocData & { status?: string; original_number?: 
       doc.text('VOID', W / 2, doc.internal.pageSize.getHeight() / 2, { align: 'center', angle: 30 });
     }
   }
-  footer(doc, `${title} ${d.number} · ${o.name || ''} · made by Counta`);
+  footer(doc, `${title} ${d.number} · ${o.name || ''}${madeBy(o)}`);
   return doc.output('blob');
 }
 
@@ -266,7 +268,7 @@ export async function tillPdf(t: TillDay): Promise<Blob> {
     styles: { font: 'helvetica', fontSize: 8, cellPadding: 3.5, textColor: [31, 41, 55] }, headStyles: { textColor: [107, 114, 128], fontStyle: 'bold' },
     columnStyles: { 1: { cellWidth: 50, halign: 'right' }, 2: { cellWidth: 90, halign: 'right' } }, didParseCell: alignHead({ 1: { halign: 'right' }, 2: { halign: 'right' } }),
   });
-  footer(doc, `Till receipts ${day(t.day)} · ${o.name || ''} · made by Counta`);
+  footer(doc, `Till receipts ${day(t.day)} · ${o.name || ''}${madeBy(o)}`);
   return doc.output('blob');
 }
 
@@ -326,7 +328,7 @@ export async function prnPdf(p: Record<string, any>): Promise<Blob> {
   }
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(107, 114, 128);
   doc.text(doc.splitTextToSize(T('Counta made this record from what TaxStreem Flux reported from Rev360 and from Counta\'s own payment. Rev360\'s receipt, when Flux sends it, is kept beside it under Payment receipts.'), W - 80), 40, y);
-  footer(doc, `PRN ${p.prn} · ${o.name || ''} · made by Counta`);
+  footer(doc, `PRN ${p.prn} · ${o.name || ''}${madeBy(o)}`);
   return doc.output('blob');
 }
 
@@ -384,6 +386,6 @@ export async function billPdf(b: Record<string, any>): Promise<Blob> {
   const claim = b.vat_day ? `Input VAT of NGN ${money(b.vat_total)} is claimed in the VAT return for ${new Date(String(b.vat_day) + 'T12:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })}${b.paid_on ? `, the month the bill was paid in full (${day(b.paid_on)})` : ''}.`
     : 'Input VAT on this bill is claimed in the month it is paid in full.';
   doc.text(doc.splitTextToSize(T(`${claim} Counta drew this from the bill as it was entered${b.journal_ref ? ` (journal ${b.journal_ref})` : ''}; the supplier's own invoice is the evidence for the VAT.`), W - 80), 40, y);
-  footer(doc, `${b.number} · ${v.name || ''} · ${o.name || ''} · made by Counta`);
+  footer(doc, `${b.number} · ${v.name || ''} · ${o.name || ''}${madeBy(o)}`);
   return doc.output('blob');
 }

@@ -29,7 +29,7 @@
 // their own number). Messages through the official API use approved templates (docs/messaging.md); through OpenWA they
 // are plain text with the same wording.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { emailHtml, emailText, first, type Msg, wording } from './wording.ts';
+import { displayName, emailHtml, emailText, type Msg, senderAddress, waText, wording } from './wording.ts';
 import { ensureSession, type OpenWa, owa, owaError, RECEIPT_EVENTS, sendText, sessionState, setWebhooks, signatureOk, waDigits, waFormat } from './openwa.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -83,22 +83,13 @@ async function hmacHex(key: string, body: string) {
 }
 
 // ------------------------------------------------------------------ senders
-// The address inside RESEND_FROM, whatever surrounds it: "billing@x.ng", "TaxStreem <billing@x.ng>", or either wrapped in quotes or spaces.
-export function senderAddress(raw: string): string {
-  const m = String(raw || '').match(/[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/i);
-  return m ? m[0].toLowerCase() : '';
-}
-// A display name Resend accepts without quoting: no commas, quotes, brackets or @.
-export function displayName(name: string): string {
-  return `${String(name || 'Counta').replace(/[",;:<>()[\]\\@]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Counta'} via Counta`;
-}
 const storageUrl = (path?: string | null) => (path ? `${SUPABASE_URL}/storage/v1/object/public/item-photos/${path.split('/').map(encodeURIComponent).join('/')}` : null);
 
 async function sendEmail(m: Msg): Promise<string> {
   const key = await secret('RESEND_API_KEY');
   const from = await secret('RESEND_FROM');
   if (!key || !from) throw new Error('Email is not switched on yet. TaxStreem is setting it up; the message goes out once it is.');
-  // Shown as "Business name via Counta <billing@...>", replies go to the business.
+  // Shown as "Business name via Counta <billing@...>" (just the business name when white-labelled), replies go to the business.
   const addr = senderAddress(from);
   if (!addr) throw new Error('Email is not switched on yet: the sending address TaxStreem set has no email address in it.');
   // Counta's own alerts to the owner come from Counta, with nowhere to reply to; customers' messages come from the business.
@@ -109,7 +100,7 @@ async function sendEmail(m: Msg): Promise<string> {
   const res = await fetch(`${RESEND_URL}/emails`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': `counta-${m.id}` },
-    body: JSON.stringify({ from: `${own ? 'Counta' : displayName(m.org?.name)} <${addr}>`, to: [m.to_address], ...(cc.length && !own ? { cc } : {}),
+    body: JSON.stringify({ from: `${own ? 'Counta' : displayName(m.org?.name, m.org?.white_label === true)} <${addr}>`, to: [m.to_address], ...(cc.length && !own ? { cc } : {}),
       subject: m.subject || wording(m).heading, html: emailHtml(m), text: emailText(m),
       ...(replyTo ? { reply_to: replyTo } : {}), tags: [{ name: 'template', value: m.template }] }),
     signal: AbortSignal.timeout(20_000),
@@ -131,17 +122,6 @@ async function provider(): Promise<'openwa' | 'meta'> {
 }
 const NOT_ON = 'WhatsApp is not switched on yet. TaxStreem is setting it up; the message goes out once it is.';
 
-// The same words as the email, as WhatsApp text. An alert to someone whose Martina chat is on the same business says that
-// a reply reaches her.
-export function waText(m: Msg): string {
-  const w = wording(m) as ReturnType<typeof wording> & { greet?: string; footer?: string };
-  const p = m.params || {};
-  const hello = `Hello ${w.greet ?? first(p.customer_name)},`;
-  const biz = p.business || m.org?.name || '';
-  const reply = m.template === 'alert' && p.reply_hint === true ? ['Reply here to ask Martina about it.'] : [];
-  return waFormat(w.heading, [hello, '', ...w.lines, ...reply], w.link, w.button, w.footer || (biz ? `Sent for ${biz} by Counta` : 'Sent by Counta'));
-}
-
 async function sendOpenWa(m: Msg): Promise<string> {
   const cfg = await openwaCfg();
   if (!cfg) throw new Error(NOT_ON);
@@ -155,6 +135,8 @@ async function sendOpenWa(m: Msg): Promise<string> {
 
 async function sendWhatsApp(m: Msg): Promise<string> {
   if ((await provider()) === 'openwa') return await sendOpenWa(m);
+  // Every approved Meta template ends "Sent with Counta"; an unbranded variant (_nb) is not approved yet.
+  if (m.org?.white_label === true) throw new Error('Unbranded WhatsApp is not available yet. Send it by email.');
   const token = await secret('WHATSAPP_TOKEN');
   const phoneId = await secret('WHATSAPP_PHONE_NUMBER_ID');
   if (!token || !phoneId) throw new Error('WhatsApp is not switched on yet. TaxStreem is setting it up; the message goes out once it is.');
@@ -189,6 +171,11 @@ async function deliver(id: string) {
   const { data: m, error } = await admin.rpc('svc_message', { p_id: id });
   if (error) throw new Error(error.message);
   if (!m) return { id, skipped: true };
+  // Fail closed: a managed (full-mandate) business only sends an alert to an address the database allowed.
+  if (m.managed === true && m.alert_to_allowed !== true) {
+    await admin.rpc('svc_message_update', { p_id: id, p_status: 'failed', p_provider_id: null, p_error: 'Not sent: full-mandate rules.' });
+    return { id, status: 'failed' };
+  }
   // An invitation gets its one-time link now, so no usable link rests in the database.
   if (m.template === 'invite') {
     const { data: inv, error: ie } = await admin.rpc('svc_invite', { p_member: m.params?.member_id });
