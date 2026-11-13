@@ -13,6 +13,7 @@ import { savedPractice, savePractice, usePracticeClient, usePracticeHome, usePra
 import Setup from './pages/Setup';
 import Overview from './pages/Overview';
 import ClientPage from './pages/Client';
+import IntakePage from './pages/Intake';
 import Deadlines from './pages/Deadlines';
 import TeamPage from './pages/Team';
 import BillingPage from './pages/Billing';
@@ -90,6 +91,8 @@ function InPractice() {
       <Routes>
         <Route index element={<Overview pid={pid} />} />
         <Route path="clients/:cid" element={<ClientPage pid={pid} />} />
+        {/* intake/new and intake/<id>: one route, so the wizard keeps its place when a new intake is first saved and gets its id. */}
+        <Route path="intake/:iid" element={<IntakePage pid={pid} />} />
         <Route path="deadlines" element={<Deadlines pid={pid} />} />
         <Route path="team" element={<TeamPage pid={pid} />} />
         <Route path="billing" element={<BillingPage pid={pid} />} />

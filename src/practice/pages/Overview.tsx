@@ -1,5 +1,6 @@
-// Every client on one screen: what needs doing in its books and tax, sorted so the most urgent comes first. Invitations the
-// practice sent, and businesses that asked for this accountant, sit above.
+// Every client on one screen: what needs doing in its books and tax, sorted so the most urgent comes first. Clients being
+// taken on (due diligence in progress, in the add-client wizard), invitations the practice sent, and businesses that asked
+// for this accountant, sit above.
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -7,9 +8,9 @@ import { cleanError, rpc } from '../../lib/supabase';
 import { fmtDay, when } from '../../lib/format';
 import { useToast } from '../../state/session';
 import { Icon } from '../../components/Icon';
-import { Alert, Field, Modal, ModalHead, Spinner } from '../../components/ui';
+import { Alert, Spinner } from '../../components/ui';
 import { PageHead, Tile, grid } from '../../admin/ui';
-import { type ClientRow, type Home, sendInvite, SERVICES, serviceLabel, serviceList, usePracticeHome } from '../api';
+import { type ClientRow, type Home, type IntakeRow, sendInvite, serviceList, usePracticeHome, usePracticeIntakes } from '../api';
 import { RequestsNote } from './Earnings';
 
 // How urgent a client is: overdue tax first, then what is due soon, then the books.
@@ -35,7 +36,6 @@ export function attention(c: ClientRow): { text: string; tone: string }[] {
 export default function Overview({ pid }: { pid: string }) {
   const home = usePracticeHome(pid);
   const h = home.data!;
-  const [inviting, setInviting] = useState(false);
   const [q, setQ] = useState('');
   const lead = h.me.role !== 'staff';
   const active = useMemo(() => h.clients.filter((c) => c.status === 'active').sort((a, b) => weight(b) - weight(a)), [h.clients]);
@@ -47,7 +47,7 @@ export default function Overview({ pid }: { pid: string }) {
   return (
     <>
       <PageHead title="Clients" sub={`${h.practice.name}: ${active.length} ${active.length === 1 ? 'business' : 'businesses'} you look after${h.me.role === 'staff' ? ' (the ones assigned to you)' : ''}.`}
-        right={lead && <button className="btn btn-primary btn-sm" onClick={() => setInviting(true)}><Icon name="plus" size={14} color="#fff" />Invite a business</button>} />
+        right={lead && <Link to={`/practice/${pid}/intake/new`} className="btn btn-primary btn-sm" data-testid="add-client-open"><Icon name="plus" size={14} color="#fff" />Add a client</Link>} />
       {lead && <RequestsNote pid={pid} />}
       {h.me.licence_status === 'rejected' && <Alert kind="red" icon="alert">TaxStreem could not confirm your licence number{h.me.licence_note ? `: ${h.me.licence_note}` : ''}. Correct it under Practice.</Alert>}
       <div style={grid(170)}>
@@ -57,6 +57,7 @@ export default function Overview({ pid }: { pid: string }) {
         <Tile label="Answers from clients" value={totals.answered} sub="to your requests" />
       </div>
       {h.business_invitations.length > 0 && <BusinessInvitations pid={pid} h={h} />}
+      {lead && <InProgress pid={pid} h={h} />}
       {invited.length > 0 && <Invited pid={pid} rows={invited} />}
       <section className="card" style={{ overflow: 'hidden' }}>
         <div className="card-hd" style={{ gap: 10, flexWrap: 'wrap' }}>
@@ -65,7 +66,7 @@ export default function Overview({ pid }: { pid: string }) {
         </div>
         {!active.length ? (
           <div className="card-pad faint" style={{ fontSize: 14, lineHeight: 1.6 }}>
-            {lead ? 'No clients yet. Invite a business by its owner\'s email, or ask your clients to invite you from Counta, under Settings, Your accountant.' : 'No clients are assigned to you yet.'}
+            {lead ? 'No clients yet. Add a client: record your due diligence and run the conflicts check, then invite the owner or, under full mandate, set the business up yourselves. Clients can also invite you from Counta, under Settings, Your accountant.' : 'No clients are assigned to you yet.'}
           </div>
         ) : shown.map((c) => (
           <Link key={c.id} to={`/practice/${pid}/clients/${c.id}`} className="tr click rsp" style={{ gridTemplateColumns: 'minmax(200px,1.1fr) minmax(240px,2fr) 150px', minWidth: 0, color: 'inherit' }}
@@ -75,6 +76,8 @@ export default function Overview({ pid }: { pid: string }) {
               <span className="faint" style={{ fontSize: 12 }}>{serviceList(c.services)}</span>
             </span>
             <span className="row wrap" style={{ gap: 4 }}>
+              {c.dd_incomplete && <span className="chip t-amber" data-testid="dd-incomplete">Due diligence incomplete</span>}
+              {c.mode === 'full' && <span className="chip t-grey">Full mandate</span>}
               {attention(c).length ? attention(c).slice(0, 4).map((a) => <span key={a.text} className={'chip ' + a.tone}>{a.text}</span>) : <span className="chip t-green">Up to date</span>}
             </span>
             <span className="faint" style={{ fontSize: 12, textAlign: 'right' }}>
@@ -92,7 +95,6 @@ export default function Overview({ pid }: { pid: string }) {
           </div>
         </details>
       )}
-      {inviting && <InviteClient pid={pid} onClose={() => setInviting(false)} />}
     </>
   );
 }
@@ -160,53 +162,44 @@ function Invited({ pid, rows }: { pid: string; rows: ClientRow[] }) {
   );
 }
 
-function InviteClient({ pid, onClose }: { pid: string; onClose: () => void }) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [f, setF] = useState({ email: '', name: '', business_name: '', billing: 'business', note: '' });
-  const [services, setServices] = useState<string[]>(['bookkeeping', 'vat', 'wht', 'cit', 'statements']);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  async function send() {
-    setBusy(true); setErr(null);
-    try {
-      const id = await rpc<string>('practice_invite_client', { p_practice: pid, p: { ...f, services } });
-      const r = await sendInvite('client', id);
-      await qc.invalidateQueries({ queryKey: ['practice-home', pid] });
-      if (r.ok) toast(`Invitation sent to ${r.sent_to}`); else toast(`Saved, but the email did not go: ${r.error}`, 'err');
-      onClose();
-    } catch (e) { setErr(cleanError(e)); }
-    setBusy(false);
-  }
+// What an intake waits for, in a few words.
+function intakeNext(x: IntakeRow, invited: boolean): [string, string] {
+  if (x.status === 'engaged') return ['Due diligence incomplete', 't-amber'];
+  if (invited) return ['Invitation waiting', 't-blue'];
+  if (!x.risk_rating) return ['Rate the risk', 't-grey'];
+  if (x.conflict_status === 'pending') return [x.checked_at ? 'Details changed: check again' : 'Run the conflicts check', 't-grey'];
+  if (x.conflict_status === 'hits') return ['Possible conflicts: a partner decides', 't-amber'];
+  if (x.mode_requested === 'full') return [x.authority_declared ? 'Letter and set-up' : 'Letter, declaration and set-up', 't-blue'];
+  return ['Ready to invite the owner', 't-green'];
+}
+
+// Clients being taken on: intakes not yet engaged, and clients whose due diligence is incomplete. Partners and managers.
+function InProgress({ pid, h }: { pid: string; h: Home }) {
+  const q = usePracticeIntakes(pid);
+  const rows = (q.data || []).filter((x) => x.status === 'draft' || (x.status === 'engaged' && x.dd_incomplete));
+  if (q.isError) return <Alert kind="red" icon="alert">{cleanError(q.error)}</Alert>;
+  if (!rows.length) return null;
   return (
-    <Modal onClose={onClose} width={560}>
-      <ModalHead title="Invite a business" sub="The owner gets an email, signs in to Counta (or signs up) and chooses which of their businesses to connect." onClose={onClose} />
-      <div className="modal-body stack" style={{ gap: 12 }}>
-        <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <Field label="Owner's email" req><input className="input" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} autoFocus /></Field>
-          <Field label="Owner's name"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={80} /></Field>
-          <Field label="Business"><input className="input" value={f.business_name} onChange={(e) => setF({ ...f, business_name: e.target.value })} maxLength={120} /></Field>
-          <Field label="Who pays for Counta">
-            <select className="input" value={f.billing} onChange={(e) => setF({ ...f, billing: e.target.value })}><option value="business">The business</option><option value="practice">My practice</option></select>
-          </Field>
-        </div>
-        <div>
-          <div className="mini-label" style={{ marginBottom: 6 }}>What you will do for them</div>
-          <div className="row wrap" style={{ gap: 6 }}>
-            {SERVICES.map(([k, l]) => (
-              <button key={k} type="button" className={'chip ' + (services.includes(k) ? 't-blue' : 't-grey')} style={{ cursor: 'pointer', border: 0 }}
-                onClick={() => setServices((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]))}>{services.includes(k) ? '✓ ' : ''}{l}</button>
-            ))}
-          </div>
-        </div>
-        <Field label="A note to the owner"><textarea className="input" rows={2} maxLength={500} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
-        <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>Once they accept, you and your partners and managers get an Accountant's place in the business: books and tax returns, never moving money. Staff get a place when you assign them.</div>
-        {err && <Alert kind="red" icon="alert">{err}</Alert>}
+    <section className="card" style={{ overflow: 'hidden' }}>
+      <div className="card-hd">
+        <b>In progress</b>
+        <span className="faint" style={{ fontSize: 13 }}>Due diligence and conflicts checks before you take a client on</span>
       </div>
-      <div className="modal-ft">
-        <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" disabled={busy || !/\S+@\S+\.\S+/.test(f.email)} onClick={send}>{busy ? <Spinner small /> : <Icon name="send" size={14} color="#fff" />}Send the invitation</button>
-      </div>
-    </Modal>
+      {rows.map((x) => {
+        const invited = h.clients.some((c) => c.intake_id === x.id && c.status === 'invited');
+        const [text, tone] = intakeNext(x, invited);
+        return (
+          <Link key={x.id} to={`/practice/${pid}/intake/${x.id}`} className="tr click rsp" data-testid="intake-row"
+            style={{ gridTemplateColumns: 'minmax(200px,1.1fr) minmax(200px,1fr) 150px', minWidth: 0, color: 'inherit' }}>
+            <span className="m-main" style={{ minWidth: 0 }}>
+              <b className="ellipsis" style={{ display: 'block' }}>{x.legal_name}</b>
+              <span className="faint" style={{ fontSize: 12 }}>{x.mode_requested === 'full' ? 'Full mandate' : 'Involved'}{x.rc_number ? ` · ${x.rc_number}` : ''}{x.risk_rating ? ` · ${x.risk_rating} risk` : ''}</span>
+            </span>
+            <span className="row wrap" style={{ gap: 4 }}><span className={'chip ' + tone}>{text}</span></span>
+            <span className="faint" style={{ fontSize: 12, textAlign: 'right' }}>Changed {when(x.updated_at)}</span>
+          </Link>
+        );
+      })}
+    </section>
   );
 }

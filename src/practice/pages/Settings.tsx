@@ -1,4 +1,5 @@
-// The practice's details (partners change them) and each person's own licence number, which TaxStreem checks.
+// The practice's details (partners change them), each person's own licence number, which TaxStreem checks, and how the
+// conflicts check looks for a prospect (partners choose).
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -17,7 +18,7 @@ export default function SettingsPage({ pid }: { pid: string }) {
   const p = h.practice;
   const [f, setF] = useState({ name: p.name, kind: p.kind, email: p.email || '', phone: localPhone(p.phone), address: p.address || '', state: p.state || '', firm_reg: p.firm_reg || '' });
   const [lic, setLic] = useState({ licence_body: h.me.licence_body || 'ICAN', licence_no: h.me.licence_no || '' });
-  const [busy, setBusy] = useState<'p' | 'l' | null>(null);
+  const [busy, setBusy] = useState<'p' | 'l' | 'scan' | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const partner = h.me.role === 'partner';
   async function save() {
@@ -32,6 +33,15 @@ export default function SettingsPage({ pid }: { pid: string }) {
       await rpc('practice_set_licence', { p_practice: pid, p: lic.licence_no.trim() ? lic : { licence_body: null, licence_no: null } });
       await qc.invalidateQueries({ queryKey: ['practice-home', pid] });
       toast(lic.licence_no.trim() ? 'Saved. TaxStreem checks it shortly.' : 'Removed');
+    } catch (e) { setErr(cleanError(e)); }
+    setBusy(null);
+  }
+  async function setScan(on: boolean) {
+    setBusy('scan'); setErr(null);
+    try {
+      await rpc('practice_set_conflict_scan', { p_practice: pid, p_on: on });
+      await qc.invalidateQueries({ queryKey: ['practice-home', pid] });
+      toast(on ? 'The conflicts check now also looks in your clients\' books.' : 'The conflicts check no longer looks in your clients\' books.');
     } catch (e) { setErr(cleanError(e)); }
     setBusy(null);
   }
@@ -59,6 +69,14 @@ export default function SettingsPage({ pid }: { pid: string }) {
           <Field label="Firm registration"><input className="input" value={f.firm_reg} onChange={up('firm_reg')} disabled={!partner} maxLength={40} /></Field>
         </div>
         {partner && <div><button className="btn btn-primary" disabled={busy !== null} onClick={save}>{busy === 'p' ? <Spinner small /> : <Icon name="check" size={14} color="#fff" />}Save</button></div>}
+      </Card>
+      <Card title="Conflicts check" sub={`Each client you add is checked against your current and former clients, your other intakes and the opposing parties you record. Never against another firm's records.${partner ? '' : ' A partner changes this.'}`}>
+        <label className="check" style={{ alignItems: 'flex-start', minHeight: 44 }}>
+          <input type="checkbox" data-testid="conflict-scan-books" checked={!!p.conflict_scan_books} disabled={!partner || busy !== null} onChange={(e) => setScan(e.target.checked)}
+            aria-describedby="conflict-scan-books-hint" style={{ marginTop: 1 }} />
+          <span>Also look for the prospect among your clients' customers and suppliers</span>
+        </label>
+        <div id="conflict-scan-books-hint" className="faint" style={{ fontSize: 13, lineHeight: 1.5 }}>Off unless a partner turns it on. The check then also compares each prospect with the customers and suppliers in the books of the clients you look after now.</div>
       </Card>
       <div><Link to="/practice/new" className="btn btn-ghost btn-sm"><Icon name="plus" size={14} />Set up another practice</Link></div>
     </>

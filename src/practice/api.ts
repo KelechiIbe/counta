@@ -21,15 +21,57 @@ export type ClientRow = {
   id: string; status: 'active' | 'invited' | 'requested' | 'ended' | 'declined'; initiated_by: 'practice' | 'business'; org_id: string | null; business_name: string | null;
   invite_email: string | null; invite_name: string | null; services: string[]; billing: 'business' | 'practice'; note: string | null; created_at: string; started_at: string | null;
   sent_at: string | null; tin: string | null; vat_registered: boolean | null; assigned: string[]; requests_open: number; answered: number; health: Health | null;
+  // How the firm works for the business, the due-diligence intake the link carries (incomplete: the link is active and the
+  // intake is not cleared), and a full mandate kept read-only after it ended, until its retention date.
+  mode: IntakeMode; intake_id: string | null; dd_incomplete: boolean; read_only: boolean; retain_until: string | null;
 };
 export type Invitation = { id: string; business: string; services: string[]; billing: string; note: string | null; created_at: string };
-export type Practice = { id: string; name: string; kind: 'firm' | 'sole'; email: string | null; phone: string | null; address: string | null; state: string | null; firm_reg: string | null; created_at: string };
+export type Practice = {
+  id: string; name: string; kind: 'firm' | 'sole'; email: string | null; phone: string | null; address: string | null; state: string | null; firm_reg: string | null; created_at: string;
+  conflict_scan_books: boolean; mandate_suspended_at: string | null;
+};
 export type Plan = { id: string; name: string; price_month: number; price_year: number | null; description?: string | null };
 export type Home = {
   practice: Practice; me: Member; members: Member[]; clients: ClientRow[]; business_invitations: Invitation[];
   past_clients: { id: string; status: string; business_name: string | null; invite_email: string | null; ended_at: string | null }[];
   billing: { paying_for: number; card: { id: string; last4: string; brand: string; expiry: string } | null } | null; plans: Plan[];
+  // Whether the firm may run full mandates: a partner whose licence TaxStreem verified, and TaxStreem has not paused them.
+  can_full: boolean;
 };
+
+// Due diligence before a client is taken on (practice_intake*): partners and managers only.
+export type IntakeMode = 'involved' | 'full';
+export type EntityType = 'company' | 'business_name' | 'incorporated_trustees' | 'partnership' | 'individual';
+export type IdType = 'nin' | 'bvn' | 'passport' | 'drivers_licence' | 'voters_card' | 'cac' | 'other';
+export type ConflictStatus = 'pending' | 'none' | 'hits' | 'cleared' | 'refused';
+export type LetterStatus = 'draft' | 'partner_signed' | 'sent' | 'completed' | 'uploaded' | 'void';
+// An ID number is only ever its last 4 characters.
+export type IntakePerson = {
+  id?: string; kind: 'director' | 'beneficial_owner' | 'related'; name: string; role: string | null; ownership_pct: number | null; nationality: string | null;
+  is_pep: boolean; id_type: IdType | null; id_last4: string | null;
+};
+export type IntakeRow = {
+  id: string; status: 'draft' | 'engaged' | 'declined'; mode_requested: IntakeMode; legal_name: string; entity_type: EntityType | null; rc_number: string | null;
+  tax_id: string | null; risk_rating: 'low' | 'medium' | 'high' | null; pep_present: boolean; dd_incomplete: boolean; conflict_status: ConflictStatus;
+  checked_at: string | null; cleared: boolean; authority_declared: boolean; client_id: string | null; org_id: string | null; retain_until: string | null;
+  created_at: string; updated_at: string;
+};
+// subject: what of the prospect matched (its name, number or one of its people); match_name: what it matched in the firm's records.
+export type ConflictHit = {
+  id: string; kind: 'client' | 'prospect' | 'related_party' | 'opposing_party' | 'books'; matched_on: 'rc_number' | 'tax_id' | 'name' | 'person';
+  subject: string; match_name: string | null; score: number | null; source_client_id: string | null; source_intake_id: string | null; source_opposing_id: string | null;
+};
+export type IntakeDoc = { id: string; kind: 'cac' | 'id' | 'address' | 'other'; name: string; path: string; sha256: string; added_by_name: string | null; created_at: string };
+export type IntakeDetail = Omit<IntakeRow, 'authority_declared'> & {
+  practice_id: string; address: string | null; industry: string | null; risk_reason: string | null; conflict_note: string | null;
+  conflict_decided_by: string | null; conflict_decided_at: string | null; conflict_decided_by_name: string | null; edited_at: string;
+  authority_declared_by: string | null; authority_declared_at: string | null; authority_statement: string | null; authority_doc_path: string | null;
+  authority_declared_by_name: string | null;
+  people: IntakePerson[]; docs: IntakeDoc[]; hits: ConflictHit[]; letters: { id: string; status: LetterStatus; variant: IntakeMode }[];
+};
+// Each condition for setting a business up under full mandate, for the signed-in person; ok when all hold.
+export type GateKey = 'partner_verified' | 'practice_can_full' | 'risk_rated' | 'rc_or_tax_id' | 'conflicts_cleared' | 'letter_completed' | 'authority_declared';
+export type MandateGate = Record<GateKey | 'ok', boolean>;
 export type RequestRow = {
   id: string; client_id: string; org_id: string; kind: 'document' | 'question' | 'approval'; title: string; detail: string | null; due_date: string | null;
   status: 'open' | 'answered' | 'done' | 'cancelled'; answer: string | null; file_path: string | null; file_name: string | null; created_at: string; answered_at: string | null;
@@ -89,6 +131,12 @@ export const usePracticeHome = (id: string | null) => useQuery({ queryKey: ['pra
 export const usePracticeClient = (id: string | null) => useQuery({ queryKey: ['practice-client', id], enabled: !!id, queryFn: () => rpc<ClientDetail>('practice_client', { p_client: id }) });
 export const usePracticeBilling = (id: string | null) => useQuery({ queryKey: ['practice-billing', id], enabled: !!id, queryFn: () => rpc<Billing>('practice_billing', { p_practice: id }) });
 export const useFileVersion = (id: string | null) => useQuery({ queryKey: ['filing-version', id], enabled: !!id, queryFn: () => rpc<FileVersion>('filing_version', { p_version: id }) });
+export const usePracticeIntakes = (pid: string, status?: string) => useQuery({ queryKey: ['practice-intakes', pid, status], enabled: !!pid,
+  queryFn: () => rpc<IntakeRow[]>('practice_intakes', { p_practice: pid, p: status ? { status } : {} }) });
+export const usePracticeIntake = (iid: string | null) => useQuery({ queryKey: ['practice-intake', iid], enabled: !!iid,
+  queryFn: () => rpc<IntakeDetail>('practice_intake', { p_intake: iid }) });
+export const useMandateGate = (iid: string | null) => useQuery({ queryKey: ['mandate-gate', iid], enabled: !!iid,
+  queryFn: () => rpc<MandateGate>('practice_mandate_gate', { p_intake: iid }) });
 
 // Emails an invitation made in the database (a fresh one-time link goes with it).
 export async function sendInvite(kind: 'member' | 'client' | 'accountant', id: string): Promise<{ ok: boolean; sent_to?: string; error?: string; reason?: string }> {
