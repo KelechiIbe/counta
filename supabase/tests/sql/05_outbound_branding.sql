@@ -541,4 +541,15 @@ begin
   perform tests.as_postgres();
 end $$;
 
+-- test: invoice_portal_white_label
+do $$
+declare m uuid := tests.id('o'); r uuid := tests.id('ord');
+begin
+  update orgs set invoice_portal_token = 'b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2' where id = m;
+  update orgs set invoice_portal_token = 'c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3' where id = r;
+  assert (public.invoice_portal('b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2')->>'white_label')::boolean, 'invoice_portal_white_label: managed';
+  assert not (public.invoice_portal('c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3')->>'white_label')::boolean, 'invoice_portal_white_label: ordinary';
+  perform tests.as_postgres();
+end $$;
+
 rollback;

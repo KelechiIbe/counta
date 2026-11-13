@@ -10,6 +10,7 @@ import { InvoiceDoc, PrintPortal, cleanHex, onColor } from '../../components/Inv
 import { qrSvg } from '../../lib/labels';
 import { Icon } from '../../components/Icon';
 import { Alert, Spinner } from '../../components/ui';
+import { showPoweredBy } from '../../lib/whiteLabel';
 
 export function Frame({ children, org, whiteLabel }: { children: React.ReactNode; org?: any; whiteLabel?: boolean }) {
   // A logo that will not load (removed, or not yet uploaded) falls back to the business's initials.
@@ -23,7 +24,7 @@ export function Frame({ children, org, whiteLabel }: { children: React.ReactNode
           <div><div style={{ fontWeight: 700, fontSize: 17 }}>{org.name}</div><div className="muted" style={{ fontSize: 12 }}>{[org.address, org.phone, org.email].filter(Boolean).join(' · ')}</div></div>
         </div>}
         {children}
-        {!(whiteLabel ?? org?.white_label) && <div className="faint" data-testid="public-powered-by" style={{ fontSize: 11, textAlign: 'center', marginTop: 24 }}>Powered by Counta · TaxStreem</div>}
+        {showPoweredBy(org, whiteLabel) && <div className="faint" data-testid="public-powered-by" style={{ fontSize: 11, textAlign: 'center', marginTop: 24 }}>Powered by Counta · TaxStreem</div>}
       </div>
     </div>
   );
@@ -40,6 +41,8 @@ export function PublicDoc() {
   const [err, setErr] = useState<string | null>(null);
   const [qr, setQr] = useState('');
   const d = doc.data;
+  // A white-labelled document's tab carries the business's name, not Counta's.
+  useEffect(() => { if (d?.org?.white_label && d.org.name) document.title = d.org.name; }, [d?.org?.white_label, d?.org?.name]);
   const balance = status ? Number(status.balance) : Number(d?.balance || 0);
   const paid = (status?.status || d?.status) === 'paid' || (d && balance <= 0.004 && ['receipt', 'invoice', 'order'].includes(d.doc_type));
   const waiting = req?.status === 'pending' || params.get('paid') === '1';

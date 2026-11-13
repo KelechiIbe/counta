@@ -29,7 +29,7 @@
 // their own number). Messages through the official API use approved templates (docs/messaging.md); through OpenWA they
 // are plain text with the same wording.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { displayName, emailHtml, emailText, type Msg, senderAddress, waText, wording } from './wording.ts';
+import { displayName, emailHtml, emailText, type Msg, mandateBlocked, senderAddress, waText, wording } from './wording.ts';
 import { ensureSession, type OpenWa, owa, owaError, RECEIPT_EVENTS, sendText, sessionState, setWebhooks, signatureOk, waDigits, waFormat } from './openwa.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -135,8 +135,9 @@ async function sendOpenWa(m: Msg): Promise<string> {
 
 async function sendWhatsApp(m: Msg): Promise<string> {
   if ((await provider()) === 'openwa') return await sendOpenWa(m);
-  // Every approved Meta template ends "Sent with Counta"; an unbranded variant (_nb) is not approved yet.
-  if (m.org?.white_label === true) throw new Error('Unbranded WhatsApp is not available yet. Send it by email.');
+  // Every approved Meta template ends "Sent with Counta"; an unbranded variant (_nb) is not approved yet. The firm's own
+  // alerts in a managed business go to the firm, so they keep the branded template.
+  if (m.org?.white_label === true && m.template !== 'alert') throw new Error('Unbranded WhatsApp is not available yet. Send it by email.');
   const token = await secret('WHATSAPP_TOKEN');
   const phoneId = await secret('WHATSAPP_PHONE_NUMBER_ID');
   if (!token || !phoneId) throw new Error('WhatsApp is not switched on yet. TaxStreem is setting it up; the message goes out once it is.');
@@ -172,7 +173,7 @@ async function deliver(id: string) {
   if (error) throw new Error(error.message);
   if (!m) return { id, skipped: true };
   // Fail closed: a managed (full-mandate) business only sends an alert to an address the database allowed.
-  if (m.managed === true && m.alert_to_allowed !== true) {
+  if (mandateBlocked(m)) {
     await admin.rpc('svc_message_update', { p_id: id, p_status: 'failed', p_provider_id: null, p_error: 'Not sent: full-mandate rules.' });
     return { id, status: 'failed' };
   }

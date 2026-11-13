@@ -296,13 +296,14 @@ export async function prnPdf(p: Record<string, any>): Promise<Blob> {
   doc.text(T(`${TAX_NAME[p.tax] || String(p.tax || '').toUpperCase()} ${period}`), W - 40, 68, { align: 'right' });
   y = Math.max(y, 80) + 12;
   const pay = p.payment || {};
+  const wl = o.white_label === true;
   const rows: [string, string][] = [
     ['Payment reference number (PRN)', p.prn], ['Revenue service', p.authority], ['Amount', `NGN ${money(p.amount)}`],
     ['Pay into', [p.bank_name, p.account_number].filter(Boolean).join(', ')], ['Account name on the payment page', p.account_name],
     ['Name the bank gave for the account', p.resolved_name], ['Where it stands', STATUS[String(p.status)] || String(p.status || '').replace(/_/g, ' ')],
     ['Received from Flux', when(p.received_at)], ['Account open until', when(p.expires_at)], ['Rev360 confirmed the payment', when(p.confirmed_at)],
-    ['Rev360 receipt reference', p.receipt_ref], ['Paid outside Counta', p.paid_outside ? 'Yes' : ''],
-    ['Counta transfer reference', pay.reference], ['Counta transfer', [pay.status ? String(pay.status).replace(/_/g, ' ') : '', when(pay.completed_at)].filter(Boolean).join(', ')],
+    ['Rev360 receipt reference', p.receipt_ref], [wl ? 'Paid outside this system' : 'Paid outside Counta', p.paid_outside ? 'Yes' : ''],
+    [wl ? 'Transfer reference' : 'Counta transfer reference', pay.reference], [wl ? 'Transfer' : 'Counta transfer', [pay.status ? String(pay.status).replace(/_/g, ' ') : '', when(pay.completed_at)].filter(Boolean).join(', ')],
   ].filter(([, v]) => v != null && String(v).trim() !== '') as [string, string][];
   autoTable(doc as any, {
     startY: y, theme: 'plain', margin: { left: 40, right: 40, bottom: 44 }, body: rows.map(([k, v]) => [T(k), T(v)]),
@@ -327,7 +328,9 @@ export async function prnPdf(p: Record<string, any>): Promise<Blob> {
     y = ((doc as any).lastAutoTable?.finalY || y) + 18;
   }
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(107, 114, 128);
-  doc.text(doc.splitTextToSize(T('Counta made this record from what TaxStreem Flux reported from Rev360 and from Counta\'s own payment. Rev360\'s receipt, when Flux sends it, is kept beside it under Payment receipts.'), W - 80), 40, y);
+  const note = wl ? 'This record was made from what was reported from Rev360 and from the payment itself. Rev360\'s receipt, when it arrives, is kept beside it under Payment receipts.'
+    : 'Counta made this record from what TaxStreem Flux reported from Rev360 and from Counta\'s own payment. Rev360\'s receipt, when Flux sends it, is kept beside it under Payment receipts.';
+  doc.text(doc.splitTextToSize(T(note), W - 80), 40, y);
   footer(doc, `PRN ${p.prn} · ${o.name || ''}${madeBy(o)}`);
   return doc.output('blob');
 }
@@ -385,7 +388,7 @@ export async function billPdf(b: Record<string, any>): Promise<Blob> {
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(75, 85, 99);
   const claim = b.vat_day ? `Input VAT of NGN ${money(b.vat_total)} is claimed in the VAT return for ${new Date(String(b.vat_day) + 'T12:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })}${b.paid_on ? `, the month the bill was paid in full (${day(b.paid_on)})` : ''}.`
     : 'Input VAT on this bill is claimed in the month it is paid in full.';
-  doc.text(doc.splitTextToSize(T(`${claim} Counta drew this from the bill as it was entered${b.journal_ref ? ` (journal ${b.journal_ref})` : ''}; the supplier's own invoice is the evidence for the VAT.`), W - 80), 40, y);
+  doc.text(doc.splitTextToSize(T(`${claim} ${o.white_label ? 'This was drawn' : 'Counta drew this'} from the bill as it was entered${b.journal_ref ? ` (journal ${b.journal_ref})` : ''}; the supplier's own invoice is the evidence for the VAT.`), W - 80), 40, y);
   footer(doc, `${b.number} · ${v.name || ''} · ${o.name || ''}${madeBy(o)}`);
   return doc.output('blob');
 }

@@ -1,5 +1,6 @@
-import { waFormat } from './openwa.ts';
 // What each customer message says, shared by email and WhatsApp so the two always agree.
+import { waFormat } from './openwa.ts';
+
 export const naira = (v: unknown) => {
   const n = Number(v);
   if (!Number.isFinite(n)) return '₦0.00';
@@ -92,7 +93,7 @@ export function wording(m: Msg) {
       const one = issues.join(' ').slice(0, 900) || 'some details need checking';
       return {
         heading: `Your invoice ${p.number} needs a look`,
-        lines: [`${biz} has received your invoice ${p.number}${Number(p.total) ? ` for ${naira(p.total)}` : ''}. Counta checked it and found:`,
+        lines: [`${biz} has received your invoice ${p.number}${Number(p.total) ? ` for ${naira(p.total)}` : ''}. ${m.org?.white_label ? 'It was checked and found:' : 'Counta checked it and found:'}`,
           ...issues.map((x: string) => `• ${x}`),
           'Please reply to this email with a corrected invoice, or send it again on the link you used. Invoices without a Tax ID (where withholding tax applies) or a business address cannot be paid.'],
         button: '', link: '',
@@ -170,6 +171,8 @@ export function emailText(m: Msg) {
     '', [p.business_phone, p.reply_to].filter(Boolean).join(' · '), w.footer || ''].join('\n').trim();
 }
 
+// A managed (full-mandate) business only sends to an address the database allowed: anything else fails closed.
+export const mandateBlocked = (m: { managed?: boolean; alert_to_allowed?: boolean }): boolean => m.managed === true && m.alert_to_allowed !== true;
 
 // The address inside RESEND_FROM, whatever surrounds it: "billing@x.ng", "TaxStreem <billing@x.ng>", or either wrapped in quotes or spaces.
 export function senderAddress(raw: string): string {
