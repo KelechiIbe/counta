@@ -1,5 +1,5 @@
-import { assertEquals } from 'jsr:@std/assert@1';
-import { ASSET_CLASSES, OPENING_KEYS, openingOut } from './opening.ts';
+import { assertEquals, assertStringIncludes } from 'jsr:@std/assert@1';
+import { ASSET_CLASSES, OPENING_KEYS, OPENING_SCHEMA, openingOut, openingSystem } from './opening.ts';
 
 Deno.test('opening_keys_match_the_database', () => {
   // The keys public.filing_opening_save posts, in the same order as its map.
@@ -47,4 +47,15 @@ Deno.test('opening_out_cleans_the_reading', () => {
     { class_account: '1514', name: 'Office equipment', cost: 240000, accumulated: 0, in_use_from: '2023-06-01' },
   ]);
   assertEquals(openingOut(null), { is_accounts: false, entity_name: null, as_of: null, lines: [], assets: [], cash: 0, other: [], confidence: 0, warnings: [] });
+});
+
+Deno.test('opening_prompt_and_schema', () => {
+  const p = openingSystem(2024);
+  assertStringIncludes(p, 'for the year before 2024');
+  assertStringIncludes(p, 'the opening position of 2024');
+  assertStringIncludes(p, 'inventory (inventories, stock)');
+  assertStringIncludes(p, '1511 Motor vehicles');
+  assertStringIncludes(openingSystem(null), 'for the year before the year being filed');
+  assertEquals((OPENING_SCHEMA.properties.lines.items.properties.key as any).enum.slice(-2), ['cash', 'other']);
+  assertEquals((OPENING_SCHEMA.properties.assets.items.properties.class_account as any).enum.length, 27);
 });

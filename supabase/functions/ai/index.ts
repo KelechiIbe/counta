@@ -10,7 +10,6 @@ import { CAC_DOC_SCHEMA, CAC_DOC_SYSTEM, cacDocChecks, type Category, cleanCacDo
   NIN_SLIP_SCHEMA, NIN_SLIP_SYSTEM } from './kyc.ts';
 import { cleanProduct, PRODUCT_SCHEMA, PRODUCT_SYSTEM, validBarcode } from './product.ts';
 import { cleanSupplier, sha256hex, sniff, SUPPLIER_SCHEMA, supplierSystem } from './supplier.ts';
-import { ASSET_CLASSES, OPENING_KEYS, openingOut } from './opening.ts';
 import { accessProblem, CredentialError, fallbackModels, type GeminiConfig, geminiConfig, generateContent, quotaMessage, thinkingConfig } from './google.ts';
 import { cleanHs, cleanPick, cleanService, type CodeRow, HS_PICK_SCHEMA, HS_PICK_SYSTEM, HS_SCHEMA, HS_SYSTEM, type HsAnswer, type HsItem, hsPickPrompt, hsPrompt,
   SERVICE_SCHEMA, SERVICE_SYSTEM, type ServiceOrg, servicePrompt } from './nrs_codes.ts';
@@ -841,77 +840,6 @@ Rules:
     wht_category: PURCHASE_WHT.includes(out.wht_category) ? out.wht_category : null } });
 }
 
-// ---------------------------------------------------------------- last year's accounts: the opening position of a filing-only year
-const OPENING_SCHEMA = {
-  type: 'OBJECT',
-  properties: {
-    is_accounts: { type: 'BOOLEAN', description: 'True when this is a set of financial statements, a statement of accounts or a tax computation with a balance sheet' },
-    entity_name: S.nstr,
-    as_of: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD: the date of the statement of financial position read' },
-    lines: {
-      type: 'ARRAY',
-      items: {
-        type: 'OBJECT',
-        properties: { key: { type: 'STRING', enum: [...Object.keys(OPENING_KEYS), 'cash', 'other'] }, caption: S.str, amount: { type: 'NUMBER' } },
-        required: ['key', 'caption', 'amount'],
-      },
-    },
-    assets: {
-      type: 'ARRAY',
-      items: {
-        type: 'OBJECT',
-        properties: { class_account: { type: 'STRING', enum: Object.keys(ASSET_CLASSES) }, name: S.str, cost: { type: 'NUMBER' },
-          accumulated: { type: 'NUMBER', nullable: true }, in_use_from: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD when printed' } },
-        required: ['class_account', 'name', 'cost'],
-      },
-    },
-    confidence: { type: 'NUMBER', description: '0 to 100' },
-    warnings: { type: 'ARRAY', items: S.str },
-  },
-  required: ['is_accounts', 'lines', 'assets', 'confidence'],
-};
-
-async function readOpening(sb: SupabaseClient, admin: SupabaseClient, body: any) {
-  const orgId = String(body.org_id || ''), path = String(body.path || '');
-  if (!isUuid(orgId) || !path.startsWith(orgId + '/') || path.includes('..')) return json({ ok: false, error: 'Upload last year\'s accounts first.' }, 400);
-  const { error } = await sb.rpc('filing_state', { p_org: orgId });
-  if (error) return json({ ok: false, error: error.message }, 403);
-  if (!aiOn()) return json(notConfigured());
-  if (await paused(admin, orgId)) return json({ ...PAUSED, error: 'AI reading starts once a year is paid for. Type the figures in, or come back after paying.' });
-  const { data: blob, error: dErr } = await sb.storage.from('documents').download(path);
-  if (dErr || !blob) return json({ ok: false, error: 'Could not open the uploaded file.' });
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  if (bytes.length > 18 * 1024 * 1024) return json({ ok: false, error: 'The file is too large to read. Use a PDF or photo under 15MB.' });
-  const mime = String(body.mime || blob.type || (path.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'));
-  if (!/^(application\/pdf|image\/(jpeg|png|webp))$/.test(mime)) return json({ ok: false, error: 'Upload a PDF or a photo of the accounts.' });
-  const year = Number(body.year) || null;
-  const system = `You read a Nigerian business's financial statements (or statement of accounts) for the year before ${year || 'the year being filed'}, to bring
-its closing position into its books as the opening position of ${year || 'the next year'}.
-Rules:
-- Read the statement of financial position (balance sheet) at the end of the latest year shown, the current-year column, never the comparatives.
-  as_of is that date.
-- lines: one for each balance, with the key that fits: ${Object.entries(OPENING_KEYS).map(([k, v]) => `${k} (${v})`).join('; ')}.
-  Bank balances, cash and short deposits use the key cash. A balance that fits none uses other, with its caption. Subtotals and totals are left out.
-- amount as printed, a positive number, except retained earnings, which is negative when the statements show accumulated losses or a deficit.
-- assets: property, plant and equipment from its note, one entry per class: cost at the year end and accumulated depreciation at the year end.
-  class_account is the class code that fits best: ${Object.entries(ASSET_CLASSES).map(([k, v]) => `${k} ${v}`).join('; ')}.
-  When only the carrying amount is shown, give it as the cost with accumulated null and say so in warnings. Leave PPE out of lines.
-- is_accounts: false when the document is something else (a bank statement, an invoice, a letter).
-- confidence 0-100. warnings: short plain sentences about anything a person should check (the balance sheet does not balance, figures in thousands, the
-  year is not the one before ${year || 'the year being filed'}).
-- Figures shown in thousands (₦'000) are multiplied out. Never invent a figure that is not on the document.`;
-  let out: any, model = MODEL;
-  try {
-    const res = await gemini(system, [{ text: 'Read the closing position from these accounts.' }, { inlineData: { mimeType: mime, data: encodeBase64(bytes) } }],
-      OPENING_SCHEMA, 0.1, { thinking: 'low', timeoutMs: 80_000, org: orgId, kind: 'read_opening' });
-    out = res.data; model = res.model;
-  } catch (e) {
-    if (e instanceof CredentialError) return json(notConfigured());
-    return json({ ok: false, error: 'Could not read the accounts: ' + (e as Error).message });
-  }
-  return json({ ok: true, model, ...openingOut(out) });
-}
-
 // ---------------------------------------------------------------- moving the books: old chart to Counta's chart
 const MAP_SCHEMA = {
   type: 'OBJECT',
@@ -1351,7 +1279,6 @@ Deno.serve(async (req) => {
       }
       case 'read_invoice': return await readInvoice(sb, admin, body, u.user.id);
       case 'read_purchase_invoice': return await readPurchaseInvoice(sb, admin, body);
-      case 'read_opening': return await readOpening(sb, admin, body);
       case 'vat_classify_text': return await vatClassifyText(sb, admin, body);
       case 'ask': return await ask(body);
       case 'chat': return await chat(body);

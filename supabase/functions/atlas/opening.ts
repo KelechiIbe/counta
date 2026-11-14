@@ -1,5 +1,7 @@
-// Last year's accounts read for the opening position of a filing-only year: the keys public.filing_opening_save posts and
-// the shape the Filing page gets. Pure, so it is tested on its own.
+// Last year's accounts read for the opening position of a filing-only year (atlas action read_opening): the keys
+// public.filing_opening_save posts, what the model is asked, and the shape the Filing page gets. Pure, so it is tested on its own.
+import { S } from './gemini.ts';
+
 export const OPENING_KEYS: Record<string, string> = {
   inventory: 'inventories, stock', trade_receivables: 'trade receivables, debtors', other_receivables: 'other receivables, deposits, staff loans',
   prepayments: 'prepayments', director_receivable: 'amounts directors owe the business', investments: 'investments',
@@ -49,3 +51,50 @@ export function openingOut(out: any) {
   };
 }
 
+export const OPENING_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    is_accounts: { type: 'BOOLEAN', description: 'True when this is a set of financial statements, a statement of accounts or a tax computation with a balance sheet' },
+    entity_name: S.nstr,
+    as_of: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD: the date of the statement of financial position read' },
+    lines: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { key: { type: 'STRING', enum: [...Object.keys(OPENING_KEYS), 'cash', 'other'] }, caption: S.str, amount: { type: 'NUMBER' } },
+        required: ['key', 'caption', 'amount'],
+      },
+    },
+    assets: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { class_account: { type: 'STRING', enum: Object.keys(ASSET_CLASSES) }, name: S.str, cost: { type: 'NUMBER' },
+          accumulated: { type: 'NUMBER', nullable: true }, in_use_from: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD when printed' } },
+        required: ['class_account', 'name', 'cost'],
+      },
+    },
+    confidence: { type: 'NUMBER', description: '0 to 100' },
+    warnings: { type: 'ARRAY', items: S.str },
+  },
+  required: ['is_accounts', 'lines', 'assets', 'confidence'],
+};
+
+// What the model is told: read the balance sheet at the end of the year before the year being filed.
+export function openingSystem(year: number | null) {
+  return `You read a Nigerian business's financial statements (or statement of accounts) for the year before ${year || 'the year being filed'}, to bring
+its closing position into its books as the opening position of ${year || 'the next year'}.
+Rules:
+- Read the statement of financial position (balance sheet) at the end of the latest year shown, the current-year column, never the comparatives.
+  as_of is that date.
+- lines: one for each balance, with the key that fits: ${Object.entries(OPENING_KEYS).map(([k, v]) => `${k} (${v})`).join('; ')}.
+  Bank balances, cash and short deposits use the key cash. A balance that fits none uses other, with its caption. Subtotals and totals are left out.
+- amount as printed, a positive number, except retained earnings, which is negative when the statements show accumulated losses or a deficit.
+- assets: property, plant and equipment from its note, one entry per class: cost at the year end and accumulated depreciation at the year end.
+  class_account is the class code that fits best: ${Object.entries(ASSET_CLASSES).map(([k, v]) => `${k} ${v}`).join('; ')}.
+  When only the carrying amount is shown, give it as the cost with accumulated null and say so in warnings. Leave PPE out of lines.
+- is_accounts: false when the document is something else (a bank statement, an invoice, a letter).
+- confidence 0-100. warnings: short plain sentences about anything a person should check (the balance sheet does not balance, figures in thousands, the
+  year is not the one before ${year || 'the year being filed'}).
+- Figures shown in thousands (₦'000) are multiplied out. Never invent a figure that is not on the document.`;
+}

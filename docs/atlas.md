@@ -11,6 +11,7 @@ Atlas is the accounting side of Counta. Agents read every bank line, sale, bill,
 | Payables | Bills from stock receipts, Prism and typed entry, with WHT worked out per supplier | Database (`write_bill`, `approve_bill`, `pay_bill`) |
 | Close | The month-end checklist, accruals, depreciation, the IAS 2 stock review and ECL | Database (`close_checklist`, `close_books`, `run_ecl`, `close_year`) |
 | Finance director | A written commentary on the period's numbers | `atlas` edge function (`commentary`); it reads figures and never posts |
+| Opening reader | Last year's accounts uploaded by a filing-only business, read for the closing position the Filing page shows before anything posts | `atlas` edge function (`read_opening`, with the keys and prompt in `opening.ts`); it reads and never posts |
 
 Every agent run is logged in `agent_runs` with what it looked at, what it posted and what it asked.
 

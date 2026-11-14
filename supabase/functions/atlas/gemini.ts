@@ -8,7 +8,11 @@ export const S = {
   nstr: { type: 'STRING', nullable: true }, nnum: { type: 'NUMBER', nullable: true },
 };
 
-export async function gemini(cfg: { g: GeminiConfig; model: string }, system: string, text: string, schema: unknown, temperature = 0.1): Promise<{ data: any; model: string; usage: { in: number; out: number } }> {
+// A part of the question: text, or a file (a PDF or a photo) sent inline.
+export type Part = { text: string } | { inlineData: { mimeType: string; data: string } };
+
+export async function gemini(cfg: { g: GeminiConfig; model: string }, system: string, text: string | Part[], schema: unknown, temperature = 0.1,
+    timeoutMs = 55_000): Promise<{ data: any; model: string; usage: { in: number; out: number } }> {
   let lastErr = '';
   const all = [cfg.model, ...fallbackModels(cfg.g).filter((m) => m !== cfg.model)];
   const ready = all.filter((m) => (resting.get(m) || 0) < Date.now());
@@ -17,10 +21,10 @@ export async function gemini(cfg: { g: GeminiConfig; model: string }, system: st
     try {
       res = await generateContent(cfg.g, model, {
         systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text }] }],
+        contents: [{ role: 'user', parts: typeof text === 'string' ? [{ text }] : text }],
         // Gemini 3 and later loop or lose accuracy below their default temperature, so it is only set for older models.
         generationConfig: { responseMimeType: 'application/json', responseSchema: schema, ...(/^gemini-[12]\./.test(model) ? { temperature } : {}) },
-      }, 55_000);
+      }, timeoutMs);
     } catch (e) {
       if (e instanceof CredentialError) throw e;
       lastErr = `${model} did not answer (${(e as Error).name})`; resting.set(model, Date.now() + 120_000); continue;

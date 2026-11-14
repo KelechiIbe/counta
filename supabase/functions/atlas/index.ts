@@ -11,12 +11,15 @@
 //   { action: 'status' }
 //   { action: 'run', org_id }               -> run the bookkeeper now (people who keep the books)
 //   { action: 'commentary', org_id, from, to } -> CFO commentary for a period (people who can see the financial reports)
+//   { action: 'read_opening', org_id, path, mime, year } -> a filing-only year's start, read from last year's accounts (opening.ts)
 // Gemini runs on Vertex AI with Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS_JSON, GOOGLE_CLOUD_PROJECT,
 // GOOGLE_CLOUD_LOCATION; see google.ts), or with GEMINI_API_KEY when no ADC credential is set. GEMINI_MODEL is optional.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { gemini, S } from './gemini.ts';
 import { geminiConfig } from './google.ts';
 import { calibrate, type Ctx, SCHEMA, systemPrompt, userPrompt } from './bookkeeper.ts';
+import { OPENING_SCHEMA, openingOut, openingSystem } from './opening.ts';
+import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -193,6 +196,35 @@ Write for a busy owner: plain words, no jargon, short sentences. Three to six po
   return { ok: true, commentary: data, model };
 }
 
+// ------------------------------------------------------------------ last year's accounts
+// The closing position read from last year's accounts (a PDF or photo the business uploaded to its own folder), for the
+// Filing page to show, change and post. Nothing is posted here. Off until AI reading is on for the business (a filing-only
+// business: once a year is paid for).
+async function readOpening(sb: SupabaseClient, body: any) {
+  const orgId = String(body.org_id || ''), path = String(body.path || '');
+  if (!/^[0-9a-f-]{36}$/i.test(orgId) || !path.startsWith(orgId + '/') || path.includes('..')) return { ok: false, error: 'Upload last year\'s accounts first.' };
+  const { error } = await sb.rpc('filing_state', { p_org: orgId });
+  if (error) return { ok: false, error: error.message };
+  const cfg = await geminiCfg();
+  if (cfg.g.mode === 'none') return { ok: false, reason: 'not_configured', error: 'AI reading is not switched on yet. Type the figures in for now.' };
+  const { data: on } = await admin.rpc('svc_feature', { p_org: orgId, p_feature: 'ai_reading' });
+  if (on === false) return { ok: false, reason: 'paused', error: 'AI reading starts once a year is paid for. Type the figures in, or come back after paying.' };
+  const { data: blob, error: dErr } = await sb.storage.from('documents').download(path);
+  if (dErr || !blob) return { ok: false, error: 'Could not open the uploaded file.' };
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (bytes.length > 18 * 1024 * 1024) return { ok: false, error: 'The file is too large to read. Use a PDF or photo under 15MB.' };
+  const mime = String(body.mime || blob.type || (path.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'));
+  if (!/^(application\/pdf|image\/(jpeg|png|webp))$/.test(mime)) return { ok: false, error: 'Upload a PDF or a photo of the accounts.' };
+  try {
+    const res = await gemini(cfg, openingSystem(Number(body.year) || null),
+      [{ text: 'Read the closing position from these accounts.' }, { inlineData: { mimeType: mime, data: encodeBase64(bytes) } }], OPENING_SCHEMA, 0.1, 80_000);
+    meter(orgId, 'read_opening', res);
+    return { ok: true, model: res.model, ...openingOut(res.data) };
+  } catch (e) {
+    return { ok: false, error: 'Could not read the accounts: ' + (e as Error).message };
+  }
+}
+
 // ------------------------------------------------------------------ entry
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -236,6 +268,7 @@ Deno.serve(async (req) => {
         return json({ ok: true, result: await bookkeep(String(body.org_id), 5, Date.now() + 90_000) });
       }
       case 'commentary': return json(await commentary(sb, String(body.org_id), body.from || null, body.to || null));
+      case 'read_opening': return json(await readOpening(sb, body));
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }
   } catch (e) {

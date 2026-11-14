@@ -117,7 +117,7 @@ export function OpeningFigures({ y, onClose, onSaved }: { y: FilingYear; onClose
     setReading(true); setRead(null);
     try {
       const saved = await uploadDocument(orgId!, f, { cat: 'tax', folder: 'Other', period: null, year: y.year - 1, notes: `Last year's accounts, for where ${y.year} starts` });
-      const r = await edge<Read>('ai', { action: 'read_opening', org_id: orgId, path: saved.path, mime: f.type || null, year: y.year });
+      const r = await edge<Read>('atlas', { action: 'read_opening', org_id: orgId, path: saved.path, mime: f.type || null, year: y.year });
       if (r.ok === false) { toast(r.error || 'The accounts could not be read.', 'err'); setReading(false); return; }
       setRead(r);
       setLines(Object.fromEntries((r.lines || []).map((l) => [l.key, String(l.amount)])));
