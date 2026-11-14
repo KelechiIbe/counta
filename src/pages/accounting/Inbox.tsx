@@ -40,7 +40,8 @@ export default function Inbox() {
   const counters: [number, string, string, string][] = d ? [
     [Number(d.payments_to_confirm), 'payment', 'to confirm against the bank', '/sell/sales?tab=confirm'],
     [Number(d.bills_to_approve), 'bill', 'to approve', '/purchases/bills'],
-    [Number(d.assets_to_confirm), 'fixed asset', 'to confirm', '/accounting/assets'],
+    [Number(d.assets_to_confirm), 'fixed asset', 'to confirm', '/accounting/assets?tab=pending'],
+    [Number(d.asset_sales_to_match || 0), 'asset sale', 'to match', '/accounting/assets?tab=pending'],
     [Number(d.payouts_to_approve), 'payout', 'to approve', '/payments'],
   ].filter(([n]) => Number(n) > 0) as [number, string, string, string][] : [];
   return (

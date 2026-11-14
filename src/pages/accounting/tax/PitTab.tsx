@@ -1,4 +1,4 @@
-// Personal income tax for a business name, a sole proprietor or a partnership, year by year from 2025 accounts. The
+// Personal income tax for a business name, a sole proprietor or a partnership, year by year from 2024 accounts. The
 // business's assessable profit comes from the same figures and adjustments as companies income tax (Figures and
 // Adjustments are the same screens); the PIT rule book then adds back the private share of mixed-use costs, donations and
 // research above 5% of turnover. Each person (the proprietor, or each partner) has a return of their own for the state that
@@ -35,7 +35,7 @@ export default function PitTab({ year, setYear }: { year: number | null; setYear
   if (years.isLoading) return <SkeletonRows n={6} />;
   if (years.error) return <Alert kind="yellow" icon="shield">{(years.error as Error).message}</Alert>;
   if (years.data?.kind === 'exempt') return <ExemptPanel />;
-  if (!list.length) return <Empty>Counta prepares personal income tax from 2025 accounts. There is no year to show yet.</Empty>;
+  if (!list.length) return <Empty>Counta prepares personal income tax from 2024 accounts. There is no year to show yet.</Empty>;
   return (
     <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '270px minmax(0,1fr)', gap: 16, alignItems: 'start' }}>
       <div className="stack" style={{ gap: 8 }}>
@@ -58,10 +58,10 @@ export default function PitTab({ year, setYear }: { year: number | null; setYear
           );
         })}
         <div className="faint" style={{ fontSize: 12, lineHeight: 1.5, padding: '0 4px' }}>
-          2025 accounts use the old law (Personal Income Tax Act); 2026 accounts onwards the Nigeria Tax Act 2025. Each return is due on 31 March after the year ends.
+          2024 and 2025 accounts use the old law (Personal Income Tax Act); 2026 accounts onwards the Nigeria Tax Act 2025. Each return is due on 31 March after the year ends.
         </div>
       </div>
-      <div style={{ minWidth: 0 }}>{year ? <PitYear key={year} year={year} firstYear={Number(years.data?.first_year || 2025)} /> : <Empty>Choose a year.</Empty>}</div>
+      <div style={{ minWidth: 0 }}>{year ? <PitYear key={year} year={year} firstYear={Number(years.data?.first_year || 2024)} /> : <Empty>Choose a year.</Empty>}</div>
     </div>
   );
 }

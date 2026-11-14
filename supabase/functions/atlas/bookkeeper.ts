@@ -7,8 +7,12 @@ import { S } from './gemini.ts';
 export type Line = { id: string; date: string; amount: number; narration?: string; reference?: string; counterparty?: string; account?: string;
   account_kind?: string; history?: { code: string; n: number }[] | null };
 export type Account = { code: string; name: string; category?: string; ifrs_line?: string };
-export type Ctx = { org: { name: string; industry?: string; vat_registered?: boolean; cash_sales_without_invoices?: boolean; threshold: number };
-  lines: Line[]; accounts: Account[]; customers: { id: string; name: string }[]; vendors: { id: string; name: string }[]; directors: string[] };
+export type Trade = { category?: string; sells?: string; activity?: string; examples?: string[] };
+export type Owned = { number: string; name: string; class: string; class_name?: string; carrying?: number };
+export type Ctx = { org: { name: string; industry?: string; vat_registered?: boolean; cash_sales_without_invoices?: boolean; threshold: number;
+    capitalisation_threshold?: number | null; trade?: Trade | null };
+  lines: Line[]; accounts: Account[]; customers: { id: string; name: string }[]; vendors: { id: string; name: string }[]; directors: string[];
+  assets?: Owned[] | null };
 export type Alt = { account_code: string; why: string };
 export type Answer = { line_id: string; account_code: string | null; confidence: number; title: string; rationale: string; question: string | null;
   party_type: 'customer' | 'vendor' | null; party_id: string | null; kind: string; alternatives: Alt[] };
@@ -44,10 +48,23 @@ export const SCHEMA = {
   required: ['results'],
 };
 
+const naira = (n: number) => `₦${Math.round(n).toLocaleString('en-NG')}`;
+const SELLS: Record<string, string> = { goods: 'goods', services: 'services', both: 'goods and services' };
+
+// What the business does, in a line, so the model can tell stock from an asset.
+export function tradeLine(t?: Trade | null) {
+  if (!t) return '';
+  const bits = [t.category, t.sells && SELLS[t.sells] ? `sells ${SELLS[t.sells]}` : '', t.activity,
+    Array.isArray(t.examples) && t.examples.length ? `for example ${t.examples.slice(0, 8).join(', ')}` : ''].filter(Boolean);
+  return bits.length ? `What the business does: ${bits.join('; ')}.` : '';
+}
+
 export function systemPrompt(ctx: Ctx) {
   const o = ctx.org;
+  const cap = Number(o.capitalisation_threshold) > 0 ? naira(Number(o.capitalisation_threshold)) : '₦100,000';
+  const trade = tradeLine(o.trade);
   return `You are Atlas, the bookkeeper for ${o.name}, a Nigerian business${o.industry ? ` (${o.industry})` : ''}. You keep the books under IFRS.
-You receive bank and wallet lines that nothing else could explain. For each line give your best guess of the one account it should post to (the other
+${trade ? `${trade}\n` : ''}You receive bank and wallet lines that nothing else could explain. For each line give your best guess of the one account it should post to (the other
 side is the bank), how sure you are, and up to four other accounts that could also be right.
 
 Always guess. The owner usually does not know the chart of accounts, so a short list of likely accounts is what they answer from: your best guess first,
@@ -67,12 +84,19 @@ Rules you must follow:
 5. Payments at supermarkets, schools, hospitals, for personal travel or to family members may be private: kind "private", confidence at most 0.6,
    and ask whether it was for the business. Include the owner's drawings or director's account among the alternatives.
 6. VAT, withholding tax, PAYE and pension never come from a bank line: do not pick tax or control accounts (they are not in the list anyway).
-7. Equipment, vehicles, computers, furniture or building work above about ₦250,000 are assets, not expenses (PPE accounts), unless clearly a repair.
-8. Bank charges, SMS alerts, card maintenance, stamp duty and the electronic money transfer levy go to bank charges.
-9. Sundry, general, miscellaneous or "other" accounts are not a hiding place: if that is your best answer, confidence at most 0.5.
-10. history lists the accounts this payee was posted to before, most frequent first. Follow it unless the narration clearly says otherwise.
-11. If the line names a customer or vendor from the lists, give party_type and party_id (the id from the list).
-12. Alternatives: different accounts from the guess and from each other, only ones a sensible bookkeeper would consider for this line, never padding.
+7. Equipment, vehicles, computers, furniture, machinery or building work bought for the business's own use and costing ${cap} or more is an asset:
+   post it to the fixed asset account for its class, kind "asset". Below ${cap} it is an expense. What the business buys to resell or uses up in its
+   trade is stock or cost of sales, never an asset, so read what the business sells first: a car dealer's cars, a phone shop's phones and a furniture
+   maker's timber are stock, while a haulier's truck and a consultancy's laptops are assets. A repair or service of something it already owns is an
+   expense. When you cannot tell an asset from stock, ask, and offer both.
+8. Money in from selling one of the business's own assets (an old car, a generator, used laptops) goes to the fixed asset account of the asset sold,
+   kind "asset", never to revenue unless the business trades in such things. The ASSETS IN USE list shows what it owns: name the asset in the title
+   ("Sale of the old Hilux"), and ask which one when you are not sure.
+9. Bank charges, SMS alerts, card maintenance, stamp duty and the electronic money transfer levy go to bank charges.
+10. Sundry, general, miscellaneous or "other" accounts are not a hiding place: if that is your best answer, confidence at most 0.5.
+11. history lists the accounts this payee was posted to before, most frequent first. Follow it unless the narration clearly says otherwise.
+12. If the line names a customer or vendor from the lists, give party_type and party_id (the id from the list).
+13. Alternatives: different accounts from the guess and from each other, only ones a sensible bookkeeper would consider for this line, never padding.
     For each, say in plain words when it would be the right one ("if this was the driver's monthly pay"). Up to four; fewer is fine.
 
 Confidence must be honest: 0.95 or more only when the narration and history leave no doubt; 0.8 to 0.95 when you are fairly sure;
@@ -86,10 +110,31 @@ export function userPrompt(ctx: Ctx) {
   const parties = [...ctx.customers.slice(0, 300).map((c) => `customer ${c.id} ${c.name}`), ...ctx.vendors.slice(0, 300).map((v) => `vendor ${v.id} ${v.name}`)].join('\n');
   const lines = ctx.lines.map((l) => JSON.stringify({ line_id: l.id, date: l.date, amount: l.amount, narration: l.narration || '', reference: l.reference || '',
     counterparty: l.counterparty || '', bank: l.account, history: l.history || [] })).join('\n');
-  return `ACCOUNTS (code name [statement line])\n${accounts}\n\nCUSTOMERS AND VENDORS\n${parties || '(none)'}\n\nLINES\n${lines}`;
+  const owned = (ctx.assets || []).slice(0, 60).map((a) => `${a.number} ${a.name} [${a.class}${a.class_name ? ` ${a.class_name}` : ''}]`
+    + (a.carrying != null ? ` carrying ${naira(Number(a.carrying))}` : '')).join('\n');
+  return `ACCOUNTS (code name [statement line])\n${accounts}\n\nCUSTOMERS AND VENDORS\n${parties || '(none)'}\n\nASSETS IN USE\n${owned || '(none)'}\n\nLINES\n${lines}`;
 }
 
 const FALLBACK = /(sundry|general expense|miscellaneous|other income|other sectors|other expenses|other operating)/i;
+
+// The fixed asset accounts (1501 to 1527), and for some the words that, in what a business sells, mean it trades in them.
+export const isAssetAccount = (code: string | null | undefined) => !!code && /^15(0[1-9]|1\d|2[0-7])$/.test(code);
+const TRADES_IN: Record<string, RegExp> = {
+  '1511': /\b(cars?|vehicles?|motors?|auto|automobiles?|tokunbo)\b/i,
+  '1512': /\b(buses|bus|trucks?|lorr(y|ies)|tippers?|vehicles?)\b/i,
+  '1514': /\b(office equipment|printers?|photocopiers?)\b/i,
+  '1517': /\b(computers?|laptops?|phones?|tablets?|electronics?|gadgets?)\b/i,
+  '1519': /\b(furniture|chairs?|tables?|beds?|sofas?)\b/i,
+  '1513': /\b(tools?|generators?|equipment|machines?|machinery)\b/i,
+  '1506': /\b(heavy equipment|excavators?|cranes?|tractors?)\b/i,
+  '1515': /\b(medical equipment|hospital equipment)\b/i,
+};
+// Whether the business sells what this asset account holds: then a purchase may be stock.
+export function tradesIn(trade: Trade | null | undefined, code: string) {
+  const re = TRADES_IN[code];
+  if (!re || !trade || trade.sells === 'services') return false;
+  return re.test([trade.category, trade.activity, ...(Array.isArray(trade.examples) ? trade.examples : [])].filter(Boolean).join(' '));
+}
 
 // The other accounts the model offered: only real codes from the list, none twice, never the guess itself, at most four.
 export function alternativesOf(raw: unknown, codes: Map<string, Account>, guess: string | null): Alt[] {
@@ -128,6 +173,14 @@ export function calibrate(ctx: Ctx, raw: any[]): Answer[] {
     if (code && inflow && /^[567]/.test(code)) { conf = Math.min(conf, 0.7); notes.push('money in to an expense account (a refund?)'); }
     if (code && /^3/.test(code)) { conf = Math.min(conf, 0.6); notes.push('equity needs the owner to confirm'); }
     if (r.kind === 'private' || r.kind === 'owner' || r.kind === 'unknown') conf = Math.min(conf, 0.6);
+    // Fixed assets: below the capitalisation threshold it is an expense; a business that sells such things may be buying stock;
+    // money in for an asset of a kind the register does not hold needs a person.
+    if (isAssetAccount(code)) {
+      const cap = Number(ctx.org.capitalisation_threshold) || 0;
+      if (!inflow && cap > 0 && Math.abs(Number(line.amount)) < cap) { conf = Math.min(conf, 0.6); notes.push('below the capitalisation threshold'); }
+      if (!inflow && tradesIn(ctx.org.trade, code!)) { conf = Math.min(conf, 0.6); notes.push('the business sells such things: stock or an asset?'); }
+      if (inflow && !(ctx.assets || []).some((a) => a.class === code)) { conf = Math.min(conf, 0.5); notes.push('no asset of this kind in the register'); }
+    }
     // The model asking the owner something means it wants a person to decide: it never posts on its own then.
     if (r.question && String(r.question).trim()) conf = Math.min(conf, 0.79);
     // Following the payee's own history is the strongest evidence there is.

@@ -21,10 +21,10 @@ The year of assessment is the accounting year plus one (preceding-year basis, NT
 
 | Accounts for | Year of assessment | Rule book | Law |
 | --- | --- | --- | --- |
-| 2025 | 2026 | `ng-pit-pita-legacy@1.1.0` (`PITA`) | Personal Income Tax Act as amended: Sixth Schedule rates, consolidated relief allowance, minimum tax, capital gains tax kept apart |
+| 2024 and 2025 | 2025 and 2026 | `ng-pit-pita-legacy@1.2.0` (`PITA`) | Personal Income Tax Act as amended: Sixth Schedule rates, consolidated relief allowance, minimum tax, capital gains tax kept apart |
 | 2026 onwards | 2027 onwards | `ng-pit-nta-2025@1.1.0` (`NTA_2025_PIT`) | NTA 2025: Fourth Schedule rates, s.30 deductions, chargeable gains in total income, no minimum tax |
 
-The rule books are data in `tax_rulebooks` (files in `supabase/rulebooks/`), beside the CIT ones. `private.pit_rulebook(accounting year)` picks the PIT one; `private.rulebook(yoa)` now returns CIT rule books only. Earlier years are not prepared (the PRD leaves them out). Note that companies move to the NTA a year earlier (2025 accounts), as signed off for CIT; the PIT rule book puts 2025 income under the old law.
+The rule books are data in `tax_rulebooks` (files in `supabase/rulebooks/`), beside the CIT ones. `private.pit_rulebook(accounting year)` picks the PIT one; `private.rulebook(yoa)` now returns CIT rule books only. Years before 2024 accounts are not prepared. Version 1.2.0 of the PITA book is 1.1.0 (signed off on 4 November 2026) widened to 2024 accounts on TaxStreem's instruction of 14 November 2026, with the rules unchanged. Note that companies move to the NTA a year earlier (2025 accounts), as signed off for CIT; the PIT rule book puts 2025 income under the old law.
 
 The return is due on 31 March of the year after the accounting year ends, whatever month the year ends in (agreed 4 November 2026). A June 2026 year end is due on 31 March 2027.
 
@@ -34,15 +34,15 @@ TaxStreem (Kelechi Ibe) signed off both rule books on 4 November 2026: every poi
 
 | Point | Reading | Status |
 | --- | --- | --- |
-| P-1 | 2025 accounts under the old law; 2026 onwards under the NTA (rule book s.1) | agreed |
+| P-1 | 2024 and 2025 accounts under the old law; 2026 onwards under the NTA (rule book s.1) | agreed |
 | P-2 | Old law CRA: higher of ₦200,000 or 1%, plus 20%, of total income less pension, NHF, NHIS, life insurance and gratuity; home loan interest after it; minimum tax 1% of the same figure | agreed 4 Nov 2026 |
 | P-3 | Due 31 March after the year ends | agreed 4 Nov 2026 |
 | P-4 | Each return covers the person's share of the business and their other income, with their reliefs | agreed 4 Nov 2026 |
 | P-5 | NTA: no minimum tax for individuals; the minimum wage exemption (s.162(1)(t)) is for employment income only | agreed 4 Nov 2026 |
 | P-6 | NTA: gains on the business's disposals are shared like the profit and taxed with income; a net loss on disposals carries forward with the business loss (s.28) | agreed 4 Nov 2026 |
 | P-7 | Old law: gains kept out of income, with CGT at 10% shown for each person's share | agreed (rule book s.1) |
-| P-8 | Capital allowances for the business as one enterprise, shared in the profit-sharing ratio (First Schedule para 19(3)), business share of partly private assets (para 16); 2025 under the old initial and annual allowances with ₦10 retained, no two-thirds limit and no investment allowance for individuals | agreed 4 Nov 2026 |
-| P-9 | A business loss carries forward against the person's later business income only; no time limit under the NTA; losses brought into 2025 taken as entered | agreed 4 Nov 2026 |
+| P-8 | Capital allowances for the business as one enterprise, shared in the profit-sharing ratio (First Schedule para 19(3)), business share of partly private assets (para 16); 2024 and 2025 under the old initial and annual allowances with ₦10 retained, no two-thirds limit and no investment allowance for individuals | agreed 4 Nov 2026 |
+| P-9 | A business loss carries forward against the person's later business income only; no time limit under the NTA; losses brought into 2024 or 2025 taken as entered | agreed 4 Nov 2026 |
 | P-10 | Partners' pay, interest on capital and benefits charged in the accounts go to that partner before the split (s.15(1)(a)); a sole proprietor's own pay is added back to him | agreed 4 Nov 2026 |
 | P-11 | State: the office an active partner works from; where a dormant partner lives, or the NRS if abroad; where a sole proprietor lived on 1 January (Twelfth Schedule paras 4 and 6) | agreed 4 Nov 2026 |
 | P-12 | WHT credit notes held at the year end (1401), less those used in earlier returns, shared in the profit-sharing ratio | agreed 4 Nov 2026 |
@@ -112,7 +112,7 @@ Twelfth Schedule to the NTA 2025: a partner engaged in the business, the state o
 
 ### The chain (`private.pit_chain`)
 
-Years run from 2025 accounts (or the first year of the books) to the year running now. Each passes forward, person by person, losses and unused allowances, and the total of WHT credit notes used. An approved year passes what it was approved with; a year filed outside Counta is still computed so its amounts pass on. A person new to the business starts from the amounts entered for them.
+Years run from 2024 accounts (or the first year of the books) to the year running now. Each passes forward, person by person, losses and unused allowances, and the total of WHT credit notes used. An approved year passes what it was approved with; a year filed outside Counta is still computed so its amounts pass on. A person new to the business starts from the amounts entered for them.
 
 ### No document, no relief (`private.pit_relief_check`)
 

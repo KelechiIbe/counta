@@ -20,12 +20,28 @@ The menu leaves out what the package does not include, and a page opened by its 
 
 ## The Filing page
 
-The Filing page lists the years the business can file: up to four accounting years that have ended, none before the first year Counta prepares (2023 accounts for companies income tax, 2025 for personal income tax) or before the business began. For each year it shows the period, the due date and four steps.
+The Filing page lists the years the business can file: up to four accounting years that have ended, none before the first year Counta prepares (2023 accounts for companies income tax, 2024 for personal income tax) or before the business began. Each year is paid for and billed on its own. For each year it shows the period, the due date and these steps.
 
-1. Bank accounts: each account the business used in the year, with its balance at the start.
+1. Bank accounts: each account the business used in the year, with its balance at the close of the day before the year starts (a new account is dated that day).
 2. Statements: Excel, CSV or PDF from internet banking. A statement Counta can read by its columns goes in at once; its lines count towards the fee. A scanned PDF needs the AI reader, so before the year is paid for it is kept unread in the business's filing folder and counts 35 lines for each page.
-3. Other documents (optional): receipts for equipment or vehicles, loan letters, last year's accounts and tax receipts, under Documents.
-4. The fee: the statement lines dated in the year, the scanned pages at 35 lines a page, the count, the band it falls in and the price.
+3. Where the year starts (see below), shown when something has to be said about it.
+4. Other documents (optional): receipts for equipment or vehicles, loan letters, last year's accounts and tax receipts, under Documents.
+5. The fee: the statement lines dated in the year, the scanned pages at 35 lines a page, the count, the band it falls in and the price.
+
+A year whose return was due and has not been filed is marked late: the tax office may charge a penalty for late filing and interest on tax paid late. Counta's figures cover the tax only.
+
+## Where a year starts
+
+Bank statements show money moving, never what the business owned and owed when the year began, so each year's start is settled before its return can be approved (`private.filing_opening`):
+
+- The year before is done in Counta (paid for, or its return approved): its closing figures carry over, losses and tax values included, so that year's return is approved first.
+- The business began during the year (its incorporation or start date), or its books were moved into Counta at the year start (Move your books): nothing more is needed.
+- Otherwise the business says where the year starts (`public.filing_opening_save`), in one of three ways:
+  - Last year's figures: stock, receivables, prepayments, payables, loans, capital, retained earnings, and property, plant and equipment by class or item with its depreciation so far. They can be read from last year's accounts (a PDF or photo, kept under Documents) once a year is paid for (the `atlas` function, `read_opening`), and are checked and changed before saving. They post one journal on the day before the year starts; each asset joins the register with its depreciation; what the figures leave over, after the bank balances, stays in equity as opening balances to be confirmed. Entered again, the earlier figures are taken back first, unless depreciation has run on their assets.
+  - Nothing but the bank balances: the statements say the business had no other assets or liabilities at that date.
+  - No figures from last year: the statements say the opening position is the bank balances and that other assets and liabilities, if any, are not included.
+
+Losses brought forward and tax written-down values from last year's return go in the return itself, under Adjustments.
 
 The year is opened the first time someone uploads or pays for it. Anyone who keeps the books can upload; the owner or an admin pays by card (Flutterwave's page the first time, then the saved card). A partner or manager of an accounting firm that works for the business can pay with the firm's card from the same page; for a business the firm runs under full mandate, only the firm pays. Coming back from Flutterwave's page, Counta asks Flutterwave about the payment before saying it is paid. A payment started and not confirmed shows on the page with a Check it button.
 
@@ -53,6 +69,6 @@ A filing-only business whose sales pass ₦100 million in a year still has VAT t
 
 ## Where it lives
 
-- Database: `supabase/migrations/20261128000100_filing_only.sql` (orgs.filing_only, plans.kind, filing_prices, filing_orders, filing_scans, the filing functions); tests in `supabase/tests/sql/17_filing_only.sql`.
+- Database: `supabase/migrations/20261128000100_filing_only.sql` (orgs.filing_only, plans.kind, filing_prices, filing_orders, filing_scans, the filing functions); tests in `supabase/tests/sql/17_filing_only.sql`. Where a year starts, personal income tax from 2024 and the late mark: `20261129000100_prior_years_assets.sql` (filing_orders.opening), tests in `18_prior_years_assets.sql`.
 - Payments function: `filing_pay` and `filing_verify` (the fee goes through the plan payments, as subscription_charges of kind filing).
-- Screens: `src/pages/filing/Filing.tsx`, the hold and scan modes of `src/pages/accounting/BankStatement.tsx`, `src/admin/pages/FilingFees.tsx`.
+- Screens: `src/pages/filing/Filing.tsx`, `src/pages/filing/Opening.tsx`, the hold and scan modes of `src/pages/accounting/BankStatement.tsx`, `src/admin/pages/FilingFees.tsx`.
