@@ -176,12 +176,12 @@ function Reconcile({ account, onClose }: { account: any; onClose: () => void }) 
   );
 }
 
-export function AddAccount({ onClose }: { onClose: () => void }) {
+export function AddAccount({ onClose, defaultDate }: { onClose: () => void; defaultDate?: string }) {
   const { data: inv } = useInventory();
   const { orgId } = useSession();
   const toast = useToast();
   const qc = useQueryClient();
-  const [f, setF] = useState({ kind: 'bank', name: '', bank_name: '', account_number: '', account_name: inv?.org.name || '', opening_balance: '', opening_date: today(), location_id: '' });
+  const [f, setF] = useState({ kind: 'bank', name: '', bank_name: '', account_number: '', account_name: inv?.org.name || '', opening_balance: '', opening_date: defaultDate || today(), location_id: '' });
   async function go() {
     try {
       await rpc('open_bank_account', { p_org: orgId, p_kind: f.kind, p_name: f.name, p_meta: { bank_name: f.bank_name || null, account_number: f.account_number || null, account_name: f.account_name || null,

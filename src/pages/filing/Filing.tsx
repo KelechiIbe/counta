@@ -14,6 +14,7 @@ import { Icon } from '../../components/Icon';
 import { Alert, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import StatementUpload from '../accounting/BankStatement';
 import { AddAccount } from '../accounting/Banking';
+import { OpeningStep } from './Opening';
 
 const n0 = (n: number | null | undefined) => Number(n || 0).toLocaleString('en-NG');
 
@@ -114,6 +115,9 @@ function Year({ s, y, onChanged }: { s: FilingState; y: FilingYear; onChanged: (
   const held = y.scans.filter((x) => x.status === 'held');
   const extra = paid ? Number(y.order!.extra_due) : 0;
   const due = paid ? extra : Number(y.price || 0);
+  // Steps are numbered as shown: the start of the year appears only when something has to be said about it.
+  const showOpening = !!y.opening && y.opening.source !== 'began' && y.opening.source !== 'moved';
+  const dayBefore = (d: string) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() - 1); return x.toISOString().slice(0, 10); };
 
   // The year's order is opened the first time someone works on it.
   async function ensureOpen() {
@@ -183,6 +187,13 @@ function Year({ s, y, onChanged }: { s: FilingState; y: FilingYear; onChanged: (
         {paid && kind && <Link className="btn btn-secondary btn-sm" to={kind === 'pit' ? '/tax/pit' : '/tax/cit'}>Open the return</Link>}
       </div>
 
+      {y.late && kind && stage.label !== 'Filed' && (
+        <div className="card-pad" style={{ borderBottom: '1px solid var(--row)' }}>
+          <Alert kind="amber" icon="clock">The {RETURN_NAME[kind].toLowerCase()} for {y.year} was due on {fmtDay(y.due)}. Filed now it is late, and the tax office may
+            charge a penalty for late filing and interest on tax paid late. Counta's figures cover the tax only.</Alert>
+        </div>
+      )}
+
       {paid && (
         <div className="card-pad stack" style={{ gap: 10, borderBottom: '1px solid var(--row)' }}>
           <Alert kind="green" icon="check">Paid {N2(y.order!.amount)} {when(y.order!.paid_at)}{y.order!.payer === 'practice' && y.order!.practice ? ` by ${y.order!.practice}` : ''}
@@ -206,7 +217,7 @@ function Year({ s, y, onChanged }: { s: FilingState; y: FilingYear; onChanged: (
 
       <Step n={1} title="Bank accounts" done={s.accounts.length > 0}
         right={s.can_upload && <button className="btn btn-ghost btn-sm" onClick={() => setAdding(true)}><Icon name="plus" size={14} />Add an account</button>}>
-        {!s.accounts.length ? <div className="muted" style={{ fontSize: 13 }}>Add each bank account the business used in {y.year}, with its balance at the start of the year.</div>
+        {!s.accounts.length ? <div className="muted" style={{ fontSize: 13 }}>Add each bank account the business used in {y.year}, with its balance at the close of {fmtDay(dayBefore(y.from))}.</div>
           : s.accounts.map((a) => (
             <div key={a.id} className="row wrap" style={{ gap: 8, justifyContent: 'space-between', fontSize: 14 }}>
               <span>{a.name}<span className="faint">{a.bank_name ? ` · ${a.bank_name}` : ''}{a.last4 ? ` •••• ${a.last4}` : ''}</span></span>
@@ -239,13 +250,19 @@ function Year({ s, y, onChanged }: { s: FilingState; y: FilingYear; onChanged: (
         {paid && held.length > 0 && <Alert kind="blue" icon="info">Read the scanned statement{held.length === 1 ? '' : 's'} so their lines reach the books. The real number of lines settles the fee.</Alert>}
       </Step>
 
-      <Step n={3} title="Other documents" done={false} optional>
+      {showOpening && (
+        <Step n={3} title={`Where ${y.year} starts`} done={!!y.opening?.done}>
+          <OpeningStep s={s} y={y} onChanged={onChanged} />
+        </Step>
+      )}
+
+      <Step n={showOpening ? 4 : 3} title="Other documents" done={false} optional>
         <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>Receipts for equipment or vehicles bought, loan letters, last year's accounts and tax receipts help Counta get the return right.
           Add them under <Link to="/documents">Documents</Link>.</div>
       </Step>
 
       {!paid && (
-        <Step n={4} title="The fee" done={false}>
+        <Step n={showOpening ? 5 : 4} title="The fee" done={false}>
           {!kind ? <div className="muted" style={{ fontSize: 13 }}>The business is exempt from income tax for {y.year}, so there is nothing to pay or file.</div> : (
             <>
               <div className="filing-count" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
@@ -273,7 +290,7 @@ function Year({ s, y, onChanged }: { s: FilingState; y: FilingYear; onChanged: (
 
       {upload && <StatementUpload account={{ id: upload.account.id, name: upload.account.name, account_number: upload.account.last4 }}
         hold={paid ? undefined : { year: y.year }} scan={upload.scan} onClose={() => { setUpload(null); void onChanged(); }} />}
-      {adding && <AddAccount onClose={() => setAdding(false)} />}
+      {adding && <AddAccount defaultDate={dayBefore(y.from)} onClose={() => setAdding(false)} />}
     </div>
   );
 }

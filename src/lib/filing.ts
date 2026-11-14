@@ -10,8 +10,14 @@ export type FilingScan = { id: string; file_name: string | null; pages: number; 
 export type FilingOrder = { id: string; status: 'open' | 'paid'; amount: number | null; counted: number | null; lines: number | null; estimate: number | null;
   band_up_to: number | null; paid_at: string | null; payer: 'business' | 'practice' | null; practice: string | null; true_count: number | null;
   extra_due: number; extra_paid: number };
+// Where a year starts: the year before in Counta (approved first), the business beginning in the year, books moved in, last
+// year's figures entered, or the owner's word that there was nothing but the bank balances (or that no figures exist).
+export type OpeningSource = 'began' | 'previous_year' | 'moved' | 'figures' | 'bank_only' | 'no_figures';
+export type FilingOpening = { as_of: string; needed: boolean; done: boolean; source: OpeningSource | null; previous_year?: number;
+  by_name?: string | null; at?: string | null; journal_ref?: string | null; assets?: number; lines?: { key: string; amount: number }[] | null;
+  asset_rows?: { class_account: string; name: string; cost: number; accumulated: number; in_use_from: string | null }[] };
 export type FilingYear = {
-  year: number; kind: FilingKind | null; from: string; to: string; due: string;
+  year: number; kind: FilingKind | null; from: string; to: string; due: string; late?: boolean; opening?: FilingOpening;
   lines: number; scan_pages: number; estimate: number; counted: number; band_up_to: number | null; price: number | null;
   order: FilingOrder | null; scans: FilingScan[];
   statements: { file_name: string | null; account: string; from: string | null; to: string | null; lines: number | null; at: string }[];
@@ -52,3 +58,44 @@ export type PayResult = { ok?: boolean; error?: string; action?: string; link?: 
 export const filingPay = (orgId: string, year: number, payer: 'business' | 'practice') =>
   edge<PayResult>('payments', { action: 'filing_pay', org_id: orgId, year, payer, use_saved: true });
 export const filingVerify = (orgId: string, txRef: string) => edge<PayResult>('payments', { action: 'filing_verify', org_id: orgId, tx_ref: txRef });
+
+// The lines of last year's statement of financial position the Filing page asks for, in the order shown; bank balances come
+// from the bank accounts themselves. Retained earnings alone can be below zero (accumulated losses).
+export const OPENING_LINES: { group: 'owned' | 'owed' | 'capital'; key: string; label: string; hint?: string }[] = [
+  { group: 'owned', key: 'inventory', label: 'Stock (inventories)' },
+  { group: 'owned', key: 'trade_receivables', label: 'Customers who owed the business', hint: 'Trade receivables' },
+  { group: 'owned', key: 'other_receivables', label: 'Other money owed to the business', hint: 'Deposits, staff loans, other receivables' },
+  { group: 'owned', key: 'prepayments', label: 'Prepayments', hint: 'Rent or insurance paid ahead' },
+  { group: 'owned', key: 'director_receivable', label: 'Owed by directors' },
+  { group: 'owned', key: 'investments', label: 'Investments' },
+  { group: 'owed', key: 'trade_payables', label: 'Suppliers the business owed', hint: 'Trade payables' },
+  { group: 'owed', key: 'accruals', label: 'Expenses owed but not yet paid', hint: 'Accruals' },
+  { group: 'owed', key: 'other_payables', label: 'Other money the business owed' },
+  { group: 'owed', key: 'director_payable', label: 'Owed to directors', hint: "Directors' current account" },
+  { group: 'owed', key: 'tax_payable', label: 'Income tax still to pay' },
+  { group: 'owed', key: 'loans_short', label: 'Short-term loans' },
+  { group: 'owed', key: 'loans_long', label: 'Long-term bank loans' },
+  { group: 'owed', key: 'shareholder_loans', label: 'Loans from shareholders' },
+  { group: 'capital', key: 'share_capital', label: 'Share capital', hint: "Or the proprietor's capital" },
+  { group: 'capital', key: 'share_premium', label: 'Share premium' },
+  { group: 'capital', key: 'deposit_for_shares', label: 'Deposit for shares' },
+  { group: 'capital', key: 'retained_earnings', label: 'Retained earnings', hint: 'Put a minus sign for accumulated losses' },
+];
+export const OWNED_KEYS = OPENING_LINES.filter((l) => l.group === 'owned').map((l) => l.key);
+
+export type OpeningAsset = { class_account: string; name: string; cost: string; accumulated: string; in_use_from: string };
+// What the figures leave over after the bank balances: assets less what was owed and the capital. When the figures are
+// complete it equals the bank balances at the start of the year.
+export function openingLeftOver(lines: Record<string, string>, assets: OpeningAsset[], num: (v: string) => number | null): number {
+  let left = 0;
+  for (const l of OPENING_LINES) {
+    const v = num(lines[l.key] || '') || 0;
+    left += l.group === 'owned' ? v : -v;
+  }
+  for (const a of assets) left += (num(a.cost) || 0) - (num(a.accumulated) || 0);
+  return Math.round(left * 100) / 100;
+}
+
+export const saveOpening = (orgId: string, year: number, p: Record<string, unknown>) =>
+  rpc<FilingState>('filing_opening_save', { p_org: orgId, p_year: year, p });
+

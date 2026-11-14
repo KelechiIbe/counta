@@ -202,7 +202,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
         <Group to="/inventory" label="Inventory" icon="package" active={p.startsWith('/inventory')} onClose={onClose} rail={rail} drawer={drawer} subs={invSubs} show={(w.has_stock || populated) && !off('inventory')} />
         <Group to="/accounting/inbox" label="Accounting" icon="book" active={p.startsWith('/accounting')} onClose={onClose} rail={rail} drawer={drawer} show={money}
           subs={[['/accounting/inbox', 'Books inbox', questions], ['/accounting/banking', 'Banking', n('bank_lines')], ['/accounting/statements', 'Financial statements'],
-            ['/accounting/ledgers', 'Ledgers & reports'], ['/accounting/cfo', 'CFO pack'], ['/accounting/journals', 'Journals'], ['/accounting/assets', 'Fixed assets', Number(ib?.assets_to_confirm || 0)],
+            ['/accounting/ledgers', 'Ledgers & reports'], ['/accounting/cfo', 'CFO pack'], ['/accounting/journals', 'Journals'], ['/accounting/assets', 'Fixed assets', Number(ib?.assets_to_confirm || 0) + Number(ib?.asset_sales_to_match || 0)],
             ['/accounting/close', 'Period close'], ['/accounting/migrate', 'Move your books']]} />
         <Group to={taxSubs[0][0]} label="Tax returns" icon="percent" active={p.startsWith('/tax/') || p === '/tax'} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'file_tax')}
           subs={taxSubs} />

@@ -37,12 +37,23 @@ The order is fixed, cheapest and safest first:
 | Money in posted to an expense account | 70% |
 | Any equity account (capital, drawings, dividends) | 60% |
 | A payment to a private individual, the owner or an unknown name | 60% |
+| A payment to a fixed asset account below the business's capitalisation threshold | 60% |
+| A payment to a fixed asset account when the business sells such things (a car dealer buying a car) | 60% |
+| Money in to a fixed asset account when the register holds no asset of that kind | 50% |
 | An account that goes against how this payee was posted before | 75% |
 | An account that does not exist in the chart | never posts; becomes a question |
 | The model asked the owner a question | 79% (never posts) |
 | No guess, only alternatives | the first alternative becomes a 30% guess |
 
 A line the model skipped still gets a question, so nothing is lost. If the model fails, the remaining lines go to suspense with a question each and the run is logged with the error.
+
+The bookkeeper is told what the business does (its category, whether it sells goods or services, its principal activity and the examples it gave at sign-up), its capitalisation threshold and the assets in its register. Equipment, vehicles, computers, furniture and building work bought for the business's own use at or above the threshold go to the fixed asset account for their class; what the business buys to resell or uses up in its trade is stock or cost of sales. Money in from selling one of the business's own assets goes to the asset account of the asset sold.
+
+## Fixed assets from the bank
+
+A bank or wallet line whose money ends up in a fixed asset account (1501 to 1527), whether the bookkeeper posted it, a rule did, or a person answered a question or corrected the account, opens a register record waiting for confirmation, as a bill's asset line does (`private.bank_asset_sync`, from a statement-level trigger on `journal_lines`). It is named by the posting, dated the day of the payment and linked to the line. The bank line's own journals decide: moved to another asset account, the record moves; moved out of the asset accounts, a record still waiting is withdrawn, and one already confirmed (or joined to another) stops the move with a message. On confirmation the person can record an old asset given in part exchange (it is disposed of at the value agreed, which is added to the new asset's cost), join the record to another asset (a second instalment, import duty, installation: `merge_asset`), or treat it as an expense.
+
+Money in that ends up in a fixed asset account waits in `asset_sales` to be matched to the asset sold (`match_asset_sale`): depreciation runs to the day of the sale, cost and depreciation leave, and the gain or loss posts, with the money already in the asset account clearing. Money that was not a sale moves to its own account (`asset_sale_elsewhere`). Assets to confirm and sales to match count in the books inbox and the menu, and stop the month closing. Payments posted to asset accounts before this was built got their records in months not closed (`private.bank_asset_backfill`).
 
 ## Posting rules
 

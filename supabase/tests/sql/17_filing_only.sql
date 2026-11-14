@@ -150,7 +150,7 @@ begin
   perform public.filing_scan_hold(o, jsonb_build_object('year', 2025, 'path', pg_temp.scan(o, 2025, 'scan-2.pdf'), 'pages', 1, 'bank_account_id', tests.id('acct')));
   perform tests.as_user(tests.id('femi'));
   s := public.filing_state(f);
-  assert s->>'kind' = 'pit' and (select array_agg((x->>'year')::int) from jsonb_array_elements(s->'years') x) = array[2025], 'filing_quote: PIT from 2025';
+  assert s->>'kind' = 'pit' and (select array_agg((x->>'year')::int) from jsonb_array_elements(s->'years') x) = array[2025, 2024], 'filing_quote: PIT from 2024';
   perform public.import_bank_lines(f, tests.id('facct'), pg_temp.lines(12, '2025-06-01'), '{"file_name": "june.csv"}');
   y := public.filing_state(f)->'years'->0;
   assert y->>'kind' = 'pit' and (y->>'counted')::int = 12 and y->'band_up_to' = 'null'::jsonb and (y->>'price')::numeric = 800 and y->>'due' = '2026-03-31',
@@ -346,6 +346,11 @@ begin
   perform tests.as_postgres();
   select * into fo from filing_orders where id = fo.id;
   assert fo.extra_due = 0 and fo.extra_paid = 6000 and fo.extra_paid_at is not null and fo.amount = 9000, 'filing_scans_settled: settled';
+  -- 2024 is not done in Counta, so 2025 needs its start (release 5).
+  perform tests.throws(format($q$update cit_years set status = 'approved' where org_id = %L and accounting_year = 2025$q$, o), '%Say where 2025 starts%');
+  perform tests.as_user(tests.id('ada'));
+  perform public.filing_opening_save(o, 2025, '{"kind": "bank_only"}');
+  perform tests.as_postgres();
   update cit_years set status = 'approved' where org_id = o and accounting_year = 2025;
   assert (select status from cit_years where org_id = o and accounting_year = 2025) = 'approved', 'filing_scans_settled: the return can be approved';
   update cit_years set status = 'draft' where org_id = o and accounting_year = 2025;

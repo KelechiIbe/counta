@@ -2,14 +2,15 @@
   "$schema": "https://taxstreem.dev/schemas/pit-business-config-v1.json",
   "meta": {
     "config_id": "ng-pit-pita-legacy",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "regime": "PITA",
     "governing_law": "Personal Income Tax Act (as amended to the Finance Act 2023)",
-    "applies_to": "Accounts for years ending in 2025 (year of assessment 2026)",
+    "applies_to": "Accounts for years ending in 2024 and 2025 (years of assessment 2025 and 2026)",
     "sources": [
       "TaxStreem PIT rule book, s.1, s.2, s.4, s.5, s.9",
       "How personal tax reliefs are calculated in our engine (YOA 2025)",
-      "TaxStreem answers and sign-off of 4 November 2026"
+      "TaxStreem answers and sign-off of 4 November 2026",
+      "TaxStreem answer of 14 November 2026: the same rules for 2024 accounts"
     ]
   },
   "entity_kinds": {
@@ -173,8 +174,8 @@
   "configurable_flags": {
     "flags": {
       "P-1": {
-        "title": "Old law for 2025",
-        "reading": "Accounts for 2025 (filed in 2026) use the old rates and reliefs, with chargeable gains left out of taxable profit.",
+        "title": "Old law for 2024 and 2025",
+        "reading": "Accounts for 2024 and 2025 (filed in 2025 and 2026) use the old rates and reliefs, with chargeable gains left out of taxable profit.",
         "source": "PIT rule book s.1, s.9",
         "status": "agreed"
       },
@@ -204,13 +205,13 @@
       },
       "P-8": {
         "title": "Capital allowances",
-        "reading": "Allowances are worked out for the business as one enterprise and shared in the profit-sharing ratio at the year end (First Schedule para 19(3)). An asset used partly for private life gets the business share of its allowance (para 16). 2025 accounts use the old initial and annual allowances with ₦10 kept on each asset, with no two-thirds restriction and no investment allowance for individuals; 2026 accounts onwards the First Schedule rates on cost with 1% kept.",
+        "reading": "Allowances are worked out for the business as one enterprise and shared in the profit-sharing ratio at the year end (First Schedule para 19(3)). An asset used partly for private life gets the business share of its allowance (para 16). 2024 and 2025 accounts use the old initial and annual allowances with ₦10 kept on each asset, with no two-thirds restriction and no investment allowance for individuals; 2026 accounts onwards the First Schedule rates on cost with 1% kept.",
         "source": "NTA 2025 First Schedule paras 16, 19, 22, 23; PITA (as amended)",
         "status": "agreed"
       },
       "P-9": {
         "title": "Losses",
-        "reading": "A business loss is carried forward against the person's later business income only, never set against other income. Under the NTA there is no time limit (s.28(3)). Losses brought into 2025 accounts are taken as entered; the four-year limit of the old law is for the person to observe.",
+        "reading": "A business loss is carried forward against the person's later business income only, never set against other income. Under the NTA there is no time limit (s.28(3)). Losses brought into 2024 or 2025 accounts are taken as entered; the four-year limit of the old law is for the person to observe.",
         "source": "NTA 2025 s.15(2), s.28(3); PITA s.35",
         "status": "agreed"
       },
