@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { can, useInventory, useSession } from './state/session';
 import type { Inventory } from './lib/types';
+import { planOff, useFeatures, type Feature } from './lib/features';
 import { refreshPushSubscription, store } from './lib/pwa';
 import { Spinner } from './components/ui';
 import { UpdateNotice } from './components/UpdateNotice';
@@ -57,6 +58,7 @@ const Journals = lazy(() => import('./pages/accounting/Journals'));
 const Assets = lazy(() => import('./pages/accounting/Assets'));
 const Close = lazy(() => import('./pages/accounting/Close'));
 const Tax = lazy(() => import('./pages/accounting/Tax'));
+const Filing = lazy(() => import('./pages/filing/Filing'));
 const PublicDoc = lazy(() => import('./pages/public/Public').then((m) => ({ default: m.PublicDoc })));
 const ShopPage = lazy(() => import('./pages/public/Public').then((m) => ({ default: m.ShopPage })));
 const Sso = lazy(() => import('./pages/public/Sso'));
@@ -95,9 +97,37 @@ const RULES: { prefix: string; ok: (i: Inventory) => boolean; who: string }[] = 
   { prefix: '/sell', ok: (i) => can(i, 'record_sales') || money(i), who: 'people who record sales' },
   { prefix: '/payments', ok: (i) => can(i, 'record_sales') || money(i), who: 'people who record sales or make payments' },
 ];
+// Parts of the app a plan can leave out (the Annual filing package keeps only the books and the income tax return).
+const AREAS: { prefix: string; feature: Feature; what: string }[] = [
+  { prefix: '/sell', feature: 'selling', what: 'Selling' }, { prefix: '/payments', feature: 'payments', what: 'Payments' },
+  { prefix: '/purchases', feature: 'purchases', what: 'Bills and vendors' }, { prefix: '/inventory', feature: 'inventory', what: 'Inventory' },
+  { prefix: '/tax/vat', feature: 'vat_wht', what: 'The monthly VAT return' }, { prefix: '/tax/wht', feature: 'vat_wht', what: 'Withholding tax schedules' },
+];
 function Gate({ children }: { children: ReactNode }) {
   const { data: inv } = useInventory();
+  const feats = useFeatures().data;
   const loc = useLocation();
+  // A filing-only business starts on its Filing page.
+  if (inv?.org.filing_only && loc.pathname === '/home') return <Navigate to="/filing" replace />;
+  // Who works where (Locations & staff) stays open whatever the plan.
+  const area = loc.pathname.startsWith('/inventory/locations') ? undefined : AREAS.find((a) => loc.pathname === a.prefix || loc.pathname.startsWith(a.prefix + '/'));
+  if (area && inv && planOff(feats, area.feature)) {
+    const filing = !!inv.org.filing_only;
+    return (
+      <div className="container" style={{ maxWidth: 560, paddingTop: 48 }}>
+        <div className="card card-pad stack" style={{ gap: 10, textAlign: 'center' }} data-testid="plan-off">
+          <b style={{ fontSize: 18 }}>{area.what} {filing ? 'is not part of filing-only' : 'is not in your plan'}</b>
+          <div className="muted" style={{ fontSize: 14, lineHeight: 1.5 }}>{filing
+            ? `${inv.org.name} is on Annual filing: Counta prepares its yearly income tax return from its bank statements. ${area.what} comes with a Counta plan.`
+            : 'The owner or an admin can move the business to a plan that includes it.'}</div>
+          <div className="row" style={{ gap: 8, justifyContent: 'center' }}>
+            {filing && <Link className="btn btn-primary btn-sm" to="/filing">Go to Filing</Link>}
+            <Link className="btn btn-secondary btn-sm" to="/settings/subscription">See the plans</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
   const rule = RULES.find((r) => loc.pathname.startsWith(r.prefix));
   if (!rule || !inv || rule.ok(inv)) return <>{children}</>;
   return (
@@ -212,6 +242,7 @@ export default function App() {
         <Route path="/tax/wht" element={<Tax tab="wht" />} />
         <Route path="/tax/cit" element={<Tax tab="cit" />} />
         <Route path="/tax/pit" element={<Tax tab="pit" />} />
+        <Route path="/filing" element={<Filing />} />
         <Route path="/inventory" element={<Overview />} />
         <Route path="/inventory/items" element={<Items />} />
         <Route path="/inventory/receive" element={<Receive />} />

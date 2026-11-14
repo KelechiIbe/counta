@@ -135,7 +135,7 @@ export type ClientDetail = {
   opposing_parties?: { id: string; name: string; rc_number: string | null; note: string | null }[];
 };
 export type Billing = {
-  clients: { client_id: string; org_id: string; business_name: string; billing: string; plan: { id: string; name: string } | null;
+  clients: { client_id: string; org_id: string; business_name: string; billing: string; plan: { id: string; name: string } | null; filing_only?: boolean; managed?: boolean;
     subscription: { status: string; billing: string; period_end: string | null; cancel_at_period_end: boolean; paid_by_us: boolean; paid_by_other: boolean } | null }[];
   cards: { id: string; last4: string; brand: string; expiry: string; created_at: string }[];
   charges: { id: string; tx_ref: string; business_name: string; plan: string; billing: string; amount: number; kind: string; status: string; error: string | null; paid_at: string | null; created_at: string }[];

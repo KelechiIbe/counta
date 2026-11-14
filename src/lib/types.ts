@@ -47,6 +47,8 @@ export interface Org {
   professional_services?: boolean; legal_form?: string | null; revenue_account?: string | null;
   managed_by?: string | null; director_confirmed_at?: string | null; read_only_at?: string | null; retain_until?: string | null;
   send_mode?: 'send' | 'download_only';
+  // On the Annual filing package: the yearly income tax return only, paid year by year on the Filing page.
+  filing_only?: boolean;
 }
 export interface Location { id: string; org_id: string; name: string; code: string; address: string | null; is_main: boolean; state?: string | null; lga?: string | null;
   city?: string | null; postcode?: string | null; }

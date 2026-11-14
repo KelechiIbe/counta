@@ -14,6 +14,7 @@ import { usePracticesMine } from '../practice/api';
 import { cap, useMode, useWords } from '../lib/wording';
 import { useVatRate } from '../lib/vat';
 import { INCOME_TAX_LABEL, incomeTaxKind } from '../lib/tax';
+import { planOff, useFeatures } from '../lib/features';
 
 // ---------- location picker state shared by Overview, Items and Insights ----------
 const LocCtx = createContext<{ loc: string; setLoc: (l: string) => void }>({ loc: 'ALL', setLoc: () => {} });
@@ -29,7 +30,7 @@ const TITLES: Record<string, string> = {
   '/accounting/inbox': 'Books inbox', '/accounting/banking': 'Banking & reconciliation', '/accounting/statements': 'Financial statements',
   '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close',
   '/tax': 'Tax returns', '/tax/vat': 'VAT returns', '/tax/wht': 'Withholding tax', '/tax/cit': 'Companies income tax', '/tax/pit': 'Income tax',
-  '/accounting/journals': 'Journals', '/accounting/migrate': 'Move your books', '/assistant': 'AI Assistant', '/settings': 'Settings', '/settings/subscription': 'Subscription', '/integrations': 'Integrations', '/documents': 'Documents',
+  '/accounting/journals': 'Journals', '/accounting/migrate': 'Move your books', '/filing': 'Filing', '/assistant': 'AI Assistant', '/settings': 'Settings', '/settings/subscription': 'Subscription', '/integrations': 'Integrations', '/documents': 'Documents',
 };
 export const titleFor = (path: string) => TITLES[path] || TITLES[Object.keys(TITLES).filter((k) => path.startsWith(k + '/')).sort((x, y) => y.length - x.length)[0]] || 'Counta';
 const PICKER = new Set(['/inventory', '/inventory/items', '/inventory/insights']);
@@ -147,6 +148,13 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
   const at = useAttention().data;
   const n = (k: keyof NonNullable<typeof at>) => Number(at?.[k] || 0);
   const itKind = incomeTaxKind(inv?.org as any);
+  // Parts the business's plan leaves out are not in the menu; a filing-only business starts on its Filing page.
+  const feats = useFeatures().data;
+  const off = (k: Parameters<typeof planOff>[1]) => planOff(feats, k);
+  const filing = !!inv?.org.filing_only;
+  const itPath = itKind === 'pit' ? '/tax/pit' : '/tax/cit';
+  const taxSubs: Sub[] = [...(off('vat_wht') ? [] : [['/tax/vat', 'VAT', n('vat') + n('schedules_draft') + n('receipts_vat')], ['/tax/wht', 'Withholding tax', n('wht')]] as Sub[]),
+    [itPath, INCOME_TAX_LABEL[itKind], n('cit')]];
   const external = (label: string, icon: string) => (
     <a className={'nav-item' + (rail ? ' rail-item' : '')} href={MAIN_APP} target="_blank" rel="noreferrer" title={label + ' opens in the main TaxStreem app'} aria-label={rail ? label : undefined}>
       <Icon name={icon} size={20} color="#6B7280" />{!rail && <><span style={{ flex: 1 }}>{label}</span><Icon name="external" size={14} color="#9CA3AF" /></>}
@@ -177,37 +185,37 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
       </div>
       <div className="sidebar-section">{rail ? '' : 'MENU'}</div>
       <nav className="nav">
-        <Group to="/home" label="Home" icon="house" active={p === '/home'} onClose={onClose} rail={rail} drawer={drawer} />
+        {filing ? <Group to="/filing" label="Filing" icon="percent" active={p === '/filing'} onClose={onClose} rail={rail} drawer={drawer} />
+          : <Group to="/home" label="Home" icon="house" active={p === '/home'} onClose={onClose} rail={rail} drawer={drawer} />}
         {/* A business that only does services bills its clients: no till, orders or shop in the way. */}
-        <Group to={w.has_stock ? '/sell/till' : '/sell/sales'} label={w.has_stock ? 'Sell' : 'Billing'} icon="receipt" active={p.startsWith('/sell')} onClose={onClose} rail={rail} drawer={drawer} show={can(inv, 'record_sales') || money}
+        <Group to={w.has_stock ? '/sell/till' : '/sell/sales'} label={w.has_stock ? 'Sell' : 'Billing'} icon="receipt" active={p.startsWith('/sell')} onClose={onClose} rail={rail} drawer={drawer} show={(can(inv, 'record_sales') || money) && !off('selling')}
           subs={w.has_stock
             ? [['/sell/till', 'Till'], ['/sell/sales', `${cap(w.sales)} & invoices`, n('invoices_overdue')], ['/sell/customers', cap(w.customers)], ['/sell/orders', 'Orders & deliveries', n('orders_to_confirm')],
               ['/sell/recurring', 'Recurring invoices'], ['/sell/price-lists', 'Price lists'], ['/sell/shop', 'Online shop']]
             : [...(mode.walkIn ? [['/sell/till', 'Till'] as [string, string]] : []), ['/sell/sales', 'Invoices', n('invoices_overdue')], ['/sell/recurring', 'Recurring invoices'], ['/sell/customers', cap(w.customers)], ['/sell/price-lists', 'Price lists']]} />
-        <Group to="/payments" label="Payments" icon="card" active={p.startsWith('/payments')} onClose={onClose} rail={rail} drawer={drawer} show={can(inv, 'record_sales') || money}
+        <Group to="/payments" label="Payments" icon="card" active={p.startsWith('/payments')} onClose={onClose} rail={rail} drawer={drawer} show={(can(inv, 'record_sales') || money) && !off('payments')}
           subs={[['/payments', 'Wallet & payments', Number(ib?.payouts_to_approve || 0) + n('tax_wallet')]]} />
         {(n('approvals') > 0 || n('approvals_mine') > 0 || ['owner', 'admin'].includes(inv?.me.role || '') || !!inv?.me.practice_id)
           && link('/approvals', 'Approvals', 'check', undefined, n('approvals'))}
-        <Group to="/purchases/bills" label="Purchases" icon="file" active={p.startsWith('/purchases')} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'approve_pos')}
+        <Group to="/purchases/bills" label="Purchases" icon="file" active={p.startsWith('/purchases')} onClose={onClose} rail={rail} drawer={drawer} show={(money || can(inv, 'approve_pos')) && !off('purchases')}
           subs={[['/purchases/bills', 'Bills', Number(ib?.bills_to_approve || 0) + n('bills_overdue')], ['/purchases/vendors', 'Vendors']]} />
-        <Group to="/inventory" label="Inventory" icon="package" active={p.startsWith('/inventory')} onClose={onClose} rail={rail} drawer={drawer} subs={invSubs} show={w.has_stock || populated} />
+        <Group to="/inventory" label="Inventory" icon="package" active={p.startsWith('/inventory')} onClose={onClose} rail={rail} drawer={drawer} subs={invSubs} show={(w.has_stock || populated) && !off('inventory')} />
         <Group to="/accounting/inbox" label="Accounting" icon="book" active={p.startsWith('/accounting')} onClose={onClose} rail={rail} drawer={drawer} show={money}
           subs={[['/accounting/inbox', 'Books inbox', questions], ['/accounting/banking', 'Banking', n('bank_lines')], ['/accounting/statements', 'Financial statements'],
             ['/accounting/ledgers', 'Ledgers & reports'], ['/accounting/cfo', 'CFO pack'], ['/accounting/journals', 'Journals'], ['/accounting/assets', 'Fixed assets', Number(ib?.assets_to_confirm || 0)],
             ['/accounting/close', 'Period close'], ['/accounting/migrate', 'Move your books']]} />
-        <Group to="/tax/vat" label="Tax returns" icon="percent" active={p.startsWith('/tax/') || p === '/tax'} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'file_tax')}
-          subs={[['/tax/vat', 'VAT', n('vat') + n('schedules_draft') + n('receipts_vat')], ['/tax/wht', 'Withholding tax', n('wht')],
-            [itKind === 'cit' ? '/tax/cit' : '/tax/pit', INCOME_TAX_LABEL[itKind], n('cit')]]} />
+        <Group to={taxSubs[0][0]} label="Tax returns" icon="percent" active={p.startsWith('/tax/') || p === '/tax'} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'file_tax')}
+          subs={taxSubs} />
         {link('/documents', 'Documents', 'folder')}
         {external('Taxes', 'landmark')}
-        {link('/assistant', 'AI Assistant', 'martina')}
+        {!off('martina') && link('/assistant', 'AI Assistant', 'martina')}
       </nav>
       <div className="sidebar-section" style={{ paddingTop: 24 }}>{rail ? '' : 'MORE'}</div>
       <nav className="nav">
         {link('/integrations', 'Integrations', 'blocks')}
         {can(inv, 'manage_settings') && link('/settings/subscription', 'Subscription', 'card')}
         {link('/settings', 'Settings', 'settings', undefined, n('tax_id') + n('accountant_requests'))}
-        {link('/m', 'Phone app', 'phone', () => store.set('counta-view', 'phone'))}
+        {!filing && link('/m', 'Phone app', 'phone', () => store.set('counta-view', 'phone'))}
       </nav>
       <div style={{ marginTop: 'auto', padding: '16px 0 12px', flex: 'none', position: 'relative' }}>
         {menu && (

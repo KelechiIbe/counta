@@ -12,7 +12,8 @@ import { Card, grid, PageHead } from '../ui';
 
 const usePlans = () => useQuery({ queryKey: ['admin-plans'], queryFn: () => rpc<any>('admin_plans') });
 const FEATURE_LABEL: Record<string, string> = { payments: 'Payments', bulk_payments: 'Bulk payments', martina: 'Martina', phone_calls: 'Phone calls', payment_voice: 'Spoken announcements',
-  ai_reading: 'AI reading', email: 'Email to customers', whatsapp: 'WhatsApp to customers', bank_feeds: 'Bank feeds', supplier_portal: 'Supplier invoice portal' };
+  ai_reading: 'AI reading', email: 'Email to customers', whatsapp: 'WhatsApp to customers', bank_feeds: 'Bank feeds', supplier_portal: 'Supplier invoice portal',
+  selling: 'Selling (sales, invoices, till, customers, shop)', purchases: 'Purchases (bills and vendors)', inventory: 'Inventory', vat_wht: 'VAT and WHT returns' };
 const METER_LABEL: Record<string, string> = { sales: 'Sales recorded', ai_reads: 'Documents read by AI', assistant: 'Questions to Martina', call_minutes: 'Phone call minutes',
   whatsapp: 'WhatsApp messages', emails: 'Emails', tin_checks: 'Tax ID checks', supplier_invoices: 'Supplier invoices', payouts: 'Payouts', users: 'Team members (now)',
   locations: 'Branches (now)', bank_feeds: 'Linked bank accounts (now)' };
@@ -33,9 +34,10 @@ export default function Plans() {
               <div key={p.id} className="card card-pad stack" style={{ gap: 8 }}>
                 <div className="row" style={{ justifyContent: 'space-between', gap: 6 }}>
                   <b style={{ fontSize: 16 }}>{p.name}</b>
-                  <span className="row" style={{ gap: 4 }}>{p.is_default && <span className="chip t-blue">default</span>}{!p.public && <span className="chip t-grey">hidden</span>}{!p.active && <span className="chip t-grey">off</span>}</span>
+                  <span className="row" style={{ gap: 4 }}>{p.kind === 'filing' && <span className="chip t-purple">filing-only</span>}{p.is_default && <span className="chip t-blue">default</span>}{!p.public && p.kind !== 'filing' && <span className="chip t-grey">hidden</span>}{!p.active && <span className="chip t-grey">off</span>}</span>
                 </div>
-                <div><span style={{ fontSize: 20, fontWeight: 700 }}>{Number(p.price_month) > 0 ? N2(p.price_month) : 'Free'}</span>{Number(p.price_month) > 0 && <span className="muted" style={{ fontSize: 12 }}> a month · {N2(p.price_year)} a year</span>}</div>
+                {p.kind === 'filing' ? <div className="muted" style={{ fontSize: 13 }}>Paid year by year, priced by the year's transactions (Filing fees).</div>
+                  : <div><span style={{ fontSize: 20, fontWeight: 700 }}>{Number(p.price_month) > 0 ? N2(p.price_month) : 'Free'}</span>{Number(p.price_month) > 0 && <span className="muted" style={{ fontSize: 12 }}> a month · {N2(p.price_year)} a year</span>}</div>}
                 <div className="muted" style={{ fontSize: 12.5 }}>{p.businesses} business{Number(p.businesses) === 1 ? '' : 'es'} · {N2(p.mrr)} a month · target margin {pct(p.target_margin, 0)}{p.trial_days ? ` · ${p.trial_days}-day trial` : ''}</div>
                 <div className="stack" style={{ gap: 2, fontSize: 12 }}>
                   {(p.entitlements || []).filter((e: any) => !e.included || e.quota != null).slice(0, 8).map((e: any) => (
@@ -166,10 +168,12 @@ function PlanEditor({ plan, modules, plans, onClose }: { plan: any; modules: any
           <Field label="Free trial (days)"><input className="input num" inputMode="numeric" value={f.trial_days} onChange={(e) => set('trial_days', e.target.value)} /></Field>
           <Field label="Order shown"><input className="input num" inputMode="numeric" value={f.sort} onChange={(e) => set('sort', e.target.value)} /></Field>
         </div>
+        {plan.kind === 'filing' && <Alert kind="blue" icon="info">Annual filing is what filing-only businesses have: choose its modules here. It is never offered as a plan nor the default, and
+          its prices are not monthly: set the fee by the year's transactions under Filing fees.</Alert>}
         <div className="row wrap" style={{ gap: 16 }}>
-          <label className="check"><input type="checkbox" checked={f.public} onChange={(e) => set('public', e.target.checked)} />Businesses can choose it</label>
+          <label className="check"><input type="checkbox" checked={f.public} disabled={plan.kind === 'filing'} onChange={(e) => set('public', e.target.checked)} />Businesses can choose it</label>
           <label className="check"><input type="checkbox" checked={f.active} disabled={plan.is_default} onChange={(e) => set('active', e.target.checked)} />On</label>
-          <label className="check"><input type="checkbox" checked={f.is_default} disabled={plan.is_default} onChange={(e) => set('is_default', e.target.checked)} />The default plan (every business without another)</label>
+          <label className="check"><input type="checkbox" checked={f.is_default} disabled={plan.is_default || plan.kind === 'filing'} onChange={(e) => set('is_default', e.target.checked)} />The default plan (every business without another)</label>
         </div>
 
         <div className="stack" style={{ gap: 6 }}>

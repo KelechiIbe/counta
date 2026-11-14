@@ -580,3 +580,8 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
   .lh-pages { position: static; }
 }
 @media (max-width: 400px) { .lh-pages { gap: 10px; } }
+
+/* Filing page: the numbered steps of a year */
+.filing-step { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: 12px; font-weight: 700;
+  background: var(--canvas); color: var(--muted); border: 1px solid var(--line); }
+.filing-step.done { background: var(--green); border-color: transparent; }

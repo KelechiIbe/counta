@@ -206,13 +206,22 @@ export const existsText = (business: string, masked: string | null, yours: boole
 export class CompanyExists extends Error {
   constructor(readonly business: string, readonly masked: string | null, readonly yours: boolean) { super(existsText(business, masked, yours)); }
 }
+// The answer to the first question at sign-up, kept on this device until the business is set up: run the whole business on
+// Counta, or only file the yearly income tax return (filing-only). Counta applies it to a new business only.
+const FILING_KEY = 'counta.onboard.filing_only';
+export const filingChoice = {
+  get: () => { try { return localStorage.getItem(FILING_KEY) === '1'; } catch { return false; } },
+  set: (v: boolean) => { try { if (v) localStorage.setItem(FILING_KEY, '1'); else localStorage.removeItem(FILING_KEY); } catch { /* private window */ } },
+};
 export async function kycSubmit(p: Record<string, unknown>, org?: string | null) {
+  const fileOnly = filingChoice.get();
   const r = await rpc<{ ok?: boolean; reason?: string; org_id: string; name: string; compliance: Score; business?: string; masked_email?: string | null; yours?: boolean }>(
-    'kyc_submit', { p: { ...p, ...forOrg(org) } });
+    'kyc_submit', { p: { ...p, ...(fileOnly ? { filing_only: true } : {}), ...forOrg(org) } });
   if (r && r.ok === false) {
     if (r.reason === 'exists') throw new CompanyExists(String(r.business || 'This company'), r.masked_email ?? null, r.yours === true);
     throw new Error(r.reason === 'duplicate' ? DUPLICATE_COMPANY : r.reason === 'managed_elsewhere' ? MANAGED_ELSEWHERE : 'The profile could not be submitted just now.');
   }
+  if (fileOnly) filingChoice.set(false);
   return r;
 }
 export const kycDoc = (org: string, path: string, kind: string, fileName?: string) => rpc<Kyc>('kyc_doc', { p_org: org, p_path: path, p_kind: kind, p_file_name: fileName ?? null });

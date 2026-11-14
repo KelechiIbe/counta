@@ -176,7 +176,7 @@ function Reconcile({ account, onClose }: { account: any; onClose: () => void }) 
   );
 }
 
-function AddAccount({ onClose }: { onClose: () => void }) {
+export function AddAccount({ onClose }: { onClose: () => void }) {
   const { data: inv } = useInventory();
   const { orgId } = useSession();
   const toast = useToast();
@@ -186,7 +186,7 @@ function AddAccount({ onClose }: { onClose: () => void }) {
     try {
       await rpc('open_bank_account', { p_org: orgId, p_kind: f.kind, p_name: f.name, p_meta: { bank_name: f.bank_name || null, account_number: f.account_number || null, account_name: f.account_name || null,
         opening_balance: money(f.opening_balance), opening_date: f.opening_date, location_id: f.location_id || null } });
-      toast('Account added'); await qc.invalidateQueries({ queryKey: ['banking'] }); onClose();
+      toast('Account added'); await Promise.all(['banking', 'filing'].map((k) => qc.invalidateQueries({ queryKey: [k] }))); onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
   }
   return (

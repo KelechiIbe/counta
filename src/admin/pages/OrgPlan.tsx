@@ -49,7 +49,7 @@ export function OrgPlan({ orgId }: { orgId: string }) {
           <ModalHead title="Put the business on a plan" sub="No charge is taken. Complimentary plans roll on without payment." onClose={() => setMoving(false)} />
           <div className="modal-body stack" style={{ gap: 10 }}>
             <Field label="Plan"><select className="input" value={f.plan_id} onChange={(e) => setF({ ...f, plan_id: e.target.value })}><option value="">Choose</option>
-              {(plans.data?.plans || []).filter((p: any) => p.active).map((p: any) => <option key={p.id} value={p.id}>{p.name}{Number(p.price_month) > 0 ? ` · ${N2(p.price_month)} a month` : ''}</option>)}</select></Field>
+              {(plans.data?.plans || []).filter((p: any) => p.active && p.kind !== 'filing').map((p: any) => <option key={p.id} value={p.id}>{p.name}{Number(p.price_month) > 0 ? ` · ${N2(p.price_month)} a month` : ''}</option>)}</select></Field>
             <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <Field label="For (months)"><input className="input num" inputMode="numeric" value={f.months} onChange={(e) => setF({ ...f, months: e.target.value })} /></Field>
               <label className="check" style={{ marginTop: 22 }}><input type="checkbox" checked={f.comp} onChange={(e) => setF({ ...f, comp: e.target.checked })} />Complimentary</label>

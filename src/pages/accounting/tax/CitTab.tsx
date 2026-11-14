@@ -15,6 +15,7 @@ import { TB_FIELDS, tbRows } from '../../../lib/moveBooks';
 import { Icon } from '../../../components/Icon';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner, Stat } from '../../../components/ui';
 import { SheetRows } from '../../../components/SheetRows';
+import { FilingLocked } from '../../filing/Locked';
 
 type Sub = 'computation' | 'figures' | 'adjustments' | 'allowances' | 'brought' | 'statements';
 const CLASS_LABEL: Record<string, string> = { SMALL: 'Small company', MEDIUM: 'Medium company', LARGE: 'Large company', REGULAR: 'Company' };
@@ -64,7 +65,8 @@ export default function CitTab({ year, setYear }: { year: number | null; setYear
               <div className="row" style={{ justifyContent: 'space-between' }}><b>{y.year} accounts</b><span className={'chip ' + st.tone}>{st.label}</span></div>
               <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>Year of assessment {y.yoa} · {lawShort(y.regime)}{y.ended ? ` · due ${fmtDay(y.due)}` : ' · running'}</div>
               <div className="row" style={{ justifyContent: 'space-between', marginTop: 8, fontSize: 13 }}>
-                {y.has_data || y.source === 'books' ? <span>Tax payable <b className="num">{N2(y.payable)}</b></span> : <span className="muted">No figures yet</span>}
+                {y.locked ? <span className="muted">Shown once paid for on the Filing page</span>
+                  : y.has_data || y.source === 'books' ? <span>Tax payable <b className="num">{N2(y.payable)}</b></span> : <span className="muted">No figures yet</span>}
                 {Number(y.blocks) > 0 && y.status === 'draft' && <span style={{ color: '#B45309', fontSize: 12 }}>{y.blocks} to settle</span>}
               </div>
             </button>
@@ -98,6 +100,7 @@ function CitYear({ year }: { year: number }) {
   if (q.isLoading) return <SkeletonRows n={8} />;
   if (q.error) return <Alert kind="yellow" icon="shield">{(q.error as Error).message}</Alert>;
   if (!d) return null;
+  if (d.locked) return <FilingLocked message={d.message} />;
   const comp = d.computation || {};
   const fig = comp.figures || {};
   const row = d.row || {};

@@ -88,7 +88,15 @@ export const FEATURES: { id: string; label: string; what: string }[] = [
   { id: 'bank_feeds', label: 'Bank feeds', what: 'Linking bank accounts through Mono. Accounts already linked keep their history.' },
   { id: 'supplier_portal', label: 'Supplier invoice portal', what: 'The link suppliers use to upload invoices. Invoices can still be uploaded by the business.' },
 ];
-export const featureLabel = (id: string) => FEATURES.find((f) => f.id === id)?.label || id;
+// Parts of the app a plan includes or not (the Annual filing package leaves them out). TaxStreem can switch them for one
+// business; they are never paused for everyone.
+export const AREAS: { id: string; label: string; what: string }[] = [
+  { id: 'selling', label: 'Selling', what: 'Sales, invoices, the till, customers, recurring invoices, price lists and the online shop.' },
+  { id: 'purchases', label: 'Purchases', what: 'Bills and vendors.' },
+  { id: 'inventory', label: 'Inventory', what: 'Items, stock, counts, production and stock reports.' },
+  { id: 'vat_wht', label: 'VAT and WHT returns', what: 'The monthly VAT return and withholding tax schedules.' },
+];
+export const featureLabel = (id: string) => [...FEATURES, ...AREAS].find((f) => f.id === id)?.label || id;
 
 export const GROUPS: { id: string; title: string; what: string; test?: boolean; noKeys?: string }[] = [
   { id: 'gemini', title: 'Google Gemini', what: 'Reads invoices, statements, product photos, CAC documents and NIN slips; the bookkeeper and Martina\'s typed answers.', test: true },

@@ -192,6 +192,10 @@ For a full-mandate client, each fee invoice is also posted as an approved bill i
 
 A partner or manager can pay for a client's Counta plan with the practice's card (Counta plans, or the client's *Team and billing* tab). The first payment goes through Flutterwave's page and comes back to the portal; the card is kept for the practice (never shown to the business) and used for renewals. The business sees that the practice pays, and can take it back by choosing a plan in Settings, Subscription. When the practice stops paying, or the work ends, the plan runs to the end of the period the practice paid for.
 
+### Filing-only clients
+
+A client that needs only its yearly income tax return can be filing-only (see [filing-only.md](filing-only.md)). The firm ticks Filing only when it sets up a business under full mandate, or switches one it runs from Counta plans (Switch to filing-only) while no plan is being paid for; a client the firm only works with is switched by its owner. Each year's one-time fee is paid on the client's Filing page: a partner or manager pays with the firm's card there, and Counta plans lists the payment as an annual filing fee. The firm bills its own fee to the client from Fees as usual.
+
 ## Database
 
 | Table | What it holds |

@@ -1,10 +1,12 @@
 // Uploading a bank statement: Excel, CSV or PDF from any Nigerian bank. The file is read in the browser (a PDF with a
 // password asks for it), checked against its own balances and shown for a look before anything reaches the books.
-import { useMemo, useRef, useState } from 'react';
+// For a filing-only business's year not yet paid for (hold), nothing is read by AI: a scanned PDF is kept unread, counted
+// by its pages for the fee, and read after payment (scan), when its lines are settled against the fee.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSession, useToast } from '../../state/session';
-import { rpc } from '../../lib/supabase';
+import { rpc, supabase } from '../../lib/supabase';
 import { edge } from '../../lib/api';
 import { N2, fmtDay } from '../../lib/format';
 import {
@@ -26,9 +28,16 @@ const ROLE_LABEL: Record<Role, string> = { date: 'Date', value_date: 'Value date
   amount: 'Amount', drcr: 'Dr / Cr', balance: 'Balance', ignore: 'Skip' };
 
 type Step = { k: 'pick' } | { k: 'password'; file: File; wrong: boolean } | { k: 'reading'; label: string } | { k: 'columns'; file: File; sheets: SheetData[]; kind: 'excel' | 'csv'; sheet: number; header: number; roles: Role[] }
-  | { k: 'review'; file: File; st: Statement; pdf?: { doc: any; text: PdfText } } | { k: 'done'; result: any };
+  | { k: 'review'; file: File; st: Statement; pdf?: { doc: any; text: PdfText } } | { k: 'done'; result: any } | { k: 'held'; pages: number; name: string };
 
-export default function StatementUpload({ account, onClose }: { account: any; onClose: () => void }) {
+// A held scan as the Filing page lists it.
+export type HeldScan = { id: string; path: string; file_name: string | null; pages: number };
+// Where a scanned PDF waits for the year to be paid for: the business's filing folder, under a name storage accepts.
+const scanPath = (org: string, year: number, name: string) =>
+  `${org}/filing/${year}/${Date.now()}-${(name.replace(/\.pdf$/i, '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[^A-Za-z0-9_-]+/, '') || 'statement').slice(0, 100)}.pdf`;
+
+export default function StatementUpload({ account, onClose, hold, scan, onImported }: { account: any; onClose: () => void;
+  hold?: { year: number }; scan?: HeldScan; onImported?: () => void }) {
   const { orgId } = useSession();
   const toast = useToast();
   const qc = useQueryClient();
@@ -51,8 +60,35 @@ export default function StatementUpload({ account, onClose }: { account: any; on
     const text = await pdfText(doc);
     const st = text.scanned ? null : fromPdfText(text, file.name);
     if (st && st.lines.length) { setStep({ k: 'review', file, st, pdf: { doc, text } }); return; }
+    if (hold) { await holdScan(file, doc.numPages); return; }
     await readWithAi(file, doc, text, text.scanned ? 'This PDF is a scan with no text in it, so the AI reader is reading the pages.' : 'The columns of this PDF could not be read, so the AI reader is reading it.');
   }
+
+  // Before the year is paid for: the PDF goes to the filing folder unread and counts 35 lines a page towards the fee.
+  async function holdScan(file: File, pages: number) {
+    setStep({ k: 'reading', label: 'Keeping the scan for after payment…' });
+    const path = scanPath(orgId!, hold!.year, file.name);
+    // Stored as a PDF whatever type the browser gave the file, so Counta can check it before holding it.
+    const pdf = file.type === 'application/pdf' ? file : new File([file], file.name, { type: 'application/pdf' });
+    const { error } = await supabase.storage.from('documents').upload(path, pdf, { contentType: 'application/pdf', upsert: false });
+    if (error) throw new Error(`The statement could not be uploaded: ${error.message}`);
+    await rpc('filing_scan_hold', { p_org: orgId, p: { year: hold!.year, path, pages, file_name: file.name.slice(0, 200), bank_account_id: account.id } });
+    await qc.invalidateQueries({ queryKey: ['filing'] });
+    setStep({ k: 'held', pages, name: file.name });
+  }
+
+  // After payment: a held scan is opened from the filing folder and read.
+  const started = useRef(false);
+  useEffect(() => {
+    if (!scan || started.current) return;
+    started.current = true;
+    (async () => {
+      setStep({ k: 'reading', label: 'Opening the scanned statement…' });
+      const { data, error } = await supabase.storage.from('documents').download(scan.path);
+      if (error || !data) throw new Error('The scanned statement could not be opened. Try again.');
+      await readPdf(new File([data], scan.file_name || 'statement.pdf', { type: 'application/pdf' }));
+    })().catch((e) => { setErr((e as Error).message); setStep({ k: 'pick' }); });
+  }, [scan]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Long statements go two pages at a time, three parts at once; a part that fails is tried once more. The parts come
   // back as lines and are joined in page order.
@@ -109,8 +145,10 @@ export default function StatementUpload({ account, onClose }: { account: any; on
           period_from: st.meta.period_from, period_to: st.meta.period_to, opening_balance: st.meta.opening_balance, closing_balance: st.meta.closing_balance,
           account_confirmed: confirmed },
       });
+      if (scan) await rpc('filing_scan_done', { p_org: orgId, p_scan: scan.id, p_import: r.import_id });
       setStep({ k: 'done', result: r });
-      await Promise.all(['banking', 'inbox'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
+      await Promise.all(['banking', 'inbox', 'filing'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
+      onImported?.();
     } catch (e) { setErr((e as Error).message); }
     setBusy(false);
   }
@@ -118,7 +156,9 @@ export default function StatementUpload({ account, onClose }: { account: any; on
   const reading = step.k === 'reading';
   return (
     <Modal onClose={onClose} width={step.k === 'review' || step.k === 'columns' ? 980 : 640}>
-      <ModalHead title={`Statement for ${account.name}`} sub="Excel, CSV or PDF from internet banking or the bank's email. Lines already in Counta are never added twice." onClose={onClose} />
+      <ModalHead title={scan ? `Scanned statement for ${account.name}` : `Statement for ${account.name}`}
+        sub={scan ? `${scan.file_name || 'The scan'} · ${scan.pages} page${scan.pages === 1 ? '' : 's'}. Check the lines the AI reader found, then add them.`
+          : "Excel, CSV or PDF from internet banking or the bank's email. Lines already in Counta are never added twice."} onClose={onClose} />
       <div className="modal-body">
         {step.k === 'pick' && (
           <div className="stack" style={{ gap: 12 }}>
@@ -129,7 +169,7 @@ export default function StatementUpload({ account, onClose }: { account: any; on
             <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>
               Counta reads the account number, period and opening and closing balances from the top of the statement, joins narrations that run onto a second
               line, and checks that every balance follows from the one before. Statements that print the newest line first are put in date order. A scanned
-              PDF is read by the AI reader. {account.account_number ? `This account ends ${lastFour(account.account_number)}.` : ''}
+              PDF is read by the AI reader{hold ? ` once ${hold.year} is paid for; until then it counts 35 lines a page towards the fee` : ''}. {account.account_number ? `This account ends ${lastFour(account.account_number)}.` : ''}
             </div>
             {account.feed?.linked && <Alert kind="blue" icon="info">This account has a bank feed. A statement for the same days adds only what the feed has not brought in.</Alert>}
           </div>
@@ -146,8 +186,16 @@ export default function StatementUpload({ account, onClose }: { account: any; on
         {reading && <div className="stack" style={{ alignItems: 'center', padding: '40px 0', gap: 12 }}><Spinner /><div className="muted">{step.label}</div></div>}
         {step.k === 'columns' && <Columns step={step} onChange={(s) => setStep(s)} onRead={(st) => setStep({ k: 'review', file: step.file, st })} />}
         {step.k === 'review' && <Review st={step.st} account={account} confirmed={confirmed} setConfirmed={setConfirmed}
-          onAi={step.pdf && step.st.read_by === 'columns' ? () => readWithAi(step.file, step.pdf!.doc, step.pdf!.text).catch((e) => { setErr((e as Error).message); }) : undefined} />}
-        {step.k === 'done' && <Done r={step.result} onClose={onClose} />}
+          onAi={step.pdf && step.st.read_by === 'columns' && !hold ? () => readWithAi(step.file, step.pdf!.doc, step.pdf!.text).catch((e) => { setErr((e as Error).message); }) : undefined} />}
+        {step.k === 'done' && <Done r={step.result} onClose={onClose} hold={!!hold} />}
+        {step.k === 'held' && (
+          <div className="stack" style={{ gap: 10 }} data-testid="scan-held">
+            <Alert kind="blue" icon="clock">{step.name} is a scan, so it needs the AI reader. It is kept unread until {hold?.year} is paid for, and counts as about{' '}
+              {(step.pages * 35).toLocaleString('en-NG')} lines ({step.pages} page{step.pages === 1 ? '' : 's'} at 35 lines a page) towards the fee. Once it is read, the real
+              number of lines settles the fee.</Alert>
+            <div className="row"><button className="btn btn-primary" onClick={onClose}>Done</button></div>
+          </div>
+        )}
         {err && <Alert kind="red" icon="alert">{err}</Alert>}
         <input ref={input} type="file" hidden accept=".pdf,.xlsx,.xls,.xlsm,.csv,.txt,application/pdf,text/csv" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) pick(f); }} />
       </div>
@@ -262,8 +310,16 @@ function Columns({ step, onChange, onRead }: { step: Extract<Step, { k: 'columns
   );
 }
 
-function Done({ r, onClose }: { r: any; onClose: () => void }) {
+function Done({ r, onClose, hold }: { r: any; onClose: () => void; hold?: boolean }) {
   const placed = Object.entries(r.matched || {}).filter(([, n]) => Number(n) > 0);
+  if (hold) return (
+    <div className="stack" style={{ gap: 10 }}>
+      <Alert kind="green" icon="check">{r.added} new line{r.added === 1 ? '' : 's'} added.{Number(r.already_in) > 0 ? ` ${r.already_in} were already in Counta.` : ''}{Number(r.duplicates) > 0 ? ` ${r.duplicates} had been uploaded before.` : ''}</Alert>
+      {r.balance_check === 'differs' && <Alert kind="yellow" icon="alert">The statement's balances do not add up. The lines are in; check the statement for a missing page.</Alert>}
+      <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>They count towards the fee for the year. Nothing is read by AI and no books are built until the year is paid for.</div>
+      <div className="row"><button className="btn btn-primary" onClick={onClose}>Done</button></div>
+    </div>
+  );
   return (
     <div className="stack" style={{ gap: 10 }}>
       <Alert kind="green" icon="check">{r.added} new line{r.added === 1 ? '' : 's'} added.{Number(r.already_in) > 0 ? ` ${r.already_in} were already in from the bank feed or another statement.` : ''}{Number(r.duplicates) > 0 ? ` ${r.duplicates} had been uploaded before.` : ''}</Alert>

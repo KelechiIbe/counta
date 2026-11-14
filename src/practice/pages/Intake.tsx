@@ -921,7 +921,8 @@ function FullMandate({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail }) {
   const toast = useToast();
   const nav = useNavigate();
   const leads = h.members.filter((m) => m.status === 'active' && (m.role === 'partner' || m.role === 'manager'));
-  const [f, setF] = useState({ email: '', phone: '', vat_registered: true, bank_details: '', alert_email: '', engagement_partner_id: leads.some((m) => m.id === h.me.id) ? h.me.id : leads[0]?.id || '' });
+  const [f, setF] = useState({ email: '', phone: '', vat_registered: true, bank_details: '', alert_email: '', engagement_partner_id: leads.some((m) => m.id === h.me.id) ? h.me.id : leads[0]?.id || '',
+    filing_only: false });
   const [docPath, setDocPath] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -949,7 +950,7 @@ function FullMandate({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail }) {
     try {
       const r = await rpc<{ ok: boolean; reason?: string; org_id?: string; client_id?: string }>('practice_create_business', { p_intake: d.id, p: {
         email: f.email.trim(), phone: f.phone.trim() || null, vat_registered: f.vat_registered, bank_details: f.bank_details.trim() || null,
-        alert_email: f.alert_email.trim() || null, engagement_partner_id: f.engagement_partner_id || null } });
+        alert_email: f.alert_email.trim() || null, engagement_partner_id: f.engagement_partner_id || null, filing_only: f.filing_only } });
       if (!r.ok || !r.client_id) { if (r.reason === 'duplicate') setDup(true); else setErr('The business was not set up. Try again.'); setBusy(null); return; }
       await Promise.all([qc.invalidateQueries({ queryKey: ['practice-home'] }), qc.invalidateQueries({ queryKey: ['practices-mine'] }), refresh()]);
       toast(`${d.legal_name} is set up under full mandate. Next: its identity check and a director's confirmation.`);
@@ -1046,6 +1047,11 @@ function FullMandate({ pid, h, d }: { pid: string; h: Home; d: IntakeDetail }) {
         </Field>
         <label className="check" style={{ alignSelf: 'flex-start' }}>
           <input type="checkbox" checked={f.vat_registered} onChange={(e) => setF({ ...f, vat_registered: e.target.checked })} />Registered for VAT
+        </label>
+        <label className="check" style={{ alignSelf: 'flex-start', alignItems: 'flex-start' }}>
+          <input type="checkbox" data-testid="create-filing-only" checked={f.filing_only} onChange={(e) => setF({ ...f, filing_only: e.target.checked })} />
+          <span>Filing only<span className="faint" style={{ display: 'block', fontSize: 12, lineHeight: 1.45 }}>The firm prepares only the yearly income tax return, for a one-time fee each year paid
+            with the firm's card on the business's Filing page. Invoicing, stock, payments and the monthly returns stay off.</span></span>
         </label>
         {dup && <ErrorNote>{DUPLICATE}</ErrorNote>}
         {err && <ErrorNote>{err}</ErrorNote>}

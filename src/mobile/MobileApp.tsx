@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession } from '../state/session';
 import { useCounts, useTransfers } from '../lib/queries';
@@ -47,6 +47,8 @@ export default function MobileApp() {
   const value = useMemo(() => ({ loc, setLoc, queue }), [loc, queue]); // eslint-disable-line react-hooks/exhaustive-deps
   if (isLoading && !inv) return <div className="m-shell" style={{ display: 'grid', placeItems: 'center' }}><Spinner /></div>;
   if (!inv) return <div className="m-shell" style={{ display: 'grid', placeItems: 'center', padding: 24, textAlign: 'center' }}>Could not load your business. Connect to data once so the phone can save a copy.</div>;
+  // A filing-only business has no till, stock or bills on the phone: its Filing page works on a phone as it is.
+  if (inv.org.filing_only) return <Navigate to="/filing" replace />;
   // A business that sells services only has no stock to scan, receive or count: it invoices, takes payments and photographs
   // its bills. Clinics, hotels and schools keep the till for walk-in customers.
   const tabs: [string, string, string, boolean][] = mode.stock ? [

@@ -8,7 +8,7 @@ A plan is made of modules. A module is either a feature a business has or not, o
 
 | Kind | Modules |
 | --- | --- |
-| Feature | Payments, Bulk payments, Martina, Phone calls, Spoken announcements, AI reading, WhatsApp to customers, Email to customers, Bank feeds, Supplier invoice portal |
+| Feature | Payments, Bulk payments, Martina, Phone calls, Spoken announcements, AI reading, WhatsApp to customers, Email to customers, Bank feeds, Supplier invoice portal, and the parts of the app: Selling, Purchases, Inventory, VAT and WHT returns |
 | Quota each month | Sales (receipts and invoices), AI reads (invoices, statements, photos, documents), questions to Martina, phone call minutes, WhatsApp messages, emails, Tax ID checks, supplier invoices, payouts |
 | Quota at any time | Team members, branches, linked bank accounts |
 
@@ -19,6 +19,8 @@ Admins add modules (Plans, New module): a feature switches one of Counta's switc
 For every module a plan says whether it is included, the limit (empty for no limit) and what happens past it: stop, or warn. A module a plan does not mention is included with no limit, so adding a module never takes anything away by itself. Prices include VAT; the yearly price defaults to twelve months. A plan can have a free trial, can be hidden from businesses, and one plan is the default: every business without a subscription is on it.
 
 The migration adds one plan, Standard: free, the default, everything included, no limits. Nothing a business does today stops until an admin sets plans up.
+
+One more plan, Annual filing, is the package of a filing-only business: it is never offered or the default, and its fee is paid year by year by the year's transactions (Filing fees). See [filing-only.md](filing-only.md). A plan that leaves out Selling, Purchases, Inventory or the VAT and WHT returns hides them from the menu, and their pages say they are not in the plan.
 
 An admin can put one business on any plan without a charge (complimentary, for a number of months) and can override a single module for one business, for a while or until removed (Businesses, a business, Plan).
 
