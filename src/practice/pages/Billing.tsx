@@ -1,12 +1,12 @@
 // Paying for clients' Counta plans with the practice's own card. The first payment goes through Flutterwave's page, which
 // keeps the card for renewals; the client's owner sees that the practice pays.
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { cleanError, rpc } from '../../lib/supabase';
 import { edge } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
-import { useToast } from '../../state/session';
+import { useSession, useToast } from '../../state/session';
 import { Icon } from '../../components/Icon';
 import { Alert, SkeletonRows, Spinner } from '../../components/ui';
 import { Card, PageHead } from '../../admin/ui';
@@ -45,6 +45,32 @@ export function StartPaying({ clientId, name, plans }: { clientId: string; name:
       {err && <Alert kind="red" icon="alert">{err}</Alert>}
     </div>
   );
+}
+
+// A filing-only client: no plan to pay for. Each year's fee is paid on the client's Filing page, with the firm's card.
+function FilingOnlyRow({ orgId }: { orgId: string }) {
+  const { setOrgId } = useSession();
+  const nav = useNavigate();
+  return (
+    <div className="row wrap" style={{ gap: 8, fontSize: 13 }} data-testid="client-filing-only">
+      <span className="muted">Filing only: the yearly income tax return, a one-time fee each year paid on the client's Filing page with your card.</span>
+      <button className="btn btn-secondary btn-sm" onClick={() => { setOrgId(orgId); nav('/filing'); }}>Open its Filing page</button>
+    </div>
+  );
+}
+
+// A business the firm runs under full mandate that needs only its yearly return: the firm switches it to filing-only.
+function SwitchToFiling({ clientId, name, onDone }: { clientId: string; name: string; onDone: () => Promise<unknown> }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  async function go() {
+    if (!window.confirm(`Switch ${name} to filing-only? Counta then prepares only its yearly income tax return, for a one-time fee each year that you pay on its Filing page. Selling, bills, inventory, payments and the monthly VAT and WHT returns are switched off until a plan is chosen again.`)) return;
+    setBusy(true);
+    try { await rpc('practice_filing_start', { p_client: clientId }); await onDone(); toast(`${name} is on filing-only`); }
+    catch (e) { toast(cleanError(e), 'err'); }
+    setBusy(false);
+  }
+  return <button className="btn btn-ghost btn-sm" disabled={busy} onClick={go}>{busy ? <Spinner small /> : null}Switch to filing-only</button>;
 }
 
 export default function BillingPage({ pid }: { pid: string }) {
@@ -97,7 +123,11 @@ export default function BillingPage({ pid }: { pid: string }) {
                         {!c.subscription.cancel_at_period_end && <button className="btn btn-ghost btn-sm" disabled={busy !== null} onClick={() => stop(c.client_id)}>Stop</button>}</span>
                     : <span className="chip t-grey">{c.subscription?.paid_by_other ? 'Another accountant pays' : 'The business pays'}</span>}
                 </div>
+                {c.filing_only && <FilingOnlyRow orgId={c.org_id} />}
                 {!c.subscription?.paid_by_us && !c.subscription?.paid_by_other && <StartPaying clientId={c.client_id} name={c.business_name} plans={b.plans} />}
+                {c.managed && !c.filing_only && !c.subscription?.paid_by_us && !c.subscription?.paid_by_other && (
+                  <div><SwitchToFiling clientId={c.client_id} name={c.business_name} onDone={() => qc.invalidateQueries({ queryKey: ['practice-billing', pid] })} /></div>
+                )}
               </div>
             ))}
           </Card>
@@ -112,7 +142,7 @@ export default function BillingPage({ pid }: { pid: string }) {
           <Card title="Payments" pad={false}>
             {!b.charges.length ? <div className="card-pad faint">None yet.</div> : b.charges.map((c) => (
               <div key={c.id} className="tr rsp" style={{ gridTemplateColumns: 'minmax(160px,1fr) 120px 110px 140px' }}>
-                <span className="m-main">{c.business_name} <span className="faint">· {c.plan}, {c.billing === 'year' ? 'a year' : 'a month'}{c.kind === 'renewal' ? ', renewal' : ''}</span>
+                <span className="m-main">{c.business_name} <span className="faint">· {c.kind === 'filing' ? 'annual filing fee' : `${c.plan}, ${c.billing === 'year' ? 'a year' : 'a month'}`}{c.kind === 'renewal' ? ', renewal' : ''}</span>
                   {c.error && <span className="faint" style={{ display: 'block', fontSize: 12, color: '#B91C1C' }}>{c.error}</span>}</span>
                 <span className="right num">{N2(c.amount)}</span>
                 <span><span className={'chip ' + (c.status === 'successful' ? 't-green' : c.status === 'failed' ? 't-red' : 't-grey')}>{c.status}</span></span>

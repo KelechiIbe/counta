@@ -25,6 +25,10 @@
 //   practice_plan_start { client_id, plan_id, billing, use_saved? }
 //                                                  -> an accountant's practice pays for a client's plan with its own card
 //   practice_plan_verify { tx_ref }                -> after the practice's checkout
+//   filing_pay { org_id, year, payer: 'business'|'practice', use_saved? }
+//                                                  -> the one-time fee for a filing-only business's year: a checkout link or a
+//                                                     charge to the saved card (the business's, or the firm's when it pays)
+//   filing_verify { org_id, tx_ref }               -> after the filing checkout: asks Flutterwave and records the payment
 // Anyone holding a document link (no sign-in):
 //   public_pay { token, method }                   -> a way to pay a shared invoice, receipt or order
 //   public_check { token }                         -> has it been paid
@@ -1028,7 +1032,8 @@ async function subCheckout(ctx: any) {
     customer: payer
       ? { email: payer.email || `billing+${String(payer.id).slice(0, 8)}@counta.ng`, name: String(payer.name).slice(0, 60), phonenumber: ngPhone(payer.phone) }
       : { email: ctx.org.email || `billing+${String(ctx.org.id).slice(0, 8)}@counta.ng`, name: String(ctx.org.name).slice(0, 60), phonenumber: ngPhone(ctx.org.phone) },
-    customizations: { title: 'Counta', description: `${ctx.plan.name} plan for ${String(ctx.org.name).slice(0, 40)}, ${c.billing === 'year' ? 'a year' : 'a month'}` },
+    customizations: { title: 'Counta', description: ctx.description ? String(ctx.description).slice(0, 120)
+      : `${ctx.plan.name} plan for ${String(ctx.org.name).slice(0, 40)}, ${c.billing === 'year' ? 'a year' : 'a month'}` },
     payment_options: 'card', meta: { kind: 'subscription', org_id: ctx.org.id, charge_id: c.id, ...(payer ? { practice_id: payer.id } : {}) } }) });
   if (!l?.data?.link) throw new UserError('Flutterwave did not return a payment page. Try again in a minute.');
   return { action: 'checkout', link: String(l.data.link) };
@@ -1039,7 +1044,7 @@ async function chargeSavedCard(ctx: any): Promise<any> {
   if (!ctx.card?.token) return await subUpdate(c.tx_ref, { status: 'failed', error: 'No card is saved. Pay by card once and Counta keeps it for renewals.' });
   try {
     await flw('/tokenized-charges', { method: 'POST', body: JSON.stringify({ token: ctx.card.token, currency: 'NGN', country: 'NG', amount: num(c.amount),
-      email: ctx.card.email, tx_ref: c.tx_ref, narration: `Counta ${ctx.plan.name} plan` }) });
+      email: ctx.card.email, tx_ref: c.tx_ref, narration: ctx.narration ? String(ctx.narration).slice(0, 60) : `Counta ${ctx.plan.name} plan` }) });
   } catch (e) {
     if (e instanceof NotConfigured) throw e;
     if (e instanceof UserError) return await subUpdate(c.tx_ref, { status: 'failed', error: e.message.slice(0, 200) });
@@ -1090,7 +1095,7 @@ async function subscriptionWork() {
     try {
       if (c.method === 'card') {
         const r = await verifySubCard(String(c.tx_ref));
-        if (r?.status === 'pending' && c.kind === 'start' && num(c.age_minutes) > 24 * 60) await svc('svc_subscription_expire', { p_tx_ref: c.tx_ref });
+        if (r?.status === 'pending' && (c.kind === 'start' || c.kind === 'filing') && num(c.age_minutes) > 24 * 60) await svc('svc_subscription_expire', { p_tx_ref: c.tx_ref });
         else if (r?.status === 'pending' && c.kind === 'renewal' && num(c.age_minutes) > 30) {
           await subUpdate(String(c.tx_ref), { status: 'failed', error: 'Flutterwave did not confirm the charge to the card.' });
         }
@@ -1510,6 +1515,35 @@ Deno.serve(async (req) => {
         const ctx = await subCtx(String(ck.charge_id));
         const result = ['successful', 'failed', 'cancelled'].includes(ctx.charge.status) ? { status: ctx.charge.status } : await verifySubCard(txRef);
         return json({ ok: true, result });
+      }
+      case 'filing_pay': {
+        // The database decides what is owed for the year (the fee for its count, or the balance after scans were read) and
+        // who may pay; Flutterwave takes the money.
+        const orgId = String(body.org_id || ''), year = Number(body.year);
+        if (!Number.isInteger(year)) throw new UserError('Choose the year to pay for.');
+        const firm = body.payer === 'practice';
+        const { data: r, error } = await sb.rpc(firm ? 'practice_filing_pay_start' : 'filing_pay_start',
+          { p_org: orgId, p_year: year, p: { use_saved: body.use_saved !== false } });
+        if (error) throw new UserError(error.message);
+        if (!(await flutterwave.configured())) throw new NotConfigured('Card payments are not switched on yet. TaxStreem is setting them up.');
+        const ctx = await subCtx(String(r.charge_id));
+        if (r.action === 'checkout') return json({ ok: true, tx_ref: r.tx_ref, ...(await subCheckout(ctx)) });
+        const result = await chargeSavedCard(ctx);
+        const { data: state } = await sb.rpc('filing_state', { p_org: orgId });
+        return json({ ok: true, action: r.action, tx_ref: r.tx_ref, result, state });
+      }
+      case 'filing_verify': {
+        const orgId = String(body.org_id || ''), txRef = String(body.tx_ref || '');
+        if (!/^SUB-[0-9A-F]{16}$/.test(txRef)) throw new UserError('Unknown payment.');
+        // Anyone in the business may ask (a firm's partner who paid included): it only asks Flutterwave what happened.
+        const { error } = await sb.rpc('filing_state', { p_org: orgId });
+        if (error) throw new UserError(error.message);
+        const id = await svc<string | null>('svc_subscription_by_ref', { p_tx_ref: txRef });
+        const ctx = id ? await subCtx(id) : null;
+        if (!ctx || ctx.org?.id !== orgId || ctx.charge?.kind !== 'filing') throw new UserError('Unknown payment.');
+        const result = ['successful', 'failed', 'cancelled'].includes(ctx.charge.status) ? { status: ctx.charge.status } : await verifySubCard(txRef);
+        const { data: state } = await sb.rpc('filing_state', { p_org: orgId });
+        return json({ ok: true, result, state });
       }
       default: return json({ ok: false, error: 'Unknown action.' }, 400);
     }

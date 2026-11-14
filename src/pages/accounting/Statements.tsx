@@ -18,6 +18,7 @@ import { downloadBlob, safeName } from '../../lib/exporters';
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Field, MenuButton, Pills, SkeletonRows } from '../../components/ui';
 import { PeriodBar, ReportPanel, type Period } from '../../components/Books';
+import { FilingLocked } from '../filing/Locked';
 
 type Tab = 'corporate' | 'directors_report' | 'responsibilities' | 'sopl' | 'sofp' | 'soce' | 'cash_flow' | 'notes' | 'value_added' | 'five_year' | 'tax_computation' | 'capital_allowances';
 const TABS: { id: Tab; label: string }[] = [
@@ -39,10 +40,13 @@ export default function Statements() {
   const [showAll, setShowAll] = useState(false);
   const pack = useQuery({ queryKey: ['fs-pack', orgId, period.from, period.to], enabled: !!orgId, staleTime: 30_000,
     queryFn: () => rpc<any>('financial_statements_pack', { p_org: orgId, p_from: period.from, p_to: period.to }) });
-  const model = useMemo(() => (pack.data ? buildPack(pack.data) : null), [pack.data]);
+  // A filing-only business sees its statements once a year is paid for.
+  const locked = pack.data?.locked ? (pack.data as { message?: string }) : null;
+  const model = useMemo(() => (pack.data && !pack.data.locked ? buildPack(pack.data) : null), [pack.data]);
   const fsKey = pack.data?.periods?.from && pack.data?.periods?.to ? `${pack.data.periods.from}:${pack.data.periods.to}` : null;
   const acc = useFilingCurrent('fs', fsKey).data;
   if (!inv) return null;
+  if (locked) return <div className="container"><FilingLocked message={locked.message} /></div>;
   const canEdit = actsAsOwner(inv) || can(inv, 'keep_books');
   const warnings = model?.warnings || [];
   const errors = warnings.filter((w) => w.level === 'error');

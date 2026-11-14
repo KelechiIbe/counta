@@ -19,6 +19,7 @@ import { Icon } from '../../../components/Icon';
 import { Alert, Drawer, Empty, Field, MenuButton, Modal, ModalHead, Pills, SkeletonRows, Spinner, Stat } from '../../../components/ui';
 import { SheetRows } from '../../../components/SheetRows';
 import { Adjustments, Figures, TaxAssetModal, amt, openInTab, useTaxRefresh } from './CitTab';
+import { FilingLocked } from '../../filing/Locked';
 
 type Sub = 'computation' | 'people' | 'staff' | 'figures' | 'adjustments' | 'mixed' | 'allowances' | 'accounts';
 const KIND_LABEL: Record<string, string> = { sole: 'Sole proprietor', partnership: 'Partnership' };
@@ -47,7 +48,8 @@ export default function PitTab({ year, setYear }: { year: number | null; setYear
               <div className="row" style={{ justifyContent: 'space-between' }}><b>{y.year} accounts</b><span className={'chip ' + st.tone}>{st.label}</span></div>
               <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>Year of assessment {y.yoa} · {y.regime === 'PITA' ? 'PITA' : 'NTA 2025'}{y.ended ? ` · due ${fmtDay(y.due)}` : ' · running'}</div>
               <div className="row" style={{ justifyContent: 'space-between', marginTop: 8, fontSize: 13 }}>
-                {!y.has_data ? <span className="muted">No figures yet</span>
+                {y.locked ? <span className="muted">Shown once paid for on the Filing page</span>
+                  : !y.has_data ? <span className="muted">No figures yet</span>
                   : y.tax != null ? <span>Income tax <b className="num">{N2(y.tax)}</b></span>
                   : <span>Assessable profit <b className="num">{amt(y.assessable)}</b></span>}
                 {Number(y.blocks) > 0 && y.state === 'draft' && <span style={{ color: '#B45309', fontSize: 12 }}>{y.blocks} to settle</span>}
@@ -130,6 +132,7 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
   if (q.isLoading) return <SkeletonRows n={8} />;
   if (q.error) return <Alert kind="yellow" icon="shield">{(q.error as Error).message}</Alert>;
   if (!d) return null;
+  if (d.locked) return <FilingLocked message={d.message} />;
   if (d.needs_setup) return <SetupCard d={d} />;
   const comp = d.computation || {};
   const fig = comp.figures || {};

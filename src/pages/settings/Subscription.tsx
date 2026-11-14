@@ -1,7 +1,7 @@
 // The business's Counta plan: what it includes and how much of it has been used this month, the plans it can move to, and
 // paying for them by card (Flutterwave keeps the card for renewals) or from the business wallet.
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
@@ -10,6 +10,7 @@ import { N2, fmtDay, when } from '../../lib/format';
 import { Alert, Field, Modal, ModalHead, SkeletonRows, Spinner } from '../../components/ui';
 import { StatusChip } from '../sell/common';
 import { OfferNote } from './Partners';
+import { incomeTaxKind } from '../../lib/tax';
 
 const nf = (n: number) => n.toLocaleString('en-NG', { maximumFractionDigits: 2 });
 const limitText = (e: any) => (e.kind === 'feature' ? (e.included ? 'Included' : 'Not included') : !e.included ? 'Not included' : e.quota == null ? 'No limit' : `${nf(Number(e.quota))} ${e.unit || ''}`.trim());
@@ -20,6 +21,7 @@ export default function Subscription() {
   const toast = useToast();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
+  const nav = useNavigate();
   // The plan is for people who manage the business's settings; anyone else who opens the page is told so, and nothing is asked.
   const allowed = !!inv && can(inv, 'manage_settings');
   const st = useQuery({ queryKey: ['subscription', orgId], enabled: !!orgId && allowed, queryFn: () => rpc<any>('subscription_state', { p_org: orgId }) });
@@ -59,6 +61,16 @@ export default function Subscription() {
   const features = (s.entitlements || []).filter((e: any) => e.kind === 'feature');
   const quotas = (s.entitlements || []).filter((e: any) => e.kind === 'quota');
   const others = (s.plans || []).filter((p: any) => p.id !== plan.id || sub.billing !== 'month' || sub.status === 'past_due');
+  async function fileOnly() {
+    if (!window.confirm('Switch to filing-only? Counta then prepares only the yearly income tax return, for a one-time fee each year. Selling, bills, inventory, payments and the monthly VAT and WHT returns are switched off until you choose a plan again. Nothing already in Counta is deleted.')) return;
+    setBusy(true);
+    try {
+      await rpc('filing_start', { p_org: orgId });
+      await Promise.all(['subscription', 'filing', 'org-features', 'inv'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
+      toast('Now on filing-only'); nav('/filing');
+    } catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(false);
+  }
   return (
     <div className="container stack" style={{ maxWidth: 1000, gap: 16 }}>
       {checking && <Alert kind="blue" icon="clock"><span className="row" style={{ gap: 8 }}><Spinner small />Checking the payment with Flutterwave…</span></Alert>}
@@ -70,7 +82,8 @@ export default function Subscription() {
           <div>
             <div className="label">Your plan</div>
             <div className="row" style={{ gap: 8, marginTop: 4 }}><span style={{ fontSize: 22, fontWeight: 700 }}>{plan.name}</span><StatusChip s={sub.status || 'active'} />{sub.comp && <span className="chip t-purple">from TaxStreem</span>}</div>
-            <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>{price > 0 ? `${N2(price)} ${sub.billing === 'year' ? 'a year' : 'a month'}, VAT included` : 'Free'}</div>
+            <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>{s.filing_only ? <>The yearly income tax return only, paid year by year. <Link to="/filing">Open Filing</Link></>
+              : price > 0 ? `${N2(price)} ${sub.billing === 'year' ? 'a year' : 'a month'}, VAT included` : 'Free'}</div>
           </div>
           <div className="stack" style={{ gap: 4, fontSize: 13, textAlign: 'right' }}>
             {sub.status === 'trialing' && sub.trial_ends_at && <span>Trial ends {fmtDay(sub.trial_ends_at)}</span>}
@@ -90,6 +103,17 @@ export default function Subscription() {
           </div>
         )}
       </div>
+
+      {s.can_file_only && s.can_change && (
+        <div className="card card-pad row wrap" style={{ gap: 12, justifyContent: 'space-between' }} data-testid="file-only-offer">
+          <div style={{ minWidth: 0, flex: '1 1 320px' }}>
+            <b>Only need the yearly income tax return?</b>
+            <div className="muted" style={{ fontSize: 13, marginTop: 4, lineHeight: 1.5 }}>On filing-only, Counta prepares the {incomeTaxKind(inv?.org as any) === 'pit' ? 'personal' : 'companies'} income
+              tax return from the business's bank statements, for a one-time fee each year set by how many transactions the year holds. Nothing else runs in Counta meanwhile.</div>
+          </div>
+          <button className="btn btn-secondary btn-sm" disabled={busy} onClick={fileOnly}>Switch to filing-only</button>
+        </div>
+      )}
 
       <div className="card card-pad stack" style={{ gap: 12 }}>
         <div className="label">This month</div>
@@ -143,7 +167,7 @@ export default function Subscription() {
         <div className="card-hd"><div className="label">Payments for the plan</div></div>
         {!(s.charges || []).length ? <div style={{ padding: 16 }} className="faint">None yet.</div> : (s.charges || []).map((c: any) => (
           <div key={c.id} className="tr" style={{ gridTemplateColumns: 'minmax(0,1fr) 120px 110px', gap: 10 }}>
-            <span>{c.plan} · {c.billing === 'year' ? 'a year' : 'a month'} · {c.method === 'card' ? 'by card' : 'from the wallet'}{c.kind === 'renewal' ? ' · renewal' : ''}
+            <span>{c.kind === 'filing' ? `${c.plan}${c.year ? ` · ${c.year} accounts` : ''}` : `${c.plan} · ${c.billing === 'year' ? 'a year' : 'a month'}`} · {c.method === 'card' ? 'by card' : 'from the wallet'}{c.kind === 'renewal' ? ' · renewal' : ''}
               <span className="faint" style={{ display: 'block', fontSize: 12 }}>{when(c.paid_at || c.at)}{c.error ? ` · ${c.error}` : ''}</span></span>
             <span className="right num">{N2(c.amount)}</span>
             <span><StatusChip s={c.status === 'sent' ? 'processing' : c.status} /></span>
@@ -184,6 +208,7 @@ function ChoosePlan({ plan, state, onClose, onDone }: { plan: any; state: any; o
     <Modal onClose={onClose} width={500}>
       <ModalHead title={`Move to ${plan.name}`} sub={free ? 'Free' : `${N2(price)} ${billing === 'year' ? 'a year' : 'a month'}, VAT included`} onClose={onClose} />
       <div className="modal-body stack" style={{ gap: 12 }}>
+        {state.filing_only && <Alert kind="blue" icon="info">Choosing {plan.name} ends filing-only and switches the rest of Counta on. Years already paid for stay paid.</Alert>}
         {!free && (
           <>
             <Field label="Pay"><div className="row" style={{ gap: 6 }}>

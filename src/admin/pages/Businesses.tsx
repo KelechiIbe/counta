@@ -6,7 +6,7 @@ import { fmtDay, num, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import { useToast } from '../../state/session';
-import { FEATURES, featureLabel, tidyError } from '../api';
+import { AREAS, FEATURES, featureLabel, tidyError } from '../api';
 import { Card, grid, PageHead } from '../ui';
 import { OrgPlan } from './OrgPlan';
 import { DeleteBusiness, UnfinishedDeletions } from './DeleteBusiness';
@@ -100,7 +100,7 @@ function SwitchRow({ orgId, s }: { orgId: string; s: Detail['switches'][number] 
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(s.override?.note || '');
-  const f = FEATURES.find((x) => x.id === s.feature);
+  const f = [...FEATURES, ...AREAS].find((x) => x.id === s.feature);
   const value = s.override ? (s.override.enabled ? 'on' : 'off') : 'default';
   async function choose(v: 'default' | 'on' | 'off') {
     setBusy(true);

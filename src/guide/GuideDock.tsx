@@ -10,6 +10,7 @@ import { useGuideTalk } from './GuideProvider';
 import { VoicePickerModal } from './VoicePicker';
 import { ConfirmCard, HandsFreeSwitch } from './ConfirmCard';
 import './guide.css';
+import { planOff, useFeatures } from '../lib/features';
 
 // Martina's face across the app: her mark in a blue disc. Live, it moves with the conversation: rings ripple out with the
 // person's voice while she listens, and when she speaks the dot inside the bubble brightens and the spark twinkles in step
@@ -104,7 +105,9 @@ export function GuideDock() {
   // Home's checklist and the onboarding page start the setup guide themselves, and the Martina page is the conversation.
   const where = loc.pathname.startsWith('/onboarding') || loc.pathname === '/assistant' || !orgId ? 'none'
     : setup && loc.pathname !== '/home' ? 'guide' : 'assistant';
-  const offer = !hidden && g.status === 'idle' && where !== 'none';
+  // A business whose plan leaves Martina out (the Annual filing package) is not offered her.
+  const feats = useFeatures().data;
+  const offer = !hidden && g.status === 'idle' && where !== 'none' && !planOff(feats, 'martina');
   // While a drawer or a dialog is open, the panel moves to the left so it never covers their buttons.
   const [overlay, setOverlay] = useState(false);
   useEffect(() => {

@@ -4,7 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { rpc } from './supabase';
 import { useSession } from '../state/session';
 
-export type Feature = 'martina' | 'phone_calls' | 'payment_voice' | 'ai_reading' | 'email' | 'whatsapp' | 'payments' | 'bulk_payments' | 'bank_feeds' | 'supplier_portal';
+export type Feature = 'martina' | 'phone_calls' | 'payment_voice' | 'ai_reading' | 'email' | 'whatsapp' | 'payments' | 'bulk_payments' | 'bank_feeds' | 'supplier_portal'
+  | 'selling' | 'purchases' | 'inventory' | 'vat_wht';
 export const PAUSED: Record<Feature, string> = {
   martina: 'TaxStreem has paused Martina for now. Everything on the screens works without her.',
   phone_calls: 'TaxStreem has paused phone calls for now. Orders and reminders still go out by WhatsApp or email.',
@@ -16,10 +17,14 @@ export const PAUSED: Record<Feature, string> = {
   bulk_payments: 'TaxStreem has paused bulk payments for now. Single payouts still work.',
   bank_feeds: 'TaxStreem has paused bank feeds for now. Statements can still be uploaded.',
   supplier_portal: 'TaxStreem has paused the supplier invoice portal for now. Invoices can still be uploaded here.',
+  selling: 'TaxStreem has switched selling off for this business.',
+  purchases: 'TaxStreem has switched bills and vendors off for this business.',
+  inventory: 'TaxStreem has switched inventory off for this business.',
+  vat_wht: 'TaxStreem has switched the VAT and WHT returns off for this business.',
 };
 const NAMES: Record<Feature, string> = { martina: 'Martina', phone_calls: 'Phone calls', payment_voice: 'Spoken announcements', ai_reading: 'AI reading',
   email: 'Email to customers', whatsapp: 'WhatsApp to customers', payments: 'Payments', bulk_payments: 'Bulk payments', bank_feeds: 'Bank feeds',
-  supplier_portal: 'The supplier invoice portal' };
+  supplier_portal: 'The supplier invoice portal', selling: 'Selling', purchases: 'Purchases', inventory: 'Inventory', vat_wht: 'Filing VAT and WHT returns' };
 export type Features = Partial<Record<Feature, boolean>> & { _plan?: Partial<Record<Feature, boolean>> };
 // Why a feature is off, in a sentence: not in the plan (the owner can change it), or paused by TaxStreem.
 export const offNote = (f: Features | undefined, k: Feature) =>
@@ -36,3 +41,6 @@ export function useFeatures() {
   });
 }
 export const isOn = (f: Features | undefined, k: Feature) => f?.[k] !== false;
+// A part of the app the business's plan leaves out (the Annual filing package leaves out selling, purchases, inventory and the
+// monthly returns): hidden from the menu, and its pages say so.
+export const planOff = (f: Features | undefined, k: Feature) => f?.[k] === false && !!f?._plan?.[k];

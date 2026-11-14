@@ -8,7 +8,7 @@ import { useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
 import { localPhone } from '../../lib/format';
 import {
-  answered, cacSearch, cacSelect, cacStatusReport, classLabel, CompanyExists, existsText, FILING, guideLanguage, guideMark, incomeTaxOf, kycAnswer, kycManual, kycSubmit, longDate, naira, OFFERING, PAY,
+  answered, cacSearch, cacSelect, cacStatusReport, classLabel, CompanyExists, existsText, FILING, filingChoice, guideLanguage, guideMark, incomeTaxOf, kycAnswer, kycManual, kycSubmit, longDate, naira, OFFERING, PAY,
   QUESTION_LABEL, questionsFor, readCacDocument, REASONS, RECEIVE, REVENUE, taxesFor, titleCase, uploadCacDocument, useCategories, useGuide, useKyc, useScore, yearsSince,
   type Answers, type Candidate, type IncomeTax, type Kyc, type Score,
 } from '../../lib/onboard';
@@ -54,6 +54,13 @@ export default function Onboard() {
   const lang = guide.data?.language || 'en';
   const [started, setStarted] = useState(false);
   const [skippedId, setSkippedId] = useState(false);
+  // The first question: run the whole business on Counta, or only file the yearly income tax return.
+  const [fileOnly, setFileOnly] = useState(filingChoice.get());
+  const chooseFiling = (v: boolean) => {
+    filingChoice.set(v); setFileOnly(v);
+    g.notify(v ? 'On screen, the person chose filing-only: Counta prepares only the yearly income tax return from bank statements, for a one-time fee each year. Set the business up as usual.'
+      : 'On screen, the person chose to run the whole business on Counta.');
+  };
   const identity = useIdentity(k?.status === 'submitted' ? k.org_id : null);
   const idOpen = !skippedId && ['pending', 'rejected'].includes(identity.data?.status || '') && !!identity.data?.can_check;
 
@@ -108,11 +115,12 @@ export default function Onboard() {
       <div className="ob-main">
         <div className="ob-col">
           {!k ? <div className="row" style={{ justifyContent: 'center', padding: 60 }}><Spinner /></div>
-            : screen === 'welcome' ? <Welcome first={first} lang={lang} onTalk={() => talk()} onType={() => talk(true)} onSelf={() => { setStarted(true); go('find'); }} onSample={sample} sampling={sampling} hasOrgs={memberships.length > 0} />
+            : screen === 'welcome' ? <Welcome first={first} lang={lang} onTalk={() => talk()} onType={() => talk(true)} onSelf={() => { setStarted(true); go('find'); }} onSample={sample} sampling={sampling} hasOrgs={memberships.length > 0}
+                fileOnly={fileOnly} onFileOnly={chooseFiling} />
             : screen === 'find' ? <Find k={k} live={live} onFound={() => go('found')} onManual={() => go('questions')} />
             : screen === 'found' ? <Found k={k} live={live} onNext={() => go('questions')} onBack={() => go('find')} />
             : screen === 'questions' ? <Questions k={k} live={live} onNext={() => go('summary')} />
-            : screen === 'summary' ? <Summary k={k} live={live} onEdit={() => go('questions')} onDone={(org) => { setOrgId(org); go('score'); }} />
+            : screen === 'summary' ? <Summary k={k} live={live} onEdit={() => go('questions')} onDone={(org) => { setOrgId(org); go('score'); }} fileOnly={fileOnly} onFileOnly={chooseFiling} />
             : screen === 'score' ? <ScoreView orgId={orgId} first={first} live={live} next={idOpen ? 'Next: confirm a director' : 'Next: your CAC document'}
                 onNext={() => { g.answer("Let's move on.", idOpen ? 'The director NIN check is on screen now.' : 'The CAC document step is on screen now.'); go(idOpen ? 'identity' : 'document'); }} />
             : screen === 'identity' ? <IdentityStep orgId={orgId} first={first} live={live} lang={lang} onNext={() => { setSkippedId(true); go('document'); }} />
@@ -146,7 +154,8 @@ function IdentityStep({ orgId, first, live, lang, onNext }: { orgId: string | nu
 }
 
 // ---------------------------------------------------------------- welcome
-function Welcome({ first, lang, onTalk, onType, onSelf, onSample, sampling, hasOrgs }: { first: string; lang: string; onTalk: () => void; onType: () => void; onSelf: () => void; onSample: () => void; sampling: boolean; hasOrgs: boolean }) {
+function Welcome({ first, lang, onTalk, onType, onSelf, onSample, sampling, hasOrgs, fileOnly, onFileOnly }: { first: string; lang: string; onTalk: () => void; onType: () => void; onSelf: () => void; onSample: () => void; sampling: boolean; hasOrgs: boolean;
+  fileOnly: boolean; onFileOnly: (v: boolean) => void }) {
   const g = useGuideTalk();
   const nav = useNavigate();
   const pcm = lang === 'pcm';
@@ -159,6 +168,19 @@ function Welcome({ first, lang, onTalk, onType, onSelf, onSample, sampling, hasO
           <div className="ob-sub" style={{ marginTop: 10, maxWidth: 520 }}>
             {pcm ? 'I go set up your business for Counta in like five minutes. I go find am for CAC, check wetin people dey talk about you online, and tell you straight where you stand with tax.'
               : "I'll set up your business in about five minutes. I'll find you on the CAC register, see what the internet knows about you, and tell you honestly where you stand with tax. No long forms."}
+          </div>
+        </div>
+        <div className="stack" style={{ gap: 8, width: '100%', maxWidth: 560 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }} id="ob-need">{pcm ? 'Wetin you need Counta for?' : 'What do you need Counta for?'}</div>
+          <div role="radiogroup" aria-labelledby="ob-need" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 8 }}>
+            <button type="button" role="radio" aria-checked={!fileOnly} className={'ob-tile' + (!fileOnly ? ' on' : '')} onClick={() => onFileOnly(false)} data-testid="choose-run">
+              <b style={{ fontSize: 14 }}>{pcm ? 'To run my business' : 'Running my business'}</b>
+              <span className="muted" style={{ fontSize: 13, lineHeight: 1.45 }}>Books, invoices, stock, payments and every tax return, on a plan.</span>
+            </button>
+            <button type="button" role="radio" aria-checked={fileOnly} className={'ob-tile' + (fileOnly ? ' on' : '')} onClick={() => onFileOnly(true)} data-testid="choose-file-only">
+              <b style={{ fontSize: 14 }}>{pcm ? 'Na only my tax return for the year' : 'Only my yearly tax return'}</b>
+              <span className="muted" style={{ fontSize: 13, lineHeight: 1.45 }}>Counta prepares the income tax return from your bank statements, for a one-time fee each year.</span>
+            </button>
           </div>
         </div>
         <div className="row wrap" style={{ gap: 10, justifyContent: 'center' }}>
@@ -646,7 +668,7 @@ function Questions({ k, live, onNext }: { k: Kyc; live: boolean; onNext: () => v
 }
 
 // ---------------------------------------------------------------- summary
-function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: () => void; onDone: (org: string) => void }) {
+function Summary({ k, live, onEdit, onDone, fileOnly, onFileOnly }: { k: Kyc; live: boolean; onEdit: () => void; onDone: (org: string) => void; fileOnly: boolean; onFileOnly: (v: boolean) => void }) {
   const { session, refreshMemberships } = useSession();
   const g = useGuideTalk();
   const qc = useQueryClient();
@@ -707,6 +729,11 @@ function Summary({ k, live, onEdit, onDone }: { k: Kyc; live: boolean; onEdit: (
           </div>
         ))}
       </div>
+      {fileOnly && (
+        <Alert kind="blue" icon="info"><span data-testid="summary-file-only">Set up for filing only: Counta prepares the yearly income tax return from the business's bank statements, for a one-time
+          fee each year. Invoicing, stock, payments and the monthly returns stay off until you choose a plan.</span>{' '}
+          <button className="btn btn-ghost btn-xs" onClick={() => onFileOnly(false)}>Run the whole business instead</button></Alert>
+      )}
       {err && <Alert kind="red" icon="alert">{err}</Alert>}
       {k.taken && !k.taken.yours && (
         <button className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => nav(k.taken?.recovery_id ? `/recover/${k.taken.recovery_id}` : '/recover')} data-testid="summary-recover">

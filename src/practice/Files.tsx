@@ -52,6 +52,7 @@ export function FilesPanel({ d }: { d: ClientDetail }) {
       if (kind === 'fs') {
         // The statements are laid out in the browser, the same as the business's own Excel download.
         const pack = await rpc<any>('financial_statements_pack', { p_org: orgId, p_from: from, p_to: to });
+        if (pack?.locked) throw new Error(pack.message || 'Pay the filing fee on the business\'s Filing page first.');
         const [{ buildPack }, mod] = await Promise.all([import('../lib/fsPack'), import('../lib/fsExport')]);
         downloadBlob(await mod.packXlsx(buildPack(pack)), `${safeName(`${d.business?.name || 'Business'} financial statements ${pack?.periods?.to || to}`)}.xlsx`);
       } else {
@@ -75,6 +76,7 @@ export function FilesPanel({ d }: { d: ClientDetail }) {
       let p = period;
       if (kind === 'fs') {
         const pack = await rpc<any>('financial_statements_pack', { p_org: orgId, p_from: from, p_to: to });
+        if (pack?.locked) throw new Error(pack.message || 'Pay the filing fee on the business\'s Filing page first.');
         p = `${pack?.periods?.from || from}:${pack?.periods?.to || to}`;
       }
       const path = `${orgId}/tax/accountant/${kind}/${p.replace(':', '_')}${kind === 'wht' ? `_${authority.replace(':', '_')}` : ''}/${uuid()}.xlsx`;
