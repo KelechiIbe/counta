@@ -30,6 +30,18 @@ export type Invitation = { id: string; business: string; services: string[]; bil
 export type Practice = {
   id: string; name: string; kind: 'firm' | 'sole'; email: string | null; phone: string | null; address: string | null; state: string | null; firm_reg: string | null; created_at: string;
   conflict_scan_books: boolean; mandate_suspended_at: string | null;
+  // The firm's letterhead on its engagement letters (null: plain), who set it and when.
+  letterhead: Letterhead | null; letterhead_set_at: string | null; letterhead_set_by: string | null;
+};
+// A letterhead file as the practice saved it: a PDF page (its size in points) or a picture (its size in pixels).
+export type LetterheadFile = { path: string; sha256: string; kind: 'pdf' | 'png' | 'jpg'; w: number; h: number };
+export type LetterheadMargins = { first_top: number; first_bottom: number; next_top: number; next_bottom: number; left: number; right: number };
+export type LetterheadShow = { address: boolean; phone: boolean; email: boolean; firm_reg: boolean; website: boolean };
+// As the database keeps it (private.letterhead_norm): the firm's own page laid under the letter, or one built here.
+export type Letterhead = {
+  mode: 'upload' | 'built'; font: 'helvetica' | 'times'; color: string; page: [number, number];
+  first?: LetterheadFile; next?: LetterheadFile | null; next_mode?: 'same' | 'upload' | 'none'; margins?: LetterheadMargins;
+  logo?: LetterheadFile | null; layout?: 'left' | 'center'; show?: LetterheadShow; website?: string | null; footer?: string | null;
 };
 export type Plan = { id: string; name: string; price_month: number; price_year: number | null; description?: string | null };
 export type Home = {

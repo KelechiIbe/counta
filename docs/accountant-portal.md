@@ -117,6 +117,8 @@ For one client the firm drafts a letter from a template (`practice_letter_draft`
 3. **Signing** (`sign_submit`): the stored letter is read again and refused if its SHA-256 no longer matches the one the firm signed (recorded on the letter as `document_changed`, and the firm's leads are told). Otherwise a signature page and a completion certificate (both sides' names, times, addresses, browsers and the letter's fingerprint) are added and the result is stored write-once.
 4. **Or a signed copy is uploaded** when the client signed on paper (`practice_letter_upload_signed`), with its SHA-256.
 
+**The firm's letterhead.** A partner can have letters printed on the firm's own letterhead page (uploaded as a PDF or a picture), on a letterhead built from its logo, colour and details, or plain. Letters a partner signs after it is set carry it; signed letters and PDF letters never change. Any draft, template or sample letter can be seen as a PDF, marked PREVIEW, before anyone signs. See [letterhead-and-vat-switch.md](letterhead-and-vat-switch.md).
+
 Every step is in the letter's record (`engagement_letter_events`): drafted, signed by the firm, sent, opened, codes sent and failed, signed, uploaded, voided. A letter can be voided with a reason until it is signed. Letters are kept for the number of years they say (six by default, never fewer than five). A letter to a full-mandate client carries no Counta name, on the page or in the email.
 
 ## Full mandate
@@ -194,7 +196,7 @@ A partner or manager can pay for a client's Counta plan with the practice's card
 
 | Table | What it holds |
 | --- | --- |
-| `practices` | The practice |
+| `practices` | The practice, and its letterhead (`letterhead`, who set it and when) |
 | `practice_members` | Its people, roles and licence numbers |
 | `practice_clients` | Invitations either way and connections (invited, requested, active, ended, declined) |
 | `practice_assignments` | Staff on a client |
@@ -204,7 +206,7 @@ A partner or manager can pay for a client's Counta plan with the practice's card
 | `practice_intakes`, `practice_intake_people`, `practice_intake_docs` | Due diligence on a prospect |
 | `practice_intake_history` | A client's intake as it stood before each change |
 | `practice_conflict_hits`, `practice_opposing_parties` | What the conflicts check found, and the other side of clients' matters |
-| `practice_letter_templates`, `engagement_letters`, `engagement_letter_signers`, `engagement_letter_events` | Templates, letters, their signers and their record |
+| `practice_letter_templates`, `engagement_letters`, `engagement_letter_signers`, `engagement_letter_events` | Templates, letters (with the letterhead each was signed on), their signers and their record |
 | `practice_director_confirmations` | A director's confirmation of the wallets |
 | `identity_checks` | A NIN matched to the CAC record and the code sent for it (a confirmation or a recovery) |
 | `practice_cac_lookups`, `practice_intake_nin_checks` | CAC searches from the intake, and NINs checked from it |

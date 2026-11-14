@@ -144,10 +144,24 @@ function VatStatus({ st, onChange }: { st: any; onChange: (charge: boolean) => v
           ? st.small && !st.crossed && <button className="btn btn-ghost btn-sm" onClick={() => onChange(false)}>Stop charging VAT</button>
           : <button className={'btn btn-sm ' + (st.advice === 'must_start' ? 'btn-primary' : 'btn-secondary')} onClick={() => onChange(true)}>Start charging VAT</button>)}
       </div>
-      {st.advice === 'must_start' && <Alert kind="red" icon="alert">{st.crossed ? `Sales this year have passed ₦100 million (${N2(st.year_to_date)}).` : 'The business is above the small company limits (turnover up to ₦100 million, fixed assets up to ₦250 million, no professional services).'} It must charge VAT and file monthly returns.{st.can_change ? '' : ' Ask the owner to turn VAT on.'}</Alert>}
+      {st.advice === 'must_start' && <Alert kind="red" icon="alert"><span data-testid="vat-must-start">{st.crossed ? `Sales this year have passed ₦100 million (${N2(st.year_to_date)}).` : 'The business is above the small company limits (turnover up to ₦100 million, fixed assets up to ₦250 million, no professional services).'} It must charge VAT and file monthly returns.{st.auto_on ? ` Counta turns VAT on at its next morning check, around 7am, and tells the people who keep the books.${st.can_change ? ' You can turn it on now instead.' : ''}` : st.can_change ? '' : ' Ask the owner to turn VAT on.'}</span></Alert>}
+      {st.last_change && <div className="faint" style={{ fontSize: 13 }} data-testid="vat-last-change">{changeWords(st.last_change)}</div>}
       {st.advice === 'may_stop' && <Alert kind="blue" icon="info">As a small company the business need not charge VAT. Keeping it on means filing every month, but lets the business recover the input VAT on its purchases.</Alert>}
     </div>
   );
+}
+
+// The last time VAT was turned on or off, and by whom: Counta's morning check says why.
+const WHY: Record<string, (c: any) => string> = {
+  sales_passed: (c) => `sales this year passed ₦100 million (${N2(c.year_to_date)}${c.year_from ? ` from ${fmtDay(c.year_from)}` : ''})`,
+  turnover: (c) => `turnover in the last full year was above ₦100 million (${N2(c.turnover)})`,
+  fixed_assets: (c) => `fixed assets were above ₦250 million (${N2(c.fixed_assets)})`,
+  professional_services: () => 'the business provides professional services, so it is not a small company',
+};
+function changeWords(c: any): string {
+  const day = fmtDay(String(c.at));
+  if (c.auto) return `On ${day} Counta turned VAT on because ${(WHY[c.reason] || (() => 'the business passed the small company limits'))(c)}.`;
+  return `On ${day} ${c.by} turned VAT ${c.charge ? 'on' : 'off'}.`;
 }
 
 function Row({ label, value, strong, muted }: { label: ReactNode; value: unknown; strong?: boolean; muted?: boolean }) {

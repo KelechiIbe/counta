@@ -17,6 +17,8 @@ import { LetterEditor } from '../LetterEditor';
 import { docxToBlocks } from '../letterDocx';
 import { type LetterDetail, type LetterStatus, type LetterTemplate, openDoc, useLetter, useLetterTemplates, usePracticeHome } from '../api';
 import { LETTER_FIELDS, type LetterBody, type MergeValues } from '../../../supabase/functions/_shared/letter.ts';
+import { PREVIEW_MERGE } from '../letterSample';
+import { PdfPreview, type PreviewAsk } from '../PdfPreview';
 
 export const LETTER_STATUS: Record<LetterStatus, [string, string]> = {
   draft: ['Draft', 't-grey'], partner_signed: ['Signed by the firm', 't-blue'], sent: ['Sent for signing', 't-amber'],
@@ -44,13 +46,6 @@ const FIELD_LABEL: Record<string, string> = {
   'partner.name': 'Engagement partner', 'partner.title': 'Partner\'s title', 'partner.email': 'Partner\'s email', 'team.assistant': 'Assisted by',
   'conflicts.note': 'Note on the conflicts check (optional)', 'liability.cap_basis': 'Liability cap: higher or lower', 'retention.years': 'Years files are kept',
   'termination.notice_days': 'Notice to end the engagement (days)', 'termination.handover_days': 'Days to hand over records', 'arbitration.seat': 'Seat of arbitration',
-};
-// Values for previewing a template: every service shown, the letter's own defaults.
-const PREVIEW_MERGE: MergeValues = {
-  'service.advisory': true, 'service.bookkeeping': true, 'service.monthly': true, 'service.annual': true, 'liability.cap_basis': 'lower', 'retention.years': 6,
-  'fees.frequency': 'monthly', 'fees.amount': 250000, 'fees.deposit': 50000, 'fees.billing_day': 20, 'fees.billing_period': 'month', 'fees.payment_days': 14,
-  'fees.suspend_days': 30, 'service.days': 7, 'termination.notice_days': 30, 'termination.handover_days': 14, 'arbitration.seat': 'Lagos',
-  'client.name': 'Client Name Limited', 'firm.name': 'Your Firm', 'partner.name': 'Engagement Partner', 'partner.title': 'Partner',
 };
 const plainName = (s: string) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[^A-Za-z0-9_-]+/, '').replace(/\.{2,}/g, '.').slice(-90) || 'file';
 async function sha256Hex(f: File) {
@@ -171,12 +166,13 @@ export default function LettersPage({ pid }: { pid: string }) {
   );
 }
 
-function TemplateEditor({ initial, busy, onClose, onSave }: {
+function TemplateEditor({ pid, initial, busy, onClose, onSave }: {
   pid: string; initial: { id?: string; name: string; body: LetterBody }; busy: boolean; onClose: () => void; onSave: (name: string, body: LetterBody) => void;
 }) {
   const [name, setName] = useState(initial.name);
   const [body, setBody] = useState(initial.body);
   const [variant, setVariant] = useState<'full' | 'involved'>('full');
+  const [preview, setPreview] = useState<PreviewAsk | null>(null);
   return (
     <Modal onClose={onClose} width={1180}>
       <ModalHead title={initial.id ? 'Edit template' : 'New template'} sub="The preview shows every service with sample details. Numbers are added for you." onClose={onClose} />
@@ -193,13 +189,18 @@ function TemplateEditor({ initial, busy, onClose, onSave }: {
           </Field>
         </div>
         <LetterEditor body={body} merge={{ ...PREVIEW_MERGE, 'mode.full_mandate': variant === 'full' }} variant={variant} editable onChange={setBody} />
-        <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
+        <div className="row" style={{ justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn btn-ghost" style={{ marginRight: 'auto' }} data-testid="letter-template-preview"
+            onClick={() => setPreview({ practice_id: pid, blocks: body, merge: { ...PREVIEW_MERGE, 'mode.full_mandate': variant === 'full' }, variant, title: name.trim() || 'Letter of engagement' })}>
+            <Icon name="eye" size={16} />Preview as PDF
+          </button>
           <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" disabled={busy || name.trim().length < 2} onClick={() => onSave(name.trim(), body)} data-testid="letter-save">
             <Busy on={busy}>{null}</Busy>Save template
           </button>
         </div>
       </div>
+      {preview && <PdfPreview ask={preview} title={`${name.trim() || 'Template'}: preview`} onClose={() => setPreview(null)} />}
     </Modal>
   );
 }
@@ -223,6 +224,7 @@ export function LetterPage({ pid }: { pid: string }) {
   const [signer, setSigner] = useState({ name: '', email: '', title: '' });
   const [voiding, setVoiding] = useState(false);
   const [voidReason, setVoidReason] = useState('');
+  const [preview, setPreview] = useState<PreviewAsk | null>(null);
   const upload = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -359,6 +361,18 @@ export function LetterPage({ pid }: { pid: string }) {
 
       {draft && (
         <Card title="Sign for the firm" sub="The letter is turned into a PDF and fingerprinted. After this it cannot be changed: void it and draft again to change it.">
+          {l.source === 'template' && (
+            <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+              <button className="btn btn-secondary" data-testid="letter-preview-pdf"
+                onClick={() => setPreview(dirty && blocks ? { practice_id: pid, blocks, merge, variant: l.variant, title } : { practice_id: pid, letter_id: lid })}>
+                <Icon name="eye" size={16} />Preview as PDF
+              </button>
+              <span className="muted" style={{ fontSize: 13 }} data-testid="letter-letterhead-note">
+                {home.data?.practice.letterhead ? 'Printed on the firm\'s letterhead. ' : 'Printed plain, with the firm\'s name at the top. '}
+                <Link to={`/practice/${pid}/settings#letterhead`}>{home.data?.practice.letterhead ? 'Change the letterhead' : 'Add your letterhead'}</Link>
+              </span>
+            </div>
+          )}
           {partner ? (
             <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
               <Field label="Your name, as your signature" style={{ flex: '1 1 260px' }}>
@@ -423,6 +437,7 @@ export function LetterPage({ pid }: { pid: string }) {
           <button className="btn btn-ghost" style={{ color: '#B42318' }} onClick={() => setVoiding(true)} data-testid="letter-void">Void this letter</button>
         </div>
       )}
+      {preview && <PdfPreview ask={preview} title={`${title || l.title}: preview`} onClose={() => setPreview(null)} />}
       {voiding && (
         <Modal onClose={() => setVoiding(false)}>
           <ModalHead title="Void this letter?" sub="A void letter cannot be signed. The client's link stops working." onClose={() => setVoiding(false)} />

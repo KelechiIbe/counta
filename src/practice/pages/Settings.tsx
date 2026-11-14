@@ -1,5 +1,5 @@
 // The practice's details (partners change them), each person's own licence number, which TaxStreem checks, and how the
-// conflicts check looks for a prospect (partners choose).
+// conflicts check looks for a prospect (partners choose). The letterhead card sets how engagement letters look.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -10,6 +10,7 @@ import { Icon } from '../../components/Icon';
 import { Alert, Field, Spinner } from '../../components/ui';
 import { Card, PageHead } from '../../admin/ui';
 import { usePracticeHome } from '../api';
+import { LetterheadCard } from '../LetterheadCard';
 
 export default function SettingsPage({ pid }: { pid: string }) {
   const h = usePracticeHome(pid).data!;
@@ -48,7 +49,7 @@ export default function SettingsPage({ pid }: { pid: string }) {
   const up = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   return (
     <>
-      <PageHead title="Practice" sub="What clients see of your practice, and your own professional licence." />
+      <PageHead title="Practice" sub="What clients see of your practice, your letterhead, and your own professional licence." />
       {err && <Alert kind="red" icon="alert">{err}</Alert>}
       <Card title="Your licence" sub="Clients see it beside your name, and it goes into the statement you accept when you change a return.">
         <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
@@ -70,6 +71,7 @@ export default function SettingsPage({ pid }: { pid: string }) {
         </div>
         {partner && <div><button className="btn btn-primary" disabled={busy !== null} onClick={save}>{busy === 'p' ? <Spinner small /> : <Icon name="check" size={14} color="#fff" />}Save</button></div>}
       </Card>
+      {(partner || h.me.role === 'manager') && <LetterheadCard pid={pid} h={h} />}
       <Card title="Conflicts check" sub={`Each client you add is checked against your current and former clients, your other intakes and the opposing parties you record. Never against another firm's records.${partner ? '' : ' A partner changes this.'}`}>
         <label className="check" style={{ alignItems: 'flex-start', minHeight: 44 }}>
           <input type="checkbox" data-testid="conflict-scan-books" checked={!!p.conflict_scan_books} disabled={!partner || busy !== null} onChange={(e) => setScan(e.target.checked)}
