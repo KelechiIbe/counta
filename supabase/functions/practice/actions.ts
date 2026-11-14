@@ -11,7 +11,8 @@
 // logged (tokens scrubbed) and answered "Something went wrong. Try again."
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { deriveMerge, type LetterBody, renderModel } from '../_shared/letter.ts';
-import { appendCompletion, pngDrawable, renderLetterPdf } from './pdf.ts';
+import { appendCompletion, type Firm, type Letterhead, pngDrawable, renderLetterPdf } from './pdf.ts';
+import { letterheadFiles } from './letterhead.ts';
 import { buildExport } from './export.ts';
 import { clientIp, dbFailure, fileFromDataUrl, pngFromDataUrl, refusedForSure, sha256Hex, tokenOk, userAgent, UserError } from './util.ts';
 import { cacContacts, LookupError, lookupWith, ninDigits, ninLookup } from '../_shared/mono_lookup.ts';
@@ -116,6 +117,11 @@ async function remove(d: Deps, paths: string[]) {
     console.error('practice: could not remove', paths.join(', '), (e as Error).message);
   }
 }
+// A stored file's bytes, or null when it is not there (the letterhead's files are checked by their caller).
+async function readFile(d: Deps, path: string): Promise<Uint8Array | null> {
+  const { data, error } = await d.admin.storage.from(BUCKET).download(path);
+  return error || !data ? null : new Uint8Array(await data.arrayBuffer());
+}
 async function signedUrl(d: Deps, path: string, seconds: number, download = false): Promise<string | null> {
   const { data, error } = await d.admin.storage.from(BUCKET).createSignedUrl(path, seconds, download ? { download: true } : undefined);
   return error ? null : data?.signedUrl || null;
@@ -145,17 +151,7 @@ async function letterFreeze(req: Request, b: Body, d: Deps, sb: SupabaseClient, 
       throw new UserError('The letter\'s file is not a PDF that can be signed (it may be protected by a password). Upload an unprotected PDF.');
     }
   } else {
-    let blocks;
-    try {
-      blocks = renderModel(prep.blocks as LetterBody, deriveMerge(prep.merge || {}), prep.variant === 'full' ? 'full' : 'involved');
-    } catch (e) {
-      // The renderer's own refusals are for the partner (a reference to a paragraph that dropped out); anything else is not.
-      const m = String((e as Error)?.message || '');
-      throw /^(Reference to a paragraph|The letter is not)/.test(m) ? new UserError(m) : e;
-    }
-    bytes = await renderLetterPdf(blocks, { title: String(prep.title || 'Letter of engagement'), firmName: String(prep.firm?.name || ''),
-      partnerName: String(prep.partner?.name || ''), partnerTitle: String(prep.partner?.title || 'Partner'),
-      partnerSignature: signature || String(prep.partner?.name || '') });
+    bytes = await renderLetter(d, prep, { partnerSignature: signature || String(prep.partner?.name || '') });
     path = `practice/${prep.practice_id}/letters/${letterId}/letter.pdf`;
     await upload(d, path, bytes, 'application/pdf',
       'This letter already has a signed file in its folder. Void it and draft the letter again.');
@@ -173,6 +169,48 @@ async function letterFreeze(req: Request, b: Body, d: Deps, sb: SupabaseClient, 
     else if (written) console.error('practice: the letter may have been frozen; its file is kept', path);
     throw e;
   }
+}
+
+// A letter's blocks numbered and merged (_shared/letter.ts) and drawn as a PDF, on the firm's letterhead when it has one
+// (its files read and checked first). prep is what practice_letter_prepare or practice_letter_preview answered.
+async function renderLetter(d: Deps, prep: any, o: { partnerSignature?: string; preview?: boolean }): Promise<Uint8Array> {
+  let blocks;
+  try {
+    blocks = renderModel(prep.blocks as LetterBody, deriveMerge(prep.merge || {}), prep.variant === 'full' ? 'full' : 'involved');
+  } catch (e) {
+    // The renderer's own refusals are for the partner (a reference to a paragraph that dropped out); anything else is not.
+    const m = String((e as Error)?.message || '');
+    throw /^(Reference to a paragraph|The letter is not)/.test(m) ? new UserError(m) : e;
+  }
+  const lh = (prep.letterhead && typeof prep.letterhead === 'object' ? prep.letterhead : null) as Letterhead | null;
+  const files = await letterheadFiles(lh, (path) => readFile(d, path));
+  const firm: Firm = { name: String(prep.firm?.name || ''), address: prep.firm?.address ?? null, state: prep.firm?.state ?? null,
+    phone: prep.firm?.phone ?? null, email: prep.firm?.email ?? null, firm_reg: prep.firm?.firm_reg ?? null };
+  return await renderLetterPdf(blocks, { title: String(prep.title || 'Letter of engagement'), firmName: firm.name, firm,
+    partnerName: String(prep.partner?.name || ''), partnerTitle: String(prep.partner?.title || 'Partner'), partnerSignature: o.partnerSignature,
+    preview: o.preview }, lh ? { settings: lh, files } : null);
+}
+
+// Bytes as base64, a piece at a time (a letter on a letterhead can run to a few megabytes).
+function base64(b: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+// Partners and managers see a letter as a PDF before anyone signs it: a draft ({letter_id}), a template in the editor or a
+// sample ({blocks, merge, variant, title}), on the practice's letterhead or, for a partner, one not yet saved
+// ({letterhead}). Nothing is stored; every page is marked as a preview and carries no signature.
+async function letterPreview(_req: Request, b: Body, d: Deps, sb: SupabaseClient): Promise<Result> {
+  const pid = uuid(b.practice_id, 'practice');
+  const p: Record<string, unknown> = {};
+  if (b.letter_id !== undefined && b.letter_id !== null) p.letter_id = uuid(b.letter_id, 'letter');
+  else Object.assign(p, { blocks: b.blocks, merge: b.merge ?? {}, variant: b.variant ?? 'involved', title: b.title ?? null });
+  if (b.letterhead !== undefined) p.letterhead = b.letterhead;
+  if (JSON.stringify(p).length > 400_000) throw new UserError('The letter is too long to show.');
+  const prep = await rpc(sb, 'practice_letter_preview', { p_practice: pid, p });
+  const bytes = await renderLetter(d, prep, { preview: true });
+  return { ok: true, pdf: base64(bytes), bytes: bytes.length, pages: (await PDFDocument.load(bytes, { updateMetadata: false })).getPageCount() };
 }
 
 // A partner exports a client's records (practice_export_begin, as themselves): the zip, and a link to it for 10 minutes.
@@ -491,7 +529,7 @@ const PUBLIC = new Map<string, (req: Request, b: Body, d: Deps) => Promise<Resul
   ['approval_open', approvalOpen], ['approval_code', approvalCode], ['approval_verify', approvalVerify], ['approval_decide', approvalDecide],
 ]);
 const SIGNED_IN = new Map<string, (req: Request, b: Body, d: Deps, sb: SupabaseClient, user: User) => Promise<Result>>([
-  ['letter_freeze', letterFreeze], ['export', exportRecords], ['end_mandate', endMandate], ['unlink_feeds', unlinkFeeds],
+  ['letter_freeze', letterFreeze], ['letter_preview', letterPreview], ['export', exportRecords], ['end_mandate', endMandate], ['unlink_feeds', unlinkFeeds],
 ]);
 
 export async function handle(req: Request, d: Deps): Promise<Response> {

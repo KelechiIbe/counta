@@ -43,3 +43,10 @@ vat_relief_ref
 vat_relief_by
 relief_words
 relief_by_name
+# Release 3: letterhead and VAT turned on by itself
+auto_on
+last_change
+must_reason
+practice.letterhead
+practice.letterhead_set_at
+practice.letterhead_set_by

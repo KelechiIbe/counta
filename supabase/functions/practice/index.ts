@@ -4,9 +4,13 @@
 //
 // Signed-in callers (Authorization: Bearer <user JWT>; the database checks each as the person):
 //   letter_freeze { letter_id, signature_name? }  -> a partner signs a draft for the firm: practice_letter_prepare, the
-//                                                    blocks numbered and merged (_shared/letter.ts) into a PDF stored
-//                                                    write-once at practice/<pid>/letters/<lid>/letter.pdf (a PDF letter's
-//                                                    own file as it stands), its SHA-256, then svc_letter_frozen. {letter}
+//                                                    blocks numbered and merged (_shared/letter.ts) into a PDF on the
+//                                                    firm's letterhead (letterhead.ts checks its files), stored write-once
+//                                                    at practice/<pid>/letters/<lid>/letter.pdf (a PDF letter's own file as
+//                                                    it stands), its SHA-256, then svc_letter_frozen. {letter}
+//   letter_preview { practice_id, letter_id } or { practice_id, blocks, merge, variant, title }, with letterhead (a partner
+//                                                 trying one not yet saved) -> practice_letter_preview, then the letter as a
+//                                                    PDF on the letterhead, marked as a preview and not stored. {pdf (base64)}
 //   export { client_id }                          -> a partner exports a full-mandate client's records (practice_export_begin,
 //                                                    export.ts): {url} for 10 minutes, sha256, bytes
 //   end_mandate { client_id, reason }             -> practice_end_mandate, then the business's bank feeds unlinked at Mono

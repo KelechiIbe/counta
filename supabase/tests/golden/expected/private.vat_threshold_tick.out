@@ -1,3 +1,5 @@
 == definer:owner
 [{"vat_threshold_tick": ""}]
-[{"kind": "tax", "email": "owner@example.test"}]
+[{"kind": "vat_on", "email": "accountant@example.test"}, {"kind": "vat_on", "email": "admin@example.test"}, {"kind": "vat_on", "email": "owner@example.test"}, {"kind": "vat_on", "email": "partner@example.test"}]
+[{"readback": {"vat_opt_in": false, "vat_registered": true}}]
+[{"readback": {"charge": true, "reason": "sales_passed", "by_name": "Counta", "crossed": "true", "by_member": null}}]

@@ -652,3 +652,82 @@ Deno.test('approval_decide_refusals', async () => {
   assertEquals((await call(d, { action: 'approval_verify', token: AP, code: '111111' })).body.reason, 'expired');
   assertEquals((await call(d, { action: 'approval_verify', token: AP, code: '12345' })).body.reason, 'wrong_code');
 });
+
+// ------------------------------------------------------------------ the firm's letterhead and the preview
+import { letterheadPdf, makePng } from './test_images.ts';
+
+const LH_PATH = `practice/${PID}/letterhead/first.pdf`;
+async function uploadedLetterhead(admin: Fake) {
+  const page = await letterheadPdf();
+  admin.files.set(LH_PATH, page);
+  return { mode: 'upload', font: 'helvetica', color: '#111827', page: [595.28, 841.89], next_mode: 'same', next: null,
+    first: { path: LH_PATH, sha256: await sha256Hex(page), kind: 'pdf', w: 595.28, h: 841.89 },
+    margins: { first_top: 150, first_bottom: 80, next_top: 150, next_bottom: 80, left: 56, right: 56 } };
+}
+const prepared = (letterhead: unknown) => ({ letter_id: LID, practice_id: PID, source: 'template', title: 'Letter of engagement', variant: 'involved',
+  blocks: bodyJson, merge: { 'client.name': 'Dayo Foods Ltd' }, firm: { name: 'Head Partners', address: '3 Test Avenue', state: 'Lagos', firm_reg: 'BN 1' },
+  partner: { name: 'Bisi Partner', title: 'Partner' }, fingerprint: 'f'.repeat(64), letterhead });
+
+Deno.test('letter_freeze_on_the_letterhead', async () => {
+  const admin = new Fake(), user = new Fake();
+  const lh = await uploadedLetterhead(admin);
+  user.rpcs.practice_letter_prepare = () => prepared(lh);
+  admin.rpcs.svc_letter_frozen = (a) => ({ id: LID, status: 'partner_signed', doc_sha256: a.p.doc_sha256 });
+  const r = await call(deps(admin, user), { action: 'letter_freeze', letter_id: LID });
+  assertEquals(r.body.ok, true);
+  const stored = await PDFDocument.load(admin.files.get(`practice/${PID}/letters/${LID}/letter.pdf`)!);
+  assert(stored.getPageCount() > 1);
+  // The letterhead's page is drawn under every page of the stored letter.
+  for (const p of stored.getPages()) assert(String(p.node.Resources()?.toString()).includes('/XObject'), 'letterhead under the page');
+});
+
+Deno.test('letter_freeze_refuses_a_changed_letterhead_file', async () => {
+  const admin = new Fake(), user = new Fake();
+  const lh = await uploadedLetterhead(admin);
+  admin.files.set(LH_PATH, await letterheadPdf([595.28, 841.89], 'SOMEONE ELSE'));
+  user.rpcs.practice_letter_prepare = () => prepared(lh);
+  admin.rpcs.svc_letter_frozen = () => ({ id: LID });
+  const r = await call(deps(admin, user), { action: 'letter_freeze', letter_id: LID });
+  assertEquals(r.body.ok, false);
+  assertMatch(r.body.error, /letterhead page is not the file that was saved\. A partner can upload it again under Practice, Letterhead\./);
+  assertEquals(admin.uploads.length, 0);
+  assertEquals(admin.calls.filter((c) => c.fn === 'svc_letter_frozen').length, 0);
+  admin.files.delete(LH_PATH);
+  assertMatch((await call(deps(admin, user), { action: 'letter_freeze', letter_id: LID })).body.error, /letterhead page was not found/);
+});
+
+Deno.test('letter_preview_shows_without_storing', async () => {
+  const admin = new Fake(), user = new Fake();
+  const logo = makePng(300, 100);
+  admin.files.set(`practice/${PID}/letterhead/logo.png`, logo);
+  const built = { mode: 'built', font: 'times', color: '#0B3B75', page: [595.28, 841.89], layout: 'left', website: null, footer: 'Regulated by ICAN',
+    show: { address: true, phone: true, email: true, firm_reg: true, website: false },
+    logo: { path: `practice/${PID}/letterhead/logo.png`, sha256: await sha256Hex(logo), kind: 'png', w: 300, h: 100 } };
+  user.rpcs.practice_letter_preview = () => prepared(built);
+  // A template from the editor, tried on a letterhead not yet saved.
+  const r = await call(deps(admin, user), { action: 'letter_preview', practice_id: PID, blocks: bodyJson, merge: { 'client.name': 'Sample Ltd' }, variant: 'full',
+    title: 'Sample', letterhead: { mode: 'built' } });
+  assertEquals(r.body.ok, true);
+  assertEquals(user.calls.map((c) => c.fn), ['practice_letter_preview']);
+  assertEquals(user.calls[0].args, { p_practice: PID, p: { blocks: bodyJson, merge: { 'client.name': 'Sample Ltd' }, variant: 'full', title: 'Sample',
+    letterhead: { mode: 'built' } } });
+  const pdf = Uint8Array.from(atob(r.body.pdf), (c) => c.charCodeAt(0));
+  assertEquals(new TextDecoder().decode(pdf.slice(0, 5)), '%PDF-');
+  assertEquals(r.body.bytes, pdf.length);
+  assertEquals(r.body.pages, (await PDFDocument.load(pdf)).getPageCount());
+  // Nothing stored, nothing recorded.
+  assertEquals(admin.uploads.length, 0);
+  assertEquals(admin.calls.length, 0);
+  // A draft letter by its id.
+  await call(deps(admin, user), { action: 'letter_preview', practice_id: PID, letter_id: LID });
+  assertEquals(user.calls[1].args, { p_practice: PID, p: { letter_id: LID } });
+  // The database's refusals come back as they are; a bad id or no sign-in never reaches it.
+  user.rpcs.practice_letter_preview = () => { throw Object.assign(new Error('Only a partner tries a new letterhead.'), { code: '42501' }); };
+  assertEquals((await call(deps(admin, user), { action: 'letter_preview', practice_id: PID, blocks: bodyJson, letterhead: {} })).body,
+    { ok: false, error: 'Only a partner tries a new letterhead.' });
+  assertEquals((await call(deps(admin, user), { action: 'letter_preview', practice_id: 'x' })).body, { ok: false, error: 'Choose the practice.' });
+  assertEquals((await call(deps(admin, user), { action: 'letter_preview', practice_id: PID, blocks: 'x'.repeat(500_000) })).body,
+    { ok: false, error: 'The letter is too long to show.' });
+  user.user = null;
+  assertEquals((await call(deps(admin, user), { action: 'letter_preview', practice_id: PID, letter_id: LID })).status, 401);
+});

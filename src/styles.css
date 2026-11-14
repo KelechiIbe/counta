@@ -547,3 +547,36 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 .fee-row[open] .fee-chev { transform: rotate(180deg); }
 .fee-chev { transition: transform .15s ease; }
 @media (prefers-reduced-motion: reduce) { .fee-chev { transition: none; } }
+
+/* A letter as a PDF in a window (practice letters), and the letterhead card's page previews (Practice settings). */
+.pdf-pages { max-height: 70vh; min-height: 240px; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px; border-radius: 10px; background: #E5E7EB; overscroll-behavior: contain; }
+.pdf-pages img { display: block; width: 100%; height: auto; background: #fff; box-shadow: 0 1px 4px rgba(17, 24, 39, .18); }
+.lh-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 20px; align-items: start; }
+#letterhead { scroll-margin-top: 72px; }
+.lh-pages { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; position: sticky; top: 68px; }
+.lh-fig { margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.lh-fig figcaption { font-size: 12px; color: var(--muted); text-align: center; }
+.lh-page { position: relative; width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 1px 3px rgba(17, 24, 39, .08); overflow: hidden; }
+.lh-page > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
+.lh-clear { position: absolute; left: 0; right: 0; background: rgba(0, 114, 245, .07); }
+.lh-area { position: absolute; display: flex; flex-direction: column; gap: 3px; outline: 1px dashed rgba(0, 114, 245, .55); outline-offset: 1px; padding-top: 2px; }
+.lh-bar { display: block; height: 3px; border-radius: 2px; background: #CBD5E1; flex: none; }
+.lh-num { position: absolute; bottom: -9px; left: 50%; width: 10px; height: 3px; margin-left: -5px; border-radius: 2px; background: #CBD5E1; }
+.lh-built { display: flex; flex-direction: column; padding: 6% 9.4% 0; }
+.lh-built .lh-area { display: none; }
+.lh-built-head { display: flex; gap: 8%; align-items: flex-start; justify-content: space-between; padding-bottom: 4%; border-bottom: 1px solid; }
+.lh-built-head.centre { flex-direction: column; align-items: center; text-align: center; gap: 4px; }
+.lh-built-head:not(.centre) .lh-built-text { text-align: right; }
+.lh-logo { max-height: 34px; max-width: 40%; object-fit: contain; }
+.lh-built-name { font-weight: 700; font-size: 11px; line-height: 1.2; }
+.lh-built-line { font-size: 6.5px; line-height: 1.35; color: #4B5563; overflow-wrap: anywhere; }
+.lh-built-slim { font-size: 7px; font-weight: 700; padding-bottom: 3%; border-bottom: 1px solid; }
+.lh-built-body { display: flex; flex-direction: column; gap: 3px; padding-top: 7%; flex: 1; }
+.lh-built-foot { position: absolute; left: 9.4%; right: 9.4%; bottom: 3.5%; text-align: center; font-size: 5.5px; line-height: 1.4; color: #6B7280; }
+.lh-slider { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ink-3); }
+.lh-slider input[type=range] { width: 100%; min-height: 28px; accent-color: var(--primary); }
+@media (max-width: 860px) {
+  .lh-grid { grid-template-columns: minmax(0, 1fr); }
+  .lh-pages { position: static; }
+}
+@media (max-width: 400px) { .lh-pages { gap: 10px; } }

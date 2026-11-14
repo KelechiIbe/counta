@@ -352,7 +352,7 @@ interface PdfLine { y: number; h: number; raw: Chunk[]; chunks: Chunk[] }
 export interface PdfText { pages: PdfLine[][]; scanned: boolean; numPages: number }
 
 let pdfjsP: Promise<any> | null = null;
-async function pdfjs() {
+export async function pdfjs() {
   if (!pdfjsP) {
     pdfjsP = (async () => {
       const lib: any = await import('pdfjs-dist/legacy/build/pdf.mjs');

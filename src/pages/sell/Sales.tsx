@@ -206,6 +206,8 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
   const waiting = (s?.approvals || []).find((a) => a.status === 'pending');
   const answered = !waiting && s?.status === 'draft' ? (s?.approvals || []).find((a) => a.kind === 'invoice' && ['rejected', 'failed'].includes(a.status)) : undefined;
   const decides = !!waiting && waiting.approver === 'owner' && decidesApprovals(inv) && !(inv?.me.practice_id && waiting.reasons.includes('firm'));
+  // VAT was turned on or off after this draft was saved: it is saved again, so its VAT is right, before it is issued.
+  const vatMoved = !!s && !!inv && s.doc_type === 'invoice' && s.status === 'draft' && s.vat_registered !== inv.org.vat_registered;
   const unposted = !!s && !s.journal_id && (s.status === 'draft' || (s.doc_type === 'quote' && s.status === 'open') || (s.doc_type === 'order' && s.status === 'pending')) && s.doc_type !== 'receipt';
   return (
     <Drawer onClose={onClose} width={640}>
@@ -232,6 +234,8 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
             ) : answered ? (
               <Alert kind="red" icon="alert"><span data-testid="sale-approval">{decidedText(answered)}. Change it and issue it again to ask once more.</span></Alert>
             ) : s.status === 'draft' && !nrsBusy && <Alert kind="grey" icon="pencil">Draft. Nothing is in the books until it is issued.</Alert>}
+            {vatMoved && !nrsBusy && <Alert kind="amber" icon="alert"><span data-testid="sale-vat-moved">VAT was turned {inv!.org.vat_registered ? 'on' : 'off'} for the business after this draft was saved.
+              {onEdit ? ' Edit it and save it again' : ' Open it from Sales and save it again'} so its VAT is right, then issue it.</span></Alert>}
             {s.vat_relief && <Alert kind="blue" icon="info"><span data-testid="sale-relief">Exempt from VAT: a supply to {s.relief_words || RELIEF[s.vat_relief].words}
               {s.vat_relief_ref ? ` (${s.vat_relief_ref})` : ''}. Every line is exempt (VAT status 1).
               {s.relief_by_name ? ` Marked on this ${DOC_LABEL[s.doc_type].toLowerCase()} by ${s.relief_by_name}.` : ' The customer\'s own exemption.'}</span></Alert>}
@@ -257,7 +261,7 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
             {s.notes && <div className="muted" style={{ fontSize: 13 }}>{s.notes}</div>}
             <div className="row wrap">
               {s.status === 'draft' && !nrsBusy && onEdit && <button className="btn btn-secondary btn-sm" onClick={() => onEdit(s)}><Icon name="pencil" size={14} />Edit</button>}
-              {s.status === 'draft' && !nrsBusy && s.doc_type === 'invoice' && <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => act(() => rpc('issue_invoice', { p_sale: s.id }), (r) => issuedNote(r))}>Issue invoice</button>}
+              {s.status === 'draft' && !nrsBusy && s.doc_type === 'invoice' && <button className="btn btn-primary btn-sm" disabled={busy || vatMoved} onClick={() => act(() => rpc('issue_invoice', { p_sale: s.id }), (r) => issuedNote(r))}>Issue invoice</button>}
               {s.doc_type === 'quote' && s.status === 'open' && <>
                 {onEdit && <button className="btn btn-secondary btn-sm" onClick={() => onEdit(s)}><Icon name="pencil" size={14} />Edit</button>}
                 <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => act(() => rpc('convert_quote', { p_sale: s.id }), 'Invoice drafted from the quote')}>Turn into an invoice</button>
