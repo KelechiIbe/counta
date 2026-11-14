@@ -234,3 +234,5 @@ bash supabase/tests/golden/run.sh check       # the owner functions answer as be
 bash supabase/tests/golden/run.sh sweep
 deno test --node-modules-dir=none --allow-read supabase/functions/practice/ supabase/functions/_shared/letter_test.ts supabase/functions/messaging/
 ```
+
+A firm with a partner whose ICAN or ANAN number and FRC number TaxStreem has verified can audit companies through Counta: it sets its prices by turnover band and its Flutterwave split under Audits, and answers requests there. See [audits.md](audits.md).

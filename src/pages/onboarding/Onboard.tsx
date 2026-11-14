@@ -431,15 +431,16 @@ function Q({ id, title, hint, done, filled, children }: { id: string; title: str
   );
 }
 
-// Candid tips, as the answers come in, for the business as it is: a professional services firm is never a small company,
-// and a business name pays personal income tax through its owners, not companies income tax.
+// Candid tips, as the answers come in, for the business as it is: a professional services firm is never a small company for
+// VAT (for companies income tax it counts by size), and a business name pays personal income tax through its owners.
 function adviceFor(a: Answers, itax: IncomeTax): string[] {
   const out: string[] = [];
   const rec = a.receive_methods || [];
   const professional = a.category === 'professional';
   const small = a.revenue_band && a.revenue_band !== 'over_100m';
   if (rec.length === 1 && rec[0] === 'cash') out.push('Cash only? Transfers leave a trail that banks and lenders like. Your own Counta account number fixes that in a minute.');
-  if (professional && a.revenue_band) out.push('A professional services firm is never a small company for tax, whatever its size. It charges VAT on its fees and files a VAT return every month by the 21st, even a nil one. Counta builds it from your invoices and bills.');
+  if (professional && a.revenue_band) out.push('A professional services firm is never a small company for VAT, whatever its size. It charges VAT on its fees and files a VAT return every month by the 21st, even a nil one. Counta builds it from your invoices and bills.'
+    + (small && itax === 'company' ? ' For companies income tax it counts by size like any company: up to ₦100 million a year, it pays none, and it still files its return every year.' : ''));
   else if (small && itax === 'company') out.push('Up to ₦100 million a year (and not a professional services firm) makes you a small company: no companies income tax and no VAT to charge. A company still files its return every year, so we\'ll keep that easy.');
   else if (small && itax === 'personal') out.push('Up to ₦100 million a year (and not a professional services firm), you have no VAT to charge.');
   else if (small) out.push('Up to ₦100 million a year (and not a professional services firm), you have no VAT to charge, and a company in that band pays no companies income tax.');

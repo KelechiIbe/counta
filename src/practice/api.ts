@@ -11,6 +11,8 @@ export type Member = {
   id: string; display_name: string; role: PracticeRole; status: 'active' | 'invited' | 'disabled'; joined: boolean; email?: string; licence_body: LicenceBody | null;
   licence_no: string | null; licence_status: 'none' | 'pending' | 'verified' | 'rejected'; licence_text: string; licence_note?: string | null; clients: number;
   sent_at?: string | null; created_at?: string;
+  // The FRC number TaxStreem checks; a partner with it and an ICAN or ANAN number verified signs audits.
+  frc_no?: string | null; frc_status?: 'none' | 'pending' | 'verified' | 'rejected'; frc_note?: string | null; signs_audits?: boolean;
 };
 export type Deadline = { tax: string; label: string; period: string; due: string; amount: number | null; url: string; overdue: boolean };
 export type Health = {

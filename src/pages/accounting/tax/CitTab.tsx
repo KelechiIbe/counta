@@ -16,6 +16,7 @@ import { Icon } from '../../../components/Icon';
 import { Alert, Drawer, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner, Stat } from '../../../components/ui';
 import { SheetRows } from '../../../components/SheetRows';
 import { FilingLocked } from '../../filing/Locked';
+import { AuditPanel } from '../../filing/Audit';
 
 type Sub = 'computation' | 'figures' | 'adjustments' | 'allowances' | 'brought' | 'statements';
 const CLASS_LABEL: Record<string, string> = { SMALL: 'Small company', MEDIUM: 'Medium company', LARGE: 'Large company', REGULAR: 'Company' };
@@ -175,6 +176,8 @@ function CitYear({ year }: { year: number }) {
         <FluxPayments taxes={['cit']} year={year} />
         {flux && <Alert kind="blue" icon="info">{flux}</Alert>}
       </div>
+
+      <AuditPanel year={year} />
 
       {checks.length > 0 && !frozen && (
         <div className="card" style={{ overflow: 'hidden' }}>
@@ -840,7 +843,7 @@ function ProfileDrawer({ onClose }: { onClose: () => void }) {
             </div>
             <div className="faint" style={{ fontSize: 12 }}>The Tax ID, RC number, address and financial year are changed in Settings.</div>
             <div className="label">Companies income tax</div>
-            {box('professional_services', 'Provides professional services (law, accounting, consulting and the like): never a small company')}
+            {box('professional_services', 'Provides professional services (law, accounting, consulting and the like): never a small company for VAT. For companies income tax it is classified on its turnover and fixed assets like any other.')}
             <Field label="Started business on" hint="The first years of a new company have special rules (minimum tax, basis periods)."><input className="input" type="date" disabled={ro} value={f.commenced_on} onChange={(e) => set('commenced_on', e.target.value)} style={{ maxWidth: 200 }} /></Field>
             {box('mne_constituent', 'Part of a multinational group with revenue of €750 million or more (15% minimum effective tax)')}
             {f.mne_constituent && <Field label="Group revenue (euros)"><input className="input num" inputMode="decimal" disabled={ro} value={f.group_turnover_eur} onChange={(e) => set('group_turnover_eur', e.target.value)} style={{ maxWidth: 240 }} /></Field>}

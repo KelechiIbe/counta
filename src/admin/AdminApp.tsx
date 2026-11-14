@@ -26,12 +26,13 @@ import Subscriptions from './pages/Subscriptions';
 import Costs from './pages/Costs';
 import Accountants from './pages/Accountants';
 import Partners from './pages/Partners';
+import AuditsAdmin from './pages/Audits';
 import Mandates from './pages/Mandates';
 import Recoveries from './pages/Recoveries';
 
 const NAV: [string, string, string][] = [
   ['', 'Overview', 'house'], ['businesses', 'Businesses', 'building'], ['people', 'People', 'users'], ['activity', 'Activity', 'radar'],
-  ['reviews', 'Identity reviews', 'shield'], ['mandates', 'Mandates', 'panel'], ['recoveries', 'Recoveries and support', 'undo'], ['accountants', 'Accountants', 'book'], ['partners', 'Partners', 'award'], ['keys', 'Keys and services', 'lock'], ['martina', 'Martina and voices', 'volume'],
+  ['reviews', 'Identity reviews', 'shield'], ['mandates', 'Mandates', 'panel'], ['recoveries', 'Recoveries and support', 'undo'], ['accountants', 'Accountants', 'book'], ['partners', 'Partners', 'award'], ['audits', 'Audits', 'shield'], ['keys', 'Keys and services', 'lock'], ['martina', 'Martina and voices', 'volume'],
   ['currency', 'Currency', 'dollar'], ['limits', 'Limits and switches', 'zap'], ['alerts', 'Alerts and tax wallets', 'bell'], ['tax', 'Tax rules', 'landmark'],
   ['plans', 'Plans', 'layers'], ['filing', 'Filing fees', 'file'], ['subscriptions', 'Subscriptions', 'card'], ['costs', 'Cost of service', 'percent'],
   ['team', 'Admin team', 'history'],
@@ -185,6 +186,7 @@ export default function AdminApp() {
             <Route path="recoveries" element={<Recoveries admin />} />
             <Route path="accountants" element={<Accountants />} />
             <Route path="partners" element={<Partners />} />
+            <Route path="audits" element={<AuditsAdmin />} />
             <Route path="keys" element={<Keys />} />
             <Route path="martina" element={<Martina />} />
             <Route path="currency" element={<Currency />} />

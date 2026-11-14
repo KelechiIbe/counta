@@ -15,6 +15,7 @@ import { Alert, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import StatementUpload from '../accounting/BankStatement';
 import { AddAccount } from '../accounting/Banking';
 import { OpeningStep } from './Opening';
+import { AuditPanel } from './Audit';
 
 const n0 = (n: number | null | undefined) => Number(n || 0).toLocaleString('en-NG');
 
@@ -90,6 +91,7 @@ export default function Filing() {
               options={s.years.map((y) => ({ id: String(y.year), label: `${y.year} accounts`, count: y.order?.status === 'paid' && Number(y.order.extra_due) > 0 ? 1 : undefined }))} />
           )}
           <Year key={shown!.year} s={s} y={shown!} onChanged={refresh} />
+          {shown!.kind === 'cit' && shown!.order?.status === 'paid' && <AuditPanel key={`audit-${shown!.year}`} year={shown!.year} />}
         </>
       )}
       <div className="card card-pad row wrap" style={{ gap: 12, justifyContent: 'space-between' }}>

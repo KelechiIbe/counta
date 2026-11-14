@@ -18,7 +18,7 @@ export default function SettingsPage({ pid }: { pid: string }) {
   const toast = useToast();
   const p = h.practice;
   const [f, setF] = useState({ name: p.name, kind: p.kind, email: p.email || '', phone: localPhone(p.phone), address: p.address || '', state: p.state || '', firm_reg: p.firm_reg || '' });
-  const [lic, setLic] = useState({ licence_body: h.me.licence_body || 'ICAN', licence_no: h.me.licence_no || '' });
+  const [lic, setLic] = useState({ licence_body: h.me.licence_body || 'ICAN', licence_no: h.me.licence_no || '', frc_no: h.me.frc_no || '' });
   const [busy, setBusy] = useState<'p' | 'l' | 'scan' | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const partner = h.me.role === 'partner';
@@ -31,7 +31,8 @@ export default function SettingsPage({ pid }: { pid: string }) {
   async function saveLicence() {
     setBusy('l'); setErr(null);
     try {
-      await rpc('practice_set_licence', { p_practice: pid, p: lic.licence_no.trim() ? lic : { licence_body: null, licence_no: null } });
+      await rpc('practice_set_licence', { p_practice: pid, p: { ...(lic.licence_no.trim() ? { licence_body: lic.licence_body, licence_no: lic.licence_no } : { licence_body: null, licence_no: null }),
+        frc_no: lic.frc_no.trim() || null } });
       await qc.invalidateQueries({ queryKey: ['practice-home', pid] });
       toast(lic.licence_no.trim() ? 'Saved. TaxStreem checks it shortly.' : 'Removed');
     } catch (e) { setErr(cleanError(e)); }
@@ -51,13 +52,16 @@ export default function SettingsPage({ pid }: { pid: string }) {
     <>
       <PageHead title="Practice" sub="What clients see of your practice, your letterhead, and your own professional licence." />
       {err && <Alert kind="red" icon="alert">{err}</Alert>}
-      <Card title="Your licence" sub="Clients see it beside your name, and it goes into the statement you accept when you change a return.">
+      <Card title="Your licence" sub="Clients see it beside your name, and it goes into the statement you accept when you change a return. To audit companies through Counta, a partner needs an ICAN or ANAN number and an FRC number, both verified by TaxStreem.">
         <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
           <Field label="Body"><select className="input" value={lic.licence_body} onChange={(e) => setLic({ ...lic, licence_body: e.target.value as any })}><option>ICAN</option><option>ANAN</option><option>CITN</option></select></Field>
           <Field label="Membership number"><input className="input" value={lic.licence_no} onChange={(e) => setLic({ ...lic, licence_no: e.target.value })} maxLength={30} /></Field>
+          <Field label="FRC number"><input className="input" value={lic.frc_no} onChange={(e) => setLic({ ...lic, frc_no: e.target.value })} maxLength={40} placeholder="FRC/2014/ICAN/00000001234" data-testid="settings-frc" /></Field>
           <button className="btn btn-secondary" disabled={busy !== null} onClick={saveLicence}>{busy === 'l' ? <Spinner small /> : null}Save</button>
         </div>
-        <div className="faint" style={{ fontSize: 13 }}>Now: {h.me.licence_text}{h.me.licence_status === 'rejected' && h.me.licence_note ? `. TaxStreem: ${h.me.licence_note}` : ''}</div>
+        <div className="faint" style={{ fontSize: 13 }}>Now: {h.me.licence_text}{h.me.licence_status === 'rejected' && h.me.licence_note ? `. TaxStreem: ${h.me.licence_note}` : ''}
+          {h.me.frc_no ? `. FRC ${h.me.frc_no} (${h.me.frc_status === 'verified' ? 'verified by TaxStreem' : h.me.frc_status === 'rejected' ? `not confirmed${h.me.frc_note ? `: ${h.me.frc_note}` : ''}` : 'unverified'})` : ''}
+          {h.me.signs_audits ? '. You can sign audits through Counta.' : ''}</div>
       </Card>
       <Card title="The practice" sub={partner ? undefined : 'A partner changes these.'}>
         <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
