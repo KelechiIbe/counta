@@ -156,7 +156,8 @@ Each part is booked to its own account when the payment is made, from the tax wa
   it came from before the books in Counta; credit Counta used that Rev360 did not allow is a charge to 6512.
 - CIT: the tax before credits clears what the books provided for (Current Income Tax Payable 2208, then Development Levy
   Payable 2209) and anything not provided for is the year's tax expense (7501). The WHT credit notes Rev360 took off come off
-  WHT Credit Notes (1401), and any beyond what 1401 holds go to 3999.
+  WHT Credit Notes (1401), tagged `cit_wht:<year>` so later years know the credit is spoken for until then (docs/tax-computation.md),
+  and any beyond what 1401 holds go to 3999.
 - `penalty`, `late_filing_penalty` and `interest`: Penalties (6514), each on its own line.
 - `charges` and the transfer fee: Bank Charges (6701).
 

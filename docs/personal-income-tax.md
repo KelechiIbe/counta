@@ -75,7 +75,7 @@ The business's figures and adjustments are the companies income tax ones (`cit_y
 3. Adjusted profit, plus balancing charges under the old law: the **assessable profit** of the business.
 4. Capital allowances for the year (`private.cit_ca` with `legacy_upto: 2025` and `use_pct_always`): old-law initial and annual allowances to 2025 accounts, First Schedule rates from 2026, the business share of a partly private asset. Not deducted here: shared below.
 5. Net chargeable gains: gains less losses on fixed assets from the schedule, gains on investments, and others entered.
-6. WHT credit notes held at the year end (account 1401, or the line read in).
+6. WHT credit notes held at the year end (account 1401, or the line read in). The credits earlier returns used come off before they are shared: those still in 1401 at this year end (a return approved after it), since an approved return's credit leaves 1401 when it is approved (`private.wht_cleared`).
 
 ### Each person (`private.pit_person_tax`)
 
@@ -112,7 +112,7 @@ Twelfth Schedule to the NTA 2025: a partner engaged in the business, the state o
 
 ### The chain (`private.pit_chain`)
 
-Years run from 2024 accounts (or the first year of the books) to the year running now. Each passes forward, person by person, losses and unused allowances, and the total of WHT credit notes used. An approved year passes what it was approved with; a year filed outside Counta is still computed so its amounts pass on. A person new to the business starts from the amounts entered for them.
+Years run from 2024 accounts (or the first year of the books) to the year running now. Each passes forward, person by person, losses and unused allowances, and the total of WHT credit notes used (the year takes off what of that total 1401 still held at its year end). An approved year passes what it was approved with; a year filed outside Counta is still computed so its amounts pass on. A person new to the business starts from the amounts entered for them.
 
 ### No document, no relief (`private.pit_relief_check`)
 
@@ -137,7 +137,7 @@ Blocks: no people; the partners' shares do not add up to 100%; a limited partner
 
 ## Approval and filing
 
-Approving (`approve_pit_year`, File tax) needs no blocks and the attestation of the statement of accounts (NTAA s.13(2)(d)): the text is kept in the snapshot with who confirmed it and when. Approval freezes the computation and marks each person's return approved. Reopening is refused once any return is with Flux or filed.
+Approving (`approve_pit_year`, File tax) needs no blocks and the attestation of the statement of accounts (NTAA s.13(2)(d)): the text is kept in the snapshot with who confirmed it and when. Approval freezes the computation and marks each person's return approved. The WHT credit the return uses leaves the books that day (`private.pit_wht_post`): Dr Retained earnings (3005, where Counta keeps the owner's drawings), one line for the owner or for each partner's share, with no names, and Cr WHT Credit Notes (1401) tagged `pit_wht:<year>`, never more than 1401 holds; the journal is kept on the year (`settings.wht_journal_id`). Nothing is posted for a year prepared from imported statements. Reopening reverses that journal, and is refused once any return is with Flux or filed.
 
 Each return then goes its own way:
 
@@ -203,6 +203,8 @@ The PRD's worked example (Persona B) also gives ₦1,290,400; chargeable income 
 `t_pit.sql` (179 checks) on a copy of production: the reliefs note's two examples to the naira; the PRD's sole proprietor corrected; a law firm with partners in Lagos, Port Harcourt and Abuja and a dormant partner abroad, under the old law and the NTA; losses and allowances carried from 2025 to 2026; other income of every kind with PAYE and foreign tax credits; minimum tax under the old law and none under the NTA; who may see and change what; approval, Flux, returns filed by the business, years filed outside Counta, deadlines and documents. For the portal: reliefs held until their documents (and the RSA number) are there; documents only for the person's own folder; rent relief from a tenant's accommodation, less what an employer paid; the statement of income adding up to total income; the accommodation and staff blocks for a return Flux files; the storage rules (a partner attaches and opens her own documents, the bookkeeper neither); the pay bill, payment and certificate only after filing; the logins (owner with two-step only, no password anywhere, a failed login flagged); reopening drops the portal's computation. The CIT suite gives the same results before and after.
 
 `pit.py`, in the browser at 1440 and 390 pixels against the local stack: a law firm registered as a business name starts its income tax with the owner, adds three partners in the drawer (one in Port Harcourt, one in Abuja with rent and dividends, one dormant and abroad), confirms mixed use, attaches its statement of accounts, sees each partner's payable (₦5,994,096, ₦4,633,172, ₦2,687,848 and ₦1,128,480), approves with the attestation, downloads the computation in PDF, Word and Excel, sends the Lagos return to a stand-in for Flux (the request is signed and carries the figures and a working link to the statement), gets Flux's "filed" back with a payment link, and marks the Rivers return filed. On the way, Ada enters her home and attaches her RSA statement, Chi's life insurance waits until her policy is attached, and the staff are confirmed; the owner saves the business's LIRS login under Settings (a refusal from Flux that quotes the password is shown without it, and the password is in no table and on no page); Send makes Ada's computation as a PDF of her return alone, and the request carries her statement of income, home, pension with its statement, the staff and the assets; Flux sends the pay bill and the payment; and the owner asks for her tax clearance certificate with her picture and the 2023 and 2024 returns, which Flux reports issued. The bookkeeper sees the business, each share and the staff, not the partners' tax, and has no tax portal logins in Settings. Incorporated trustees see the exemption until the owner says it trades; a company CAC records as limited by guarantee is taxed as a company once the owner says it is not an NGO, and stays so when CAC is read again. Nothing runs off the side of a phone screen.
+
+`supabase/tests/sql/20_wht_credits.sql`: a 2024 return saved; a sole trader's 2024 and 2025 returns approved, each moving its credit out of 1401 with no name in the ledger, the later years taking off only what 1401 still held, and 2025 reopened (reversed) and approved again; partners at 60/40 getting one line each; a credit larger than what 1401 still holds; CIT for two years filed together, a year paid late with Rev360 applying less credit, one paid on time, one paid with no credit applied, a year after a gap and an imported year.
 
 ## Not covered yet
 
