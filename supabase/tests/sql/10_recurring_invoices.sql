@@ -482,6 +482,8 @@ begin
   v_manager_seat := (select id from members where org_id = mo and user_id = v_manager);
   v_kunle_seat := (select id from members where org_id = mo and user_id = v_kunle);
   assert v_partner_seat is not null and v_manager_seat is not null and v_kunle_seat is not null, 'recurring_actor_per_item: acting seats';
+  -- The director who approves what the firm sets up (Release 2): each schedule waits for them once, then runs on its own.
+  perform tests.director_approver(mo);
 
   perform tests.as_user(v_partner);
   ca := public.save_customer(mo, '{"name": "Alpha Client", "email": "alpha@client.example.test"}');
@@ -494,6 +496,9 @@ begin
   perform tests.as_user(v_kunle);
   rd := (public.recurring_save(mo, pg_temp.sched(cb, 8, '2026-03-01'))->>'id')::uuid;
   perform tests.as_postgres();
+  assert (select count(*) from recurring_invoices where org_id = mo and approval_state = 'pending') = 4, 'recurring_actor_per_item: waiting for the director';
+  assert tests.director_approves(mo) = 4, 'recurring_actor_per_item: the director approves the four schedules';
+  assert (select count(*) from recurring_invoices where org_id = mo and approval_state = 'approved') = 4, 'recurring_actor_per_item: approved';
   assert (select created_by from recurring_invoices where id = rb) = v_manager_seat and (select created_by from recurring_invoices where id = rd) = v_kunle_seat,
     'recurring_actor_per_item: the creators';
   -- Kunle's place is gone; Gamma Client is archived, so its schedule fails.

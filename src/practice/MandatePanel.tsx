@@ -19,6 +19,7 @@ import { RecoveryHolderCard } from '../components/RecoveryHolder';
 import { Card } from '../admin/ui';
 import { type ClientDetail, type Mandate, sendInvite, usePracticeActivity, usePracticeHome } from './api';
 import { LETTER_STATUS } from './pages/Letters';
+import { titleName } from '../lib/approvals';
 
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const mb = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
@@ -91,6 +92,10 @@ type DirectorState = {
   confirmed_at: string | null; cac: boolean; directors: { name: string; role: string }[];
   latest: { id: string; status: string; name: string; email: string | null; created_at: string; matched_name: string | null; review_reason: string | null;
     decline_reason: string | null; step: 'nin' | 'code' | 'slip' | null; link_live: boolean } | null;
+  // Who approves what the firm asks for here (invoices, credit notes, refunds, payments out of the wallet, recurring
+  // invoices): the director whose code reached them. approver_missing: confirmed, but no phone or email to reach them.
+  approver?: { name: string; email: string | null; phone: string | null; confirmed_at: string | null; pending: number; last_link: string | null } | null;
+  approver_missing?: boolean;
 };
 const STEP_TEXT: Record<string, string> = { nin: 'has not entered their NIN yet', code: 'has the code and has not entered it yet', slip: 'has no phone or email to get a code: they upload their NIN slip' };
 
@@ -138,8 +143,18 @@ function Director({ d, m }: { d: ClientDetail; m: Mandate }) {
   let state: React.ReactNode;
   let ask: string | null = 'Ask a director';
   if (m.director_confirmed_at) {
-    state = <Alert kind="green" icon="check">{x?.status === 'confirmed' && x.name ? `${x.matched_name || x.name} confirmed` : 'A director confirmed'} the wallets on {fmtDay(m.director_confirmed_at.slice(0, 10))}.</Alert>;
-    ask = null;
+    state = <>
+      <Alert kind="green" icon="check">{x?.status === 'confirmed' && x.name ? `${x.matched_name || x.name} confirmed` : 'A director confirmed'} the wallets on {fmtDay(m.director_confirmed_at.slice(0, 10))}.</Alert>
+      {s?.approver ? (
+        <span data-testid="director-approver">{titleName(s.approver.name)} approves the invoices, credit notes, refunds, payments out of the wallet and recurring invoices the
+          firm asks for here, from a link and a code sent to {[s.approver.email, s.approver.phone].filter(Boolean).join(' and ')}.
+          {s.approver.pending > 0 ? ` ${s.approver.pending} wait${s.approver.pending === 1 ? 's' : ''} for them now (Approvals, in the business).` : ''}</span>
+      ) : s?.approver_missing ? (
+        <Alert kind="amber" icon="alert"><span data-testid="director-approver-missing">Counta cannot reach a director to approve what the firm asks for: the confirmation
+          came with no phone or email. Invoices, credit notes, refunds and payments cannot go through until a director confirms by code. Ask one now.</span></Alert>
+      ) : null}
+    </>;
+    ask = s?.approver_missing && x?.status !== 'pending' ? 'Ask a director to confirm by code' : null;
   } else if (x?.status === 'pending') {
     state = <span>Waiting for {who}, who {STEP_TEXT[x.step || 'nin']}. Asked {when(x.created_at)}.</span>;
     ask = 'Ask again';
@@ -168,7 +183,7 @@ function Director({ d, m }: { d: ClientDetail; m: Mandate }) {
           </div>
         </div>
       )}
-      {x?.status === 'pending' && !m.director_confirmed_at && !open && (
+      {x?.status === 'pending' && (!m.director_confirmed_at || s?.approver_missing) && !open && (
         <div><button type="button" className="btn btn-ghost btn-sm" style={{ minHeight: 40 }} disabled={busy === 'link'} onClick={newLink} data-testid="director-new-link">
           {busy === 'link' ? <Spinner small /> : <Icon name="link" size={14} />}Get a new link to send
         </button></div>

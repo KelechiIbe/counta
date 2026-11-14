@@ -13,7 +13,7 @@
 //                                                    (the database only unlinks them in Counta, keeping former_feed).
 //                                                    {client_id, org_id, read_only_at, retain_until, feeds: {unlinked, failed}}
 //   unlink_feeds { client_id }                    -> those Mono unlinks tried again. {feeds}
-// Public (the client's signer on /sign, a director on /confirm; no account, the link's token):
+// Public (the client's signer on /sign, a director on /confirm and /approve; no account, the link's token):
 //   sign_open { token }                           -> svc_sign_open and a 5-minute link to the letter (doc_url)
 //   sign_code { token }                           -> a code emailed to the signer (svc_sign_code)
 //   sign_submit { token, code, typed_name, signature_png } -> the code checked, the stored letter re-hashed and refused
@@ -29,6 +29,13 @@
 //                                                    svc_director_slip: TaxStreem checks it
 //   director_code { token }, director_confirm { token, code }, director_decline { token, reason }
 //                                                 -> svc_director_code (the code again), _confirm, _decline
+//   approval_open { token }                       -> svc_approval_open: what waits for the director of a full-mandate client
+//                                                    (/approve), and whether a code has been confirmed
+//   approval_code { token }, approval_verify { token, code }
+//                                                 -> svc_approval_code (a code to the director's phone and email), _verify
+//                                                    (a right code lets them decide for 15 minutes)
+//   approval_decide { token, ids, approve, note } -> svc_approval_decide: approved, each is carried out as the person who
+//                                                    asked; rejecting takes a reason
 // Public actions check the token's form first and send the caller's IP address and browser with every call; tokens are
 // never logged; answers carry Referrer-Policy: no-referrer.
 //

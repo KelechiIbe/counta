@@ -38,11 +38,14 @@ export function BooksSection() {
     setF({ tin: o.tin || '', rc_number: o.rc_number || '', address: o.address || '', fiscal_year_start: String(o.fiscal_year_start || 1), reporting_framework: o.reporting_framework || 'ifrs',
       principal_activity: o.principal_activity || '', auto_post_threshold: String(Math.round(Number(o.auto_post_threshold || 0.8) * 100)), cash_sales_without_invoices: !!o.cash_sales_without_invoices,
       capitalisation_threshold: String(o.capitalisation_threshold ?? ''), prices_include_vat: !!o.prices_include_vat, invoice_terms_days: String(o.invoice_terms_days ?? 30),
-      invoice_note: o.invoice_note || '', books_start: o.books_start || '', wht_small_company: !!o.wht_small_company });
+      invoice_note: o.invoice_note || '', books_start: o.books_start || '', wht_small_company: !!o.wht_small_company,
+      discount_approval_pct: String(Number(o.discount_approval_pct ?? 10)) });
   }, [inv?.org]); // eslint-disable-line react-hooks/exhaustive-deps
   const tinCheck = useTinCheck();
   if (!inv) return null;
   const owner = can(inv, 'manage_settings');
+  // The discount limit on invoices is the owner's alone.
+  const theOwner = can(inv, 'owner');
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
   const tinErr = taxIdError(f.tin, inv.org.tin);
   const start = Number(f.fiscal_year_start || 1);
@@ -50,11 +53,14 @@ export function BooksSection() {
     if (tinErr) { toast(tinErr, 'err'); return; }
     const pct = Number(f.auto_post_threshold);
     if (!(pct >= 80 && pct <= 100)) { toast('Atlas posts on its own only when at least 80% sure. Choose 80 to 100.', 'err'); return; }
+    const limit = Number(String(f.discount_approval_pct).replace('%', '').trim());
+    if (theOwner && !(limit >= 0 && limit <= 100)) { toast('The discount limit is a percentage from 0 to 100.', 'err'); return; }
     try {
       await rpc('update_org_settings', { p_org: orgId, p_patch: { tin: f.tin, rc_number: f.rc_number, address: f.address, fiscal_year_start: Number(f.fiscal_year_start), auto_post_threshold: pct / 100,
         cash_sales_without_invoices: f.cash_sales_without_invoices, capitalisation_threshold: money(f.capitalisation_threshold) ?? undefined, prices_include_vat: f.prices_include_vat,
         invoice_terms_days: Number(f.invoice_terms_days) || 0, invoice_note: f.invoice_note, books_start: f.books_start || null } });
       await rpc('update_books_settings', { p_org: orgId, p_patch: { reporting_framework: f.reporting_framework, principal_activity: f.principal_activity, wht_small_company: f.wht_small_company } });
+      if (theOwner && limit !== Number(inv!.org.discount_approval_pct ?? 10)) await rpc('update_sales_settings', { p_org: orgId, p_patch: { discount_approval_pct: limit } });
       toast('Saved'); await qc.invalidateQueries({ queryKey: ['inv'] });
       // A Tax ID typed or changed is checked with the NRS straight away.
       if (f.tin && f.tin.replace(/[\s\-./]/g, '') !== String(inv!.org.tin || '').replace(/[\s\-./]/g, '')) await tinCheck.check(null);
@@ -86,6 +92,8 @@ export function BooksSection() {
       <label className="check"><input type="checkbox" disabled={!owner} checked={!!f.wht_small_company} onChange={(e) => set('wht_small_company', e.target.checked)} />Small company: no WHT on bills under ₦2m from suppliers with a Tax ID (WHT Regulations 2024)</label>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
         <Field label="Invoices are due after (days)"><input className="input" disabled={!owner} inputMode="numeric" value={f.invoice_terms_days || ''} onChange={(e) => set('invoice_terms_days', e.target.value)} /></Field>
+        <Field label="Discounts above this (%) need approval" hint={theOwner ? 'On an invoice by anyone but the owner or an admin, the owner or an admin approves it first.' : 'Set by the owner.'}>
+          <input className="input" disabled={!theOwner} inputMode="decimal" value={f.discount_approval_pct ?? ''} onChange={(e) => set('discount_approval_pct', e.target.value)} data-testid="discount-limit" /></Field>
         <label className="check" style={{ alignSelf: 'end' }}><input type="checkbox" disabled={!owner} checked={!!f.prices_include_vat} onChange={(e) => set('prices_include_vat', e.target.checked)} />Our prices include VAT</label>
       </div>
       <Field label="Payment details on invoices" hint="Bank name and account number customers pay into."><textarea className="input" disabled={!owner} value={f.invoice_note || ''} onChange={(e) => set('invoice_note', e.target.value)} /></Field>

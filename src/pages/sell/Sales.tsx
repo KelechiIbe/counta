@@ -21,6 +21,7 @@ import { CustomerPicker, PaymentsList, PrintButtons, RecordPayment, RequestPayme
 import { EinvoiceStatus, heldFromBuyer, nrsChip } from '../../components/Einvoice';
 import { useVatRate, vatInside, vatPct, vatRateOn } from '../../lib/vat';
 import { cap, useMode, useWords } from '../../lib/wording';
+import { KIND_LABEL, REASON_LABEL, RELIEF, RELIEFS, decidedText, decidesApprovals, pendingNote, waitsFor, type Relief } from '../../lib/approvals';
 
 type Tab = 'all' | 'invoice' | 'receipt' | 'quote' | 'credit_note' | 'unpaid' | 'confirm' | 'settle';
 
@@ -120,8 +121,10 @@ export default function Sales() {
   );
 }
 
-// An invoice to a business or government goes to NRS first, with e-invoicing on: it is issued once NRS signs it.
-const issuedNote = (r: any) => (r?.einvoice?.held && r?.status === 'draft' ? `${r.number} sent to NRS. It is issued once NRS signs it.` : `${r?.number || 'The invoice'} issued`);
+// An invoice to a business or government goes to NRS first, with e-invoicing on: it is issued once NRS signs it. One that
+// needs approval waits for it (see lib/approvals).
+const issuedNote = (r: any) => pendingNote(r, r?.number || 'The invoice')
+  || (r?.einvoice?.held && r?.status === 'draft' ? `${r.number} sent to NRS. It is issued once NRS signs it.` : `${r?.number || 'The invoice'} issued`);
 
 export function VatStatusChips({ codes }: { codes?: number[] }) {
   const list = (codes || []).slice().sort();
@@ -184,8 +187,9 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
   const sale = useSale(id);
   const toast = useToast();
   const qc = useQueryClient();
-  const [modal, setModal] = useState<'pay' | 'request' | 'return' | 'void' | 'credit' | 'export' | null>(null);
+  const [modal, setModal] = useState<'pay' | 'request' | 'return' | 'void' | 'credit' | 'export' | 'relief' | 'reject' | null>(null);
   const [reason, setReason] = useState('');
+  const [relief, setRelief] = useState<{ kind: Relief; ref: string }>({ kind: 'diplomatic', ref: '' });
   const [busy, setBusy] = useState(false);
   const s = sale.data;
   const refresh = () => Promise.all(['sale', 'sales', 'customers', 'till', 'inv'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
@@ -198,6 +202,11 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
   // NRS is checking a held invoice: it cannot be changed or issued meanwhile.
   const nrsBusy = !!s?.einvoice?.held && ['waiting', 'sending'].includes(s.einvoice.state);
   const signed = s?.einvoice?.state === 'signed';
+  // What waits for approval on this document, else the invoice's own last answer.
+  const waiting = (s?.approvals || []).find((a) => a.status === 'pending');
+  const answered = !waiting && s?.status === 'draft' ? (s?.approvals || []).find((a) => a.kind === 'invoice' && ['rejected', 'failed'].includes(a.status)) : undefined;
+  const decides = !!waiting && waiting.approver === 'owner' && decidesApprovals(inv) && !(inv?.me.practice_id && waiting.reasons.includes('firm'));
+  const unposted = !!s && !s.journal_id && (s.status === 'draft' || (s.doc_type === 'quote' && s.status === 'open') || (s.doc_type === 'order' && s.status === 'pending')) && s.doc_type !== 'receipt';
   return (
     <Drawer onClose={onClose} width={640}>
       <div className="drawer-hd">
@@ -211,16 +220,33 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
         {!s ? <Spinner /> : (
           <>
             {s.status === 'pending' && s.doc_type === 'receipt' && <Alert kind="yellow" icon="clock">Waiting for the customer's transfer. It posts the moment the money lands.</Alert>}
-            {s.status === 'draft' && !nrsBusy && <Alert kind="grey" icon="pencil">Draft. Nothing is in the books until it is issued.</Alert>}
+            {waiting ? (
+              <Alert kind="amber" icon="clock"><span data-testid="sale-approval">
+                {KIND_LABEL[waiting.kind]}{waiting.kind === 'invoice' ? '' : ` on ${s.number}`} waits for {waitsFor(waiting)}
+                {waiting.requested_by_name ? `, asked by ${waiting.requested_by_name}` : ''} {when(waiting.created_at)}. {waiting.reasons.map((x) => REASON_LABEL[x]).join('. ')}.
+                {decides && <span className="row" style={{ gap: 8, marginTop: 8 }}>
+                  <button className="btn btn-primary btn-xs" disabled={busy} onClick={() => act(() => rpc('approval_decide', { p_id: waiting.id, p_approve: true }), (r) => r?.status === 'failed' ? `Approved, but it did not go through: ${r.error}` : 'Approved')}>Approve</button>
+                  <button className="btn btn-ghost btn-xs" disabled={busy} onClick={() => { setReason(''); setModal('reject'); }}>Reject</button>
+                </span>}
+              </span></Alert>
+            ) : answered ? (
+              <Alert kind="red" icon="alert"><span data-testid="sale-approval">{decidedText(answered)}. Change it and issue it again to ask once more.</span></Alert>
+            ) : s.status === 'draft' && !nrsBusy && <Alert kind="grey" icon="pencil">Draft. Nothing is in the books until it is issued.</Alert>}
+            {s.vat_relief && <Alert kind="blue" icon="info"><span data-testid="sale-relief">Exempt from VAT: a supply to {s.relief_words || RELIEF[s.vat_relief].words}
+              {s.vat_relief_ref ? ` (${s.vat_relief_ref})` : ''}. Every line is exempt (VAT status 1).
+              {s.relief_by_name ? ` Marked on this ${DOC_LABEL[s.doc_type].toLowerCase()} by ${s.relief_by_name}.` : ' The customer\'s own exemption.'}</span></Alert>}
             <EinvoiceStatus sale={s} />
             {s.export ? (
               <Alert kind="blue" icon="truck">Export{isExport(s.customer_country) ? ` to ${countryName(s.customer_country)}` : ''}: every line is zero-rated (VAT status 2), whatever the item's usual treatment.{s.export_note ? ` Note: ${s.export_note}` : ''}</Alert>
             ) : isExport(s.customer_country) && s.export_note ? (
               <Alert kind="yellow" icon="info">The customer is in {countryName(s.customer_country)}, but this sale is treated as a local supply. Note: {s.export_note}</Alert>
             ) : null}
-            {!s.journal_id && (s.status === 'draft' || (s.doc_type === 'quote' && s.status === 'open') || (s.doc_type === 'order' && s.status === 'pending')) && s.doc_type !== 'receipt'
-              && (can(inv, 'approve_adjustments') || can(inv, 'keep_books')) && (
+            {unposted && (can(inv, 'approve_adjustments') || can(inv, 'keep_books')) && (
               <div><button className="link" style={{ fontSize: 13 }} onClick={() => { setReason(''); setModal('export'); }}>{s.export ? 'Not an export? Charge VAT as normal' : 'Exported? Zero-rate this sale'}</button></div>
+            )}
+            {unposted && !s.export && can(inv, 'record_sales') && (
+              <div><button className="link" style={{ fontSize: 13 }} data-testid="relief-open" onClick={() => { setRelief({ kind: s.vat_relief || 'diplomatic', ref: s.vat_relief_ref || '' }); setModal('relief'); }}>
+                {s.vat_relief ? 'Change or take off the VAT exemption' : 'Diplomat, free zone or humanitarian buyer? Mark it exempt from VAT'}</button></div>
             )}
             {s.viewed_at && <div className="faint" style={{ fontSize: 12 }}>The customer opened it {when(s.viewed_at)}.</div>}
             <SaleLines sale={s} />
@@ -270,6 +296,30 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
             onClick={() => act(() => rpc('set_sale_export', { p_sale: s.id, p_export: !s.export, p_reason: reason }), s.export ? 'VAT charged as normal' : 'Zero-rated as an export')}>Save</button></div>
         </Modal>
       )}
+      {s && modal === 'relief' && (
+        <Modal onClose={() => setModal(null)} width={480}>
+          <ModalHead title="Exempt from VAT" sub="Goods and services supplied to a diplomatic mission or diplomat, an approved free trade zone entity or a humanitarian donor-funded project are exempt. Every line becomes exempt (VAT status 1) and carries the description the NRS VAT return uses." onClose={() => setModal(null)} />
+          <div className="modal-body">
+            <Field label="Who the buyer is"><select className="input" value={relief.kind} onChange={(e) => setRelief({ ...relief, kind: e.target.value as Relief })} data-testid="relief-kind">
+              {RELIEFS.map((k) => <option key={k} value={k}>{RELIEF[k].label}</option>)}</select></Field>
+            <Field label={RELIEF[relief.kind].ref} hint="Saved with the sale. Keep the buyer's papers with your VAT records.">
+              <input className="input" value={relief.ref} maxLength={120} onChange={(e) => setRelief({ ...relief, ref: e.target.value })} data-testid="relief-ref" /></Field>
+            {!decidesApprovals(inv) && s.doc_type === 'invoice' && <Alert kind="yellow" icon="info">Issuing it then waits for the owner or an admin to approve, unless the exemption is the customer's own.</Alert>}
+          </div>
+          <div className="modal-ft">
+            {s.vat_relief && <button className="btn btn-ghost" disabled={busy} onClick={() => act(() => rpc('set_sale_vat_relief', { p_sale: s.id, p_relief: null, p_ref: null }), 'VAT charged as normal')}>Take it off</button>}
+            <button className="btn btn-primary" disabled={busy || relief.ref.trim().length < 2} data-testid="relief-save"
+              onClick={() => act(() => rpc('set_sale_vat_relief', { p_sale: s.id, p_relief: relief.kind, p_ref: relief.ref.trim() }), 'Marked exempt from VAT')}>Save</button>
+          </div>
+        </Modal>
+      )}
+      {s && modal === 'reject' && waiting && (
+        <Modal onClose={() => setModal(null)} width={440}><ModalHead title={`Reject ${KIND_LABEL[waiting.kind].toLowerCase()}`} sub="Say why, so the person who asked knows what to change." onClose={() => setModal(null)} />
+          <div className="modal-body"><Field label="Why"><input className="input" autoFocus value={reason} onChange={(e) => setReason(e.target.value)} /></Field></div>
+          <div className="modal-ft"><button className="btn btn-danger" disabled={busy || reason.trim().length < 3}
+            onClick={() => act(() => rpc('approval_decide', { p_id: waiting.id, p_approve: false, p_note: reason.trim() }), 'Not approved. They have been told why.')}>Reject</button></div>
+        </Modal>
+      )}
       {s && modal === 'void' && (
         <Modal onClose={() => setModal(null)} width={440}><ModalHead title={`Void ${s.number}`} sub="Reverses it in the books and puts the stock back. Money already paid becomes the customer's credit unless it was cash on the same sale." onClose={() => setModal(null)} />
           <div className="modal-body"><Field label="Why"><input className="input" autoFocus value={reason} onChange={(e) => setReason(e.target.value)} /></Field></div>
@@ -315,7 +365,8 @@ function CreditAmount({ sale, onClose, onDone, onGoods }: { sale: Sale; onClose:
       const r = await rpc<any>('credit_sale', { p_sale: sale.id, p: {
         reason, ...(byLine ? { lines: lines.filter((l) => (money(amt[l.id]) || 0) > 0).map((l) => ({ sale_line_id: l.id, amount: money(amt[l.id]) })) } : { amount: total }),
         refund: refund.method === 'none' ? {} : { method: refund.method, amount: money(refund.amount) ?? over, bank_account_id: refund.bank_account_id || null } } });
-      toast(`${r.credit_note?.number || 'Credit note'} raised${Number(r.refunded) > 0 ? ` · ${N2(r.refunded)} refunded` : ''}${Number(r.store_credit) > 0 ? ` · ${N2(r.store_credit)} kept as credit` : ''}`);
+      toast(pendingNote(r, 'The credit note')
+        || `${r.credit_note?.number || 'Credit note'} raised${Number(r.refunded) > 0 ? ` · ${N2(r.refunded)} refunded` : ''}${Number(r.store_credit) > 0 ? ` · ${N2(r.store_credit)} kept as credit` : ''}`);
       onDone(); onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
@@ -376,10 +427,10 @@ function ReturnGoods({ sale, onClose, onDone, onAmount }: { sale: Sale; onClose:
   async function go() {
     setBusy(true);
     try {
-      await rpc('return_sale', { p_sale: sale.id, p_lines: lines.filter((l) => Number(qty[l.id]) > 0).map((l) => ({ sale_line_id: l.id, qty: Number(qty[l.id]) })),
+      const r = await rpc<any>('return_sale', { p_sale: sale.id, p_lines: lines.filter((l) => Number(qty[l.id]) > 0).map((l) => ({ sale_line_id: l.id, qty: Number(qty[l.id]) })),
         p_refund: refund.method === 'none' ? {} : { method: refund.method, amount: money(refund.amount) ?? Math.max(0, value - Number(sale.balance)), bank_account_id: refund.bank_account_id || null },
         p_reason: reason, p_restock: restock });
-      toast('Credit note raised'); onDone(); onClose();
+      toast(pendingNote(r, 'The return') || 'Credit note raised'); onDone(); onClose();
     } catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
   }
@@ -558,6 +609,15 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
   useEffect(() => {
     if (existing.data && customers.data) setCustomer(customers.data.customers.find((c) => c.id === existing.data!.customer_id) || null);
   }, [existing.data?.id, customers.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Exempt from VAT: as saved on this document, else the customer's own exemption (a diplomatic mission, a free trade zone
+  // entity, a humanitarian project).
+  const [relief, setRelief] = useState<{ on: boolean; kind: Relief; ref: string }>({ on: false, kind: 'diplomatic', ref: '' });
+  useEffect(() => {
+    if (!customer) return;
+    const s = existing.data;
+    const from = s && s.customer_id === customer.id ? { kind: s.vat_relief, ref: s.vat_relief_ref } : { kind: customer.vat_relief, ref: customer.vat_relief_ref };
+    setRelief(from.kind ? { on: true, kind: from.kind, ref: from.ref || '' } : { on: false, kind: 'diplomatic', ref: '' });
+  }, [customer?.id, existing.data?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // Martina's draft: the lines she matched to products, the rest as service lines, and the customer when the name fits one.
   const [unmatched, setUnmatched] = useState<string | null>(null);
   useEffect(() => {
@@ -586,10 +646,18 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
   const sum = lines.reduce((a, l) => a + gross(l), 0) + (money(f.delivery_fee) || 0);
   // A customer outside Nigeria makes the sale an export: zero-rated, unless a manager has said otherwise on this document.
   const exp = existing.data && existing.data.customer_id === customer?.id ? !!existing.data.export : isExport(customer?.country);
-  const vat = inv.org.vat_registered && !exp ? lines.reduce((a, l) => a + (l.vat_treatment === 'standard' ? (f.prices_include_vat ? vatInside(gross(l), f.issue_date) : gross(l) * vatRateOn(f.issue_date)) : 0), 0) : 0;
+  const exempt = relief.on && !exp;
+  const vat = inv.org.vat_registered && !exp && !exempt ? lines.reduce((a, l) => a + (l.vat_treatment === 'standard' ? (f.prices_include_vat ? vatInside(gross(l), f.issue_date) : gross(l) * vatRateOn(f.issue_date)) : 0), 0) : 0;
   const total = f.prices_include_vat ? sum : sum + vat;
+  // Discounts past the business's limit, or a firm's invoice: issuing it waits for approval (the database decides; this is a heads-up).
+  const before = lines.reduce((a, l) => a + (Number(l.qty) || 0) * (money(l.unit_price) || 0), 0);
+  const offPct = before > 0 ? Math.round(lines.reduce((a, l) => a + (money(l.discount) || 0), 0) * 10000 / before) / 100 : 0;
+  const limit = Number(inv.org.discount_approval_pct ?? 10);
+  const owns = decidesApprovals(inv);
+  const ownRelief = !!customer?.vat_relief && relief.kind === customer.vat_relief && relief.ref.trim() === (customer.vat_relief_ref || '');
   async function save(issue: boolean) {
     if (!customer) { toast(`Choose the ${w.customer}.`, 'err'); return; }
+    if (exempt && relief.ref.trim().length < 2) { toast(`Add the ${RELIEF[relief.kind].ref.toLowerCase()} for the VAT exemption.`, 'err'); return; }
     if (!lines.length) { toast('Add at least one line.', 'err'); return; }
     if (lines.some((l) => !l.item_id && !l.description.trim())) { toast(svc ? 'Describe the service on each line.' : 'Describe each service or charge.', 'err'); return; }
     setBusy(true);
@@ -597,6 +665,7 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
       const r = await rpc<Sale>('save_sale_doc', { p_org: orgId, p_doc: {
         id: id || null, doc_type: type, status: issue && type === 'invoice' ? 'issue' : 'draft', customer_id: customer.id, issue_date: f.issue_date, due_date: f.due_date || null,
         prices_include_vat: f.prices_include_vat, delivery_fee: money(f.delivery_fee) || 0, notes: f.notes || null, terms: f.terms || null, reference: f.reference || null,
+        vat_relief: exempt ? relief.kind : null, vat_relief_ref: exempt ? relief.ref.trim() : null,
         lines: lines.map((l) => l.item_id
           ? { item_id: l.item_id, qty: Number(l.qty), unit: l.unit, unit_price: money(l.unit_price), discount: money(l.discount) || 0 }
           : { description: l.description, qty: Number(l.qty), unit_price: money(l.unit_price), discount: money(l.discount) || 0, vat_treatment: l.vat_treatment, revenue_account: l.revenue_account || null }),
@@ -621,6 +690,23 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
           <Field label="Date"><input className="input" type="date" value={f.issue_date} onChange={(e) => set('issue_date', e.target.value)} /></Field>
           <Field label={type === 'quote' ? 'Valid until' : 'Due'} hint={customer?.terms_days ? `${customer.terms_days} days for this ${w.customer}` : undefined}><input className="input" type="date" value={f.due_date} onChange={(e) => set('due_date', e.target.value)} /></Field>
         </div>
+        {!exp && (
+          <div className="stack" style={{ gap: 8 }} data-testid="relief-box">
+            <label className="check"><input type="checkbox" checked={relief.on} onChange={(e) => setRelief({ ...relief, on: e.target.checked })} data-testid="relief-on" />
+              Exempt from VAT: the buyer is a diplomatic mission or diplomat, a free trade zone entity or a humanitarian project</label>
+            {relief.on && <div className="m-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <Field label="Who the buyer is"><select className="input" value={relief.kind} onChange={(e) => setRelief({ ...relief, kind: e.target.value as Relief })} data-testid="relief-kind">
+                {RELIEFS.map((k) => <option key={k} value={k}>{RELIEF[k].label}</option>)}</select></Field>
+              <Field label={RELIEF[relief.kind].ref} hint={ownRelief ? `The ${w.customer}'s own exemption.` : !owns && type === 'invoice' ? 'Issuing it then waits for the owner or an admin to approve.' : undefined}>
+                <input className="input" value={relief.ref} maxLength={120} onChange={(e) => setRelief({ ...relief, ref: e.target.value })} data-testid="relief-ref" /></Field>
+            </div>}
+          </div>
+        )}
+        {type === 'invoice' && inv.me.practice_id ? (
+          <Alert kind="yellow" icon="info">Invoices the firm issues here wait for the client's approval before they are issued.</Alert>
+        ) : type === 'invoice' && !owns && offPct > limit + 0.0001 ? (
+          <Alert kind="yellow" icon="info"><span data-testid="discount-note">Discounts come to {offPct}% of this invoice, more than the {limit}% the owner set. Issuing it waits for the owner or an admin to approve.</span></Alert>
+        ) : null}
         <div className="card" style={{ overflow: 'visible' }}>
           {/* A service needs room for its description and has no units. */}
           <div className="tr head shade th hide-sm" style={{ gridTemplateColumns: grid }}>
@@ -639,6 +725,7 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
                 </div>}
                 <span className="faint row" style={{ fontSize: 11, gap: 0 }}>
                   {exp ? <>Zero-rated export · VAT 2{l.vat_treatment !== 'zero' ? ` (normally ${l.vat_treatment === 'exempt' ? 'exempt' : 'VATable'})` : ''}</>
+                    : exempt ? <>Exempt buyer · VAT 1{l.vat_treatment !== 'exempt' ? ` (normally ${l.vat_treatment === 'zero' ? 'zero-rated' : 'VATable'})` : ''}</>
                     : !inv.org.vat_registered ? 'No VAT' : l.vat_treatment === 'zero' ? 'Zero-rated · VAT 2' : l.vat_treatment === 'exempt' ? 'Exempt · VAT 1' : l.item_id ? `VAT ${vatPct(f.issue_date)}` : null}
                   <VatInfo side="sale" treatment={l.vat_treatment} name={l.description} day={f.issue_date} exportSale={!!exp} vatRegistered={inv.org.vat_registered}
                     item={inv.items.find((i) => i.id === l.item_id && i.vat_treatment === l.vat_treatment) || null} />

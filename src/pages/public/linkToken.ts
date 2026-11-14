@@ -1,9 +1,9 @@
-// One-time links (/sign/<token>, /confirm/<token>) keep their token out of the address bar, the browser history and any
+// One-time links (/sign/<token>, /confirm/<token>, /approve/<token>) keep their token out of the address bar, the browser history and any
 // Referer header: it is moved into this tab's sessionStorage on arrival and the address becomes /sign or /confirm, so a
 // reload still works and nothing else sees it.
 import { useEffect, useState } from 'react';
 
-export function useLinkToken(param: string | undefined, key: 'counta.sign' | 'counta.confirm', bare: '/sign' | '/confirm'): string {
+export function useLinkToken(param: string | undefined, key: 'counta.sign' | 'counta.confirm' | 'counta.approve', bare: '/sign' | '/confirm' | '/approve'): string {
   const [token] = useState(() => {
     let t = param || '';
     try {

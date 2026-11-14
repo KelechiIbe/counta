@@ -12,7 +12,8 @@
 //                                            to each of TaxStreem's reviewers, one email each (practice_mail.ts)
 //   { action: 'identity_mail', kind, id } -> a director's or recovering director's code (by email and by SMS through
 //                                            Termii), and the recovery's messages to the holder, the director, the previous
-//                                            owner, TaxStreem's reviewers and the support address: svc_identity_mail writes
+//                                            owner, TaxStreem's reviewers and the support address; a full-mandate client's
+//                                            director's approval link and code (email and SMS): svc_identity_mail writes
 //                                            each and mints the code or link as it goes (identity_mail.ts)
 // Signed-in callers (Authorization: Bearer <user JWT>):
 //   { action: 'status' }    -> which channels are switched on

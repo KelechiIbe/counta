@@ -32,6 +32,8 @@ export interface Org {
   invoice_terms_days?: number; invoice_note?: string | null; auto_post_threshold?: number; cash_sales_without_invoices?: boolean;
   reporting_framework?: 'ifrs' | 'ifrs_sme'; principal_activity?: string | null; fiscal_year_start?: number; books_start?: string | null;
   capitalisation_threshold?: number; max_cashier_discount_pct?: number; receipt_footer?: string | null; release_after_payment?: boolean;
+  // Invoice discounts above this percentage, by anyone but the owner or an admin, wait for their approval.
+  discount_approval_pct?: number;
   shop_slug?: string | null; shop_enabled?: boolean; shop_title?: string | null; shop_note?: string | null; shop_whatsapp?: string | null;
   shop_location_id?: string | null; shop_delivery_fee?: number; shop_pickup?: boolean; shop_delivery?: boolean; shop_show_stock?: boolean;
   payment_rail?: string; payment_methods?: string[]; payout_approval_threshold?: number; reminders_enabled?: boolean; reminder_days?: number[];
@@ -63,6 +65,8 @@ export interface MeRow {
   p_approve_pos: boolean; p_transfer_stock: boolean; p_see_margins: boolean; p_issue_stock?: boolean; p_keep_books?: boolean; p_make_payments?: boolean;
   p_add_items?: boolean; p_approve_payments?: boolean; p_file_tax?: boolean; p_manage_team?: boolean; p_manage_settings?: boolean;
   acts_as_owner?: boolean;
+  // A firm's person working in this business.
+  practice_id?: string | null;
 }
 export interface Item {
   id: string; name: string; photo_path: string | null; barcode: string | null; sku: string | null; qr_code: string; category: string;

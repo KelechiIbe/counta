@@ -13,6 +13,7 @@ import { Icon } from '../../components/Icon';
 import { Alert, Empty, Field, Modal, ModalHead, Pills, SkeletonRows, Spinner } from '../../components/ui';
 import { NG_STATES } from '../../lib/countries';
 import { StatusChip } from '../sell/common';
+import { decidedText, waitsFor } from '../../lib/approvals';
 
 // Codes Counta posts to through a bill or a supplier, never straight from a bulk payment.
 const CONTROL = new Set(['1101', '1102', '2101', '2107']);
@@ -477,7 +478,9 @@ export function BatchModal({ id, onClose }: { id: string; onClose: () => void })
               <Tile label="WHT kept back" value={N2(b.wht_total)} />
             </div>
             <Progress b={b} />
-            {b.status === 'pending_approval' && !b.can?.approve && <Alert kind="blue" icon="clock">Waiting for someone else who makes payments to approve it.</Alert>}
+            {b.status === 'pending_approval' && !b.can?.approve && <Alert kind="blue" icon="clock"><span data-testid="batch-waits">
+              {b.approval?.status === 'pending' ? `Waiting for ${waitsFor(b.approval)} to approve it.` : 'Waiting for someone else who makes payments to approve it.'}</span></Alert>}
+            {b.approval && ['rejected', 'failed'].includes(b.approval.status) && <Alert kind="red" icon="alert">{decidedText(b.approval)}.</Alert>}
             {sending && <Alert kind="blue" icon="send"><span className="row" style={{ gap: 8 }}><Spinner small />Sending · {Number(b.row_count) - waiting} of {b.row_count} handed to the bank. You can close this; Counta carries on.</span></Alert>}
             {!sending && Number(b.processing_count) > 0 && <Alert kind="grey" icon="clock">{b.processing_count} payment{Number(b.processing_count) === 1 ? ' is' : 's are'} at the bank. Each one completes when the bank confirms it, and this page updates on its own.</Alert>}
             {b.status === 'sending' && !sending && waiting > 0 && <Alert kind="blue" icon="clock">{waiting} payment{waiting === 1 ? '' : 's'} still to go. Counta sends them within five minutes, or send them now.</Alert>}

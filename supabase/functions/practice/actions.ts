@@ -1,7 +1,7 @@
 // The practice function's actions (index.ts serves them). POST JSON {action, ...} -> {ok: true, ...} or {ok: false, error}
 // (with reason when the database gave one). See index.ts for the list.
 //
-// Public actions (the signing page /sign and the director's page /confirm, no account): the token is checked for its form
+// Public actions (the signing page /sign, the director's pages /confirm and /approve, no account): the token is checked for its form
 // before anything else, the caller's IP address and browser go to the database with each call, the token is never logged,
 // and every answer carries Referrer-Policy: no-referrer. Files are written with the service role, write-once (upsert
 // false); a file written by a step the database then refused for certain is removed again so the step can be retried.
@@ -65,6 +65,11 @@ export const REASONS: Record<string, string> = {
   nin_not_found: 'NIMC has no record of that NIN. Check the 11 digits.',
   nin_failed: 'The NIN check did not go through just now. Try again in a minute.',
   lookup_off: 'The NIN check is not switched on yet. Ask the firm about it.',
+  approval_closed: 'This link no longer works: the firm\'s mandate ended, or another director approves for the business now.',
+  approval_code_first: 'Ask for a code and enter it first. A code lets you decide for 15 minutes.',
+  choose: 'Choose whether to approve or reject.',
+  note: 'Say why you are not approving it, so the firm knows what to change.',
+  note_long: 'Keep the reason under 500 characters.',
 };
 const refusal = (reason: unknown): Result => {
   const r = typeof reason === 'string' && reason ? reason : 'invalid';
@@ -437,12 +442,53 @@ async function directorDecline(req: Request, b: Body, d: Deps): Promise<Result> 
   return r?.ok ? r : refusal(r?.reason);
 }
 
+// ------------------------------------------------------------------ public: the director's approvals (/approve)
+// The director who confirmed the wallets of a business the firm runs under full mandate approves what the firm asks for
+// (invoices, credit notes, refunds, payments out of the wallet, recurring invoices) from an emailed link. The page shows
+// what waits; a code to the director's phone and email lets them decide for 15 minutes.
+const approvalRefusal = (reason: unknown): Result => refusal(reason === 'closed' ? 'approval_closed' : reason === 'not_verified' ? 'approval_code_first' : reason);
+async function approvalOpen(req: Request, b: Body, d: Deps): Promise<Result> {
+  const token = String(b.token ?? '');
+  if (!tokenOk(token, 'ap')) return refusal('invalid');
+  const r = await rpc(d.admin, 'svc_approval_open', ask(req, token));
+  return r?.ok ? r : approvalRefusal(r?.reason);
+}
+async function approvalCode(req: Request, b: Body, d: Deps): Promise<Result> {
+  const token = String(b.token ?? '');
+  if (!tokenOk(token, 'ap')) return refusal('invalid');
+  const r = await rpc(d.admin, 'svc_approval_code', ask(req, token));
+  return r?.ok ? r : approvalRefusal(r?.reason);
+}
+async function approvalVerify(req: Request, b: Body, d: Deps): Promise<Result> {
+  const token = String(b.token ?? '');
+  if (!tokenOk(token, 'ap')) return refusal('invalid');
+  if (!codeShape(b.code)) return { ok: false, reason: 'wrong_code', error: 'Enter the 6-digit code you were sent.' };
+  const r = await rpc(d.admin, 'svc_approval_verify', { p_token: token, p_code: String(b.code), p_ip: clientIp(req), p_ua: userAgent(req) });
+  if (r?.ok) return r;
+  return r?.reason === 'closed' ? approvalRefusal('closed') : codeRefusal(r);
+}
+// ids: what the director decides, all one way (at most 50). Rejecting takes a reason, which the firm sees.
+async function approvalDecide(req: Request, b: Body, d: Deps): Promise<Result> {
+  const token = String(b.token ?? '');
+  if (!tokenOk(token, 'ap')) return refusal('invalid');
+  const ids = Array.isArray(b.ids) ? b.ids : [];
+  if (!ids.length || ids.length > 50 || !ids.every((x) => typeof x === 'string' && UUID.test(x))) throw new UserError('Choose what to approve or reject.');
+  if (typeof b.approve !== 'boolean') return refusal('choose');
+  const note = String(b.note ?? '').replace(/\s+/g, ' ').trim();
+  if (note.length > 500) return refusal('note_long');
+  if (!b.approve && note.length < 3) return refusal('note');
+  const r = await rpc(d.admin, 'svc_approval_decide', { ...ask(req, token), p_ids: ids.map((x) => String(x).toLowerCase()), p_approve: b.approve,
+    p_note: note || null });
+  return r?.ok ? r : approvalRefusal(r?.reason);
+}
+
 // ------------------------------------------------------------------ entry
 // (Maps, so an action named after an object property, "constructor" say, is simply unknown.)
 const PUBLIC = new Map<string, (req: Request, b: Body, d: Deps) => Promise<Result>>([
   ['sign_open', signOpen], ['sign_code', signCode], ['sign_submit', signSubmit],
   ['director_open', directorOpen], ['director_nin', directorNin], ['director_slip', directorSlip], ['director_code', directorCode],
   ['director_confirm', directorConfirm], ['director_decline', directorDecline],
+  ['approval_open', approvalOpen], ['approval_code', approvalCode], ['approval_verify', approvalVerify], ['approval_decide', approvalDecide],
 ]);
 const SIGNED_IN = new Map<string, (req: Request, b: Body, d: Deps, sb: SupabaseClient, user: User) => Promise<Result>>([
   ['letter_freeze', letterFreeze], ['export', exportRecords], ['end_mandate', endMandate], ['unlink_feeds', unlinkFeeds],

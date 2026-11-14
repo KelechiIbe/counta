@@ -25,7 +25,7 @@ const TITLES: Record<string, string> = {
   '/inventory/reorder': 'Reorder', '/inventory/pricing': 'Pricing', '/inventory/insights': 'Insights', '/inventory/locations': 'Locations & staff', '/inventory/reports': 'Reports',
   '/inventory/production': 'Production & jobs', '/inventory/month-end': 'Stock close', '/inventory/migrate': 'Move to Counta',
   '/sell/till': 'Till', '/sell/sales': 'Sales', '/sell/customers': 'Customers', '/sell/orders': 'Orders & deliveries', '/sell/price-lists': 'Price lists', '/sell/shop': 'Online shop', '/sell/recurring': 'Recurring invoices',
-  '/payments': 'Payments', '/purchases/bills': 'Bills', '/purchases/vendors': 'Vendors',
+  '/payments': 'Payments', '/approvals': 'Approvals', '/purchases/bills': 'Bills', '/purchases/vendors': 'Vendors',
   '/accounting/inbox': 'Books inbox', '/accounting/banking': 'Banking & reconciliation', '/accounting/statements': 'Financial statements',
   '/accounting/ledgers': 'Ledgers & reports', '/accounting/cfo': 'CFO pack', '/accounting/assets': 'Fixed assets', '/accounting/close': 'Period close',
   '/tax': 'Tax returns', '/tax/vat': 'VAT returns', '/tax/wht': 'Withholding tax', '/tax/cit': 'Companies income tax', '/tax/pit': 'Income tax',
@@ -186,6 +186,8 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
             : [...(mode.walkIn ? [['/sell/till', 'Till'] as [string, string]] : []), ['/sell/sales', 'Invoices', n('invoices_overdue')], ['/sell/recurring', 'Recurring invoices'], ['/sell/customers', cap(w.customers)], ['/sell/price-lists', 'Price lists']]} />
         <Group to="/payments" label="Payments" icon="card" active={p.startsWith('/payments')} onClose={onClose} rail={rail} drawer={drawer} show={can(inv, 'record_sales') || money}
           subs={[['/payments', 'Wallet & payments', Number(ib?.payouts_to_approve || 0) + n('tax_wallet')]]} />
+        {(n('approvals') > 0 || n('approvals_mine') > 0 || ['owner', 'admin'].includes(inv?.me.role || '') || !!inv?.me.practice_id)
+          && link('/approvals', 'Approvals', 'check', undefined, n('approvals'))}
         <Group to="/purchases/bills" label="Purchases" icon="file" active={p.startsWith('/purchases')} onClose={onClose} rail={rail} drawer={drawer} show={money || can(inv, 'approve_pos')}
           subs={[['/purchases/bills', 'Bills', Number(ib?.bills_to_approve || 0) + n('bills_overdue')], ['/purchases/vendors', 'Vendors']]} />
         <Group to="/inventory" label="Inventory" icon="package" active={p.startsWith('/inventory')} onClose={onClose} rail={rail} drawer={drawer} subs={invSubs} show={w.has_stock || populated} />

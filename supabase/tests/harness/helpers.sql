@@ -332,6 +332,36 @@ begin
   return (r->>'client_id')::uuid;
 end $$;
 
+-- The director of a business the practice runs under full mandate, confirmed and reachable for approvals: what their code
+-- reached is kept on the confirmation, as when they confirm the wallets by code. Returns the confirmation's id.
+create function tests.director_approver(p_org uuid, p_name text default 'Dayo Director', p_email text default 'director@example.test',
+  p_phone text default '2348031234567') returns uuid
+language plpgsql as $$
+declare c public.practice_clients; v_id uuid;
+begin
+  select * into c from public.practice_clients where org_id = p_org and status = 'active' and mode = 'full' order by created_at desc limit 1;
+  if c.id is null then raise exception 'tests.director_approver: % has no full mandate', p_org; end if;
+  insert into public.practice_director_confirmations (practice_id, client_id, name, email, status, confirmed_at, matched_name, approver_email,
+    approver_phone)
+  values (c.practice_id, c.id, p_name, p_email, 'confirmed', now(), upper(p_name), p_email, p_phone)
+  returning id into v_id;
+  update public.orgs set director_confirmed_at = coalesce(director_confirmed_at, now()) where id = p_org;
+  return v_id;
+end $$;
+
+-- Every request waiting for the director of p_org, approved by them as their link and code would. Call as postgres.
+-- Returns how many.
+create function tests.director_approves(p_org uuid) returns integer
+language plpgsql as $$
+declare a record; v_n int := 0;
+begin
+  for a in select id from public.approvals where org_id = p_org and status = 'pending' and approver = 'director' order by created_at loop
+    perform private.approval_settle(a.id, true, null, null, 'Dayo Director (director)', null, null);
+    v_n := v_n + 1;
+  end loop;
+  return v_n;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Grants: every caller can switch identity, read ids and capture results.
 -- ---------------------------------------------------------------------------
