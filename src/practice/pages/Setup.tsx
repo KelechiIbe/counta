@@ -16,7 +16,7 @@ export default function Setup({ invitations, again }: { invitations: Invitation[
   const qc = useQueryClient();
   const meta = (session?.user.user_metadata || {}) as Record<string, string>;
   const [f, setF] = useState({ name: '', kind: 'firm', email: session?.user.email || '', phone: '', firm_reg: '', my_name: meta.full_name || meta.name || '',
-    licence_body: 'ICAN', licence_no: '' });
+    licence_body: 'ICAN', licence_no: '', frc_no: '' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const up = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
@@ -24,7 +24,8 @@ export default function Setup({ invitations, again }: { invitations: Invitation[
   async function create() {
     setBusy(true); setErr(null);
     try {
-      const h = await rpc<Home>('create_practice', { p: { ...f, phone: localPhone(f.phone), licence_body: f.licence_no.trim() ? f.licence_body : null, licence_no: f.licence_no.trim() || null } });
+      const h = await rpc<Home>('create_practice', { p: { ...f, phone: localPhone(f.phone), licence_body: f.licence_no.trim() ? f.licence_body : null, licence_no: f.licence_no.trim() || null,
+        frc_no: f.frc_no.trim() || null } });
       savePractice(h.practice.id);
       await qc.invalidateQueries({ queryKey: ['practices-mine'] });
       nav(`/practice/${h.practice.id}`, { replace: true });
@@ -64,7 +65,10 @@ export default function Setup({ invitations, again }: { invitations: Invitation[
             <select className="input" value={f.licence_body} onChange={up('licence_body')}><option value="ICAN">ICAN</option><option value="ANAN">ANAN</option><option value="CITN">CITN</option></select>
           </Field>
           <Field label="Membership number" hint="TaxStreem checks it. Until then clients see it as unverified."><input className="input" value={f.licence_no} onChange={up('licence_no')} maxLength={30} /></Field>
+          <Field label="FRC number (for audits)" hint="As on your FRC certificate, such as FRC/2014/ICAN/00000001234."><input className="input" value={f.frc_no} onChange={up('frc_no')} maxLength={40} data-testid="setup-frc" /></Field>
         </div>
+        <Alert kind="blue" icon="shield"><span data-testid="setup-audit-note">Planning to audit companies through Counta? Give your ICAN or ANAN membership number and your FRC number. TaxStreem checks
+          both, and only firms with a partner verified this way are offered to companies that need an audit. You can add them later under Practice.</span></Alert>
         {err && <Alert kind="red" icon="alert">{err}</Alert>}
         <div className="row wrap" style={{ gap: 8 }}>
           <button className="btn btn-primary" disabled={busy || f.name.trim().length < 2} onClick={create}>{busy ? <Spinner small /> : <Icon name="check" size={16} color="#fff" />}Set up the practice</button>

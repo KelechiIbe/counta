@@ -72,3 +72,5 @@ A filing-only business whose sales pass ₦100 million in a year still has VAT t
 - Database: `supabase/migrations/20261128000100_filing_only.sql` (orgs.filing_only, plans.kind, filing_prices, filing_orders, filing_scans, the filing functions); tests in `supabase/tests/sql/17_filing_only.sql`. Where a year starts, personal income tax from 2024 and the late mark: `20261129000100_prior_years_assets.sql` (filing_orders.opening), tests in `18_prior_years_assets.sql`.
 - Payments function: `filing_pay` and `filing_verify` (the fee goes through the plan payments, as subscription_charges of kind filing).
 - Screens: `src/pages/filing/Filing.tsx`, `src/pages/filing/Opening.tsx`, the hold and scan modes of `src/pages/accounting/BankStatement.tsx`, `src/admin/pages/FilingFees.tsx`.
+
+A company whose year is above the small company limits sees the year's audit on the Filing page once the year is paid for: it chooses a TaxStreem partner firm and pays it there, or names its own auditor. See [audits.md](audits.md).

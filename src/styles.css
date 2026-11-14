@@ -585,3 +585,13 @@ textarea.input { resize: vertical; min-height: 80px; line-height: 1.45; }
 .filing-step { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: 12px; font-weight: 700;
   background: var(--canvas); color: var(--muted); border: 1px solid var(--line); }
 .filing-step.done { background: var(--green); border-color: transparent; }
+
+/* Audits: the fee summary, and the partner firms to choose from */
+.audit-sum { display: grid; gap: 6px; background: var(--canvas); border-radius: 10px; padding: 10px 12px; max-width: 520px; }
+.audit-firm { display: block; width: 100%; text-align: left; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  cursor: pointer; font: inherit; color: inherit; min-height: 44px; transition: border-color .15s, box-shadow .15s; }
+.audit-firm:hover { border-color: var(--primary-line); box-shadow: var(--shadow-card); }
+.audit-firm:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.audit-steps { display: grid; gap: 8px; }
+.audit-step { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.45; }
+.audit-prices { display: grid; gap: 8px; max-width: 460px; }

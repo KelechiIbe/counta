@@ -102,7 +102,7 @@ cat <<MSG
       It points at: ${DNS:-nothing yet}
     Caddy gets the HTTPS certificate by itself once it does; check with:
       curl https://$NAME/health
-    which should print {"ok":true,"version":"1"}.
+    which should print {"ok":true,"version":"2"}.
 
  3. In Counta's admin portal, Keys and services, Flutterwave, save:
       FLW_RELAY_URL     https://$NAME

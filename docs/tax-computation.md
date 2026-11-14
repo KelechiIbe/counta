@@ -22,7 +22,7 @@ Financial statements has two tax sections, Tax computation and Capital allowance
 
 Petroleum development costs (1524) have no rate until the rule book sets one; the computation says so.
 
-A professional services company is never a small company (`tax_settings.professional_services`).
+A company is small for companies income tax on its turnover and fixed assets alone (NTA 2025 s.202), professional services or not. The rule that a professional services company is never small applies to VAT only (`orgs.professional_services`, read by `vat_status`).
 
 ## Capital allowances
 

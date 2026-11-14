@@ -12,10 +12,13 @@ TaxStreem's own Flutterwave account, and the sweep that should have moved the mo
 Transfers for sales now go straight to the business's own wallet number, so they no longer depend on a sweep. Card, USSD and
 QR payments, payouts and the tax wallet still need transfers, and the relay is how Counta sends them.
 
+Flutterwave applies the same rule to the subaccounts that split an audit fee between the audit firm and TaxStreem (see
+`docs/audits.md`), so the relay forwards those calls too, from version 2.
+
 The relay is a small program (`relay/server.mjs` in the repository, no packages needed) on a server TaxStreem rents, with
 one fixed IP address. Counta signs each transfer request with a shared secret; the relay checks the signature, the time
 (within five minutes) and that it has not seen the request before, then passes it to Flutterwave from its fixed address. It
-forwards only Flutterwave's transfer paths, keeps nothing on disk and logs only the method, path and status of each request.
+forwards only Flutterwave's transfer and subaccount paths, keeps nothing on disk and logs only the method, path and status of each request.
 
 Until the relay is set up, Counta keeps working: collections are recorded as before, and transfers wait (a payout stays
 approved, a sweep pending, a tax wallet move queued) and go once the relay works. Nothing needs to be redone.
@@ -63,7 +66,7 @@ cat /etc/counta-relay.env
 
 The 64 characters after `RELAY_SECRET=` are the secret. Do not email them or paste them into a chat.
 
-Once the name points at the server (a few minutes after step 2), this should print `{"ok":true,"version":"1"}`:
+Once the name points at the server (a few minutes after step 2), this should print `{"ok":true,"version":"2"}`:
 
 ```bash
 curl https://relay.taxstreem.com/health
@@ -92,13 +95,14 @@ In Counta's admin portal, Keys and services, Flutterwave:
 - `FLW_RELAY_URL`: `https://relay.taxstreem.com` (the name from step 2)
 - `FLW_RELAY_SECRET`: the 64 characters after `RELAY_SECRET=` (step 3)
 
-Then press Test. It should say "Transfers go through the relay (version 1)". From then on payouts, bulk payments, sweeps,
+Then press Test. It should say "Transfers go through the relay (version 2)". From then on payouts, bulk payments, sweeps,
 tax wallet moves and tax payments go out, including any that were waiting.
 
 ## Looking after it
 
 - Logs: `journalctl -u counta-relay -n 100` shows each request's time, method, path and Flutterwave's status code.
-- Updating: run the setup line from step 3 again. It keeps the secret.
+- Updating: run the setup line from step 3 again. It keeps the secret. A relay set up before version 2 does not forward audit
+  subaccounts; until it is updated, the audits function sends them straight to Flutterwave, which may refuse them.
 - Changing the secret: `rm /etc/counta-relay.env`, run the setup line again, then save the new value in the admin portal. Transfers
   sent in the minute between the two are refused by the relay, nothing leaves anyone's wallet, and they go on the next try.
 - If the server's address ever changes, whitelist the new one on Flutterwave before removing the old one.
@@ -107,7 +111,8 @@ tax wallet moves and tax payments go out, including any that were waiting.
 
 ## How Counta uses it
 
-The payments function sends transfer requests (`/transfers`, `/bulk-transfers`) to `FLW_RELAY_URL/forward/<path>` with:
+The payments function sends transfer requests (`/transfers`, `/bulk-transfers`), and the audits function sends subaccount
+requests (`/subaccounts`), to `FLW_RELAY_URL/forward/<path>` with:
 
 ```
 X-Relay-Timestamp: <unix seconds>
@@ -119,5 +124,9 @@ The relay answers with Flutterwave's own status and body. Its own refusals start
 repeated signature, 403 for a path it does not forward, 504 when Flutterwave did not answer). A 504 is treated as "no
 answer": the transfer may have gone, so Counta checks with Flutterwave before sending it again.
 
-The test suite runs the real relay between Counta and a stand-in for Flutterwave that, like the live account, refuses
-transfers from any address but the relay's.
+The audits function goes straight to Flutterwave when the relay answers 403 (a relay older than version 2) or cannot be
+reached at all, since nothing was sent either way. It reports a wrong secret, a repeat and a 504 without trying again.
+
+`bash relay/test/audits_e2e.sh` runs the audits function, the real relay and stand-ins for Supabase and Flutterwave that,
+like the live account, refuse subaccount calls from any address but the relay's. It covers the relay route, the fallbacks,
+a wrong secret, a repeat, an existing split, a moved bank account and the paths the relay still refuses.

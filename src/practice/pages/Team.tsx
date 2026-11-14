@@ -50,6 +50,9 @@ export default function TeamPage({ pid }: { pid: string }) {
               <span className="row wrap" style={{ gap: 4 }}>
                 {m.licence_body && <span className="faint" style={{ fontSize: 12 }}>{m.licence_body} {m.licence_no}</span>}
                 <span className={'chip ' + lc}>{lt}</span>
+                {m.frc_no && <span className={'chip ' + (m.frc_status === 'verified' ? 't-green' : m.frc_status === 'rejected' ? 't-red' : 't-amber')} title={m.frc_no}>
+                  FRC {m.frc_status === 'verified' ? 'verified' : m.frc_status === 'rejected' ? 'not confirmed' : 'waiting'}</span>}
+                {m.signs_audits && <span className="chip t-blue">Signs audits</span>}
               </span>
               <span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
                 {lead && !me && m.status !== 'disabled' && (
