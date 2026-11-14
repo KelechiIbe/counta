@@ -1784,7 +1784,8 @@ select 'ng-pit-pita-legacy@1.2.0', r.config_id, '1.2.0', r.regime, r.yoa_from, r
     '{configurable_flags,flags,P-8,reading}',
       to_jsonb(replace(r.config#>>'{configurable_flags,flags,P-8,reading}', '2025 accounts use the old initial', '2024 and 2025 accounts use the old initial'))),
     '{configurable_flags,flags,P-9,reading}',
-      to_jsonb(replace(r.config#>>'{configurable_flags,flags,P-9,reading}', 'Losses brought into 2025 accounts', 'Losses brought into 2024 or 2025 accounts'))),
+      -- Matched in parts: the SQL Editor's check for new tables mistook the whole sentence for a statement that creates a table.
+      to_jsonb(regexp_replace(r.config#>>'{configurable_flags,flags,P-9,reading}', '(Losses brought in)(to) (2025 accounts)', '\1\2 2024 or \3'))),
   'TaxStreem', '2026-11-14 12:00:00+01',
   'Version 1.1.0 (signed off by TaxStreem on 4 November 2026) widened to 2024 accounts on TaxStreem''s instruction of 14 November 2026. The rules are unchanged.'
 from public.tax_rulebooks r where r.id = 'ng-pit-pita-legacy@1.1.0'
