@@ -1,7 +1,8 @@
 // Counta transfer relay: forwards Counta's Flutterwave transfer requests from one fixed IP address.
 //
 // Flutterwave takes transfer requests (payouts, bulk payments, sweeps and moves between a business's wallets) only from IP
-// addresses whitelisted on TaxStreem's account. Counta's server functions run on Supabase, which has no fixed address, so
+// addresses whitelisted on TaxStreem's account, and the subaccounts that split an audit fee between an audit firm and
+// TaxStreem are set up from there too. Counta's server functions run on Supabase, which has no fixed address, so
 // they send those requests here and this server, on a machine with a fixed address, passes them on.
 //
 // Nothing is kept here: no keys at rest (unless RELAY_FLW_KEY is set), no data, no logs of request bodies. Each request is
@@ -13,7 +14,7 @@
 //   PORT                 default 8787 (put Caddy or nginx in front for https)
 //   HOST                 default 127.0.0.1
 //   RELAY_UPSTREAM       default https://api.flutterwave.com/v3
-//   RELAY_ALLOW          default ^/(transfers|bulk-transfers)(/|\?|$)   (a regular expression on the path)
+//   RELAY_ALLOW          default ^/(transfers|bulk-transfers|subaccounts)(/|\?|$)   (a regular expression on the path)
 //   RELAY_FLW_KEY        optional: Flutterwave's secret key kept here instead of travelling with each request
 //   RELAY_LOCAL_ADDRESS  optional: the local address to send from, on a machine with several
 //   RELAY_IP_FAMILY      default 4: connect to Flutterwave over IPv4, so requests leave from the whitelisted IPv4 address
@@ -28,11 +29,11 @@ const SECRET = process.env.RELAY_SECRET || '';
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '127.0.0.1';
 const UPSTREAM = new URL((process.env.RELAY_UPSTREAM || 'https://api.flutterwave.com/v3').replace(/\/$/, ''));
-const ALLOW = new RegExp(process.env.RELAY_ALLOW || '^/(transfers|bulk-transfers)(/|\\?|$)');
+const ALLOW = new RegExp(process.env.RELAY_ALLOW || '^/(transfers|bulk-transfers|subaccounts)(/|\\?|$)');
 const OWN_KEY = process.env.RELAY_FLW_KEY || '';
 const LOCAL_ADDRESS = process.env.RELAY_LOCAL_ADDRESS || undefined;
 const FAMILY = [0, 4, 6].includes(Number(process.env.RELAY_IP_FAMILY ?? 4)) ? Number(process.env.RELAY_IP_FAMILY ?? 4) : 4;
-const VERSION = '1';
+const VERSION = '2';
 const MAX_BODY = 1024 * 1024;
 const WINDOW_S = 300;
 

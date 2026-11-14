@@ -10,10 +10,13 @@
 //
 // What a checkout costs, the bill and the withholding tax are the database's (audit_pay_start). Nothing the browser says
 // about a payment is trusted: Counta asks Flutterwave for the transaction by its reference.
-// Secrets: FLW_SECRET_KEY (Supabase Vault from the admin portal, else an Edge Function secret), APP_URL. Subaccounts and
-// checkouts are not transfers, so they go to Flutterwave directly, not through the transfer relay.
+// Secrets: FLW_SECRET_KEY (Supabase Vault from the admin portal, else an Edge Function secret), APP_URL. Subaccount calls go
+// through the transfer relay when FLW_RELAY_URL and FLW_RELAY_SECRET are set (Flutterwave may take them only from TaxStreem's
+// whitelisted address); a relay not yet updated to forward them sends nothing, and the call then goes straight to
+// Flutterwave. Checkouts and checks go straight to Flutterwave, as the payments function's do.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { type ChargeCtx, checkoutBody, readVerify, type SubCtx, subaccountBody, subaccountPlan } from './flw.ts';
+import { RELAY_PATH, relayHeaders, relayKey, relayRefusal } from './relay.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -30,6 +33,8 @@ const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { sta
 
 class UserError extends Error {}
 class NotConfigured extends UserError {}
+// Nothing was sent and nothing changed (the relay refused a repeat of a request it had just passed on).
+class NothingSent extends UserError {}
 
 const cache = new Map<string, { v: string; at: number }>();
 // Keys set in the admin portal (Supabase Vault) come first; the Edge Function secrets are the fallback.
@@ -69,19 +74,72 @@ function same(a: string, b: string) {
   return r === 0;
 }
 
-async function flw(path: string, init: RequestInit = {}): Promise<any> {
-  const key = await secret('FLW_SECRET_KEY');
-  if (!key) throw new NotConfigured('Payments are not switched on yet. TaxStreem is setting them up.');
-  const res = await fetch(FLW + path, { ...init, headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
-    signal: AbortSignal.timeout(30_000) });
-  const text = await res.text();
+function readFlw(status: number, text: string): any {
   let body: any = text;
   try { body = JSON.parse(text); } catch { /* not json */ }
-  if (!res.ok || (body && body.status === 'error')) {
+  if (status < 200 || status >= 300 || (body && body.status === 'error')) {
     const msg = typeof body === 'string' ? body : body?.message || JSON.stringify(body);
     throw new UserError(`Flutterwave: ${String(msg).slice(0, 300)}`);
   }
   return body;
+}
+
+async function relayConfig(): Promise<{ url: string; key: string } | null> {
+  const url = await secret('FLW_RELAY_URL'), raw = await secret('FLW_RELAY_SECRET');
+  const key = relayKey(raw);
+  return url && key ? { url: url.replace(/\/$/, ''), key } : null;
+}
+
+// One call through the relay. null: nothing was sent (the relay does not forward this path yet, or could not be reached).
+async function viaRelay(relay: { url: string; key: string }, path: string, init: RequestInit, flwKey: string): Promise<any | null> {
+  const method = String(init.method || 'GET').toUpperCase();
+  const body = typeof init.body === 'string' ? init.body : '';
+  let res: Response;
+  try {
+    res = await fetch(`${relay.url}/forward${path}`, { method, body: method === 'GET' ? undefined : body,
+      headers: await relayHeaders(relay.key, method, path, body, flwKey), signal: AbortSignal.timeout(35_000) });
+  } catch (e) {
+    // No answer in time: the request may have reached Flutterwave. No connection at all: nothing was sent.
+    const name = (e as Error).name;
+    if (name === 'TimeoutError' || name === 'AbortError') throw new UserError('The transfer relay did not answer in time. Try again in a minute.');
+    console.log('audits relay unreachable', (e as Error).message);
+    return null;
+  }
+  const text = await res.text();
+  const refusal = relayRefusal(res.status, text);
+  if (refusal === 'not_forwarded') return null;
+  if (refusal === 'no_answer') throw new UserError('The transfer relay got no answer from Flutterwave. Try again in a minute.');
+  if (refusal === 'refused') {
+    let msg = '';
+    try { msg = String(JSON.parse(text)?.message || ''); } catch { /* not json */ }
+    // The same request signed twice within a second (a double click) is refused as a repeat: nothing was sent.
+    if (/replayed/.test(msg)) throw new NothingSent('The same request went twice. Try again in a moment.');
+    throw new UserError(/signature|unsigned|stale/.test(msg)
+      ? 'The transfer relay refused Counta\'s signature. Check FLW_RELAY_SECRET in the admin portal and the clock on the relay server.'
+      : `The transfer relay refused the request (${msg.slice(7).trim()}).`);
+  }
+  return readFlw(res.status, text);
+}
+
+async function flw(path: string, init: RequestInit = {}): Promise<any> {
+  const key = await secret('FLW_SECRET_KEY');
+  if (!key) throw new NotConfigured('Payments are not switched on yet. TaxStreem is setting them up.');
+  const relay = RELAY_PATH.test(path) ? await relayConfig() : null;
+  if (relay) {
+    const r = await viaRelay(relay, path, init, key);
+    if (r !== null) return r;
+  }
+  const res = await fetch(FLW + path, { ...init, headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
+    signal: AbortSignal.timeout(30_000) });
+  try {
+    return readFlw(res.status, await res.text());
+  } catch (e) {
+    // Flutterwave takes this only from the whitelisted address, and the relay did not forward it.
+    if (relay && /whitelist/i.test((e as Error).message)) {
+      throw new UserError('Flutterwave takes this only from TaxStreem\'s whitelisted address, and the transfer relay did not forward it. Update the relay by running its setup again, and check it answers in the admin portal.');
+    }
+    throw e;
+  }
 }
 
 // ------------------------------------------------------------------ the firm's split
@@ -114,7 +172,7 @@ async function setUpSubaccount(sb: SupabaseClient, practiceId: string, user: { e
       await svc('svc_audit_subaccount_save', { p_practice: practiceId, p: { status: 'ready', ref: String(d.subaccount_id), num: Number(d.id),
         bank: ctx.bank.bank_code, account: ctx.bank.account_number } });
     } catch (e) {
-      if (e instanceof NotConfigured) throw e;
+      if (e instanceof NotConfigured || e instanceof NothingSent) throw e;
       await svc('svc_audit_subaccount_save', { p_practice: practiceId, p: { status: 'failed', error: (e as Error).message.replace(/^Flutterwave: /, '') } });
     }
   }

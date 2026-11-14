@@ -53,8 +53,11 @@ another firm chosen, is kept and marked for TaxStreem to refund (Audits, in the 
 
 ## Secrets
 
-`FLW_SECRET_KEY` and `APP_URL`, as for the payments function. Subaccounts and checkouts are not transfers, so they go to
-Flutterwave directly, not through the transfer relay.
+`FLW_SECRET_KEY` and `APP_URL`, as for the payments function. Flutterwave takes subaccount calls only from TaxStreem's
+whitelisted address, so the audits function sends them through the transfer relay when `FLW_RELAY_URL` and
+`FLW_RELAY_SECRET` are set (`docs/transfer-relay.md`; the relay forwards them from version 2). A relay not yet updated, or
+one that cannot be reached, sent nothing, so the call then goes straight to Flutterwave, and the firm sees "update the
+relay" if Flutterwave refuses it. Checkouts and payment checks are not restricted and go straight to Flutterwave.
 
 ## Still to come
 
