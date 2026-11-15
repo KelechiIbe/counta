@@ -109,6 +109,9 @@ export default function Onboard() {
           {screen !== 'welcome' && g.status === 'idle' && (
             <button className="btn btn-secondary btn-sm" onClick={() => talk()} title="Talk to Martina" aria-label="Talk to Martina"><Icon name="mic" size={14} /><span className="ob-talk-label">Talk</span></button>
           )}
+          {memberships.length > 0 && (
+            <button className="btn btn-ghost btn-sm" onClick={() => nav('/home')} title="Back to your business" aria-label="Back to your business"><Icon name="x" size={16} /></button>
+          )}
           <button className="btn btn-ghost btn-sm" onClick={signOut} title="Sign out"><Icon name="logout" size={16} /></button>
         </div>
       </div>
@@ -120,7 +123,7 @@ export default function Onboard() {
             : screen === 'find' ? <Find k={k} live={live} onFound={() => go('found')} onManual={() => go('questions')} />
             : screen === 'found' ? <Found k={k} live={live} onNext={() => go('questions')} onBack={() => go('find')} />
             : screen === 'questions' ? <Questions k={k} live={live} onNext={() => go('summary')} />
-            : screen === 'summary' ? <Summary k={k} live={live} onEdit={() => go('questions')} onDone={(org) => { setOrgId(org); go('score'); }} fileOnly={fileOnly} onFileOnly={chooseFiling} />
+            : screen === 'summary' ? <Summary k={k} live={live} onEdit={() => go('questions')} onDone={(org) => { setOrgId(org); if (fresh) { params.delete('new'); setParams(params, { replace: true }); } go('score'); }} fileOnly={fileOnly} onFileOnly={chooseFiling} />
             : screen === 'score' ? <ScoreView orgId={orgId} first={first} live={live} next={idOpen ? 'Next: confirm a director' : 'Next: your CAC document'}
                 onNext={() => { g.answer("Let's move on.", idOpen ? 'The director NIN check is on screen now.' : 'The CAC document step is on screen now.'); go(idOpen ? 'identity' : 'document'); }} />
             : screen === 'identity' ? <IdentityStep orgId={orgId} first={first} live={live} lang={lang} onNext={() => { setSkippedId(true); go('document'); }} />
@@ -218,12 +221,14 @@ function Welcome({ first, lang, onTalk, onType, onSelf, onSample, sampling, hasO
 function Find({ k, live, onFound, onManual }: { k: Kyc; live: boolean; onFound: () => void; onManual: () => void }) {
   const g = useGuideTalk();
   const qc = useQueryClient();
-  const [q, setQ] = useState(k.search?.query || '');
+  // Adding another business: the profile on hand is the last business's, already set up, so its search is not this one.
+  const done = k.status === 'submitted';
+  const [q, setQ] = useState(done ? '' : k.search?.query || '');
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [manual, setManual] = useState(false);
-  const cands = k.search?.candidates || [];
-  const searched = Boolean(k.search?.query);
+  const cands = done ? [] : k.search?.candidates || [];
+  const searched = !done && Boolean(k.search?.query);
   const put = (x: Kyc) => qc.setQueriesData({ queryKey: ['kyc'] }, (old: any) => (old && old.id === x.id ? x : old));
   async function search(e?: React.FormEvent) {
     e?.preventDefault(); setErr(null);

@@ -228,7 +228,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
                 {m.org_id === orgId && <Icon name="check" size={16} color="#0072F5" />}
               </button>
             ))}
-            <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/onboarding'); }}><Icon name="plus" size={16} color="#6B7280" />Add a business</button>
+            <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/onboarding?new=1'); }}><Icon name="plus" size={16} color="#6B7280" />Add a business</button>
             <div style={{ height: 1, background: '#F3F4F6', margin: '4px 0' }} />
             <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/settings'); }}><Icon name="settings" size={16} color="#6B7280" />Settings</button>
             <button className="nav-item" style={{ fontSize: 14, padding: '8px 10px' }} onClick={() => { setMenu(false); nav('/practice'); }}><Icon name="book" size={16} color="#6B7280" />{practices ? 'Accountant portal' : 'I am an accountant'}</button>
