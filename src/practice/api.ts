@@ -162,6 +162,7 @@ export const STATUS_CHIP: Record<FileBrief['status'], [string, string]> = {
 const KEY = 'counta.practice';
 export const savedPractice = () => { try { return localStorage.getItem(KEY); } catch { return null; } };
 export const savePractice = (id: string) => { try { localStorage.setItem(KEY, id); } catch { /* private mode */ } };
+export const forgetPractice = () => { try { localStorage.removeItem(KEY); } catch { /* private mode */ } };
 
 export const usePracticesMine = (enabled = true) => useQuery({ queryKey: ['practices-mine'], enabled, staleTime: 60_000,
   queryFn: () => rpc<{ practices: { id: string; name: string; role: PracticeRole; clients: number }[]; business_invitations: Invitation[] }>('practices_mine') });

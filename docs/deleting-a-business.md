@@ -14,6 +14,14 @@ business** at the bottom of the page. Reviewers cannot.
 - The **logins of the people who are in no other business**, so the same email can sign up again from the start.
 - The sample business of each of those people.
 
+## What stays
+
+- An accountant practice whose own business this is (the business it bills its clients from). The practice keeps its
+  clients, people, letters and intakes; it loses the link to the business and needs its own business set up again before
+  it can issue fee invoices. The preview names it.
+- Commissions a partner practice earned on the business. They belong to the practice, and lose only the link.
+- A practice's due-diligence record (intake) of the business, kept for at least five years from the deletion.
+
 ## Who keeps their login
 
 - Anyone who is also in another business (the preview names it).
@@ -41,7 +49,9 @@ sign-in.
    stops it.
 2. The admin types the business's name. `admin_business_delete` checks the name and the blockers again and removes every
    record in one transaction. That includes rows in tables that would otherwise keep them with no business (identity
-   checks, the guide, usage, sign-ins from TaxStreem, payment events).
+   checks, the guide, usage, sign-ins from TaxStreem, payment events). Two such tables hold another party's records: a
+   practice whose own business this is (`practices.firm_org_id`) and a partner practice's commissions on it
+   (`partner_commissions.org_id`). Those rows stay and lose the link.
 3. The admin server function (`supabase/functions/admin`, action `delete_business`) then removes the files, the logins (only
    of people still in no business), the Mono feeds and the WhatsApp numbers. It emails every admin.
 4. The admin log (**Admin team**) keeps one line: who deleted which business, when, and the counts. No list of people or

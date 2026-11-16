@@ -112,6 +112,7 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [modal, setModal] = useState<null | 'approve' | 'reopen' | 'send' | 'outside'>(null);
   const [reason, setReason] = useState('');
+  const [credit, setCredit] = useState('');
   const [attest, setAttest] = useState(false);
   const [sendOut, setSendOut] = useState<any>(null);
   const [filing, setFiling] = useState<any>(null);
@@ -220,7 +221,7 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
                 <Icon name="send" size={14} color="#fff" />{viaFlux.length ? 'Send to Flux' : 'File on e-Tax'}</button>)}
             {can.approve && d.row?.status === 'approved' && !people.some((p) => ['sent', 'filed'].includes(p.status)) && (
               <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => { setReason(''); setModal('reopen'); }}><Icon name="undo" size={14} />Reopen</button>)}
-            {can.approve && draft && <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => { setReason(''); setModal('outside'); }}>Filed outside Counta</button>}
+            {can.approve && draft && <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => { setReason(''); setCredit(String(Number(fig.wht_credit_used || 0))); setModal('outside'); }}>Filed outside Counta</button>}
             {can.approve && d.row?.status === 'filed_outside' && (
               <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => act('outside', () => rpc('mark_pit_filed', { p_org: orgId, p_year: year, p: { outside: false } }), 'Back to a draft')}>
                 <Icon name="undo" size={14} />Not filed after all</button>)}
@@ -234,7 +235,8 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
           <Stat label="Due" value={comp.ended ? fmtDay(comp.due) : 'Year still running'} />
         </div>
         {d.row?.status === 'approved' && <div className="faint" style={{ fontSize: 12 }}>Approved by {d.row.approved_by || 'someone'} ({when(d.row.approved_at)}), who confirmed the statement of accounts. The figures are frozen; reopen the year to change them.</div>}
-        {d.row?.status === 'filed_outside' && <Alert kind="green" icon="check">Marked as filed outside Counta{d.row.settings?.filed_outside?.note ? `: ${d.row.settings.filed_outside.note}` : ''}. Losses and allowances still carry on to the next year.</Alert>}
+        {d.row?.status === 'filed_outside' && <Alert kind="green" icon="check">Marked as filed outside Counta{d.row.settings?.filed_outside?.note ? `: ${d.row.settings.filed_outside.note}` : ''}. Losses and allowances still carry on to the next year.
+          {Number(d.row.settings?.filed_outside?.wht_credit) > 0 && d.row.settings?.wht_journal_id ? ` The ${N2(d.row.settings.filed_outside.wht_credit)} of WHT credit notes the return used left WHT receivable (account 1401).` : ''}</Alert>}
         {d.row?.status === 'approved' && <FilingList people={people} bots={bots} canMark={!!can.approve} canPay={!!can.see_all} onMark={setFiling} onTcc={setTcc} onPay={(p) => setPay(p.person_id)} onLogin={(p) => setLoginFor(p.person_id)}
           onPaid={(p) => act(`paid-${p.person_id}`, () => rpc('pit_pay_tapped', { p_org: orgId, p_year: year, p_person: p.person_id }), `Counta will confirm ${p.name}'s payment with LIRS`)}
           onAgain={(p, kind) => act(`again-${p.person_id}`, async () => {
@@ -305,10 +307,12 @@ function PitYear({ year, firstYear }: { year: number; firstYear: number }) {
           <ModalHead title={`The ${year} returns were filed outside Counta`} onClose={() => setModal(null)} />
           <div className="modal-body stack" style={{ gap: 10 }}>
             <div className="muted" style={{ fontSize: 13 }}>For a year an accountant or the state's portal already took care of. Counta stops reminding you, and losses and allowances still carry on.</div>
+            <Field label="WHT credit notes the return used (₦)" hint={`Counta works out ${N2(fig.wht_credit_used || 0)} for ${year}. Change it if the return claimed a different amount; Counta moves it out of WHT receivable (account 1401), and the next year counts it as used.`}>
+              <input className="input num" inputMode="decimal" value={credit} onChange={(e) => setCredit(e.target.value)} data-testid="pit-outside-credit" /></Field>
             <Field label="Note (optional)"><input className="input" autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="For example, filed with LIRS by our accountant" /></Field>
           </div>
           <div className="modal-ft"><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button>
-            <button className="btn btn-primary" disabled={!!busy} onClick={async () => { if (await act('outside', () => rpc('mark_pit_filed', { p_org: orgId, p_year: year, p: { outside: true, note: reason } }), 'Marked as filed')) setModal(null); }}>Mark as filed</button></div>
+            <button className="btn btn-primary" disabled={!!busy || !/^\s*[0-9][0-9,]*(\.[0-9]{0,2})?\s*$/.test(credit)} onClick={async () => { if (await act('outside', () => rpc('mark_pit_filed', { p_org: orgId, p_year: year, p: { outside: true, note: reason, wht_credit: credit.replace(/,/g, '').trim() } }), 'Marked as filed')) setModal(null); }}>Mark as filed</button></div>
         </Modal>
       )}
       {modal === 'send' && (

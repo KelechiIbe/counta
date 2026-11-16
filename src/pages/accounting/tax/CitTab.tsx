@@ -93,8 +93,10 @@ function CitYear({ year }: { year: number }) {
   const q = useCitYear(year);
   const [sub, setSub] = useState<Sub>('computation');
   const [busy, setBusy] = useState<string | null>(null);
-  const [modal, setModal] = useState<null | 'approve' | 'reopen' | 'send'>(null);
+  const [modal, setModal] = useState<null | 'approve' | 'reopen' | 'send' | 'outside'>(null);
   const [reason, setReason] = useState('');
+  const [credit, setCredit] = useState('');
+  const [paidOn, setPaidOn] = useState('');
   const [flux, setFlux] = useState<string | null>(null);
   const d = q.data;
   const acc = useFilingCurrent('cit', String(year)).data;
@@ -161,6 +163,10 @@ function CitYear({ year }: { year: number }) {
                 onClick={() => setModal('approve')}><Icon name="check" size={14} color="#fff" />Approve</button>)}
             {canSend && <button className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => setModal('send')}><Icon name="send" size={14} color="#fff" />Send to Flux</button>}
             {d.can_approve && row.status === 'approved' && <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => { setReason(''); setModal('reopen'); }}><Icon name="undo" size={14} />Reopen</button>}
+            {/* The tax was paid without Counta (for example, at the bank against a Rev360 assessment): the WHT credit the return used leaves 1401. */}
+            {d.can_approve && comp.ended && !row.tax_paid_at && !row.paid_outside && (
+              <button className="btn btn-ghost btn-sm" disabled={!!busy} data-testid="cit-outside" onClick={() => { setReason(''); setCredit(String(Number(fig.wht_credit || 0))); setPaidOn(''); setModal('outside'); }}>
+                Paid outside Counta</button>)}
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(128px,1fr))', gap: 8 }}>
@@ -171,6 +177,14 @@ function CitYear({ year }: { year: number }) {
           <Stat label="Due" value={comp.ended ? fmtDay(comp.due) : 'Year still running'} />
         </div>
         {row.status === 'approved' && <div className="faint" style={{ fontSize: 12 }}>Approved by {row.approved_by || 'someone'} ({when(row.approved_at)}). The figures are frozen; reopen the year to change them.</div>}
+        {row.paid_outside && (
+          <Alert kind="green" icon="check"><span className="row wrap" style={{ gap: 8, justifyContent: 'space-between', width: '100%' }} data-testid="cit-outside-done">
+            <span>Paid outside Counta{row.paid_outside.on ? ` on ${fmtDay(row.paid_outside.on)}` : ''}{row.paid_outside.note ? `: ${row.paid_outside.note}` : ''}.
+              {Number(row.paid_outside.wht_credit) > 0 ? ` The ${N2(row.paid_outside.wht_credit)} of WHT credit notes the return used left WHT receivable (account 1401).` : ' No WHT credit notes were used.'}</span>
+            {d.can_approve && !row.tax_paid_at && <button className="btn btn-ghost btn-xs" disabled={!!busy}
+              onClick={() => act('outside', () => rpc('record_cit_paid_outside', { p_org: orgId, p_year: year, p: { undo: true } }), 'Undone')}><Icon name="undo" size={13} />Undo</button>}
+          </span></Alert>
+        )}
         <VersionBanner kind="cit" period={String(year)} />
         {(row.flux_status || ['sent', 'filed', 'rejected'].includes(row.status)) && <FluxState row={row} />}
         <FluxPayments taxes={['cit']} year={year} />
@@ -222,6 +236,22 @@ function CitYear({ year }: { year: number }) {
           </div>
           <div className="modal-ft"><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button>
             <button className="btn btn-primary" disabled={!!busy || reason.trim().length < 3} onClick={async () => { if (await act('reopen', () => rpc('reopen_cit_year', { p_org: orgId, p_year: year, p_reason: reason }), 'Reopened')) setModal(null); }}>Reopen</button></div>
+        </Modal>
+      )}
+      {modal === 'outside' && (
+        <Modal onClose={() => setModal(null)} width={480}>
+          <ModalHead title={`The ${year} tax was paid outside Counta`} onClose={() => setModal(null)} />
+          <div className="modal-body stack" style={{ gap: 10 }}>
+            <div className="muted" style={{ fontSize: 13 }}>For tax paid without Counta, for example at the bank against a Rev360 assessment. Counta takes the WHT credit notes the return used out of WHT
+              receivable (account 1401) and clears the same amount from CIT payable, so a later year does not count them again.</div>
+            <Field label="WHT credit notes the return used (₦)" hint={`Counta works out ${N2(fig.wht_credit || 0)} for ${year}. Change it if the return claimed a different amount.`}>
+              <input className="input num" inputMode="decimal" value={credit} onChange={(e) => setCredit(e.target.value)} data-testid="cit-outside-credit" /></Field>
+            <Field label="Paid on" hint="Leave empty for today."><input className="input" type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} /></Field>
+            <Field label="Note (optional)"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="For example, paid at the bank on our accountant's instructions" /></Field>
+          </div>
+          <div className="modal-ft"><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button>
+            <button className="btn btn-primary" disabled={!!busy || !/^\s*[0-9][0-9,]*(\.[0-9]{0,2})?\s*$/.test(credit)}
+              onClick={async () => { if (await act('outside', () => rpc('record_cit_paid_outside', { p_org: orgId, p_year: year, p: { wht_credit: credit.replace(/,/g, '').trim(), paid_on: paidOn || undefined, note: reason } }), 'Recorded')) setModal(null); }}>Record it</button></div>
         </Modal>
       )}
       {modal === 'send' && (

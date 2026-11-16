@@ -2,7 +2,7 @@
 // controls. Also the confetti and the voice chooser the guide can open from anywhere.
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { useSession } from '../state/session';
+import { actsAsOwner, useInventory, useSession } from '../state/session';
 import { useGuide } from '../lib/onboard';
 import { Icon, MartinaMark } from '../components/Icon';
 import { Spinner } from '../components/ui';
@@ -10,7 +10,7 @@ import { useGuideTalk } from './GuideProvider';
 import { VoicePickerModal } from './VoicePicker';
 import { ConfirmCard, HandsFreeSwitch } from './ConfirmCard';
 import './guide.css';
-import { planOff, useFeatures } from '../lib/features';
+import { planHidden, useFeatures } from '../lib/features';
 
 // Martina's face across the app: her mark in a blue disc. Live, it moves with the conversation: rings ripple out with the
 // person's voice while she listens, and when she speaks the dot inside the bubble brightens and the spark twinkles in step
@@ -105,9 +105,21 @@ export function GuideDock() {
   // Home's checklist and the onboarding page start the setup guide themselves, and the Martina page is the conversation.
   const where = loc.pathname.startsWith('/onboarding') || loc.pathname === '/assistant' || !orgId ? 'none'
     : setup && loc.pathname !== '/home' ? 'guide' : 'assistant';
-  // A business whose plan leaves Martina out (the Annual filing package) is not offered her.
+  // A business whose plan leaves Martina out (the Annual filing package) is not offered her; nor is one whose plan is not
+  // known yet.
   const feats = useFeatures().data;
-  const offer = !hidden && g.status === 'idle' && where !== 'none' && !planOff(feats, 'martina');
+  // On a phone, Home's setup checklist has its own "Talk to Martina", and the floating button would sit over its steps'
+  // buttons (Find it, the first one): it waits until the checklist is done or hidden.
+  const inv = useInventory().data;
+  const phoneWide = useNarrow();
+  const homeChecklist = loc.pathname === '/home' && !!gs && !gs.completed && !gs.dismissed && gs.org?.id === orgId && actsAsOwner(inv) && !inv?.org.is_sample;
+  const offer = !hidden && g.status === 'idle' && where !== 'none' && !planHidden(feats, 'martina') && !(phoneWide && homeChecklist);
+  // While the button shows, pages keep room at their foot so their last lines and buttons can scroll above it.
+  useEffect(() => {
+    if (!offer) return;
+    document.body.classList.add('g-launch-on');
+    return () => document.body.classList.remove('g-launch-on');
+  }, [offer]);
   // While a drawer or a dialog is open, the panel moves to the left so it never covers their buttons.
   const [overlay, setOverlay] = useState(false);
   useEffect(() => {

@@ -105,12 +105,27 @@ const AREAS: { prefix: string; feature: Feature; what: string }[] = [
 ];
 function Gate({ children }: { children: ReactNode }) {
   const { data: inv } = useInventory();
-  const feats = useFeatures().data;
+  const fq = useFeatures();
+  const feats = fq.data;
   const loc = useLocation();
   // A filing-only business starts on its Filing page.
   if (inv?.org.filing_only && loc.pathname === '/home') return <Navigate to="/filing" replace />;
   // Who works where (Locations & staff) stays open whatever the plan.
   const area = loc.pathname.startsWith('/inventory/locations') ? undefined : AREAS.find((a) => loc.pathname === a.prefix || loc.pathname.startsWith(a.prefix + '/'));
+  // The plan is not known yet: wait for it, or say it could not be checked, rather than open a part it may leave out.
+  if (area && inv && feats === undefined) {
+    return (
+      <div className="container" style={{ maxWidth: 560, paddingTop: 48 }}>
+        {fq.isError ? (
+          <div className="card card-pad stack" style={{ gap: 10, textAlign: 'center' }} data-testid="plan-unknown">
+            <b style={{ fontSize: 18 }}>Counta could not check this business's plan</b>
+            <div className="muted" style={{ fontSize: 14, lineHeight: 1.5 }}>{area.what} opens once the plan is checked. Check your connection and try again.</div>
+            <div className="row" style={{ justifyContent: 'center' }}><button className="btn btn-primary btn-sm" onClick={() => void fq.refetch()}>Try again</button></div>
+          </div>
+        ) : <div className="row" style={{ justifyContent: 'center' }}><Spinner /></div>}
+      </div>
+    );
+  }
   if (area && inv && planOff(feats, area.feature)) {
     const filing = !!inv.org.filing_only;
     return (

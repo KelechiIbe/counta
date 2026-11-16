@@ -30,17 +30,29 @@ export type Features = Partial<Record<Feature, boolean>> & { _plan?: Partial<Rec
 export const offNote = (f: Features | undefined, k: Feature) =>
   f?._plan?.[k] ? `${NAMES[k]} ${k === 'phone_calls' || k === 'bank_feeds' || k === 'bulk_payments' || k === 'payments' ? 'are' : 'is'} not in your plan. The owner can change the plan in Settings, Subscription.` : PAUSED[k];
 
+// The last answer for each business is kept on the device, so menus show at once on the next visit. When the check cannot
+// be made and nothing is kept, the answer stays unknown (undefined): parts a plan can leave out stay hidden until it comes,
+// and are never shown just because the check failed.
+const FEATS_KEY = 'counta.feats.';
 export function useFeatures() {
   const { orgId } = useSession();
   return useQuery({
     queryKey: ['org-features', orgId],
     enabled: !!orgId,
     staleTime: 60_000,
-    // Before the portal's database changes are in, everything counts as on.
-    queryFn: () => rpc<Features>('org_features', { p_org: orgId }).catch(() => ({} as Features)),
+    retry: 3,
+    queryFn: async () => {
+      const f = await rpc<Features>('org_features', { p_org: orgId });
+      try { localStorage.setItem(FEATS_KEY + orgId, JSON.stringify(f || {})); } catch { /* private mode */ }
+      return f || ({} as Features);
+    },
+    initialData: () => { try { const v = localStorage.getItem(FEATS_KEY + orgId); return v ? (JSON.parse(v) as Features) : undefined; } catch { return undefined; } },
+    initialDataUpdatedAt: 0,
   });
 }
 export const isOn = (f: Features | undefined, k: Feature) => f?.[k] !== false;
 // A part of the app the business's plan leaves out (the Annual filing package leaves out selling, purchases, inventory and the
 // monthly returns): hidden from the menu, and its pages say so.
 export const planOff = (f: Features | undefined, k: Feature) => f?.[k] === false && !!f?._plan?.[k];
+// For menus: a part the plan may leave out shows only once the plan is known to include it.
+export const planHidden = (f: Features | undefined, k: Feature) => f === undefined || planOff(f, k);

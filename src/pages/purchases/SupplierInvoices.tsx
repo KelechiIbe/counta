@@ -282,7 +282,16 @@ function SupplierInvoiceDrawer({ id, onClose, onOpenBill }: { id: string; onClos
                 ))}
               </div>
             )}
-            {keep && si.status === 'review' && (
+            {/* Counta could not write a bill from it: nothing to approve. The person enters the bill under Bills, then rejects this. */}
+            {keep && si.status === 'review' && !si.bill_id && (
+              <Alert kind="amber" icon="alert"><span data-testid="si-no-bill">Counta could not write a bill from {si.number}, so there is nothing to approve. Enter the bill yourself under Bills, then reject this invoice so it leaves the list.</span></Alert>
+            )}
+            {keep && si.status === 'review' && !si.bill_id && (
+              <div className="row wrap" style={{ gap: 8 }}>
+                <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => setRejecting(true)}><Icon name="undo" size={14} />Reject</button>
+              </div>
+            )}
+            {keep && si.status === 'review' && !!si.bill_id && (
               <div className="row wrap" style={{ gap: 8 }}>
                 <button className="btn btn-primary btn-sm" disabled={busy || Number(si.blocks) > 0 || (stockLines.length > 0 && !plan.location_id)}
                   title={Number(si.blocks) > 0 ? 'Fix the checks that stop payment first' : undefined} data-testid="si-approve"
@@ -293,7 +302,7 @@ function SupplierInvoiceDrawer({ id, onClose, onOpenBill }: { id: string; onClos
                 {si.bill && <button className="btn btn-ghost btn-sm" onClick={() => onOpenBill(si.bill.id)}>Edit the bill</button>}
               </div>
             )}
-            {keep && si.status === 'review' && Number(si.blocks) > 0 && <div className="faint" style={{ fontSize: 12 }}>Mistakes in the sums or the VAT do not stop payment. A missing Tax ID where withholding tax applies, or a business with no address, does: add them to the supplier and check again, or reject the invoice.</div>}
+            {keep && si.status === 'review' && !!si.bill_id && Number(si.blocks) > 0 && <div className="faint" style={{ fontSize: 12 }}>Mistakes in the sums or the VAT do not stop payment. A missing Tax ID where withholding tax applies, or a business with no address, does: add them to the supplier and check again, or reject the invoice.</div>}
           </>
         )}
       </div>

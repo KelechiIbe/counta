@@ -1188,6 +1188,10 @@ async function flutterwaveWebhook(req: Request) {
       // A Counta plan paid by card: Flutterwave is asked, never the event's own fields.
       const r = await verifySubCard(String(d.tx_ref));
       outcome = `subscription:${r?.status}`;
+    } else if (event === 'charge.completed' && String(d.tx_ref || '').startsWith('AUD-')) {
+      // An audit fee paid at Flutterwave's checkout: the audits function settles it (it asks Flutterwave itself), so it is
+      // asked to check now rather than at its next five-minute round.
+      outcome = (await svc<boolean>('svc_audit_poll_now', {})) ? 'audit' : 'audit:not_sent';
     } else if (event === 'charge.completed' && String(d.tx_ref || '').startsWith('CNT-')) {
       const r = await settle(String(d.tx_ref), 'flutterwave', { name: d.customer?.name, email: d.customer?.email });
       outcome = r.paid ? 'paid' : `not_paid:${r.status}`;
