@@ -14,7 +14,7 @@ import { usePracticesMine } from '../practice/api';
 import { cap, useMode, useWords } from '../lib/wording';
 import { useVatRate } from '../lib/vat';
 import { INCOME_TAX_LABEL, incomeTaxKind } from '../lib/tax';
-import { planOff, useFeatures } from '../lib/features';
+import { planHidden, useFeatures } from '../lib/features';
 
 // ---------- location picker state shared by Overview, Items and Insights ----------
 const LocCtx = createContext<{ loc: string; setLoc: (l: string) => void }>({ loc: 'ALL', setLoc: () => {} });
@@ -150,7 +150,7 @@ function Sidebar({ open, onClose, rail, onRail, drawer }: { open: boolean; onClo
   const itKind = incomeTaxKind(inv?.org as any);
   // Parts the business's plan leaves out are not in the menu; a filing-only business starts on its Filing page.
   const feats = useFeatures().data;
-  const off = (k: Parameters<typeof planOff>[1]) => planOff(feats, k);
+  const off = (k: Parameters<typeof planHidden>[1]) => planHidden(feats, k);
   const filing = !!inv?.org.filing_only;
   const itPath = itKind === 'pit' ? '/tax/pit' : '/tax/cit';
   const taxSubs: Sub[] = [...(off('vat_wht') ? [] : [['/tax/vat', 'VAT', n('vat') + n('schedules_draft') + n('receipts_vat')], ['/tax/wht', 'Withholding tax', n('wht')]] as Sub[]),

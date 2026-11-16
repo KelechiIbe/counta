@@ -199,7 +199,8 @@ export function ReportPanel({ id, period, options = {}, title, actions, onRow, n
 export function checkLines(id: string, x: Record<string, any>): { ok: boolean; text: string }[] {
   const out: { ok: boolean; text: string }[] = [];
   if (id === 'sofp' && x.casts !== undefined) out.push({ ok: !!x.casts, text: x.casts ? 'Assets equal equity and liabilities' : `Does not cast: assets ${acc(x.check?.assets)} against ${acc(x.check?.equity_and_liabilities)}` });
-  if (id === 'trial_balance' && x.balances !== undefined) out.push({ ok: !!x.balances, text: x.balances ? `Debits equal credits (${acc(x.total_dr)})` : `Out of balance: ${acc(x.total_dr)} against ${acc(x.total_cr)}` });
+  // Books with no entries balance (the database answers true; an older answer had no totals at all).
+  if (id === 'trial_balance' && x.balances != null) out.push({ ok: !!x.balances, text: x.balances ? `Debits equal credits (${acc(x.total_dr)})` : `Out of balance: ${acc(x.total_dr)} against ${acc(x.total_cr)}` });
   if (id === 'cash_flow' && x.casts !== undefined) out.push({ ok: !!x.casts, text: x.casts ? 'Ends on the cash in the books' : 'Does not agree to the cash in the books' });
   if ((id === 'ar_ledger' || id === 'ap_ledger') && x.control_total !== undefined) {
     const ok = Math.abs(Number(x.subledger_total || 0) + Number(x.unassigned || 0) - Number(x.control_total || 0)) < 0.01;

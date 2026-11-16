@@ -9,7 +9,7 @@ import { useSession } from '../state/session';
 import { cleanError } from '../lib/supabase';
 import { Icon } from '../components/Icon';
 import { Alert, Spinner } from '../components/ui';
-import { savedPractice, savePractice, usePracticeClient, usePracticeHome, usePracticesMine } from './api';
+import { forgetPractice, savedPractice, savePractice, usePracticeClient, usePracticeHome, usePracticesMine } from './api';
 import Setup from './pages/Setup';
 import Overview from './pages/Overview';
 import ClientPage from './pages/Client';
@@ -89,8 +89,16 @@ function Pick() {
 function InPractice() {
   const { pid = '' } = useParams();
   const qc = useQueryClient();
-  useEffect(() => { if (pid) savePractice(pid); }, [pid]);
+  const mine = usePracticesMine();
+  // A practice the person is no longer on (it was deleted, or they were taken off it, or the link is old): the portal opens
+  // their other practice, or the page to set one up, in place of a dead end.
+  const gone = !!mine.data && !mine.data.practices.some((p) => p.id === pid);
+  useEffect(() => { if (pid && !gone && mine.data) savePractice(pid); }, [pid, gone, mine.data]);
   useEffect(() => () => { qc.removeQueries({ queryKey: ['practice-home'] }); }, [qc]);
+  if (gone) {
+    if (savedPractice() === pid) forgetPractice();
+    return <Navigate to="/practice" replace />;
+  }
   return (
     <Layout pid={pid}>
       <Routes>

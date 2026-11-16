@@ -19,6 +19,8 @@ type Preview = {
   org: { id: string; name: string; is_sample: boolean };
   people: Person[]; invited: number; samples: { id: string; name: string }[];
   counts: { sales: number; bills: number; customers: number; vendors: number; items: number; journals: number; branches: number; files: number; bank_feeds: number; tools: number };
+  // Accountant practices whose own business this is: they stay, without it.
+  practices?: { id: string; name: string }[];
   blockers: string[]; can_delete: boolean;
 };
 type Done = { ok: boolean; error?: string; name?: string; finished?: boolean; logins?: number; files?: number; errors?: string[] };
@@ -77,6 +79,8 @@ function DeleteModal({ id, name, onClose }: { id: string; name: string; onClose:
                 {d.counts.tools ? ` ${plural(d.counts.tools, 'connected tool')} and ${d.counts.tools === 1 ? 'its key' : 'their keys'} go.` : ''}
                 {d.invited ? ` ${plural(d.invited, 'invitation')} not yet taken.` : ''}</div>
               {d.samples.length > 0 && <div className="muted">With it: {d.samples.map((s) => s.name).join(', ')} (sample business of a person whose login goes).</div>}
+              {(d.practices || []).length > 0 && <div className="muted" data-testid="practice-stays">Stays: {d.practices!.map((x) => x.name).join(', ')}, the accountant practice whose own business
+                this is. It keeps its clients and people, and needs its own business set up again before it can bill clients.</div>}
             </div>
             <div className="stack" style={{ gap: 6 }}>
               <b style={{ fontSize: 14 }}>Logins removed ({removed.length})</b>

@@ -42,7 +42,10 @@
 .g-dot.wait { background: #F59E0B; box-shadow: 0 0 0 3px rgba(245, 158, 11, .2); }
 .g-mini { position: fixed; right: 20px; bottom: 20px; z-index: 45; cursor: pointer; border: 0; background: transparent; padding: 0; }
 .g-dock.left, .g-mini.left { right: auto; left: 20px; }
+/* While the launcher shows, a page keeps room at its foot so its last lines and buttons scroll clear of it. */
+body.g-launch-on .content { padding-bottom: 96px; }
 @media (max-width: 700px) {
+  body.g-launch-on .content { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
   .g-dock.left, .g-mini.left { left: 8px; }
   .g-dock { right: 8px; left: 8px; bottom: 8px; width: auto; max-width: none; border-radius: 20px; }
   .g-launch { right: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); }
