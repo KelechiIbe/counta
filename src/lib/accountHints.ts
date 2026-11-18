@@ -13,7 +13,7 @@ const HINTS: Record<string, [string, string]> = {
   '1105': ['Money a director took and owes back to the business', 'director owner took loan'],
   '1106': ['Paid a supplier before the goods or service arrived', 'deposit supplier advance prepayment'],
   '1110': ['Money someone owes the business that is not a sale', 'owed refund due'],
-  '1101': ['A customer paying what they owe on credit', 'customer debtor invoice paid'],
+  '1101': ['A customer paying their invoices (Counta settles them, allowing for WHT)', 'customer debtor invoice paid'],
   '1301': ['Rent paid in advance for months to come', 'rent advance yearly'],
   '1302': ['Insurance paid in advance', 'insurance premium advance'],
   '1303': ['Paid in advance for something used over later months', 'advance prepaid subscription'],

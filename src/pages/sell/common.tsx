@@ -177,6 +177,7 @@ export function PayWait({ request, saleNumber, onPaid, onClose, onCancelSale }: 
         {err ? <Alert kind="red" icon="alert">{err} Take another way of paying, or try again.</Alert>
           : r.status === 'creating' ? <div className="row" style={{ justifyContent: 'center', padding: 30 }}><Spinner /></div>
           : r.status === 'paid' ? <Alert kind="green" icon="check">Paid {N2(r.paid_amount || r.amount)}{r.payer ? ` by ${r.payer}` : ''}.</Alert>
+          : r.status === 'cancelled' && r.sale_status === 'paid' ? <Alert kind="green" icon="check">{saleNumber || r.sale_number || 'The sale'} is paid. The payment was recorded another way.</Alert>
           : r.status === 'failed' ? <Alert kind="red" icon="alert">{r.error || 'This way of paying is not available right now.'}</Alert>
           : r.method === 'account' ? (
             <div style={{ textAlign: 'center', padding: '6px 0' }}>

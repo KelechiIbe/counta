@@ -52,6 +52,7 @@
 // moves into the tax wallet and tax payments) wait. FLW_DIRECT_TRANSFERS=1 sends them straight, for an account that needs no
 // whitelisting (an Edge Function secret, set only for tests or a Flutterwave account set up otherwise).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { publicCheckEvery, publicView } from './public.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -932,6 +933,7 @@ async function poll() {
   // Every run, the wallets with a sale waiting for a transfer to the business's number; twice an hour, every wallet and
   // tax wallet, for money paid straight into them.
   try { out.direct = await syncWallets(1, undefined, 'direct'); } catch (e) { console.log('poll direct', (e as Error).message); }
+  try { out.claims = await claimsWork(); } catch (e) { console.log('poll claims', (e as Error).message); }
   if (new Date().getUTCMinutes() % 30 < 5) out.wallets = await syncWallets(1, undefined, 'all_and_tax');
   // The tax: moved into the tax wallets, and tax payments followed up.
   try { out.tax_transfers = await sendTaxTransfers(); } catch (e) { console.log('poll tax transfers', (e as Error).message); }
@@ -942,6 +944,30 @@ async function poll() {
   try {
     out.partner_payouts = { listed: await svc('svc_partner_payout_run', { p_force: false }), sent: await sendPartnerPayouts(), settled: await checkPartnerPayouts() };
   } catch (e) { console.log('poll partner payouts', (e as Error).message); }
+  return out;
+}
+
+// Customers who said ten minutes ago that they paid and whose money is still not matched. The wallets with a sale waiting
+// were read just before this runs; a one-time account is asked at the rail once more. Then the business is asked to check
+// the bank (once per request).
+async function claimsWork() {
+  const out = { checked: 0, asked: 0 };
+  for (const c of (await svc<any[]>('svc_work', { p_kind: 'claims' })) || []) {
+    out.checked++;
+    if (!c.direct && c.tx_ref) {
+      try { await settle(c.tx_ref, c.rail, undefined, c.id); } catch (e) { console.log('claim check', c.id, (e as Error).message); }
+    }
+    try { if ((await svc<any>('svc_claim_unmatched', { p_request: c.id }))?.asked) out.asked++; }
+    catch (e) { console.log('claim ask', c.id, (e as Error).message); }
+  }
+  return out;
+}
+
+// The one-minute run: only the wallets with a sale waiting for a transfer to the business's own number, then the claims.
+async function pollDirect() {
+  const out: Record<string, unknown> = {};
+  try { out.direct = await syncWallets(1, undefined, 'direct'); } catch (e) { console.log('poll direct', (e as Error).message); }
+  try { out.claims = await claimsWork(); } catch (e) { console.log('poll claims', (e as Error).message); }
   return out;
 }
 
@@ -1277,12 +1303,6 @@ async function railWebhook(req: Request, code: string) {
 
 // ------------------------------------------------------------------ public payers
 const publicChecks = new Map<string, number>();
-function publicView(r: any) {
-  if (!r) return null;
-  return { method: r.method, status: r.status, amount: r.amount, account_number: r.account_number, bank_name: r.bank_name, account_name: r.account_name,
-    link_url: r.link_url, qr_image: r.qr_image, expires_at: r.expires_at, direct: Boolean(r.direct), pay_ref: r.direct ? r.pay_ref : undefined,
-    error: r.status === 'failed' ? 'This way of paying is not available right now.' : undefined };
-}
 
 // ------------------------------------------------------------------ entry
 Deno.serve(async (req) => {
@@ -1297,7 +1317,7 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
     const action = String(body.action || '');
 
-    if (action === 'poll' || action === 'reconcile' || action === 'tax_instruction' || action === 'resolve_hook') {
+    if (action === 'poll' || action === 'poll_direct' || action === 'reconcile' || action === 'tax_instruction' || action === 'resolve_hook') {
       const hook = req.headers.get('x-counta-hook') || '';
       if (!hook || !timingSafeEqual(hook, await secret('PUSH_HOOK_SECRET'))) return json({ ok: false, error: 'Not allowed.' }, 401);
       // Whose name an account on a supplier's invoice is held in (the ai function asks, for the invoice checks).
@@ -1313,10 +1333,13 @@ Deno.serve(async (req) => {
       }
       // A payment request Flux has just posted (the taxstreem function passes it on): check it and pay it if everything agrees.
       if (action === 'tax_instruction') return json({ ok: true, result: await checkInstruction(String(body.instruction_id || '')) });
+      // Every minute while a sale waits for a transfer to the business's own number: those wallets' statements, and the
+      // customers who said they paid and are still waiting.
+      if (action === 'poll_direct') return json({ ok: true, result: await pollDirect() });
       return json({ ok: true, result: action === 'poll' ? await poll() : await reconcile() });
     }
 
-    if (action === 'public_pay' || action === 'public_check') {
+    if (action === 'public_pay' || action === 'public_check' || action === 'public_paid') {
       const token = String(body.token || '');
       if (!/^[a-f0-9]{24,64}$/.test(token)) return json({ ok: false, error: 'Document not found.' }, 404);
       if (action === 'public_pay') {
@@ -1325,14 +1348,30 @@ Deno.serve(async (req) => {
         return json({ ok: true, request: publicView(r) });
       }
       const anon = createClient(SUPABASE_URL, ANON, { auth: { persistSession: false } });
+      if (action === 'public_paid') {
+        // The customer says they have paid (the amount they sent and the name on their account): kept with the request, and
+        // the wallet's statement (or the rail) is read straight away. Nothing is settled on their word alone.
+        const amount = typeof body.amount === 'number' || typeof body.amount === 'string' ? String(body.amount).slice(0, 20) : '';
+        const name = typeof body.name === 'string' ? body.name.slice(0, 120) : '';
+        const ctx = await svc<any>('svc_public_claim', { p_token: token, p: { amount, name } });
+        publicChecks.set(token, Date.now());
+        try {
+          if (ctx?.direct) { if (ctx.wallet_id) await syncOneWallet(ctx.wallet_id, 3_000); }
+          else if (ctx?.tx_ref) await settle(ctx.tx_ref, ctx.rail, undefined, ctx.id);
+        } catch (e) { console.log('public_paid check', (e as Error).message); }
+        const { data: now } = await anon.rpc('public_payment_status', { p_token: token });
+        return json({ ok: true, status: now?.status, balance: now?.balance, request: publicView(now?.request) });
+      }
       const { data: st } = await anon.rpc('public_payment_status', { p_token: token });
-      // A payer's page checks every few seconds; the rail is asked at most every 15 seconds per document.
+      // A payer's page checks every few seconds; the rail is asked at most every 15 seconds per document (every 5 just
+      // after the customer says they have paid).
       const last = publicChecks.get(token) || 0;
-      if (st?.request?.status === 'pending' && st.request.tx_ref && Date.now() - last > 15_000) {
+      const every = publicCheckEvery(st?.request?.claimed_at);
+      if (st?.request?.status === 'pending' && st.request.tx_ref && Date.now() - last > every) {
         publicChecks.set(token, Date.now());
         if (publicChecks.size > 5000) publicChecks.clear();
         const ctx = await svc('svc_request_context', { p_request: st.request.id });
-        if (ctx && st.request.direct) { if (ctx.wallet?.id) await syncOneWallet(ctx.wallet.id, 15_000); }
+        if (ctx && st.request.direct) { if (ctx.wallet?.id) await syncOneWallet(ctx.wallet.id, every); }
         else if (ctx) await settle(st.request.tx_ref, ctx.rail, undefined, st.request.id);
         const again = await anon.rpc('public_payment_status', { p_token: token });
         return json({ ok: true, status: again.data?.status, balance: again.data?.balance, request: publicView(again.data?.request) });
