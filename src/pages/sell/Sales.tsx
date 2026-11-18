@@ -10,6 +10,8 @@ import { countryName, isExport } from '../../lib/countries';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { VatInfo } from '../../components/VatInfo';
+import { LineVat, VatCheck } from '../../components/LineVat';
+import { forgetLineVat, lineVatTreatment, linesToCheck, useLineVat, vatKey, type VatBy, type VatT } from '../../lib/lineVat';
 import { PeriodPicker } from '../../components/PeriodPicker';
 import { periodText, useScreenPeriod } from '../../lib/period';
 import { ItemPicker } from '../../components/ItemPicker';
@@ -577,7 +579,8 @@ function PendingPayments({ rows }: { rows: any[] }) {
 }
 
 // ---------------------------------------------------------------- invoice and quote editor
-interface ELine { key: string; item_id: string | null; description: string; qty: string; unit: 'selling' | 'purchase'; unit_price: string; discount: string; vat_treatment: string; revenue_account: string; pack: number; units: [string, string] }
+// A typed line's VAT is Numens' answer unless the person chose it (vat_by 'person'); vat_treatment is then their choice.
+interface ELine { key: string; item_id: string | null; description: string; qty: string; unit: 'selling' | 'purchase'; unit_price: string; discount: string; vat_treatment: string; vat_by: VatBy; revenue_account: string; pack: number; units: [string, string] }
 
 export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; type: 'invoice' | 'quote'; draft?: Drafts['invoice']; onClose: () => void; onSaved: (id: string) => void }) {
   const { data: inv } = useInventory();
@@ -594,7 +597,7 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
   const svc = !mode.stock;
   const w = useWords();
   const grid = svc ? 'minmax(260px,3fr) 70px 130px 110px 120px 30px' : 'minmax(180px,2fr) 80px 120px 100px 110px 110px 30px';
-  const serviceLine = (): ELine => ({ key: crypto.randomUUID(), item_id: null, description: '', qty: '1', unit: 'selling', unit_price: '', discount: '', vat_treatment: 'standard', revenue_account: '', pack: 1, units: ['unit', 'unit'] });
+  const serviceLine = (): ELine => ({ key: crypto.randomUUID(), item_id: null, description: '', qty: '1', unit: 'selling', unit_price: '', discount: '', vat_treatment: 'standard', vat_by: 'numens', revenue_account: '', pack: 1, units: ['unit', 'unit'] });
   const [lines, setLines] = useState<ELine[]>(() => (svc && !id && !draft ? [serviceLine()] : []));
   useEffect(() => { if (svc && !id && !draft) setLines((ls) => (ls.length ? ls : [serviceLine()])); }, [svc]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(false);
@@ -606,7 +609,7 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
     setLines((s.lines || []).filter((l) => l.kind !== 'delivery').map((l) => {
       const it = inv.items.find((i) => i.id === l.item_id);
       return { key: l.id, item_id: l.item_id, description: l.description, qty: String(Number(l.qty)), unit: it && Number((l as any).unit_factor) > 1 ? 'purchase' : 'selling',
-        unit_price: String(Number(l.unit_price)), discount: Number(l.discount) ? String(Number(l.discount)) : '', vat_treatment: l.item_vat_treatment || l.vat_treatment, revenue_account: l.revenue_account || '',
+        unit_price: String(Number(l.unit_price)), discount: Number(l.discount) ? String(Number(l.discount)) : '', vat_treatment: l.item_vat_treatment || l.vat_treatment, vat_by: 'numens', revenue_account: l.revenue_account || '',
         pack: it?.pack_size || 1, units: [it?.selling_unit || l.unit_label, it?.purchase_unit || l.unit_label] };
     }));
   }, [existing.data?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -630,9 +633,9 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
       const it = d.item_id ? inv.items.find((i) => i.id === d.item_id) : undefined;
       return it
         ? { key: crypto.randomUUID(), item_id: it.id, description: it.name, qty: String(d.qty || 1), unit: 'selling', unit_price: String(d.unit_price ?? Number(it.price)), discount: '',
-            vat_treatment: it.vat_treatment, revenue_account: '', pack: it.pack_size, units: [it.selling_unit, it.purchase_unit] }
+            vat_treatment: it.vat_treatment, vat_by: 'numens', revenue_account: '', pack: it.pack_size, units: [it.selling_unit, it.purchase_unit] }
         : { key: crypto.randomUUID(), item_id: null, description: d.name, qty: String(d.qty || 1), unit: 'selling', unit_price: d.unit_price != null ? String(d.unit_price) : '', discount: '',
-            vat_treatment: 'standard', revenue_account: '', pack: 1, units: ['unit', 'unit'] };
+            vat_treatment: 'standard', vat_by: 'numens', revenue_account: '', pack: 1, units: ['unit', 'unit'] };
     }));
     setF((x) => ({ ...x, notes: draft.note || x.notes, due_date: draft.due_in_days ? new Date(Date.now() + draft.due_in_days * 86400_000).toISOString().slice(0, 10) : x.due_date }));
   }, [draft, inv?.org.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -643,15 +646,24 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
     const hit = list.find((c) => c.name.toLowerCase() === n) || list.find((c) => c.name.toLowerCase().includes(n) || n.includes(c.name.toLowerCase()));
     if (hit) setCustomer(hit); else setUnmatched(draft.customer);
   }, [draft, customers.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Numens decides the VAT on typed lines while the business charges VAT.
+  const vatOn = !!inv?.org.vat_registered;
+  const lineVat = useLineVat(orgId, vatOn ? lines.filter((l) => !l.item_id).map((l) => l.description) : []);
+  const [check, setCheck] = useState<ELine[] | null>(null);
   if (!inv) return null;
   const set = (k: string, v: any) => setF((x) => ({ ...x, [k]: v }));
   const upd = (k: string, patch: Partial<ELine>) => setLines((ls) => ls.map((l) => (l.key === k ? { ...l, ...patch } : l)));
+  // The VAT a line goes to the books with.
+  const eff = (l: ELine): string => (l.item_id || !vatOn ? l.vat_treatment : lineVatTreatment(lineVat(l.description), l.vat_by, l.vat_treatment as VatT));
+  // The person's choice (or Numens again) for a typed line, and for every line here with the same words.
+  const vatChoice = (l: ELine, by: VatBy, t?: VatT) => setLines((ls) => ls.map((x) => (!x.item_id && vatKey(x.description) === vatKey(l.description)
+    ? { ...x, vat_by: by, vat_treatment: t ?? x.vat_treatment } : x)));
   const gross = (l: ELine) => Math.max(0, (Number(l.qty) || 0) * (money(l.unit_price) || 0) - (money(l.discount) || 0));
   const sum = lines.reduce((a, l) => a + gross(l), 0) + (money(f.delivery_fee) || 0);
   // A customer outside Nigeria makes the sale an export: zero-rated, unless a manager has said otherwise on this document.
   const exp = existing.data && existing.data.customer_id === customer?.id ? !!existing.data.export : isExport(customer?.country);
   const exempt = relief.on && !exp;
-  const vat = inv.org.vat_registered && !exp && !exempt ? lines.reduce((a, l) => a + (l.vat_treatment === 'standard' ? (f.prices_include_vat ? vatInside(gross(l), f.issue_date) : gross(l) * vatRateOn(f.issue_date)) : 0), 0) : 0;
+  const vat = inv.org.vat_registered && !exp && !exempt ? lines.reduce((a, l) => a + (eff(l) === 'standard' ? (f.prices_include_vat ? vatInside(gross(l), f.issue_date) : gross(l) * vatRateOn(f.issue_date)) : 0), 0) : 0;
   const total = f.prices_include_vat ? sum : sum + vat;
   // Discounts past the business's limit, or a firm's invoice: issuing it waits for approval (the database decides; this is a heads-up).
   const before = lines.reduce((a, l) => a + (Number(l.qty) || 0) * (money(l.unit_price) || 0), 0);
@@ -659,21 +671,31 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
   const limit = Number(inv.org.discount_approval_pct ?? 10);
   const owns = decidesApprovals(inv);
   const ownRelief = !!customer?.vat_relief && relief.kind === customer.vat_relief && relief.ref.trim() === (customer.vat_relief_ref || '');
-  async function save(issue: boolean) {
+  async function save(issue: boolean, checked?: ELine[]) {
     if (!customer) { toast(`Choose the ${w.customer}.`, 'err'); return; }
     if (exempt && relief.ref.trim().length < 2) { toast(`Add the ${RELIEF[relief.kind].ref.toLowerCase()} for the VAT exemption.`, 'err'); return; }
     if (!lines.length) { toast('Add at least one line.', 'err'); return; }
     if (lines.some((l) => !l.item_id && !l.description.trim())) { toast(svc ? 'Describe the service on each line.' : 'Describe each service or charge.', 'err'); return; }
+    // Before it is issued, the person looks at the lines whose VAT Numens is not sure of (an export or an exempt buyer
+    // carries no VAT whatever the lines are).
+    const ls = checked || lines;
+    if (issue && type === 'invoice' && vatOn && !exp && !exempt && !checked) {
+      const c = linesToCheck(ls.filter((l) => !l.item_id), lineVat);
+      if (c.waiting.length) { toast('Numens is still checking the VAT. Issue it again in a moment.', 'err'); return; }
+      if (c.unsure.length) { setCheck(c.unsure); return; }
+    }
     setBusy(true);
     try {
       const r = await rpc<Sale>('save_sale_doc', { p_org: orgId, p_doc: {
         id: id || null, doc_type: type, status: issue && type === 'invoice' ? 'issue' : 'draft', customer_id: customer.id, issue_date: f.issue_date, due_date: f.due_date || null,
         prices_include_vat: f.prices_include_vat, delivery_fee: money(f.delivery_fee) || 0, notes: f.notes || null, terms: f.terms || null, reference: f.reference || null,
         vat_relief: exempt ? relief.kind : null, vat_relief_ref: exempt ? relief.ref.trim() : null,
-        lines: lines.map((l) => l.item_id
+        lines: ls.map((l) => l.item_id
           ? { item_id: l.item_id, qty: Number(l.qty), unit: l.unit, unit_price: money(l.unit_price), discount: money(l.discount) || 0 }
-          : { description: l.description, qty: Number(l.qty), unit_price: money(l.unit_price), discount: money(l.discount) || 0, vat_treatment: l.vat_treatment, revenue_account: l.revenue_account || null }),
+          : { description: l.description, qty: Number(l.qty), unit_price: money(l.unit_price), discount: money(l.discount) || 0, vat_treatment: eff(l), revenue_account: l.revenue_account || null,
+              ...(vatOn ? { vat_by: l.vat_by } : {}) }),
       } });
+      forgetLineVat(orgId, ls.filter((l) => !l.item_id && l.vat_by === 'person').map((l) => l.description));
       toast(issue && type === 'invoice' ? issuedNote(r) : `${r.number} saved`);
       await Promise.all(['sales', 'sale', 'customers'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
       onSaved(r.id);
@@ -724,16 +746,20 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
                       autoFocus={lines.length === 1 && !id} onChange={(e) => upd(l.key, { description: e.target.value })} />
                   : <input className="input input-sm" value={l.description} placeholder="Service or charge" aria-label="Description" onChange={(e) => upd(l.key, { description: e.target.value })} />}
                 {!l.item_id && <div className="row" style={{ gap: 4 }}>
-                  <select className="input input-sm" value={l.vat_treatment} onChange={(e) => upd(l.key, { vat_treatment: e.target.value })} aria-label="VAT"><option value="standard">VAT {vatPct(f.issue_date)}</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select>
                   <select className="input input-sm" value={l.revenue_account} onChange={(e) => upd(l.key, { revenue_account: e.target.value })} aria-label="Income account"><option value="">Usual income account</option>{revenue.map((a: any) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</select>
                 </div>}
-                <span className="faint row" style={{ fontSize: 11, gap: 0 }}>
-                  {exp ? <>Zero-rated export · VAT 2{l.vat_treatment !== 'zero' ? ` (normally ${l.vat_treatment === 'exempt' ? 'exempt' : 'VATable'})` : ''}</>
-                    : exempt ? <>Exempt buyer · VAT 1{l.vat_treatment !== 'exempt' ? ` (normally ${l.vat_treatment === 'zero' ? 'zero-rated' : 'VATable'})` : ''}</>
-                    : !inv.org.vat_registered ? 'No VAT' : l.vat_treatment === 'zero' ? 'Zero-rated · VAT 2' : l.vat_treatment === 'exempt' ? 'Exempt · VAT 1' : l.item_id ? `VAT ${vatPct(f.issue_date)}` : null}
-                  <VatInfo side="sale" treatment={l.vat_treatment} name={l.description} day={f.issue_date} exportSale={!!exp} vatRegistered={inv.org.vat_registered}
-                    item={inv.items.find((i) => i.id === l.item_id && i.vat_treatment === l.vat_treatment) || null} />
-                </span>
+                {!l.item_id && vatOn && !exp && !exempt ? (
+                  <LineVat st={lineVat(l.description)} by={l.vat_by} treatment={eff(l) as VatT} name={l.description} day={f.issue_date} testid="line-vat"
+                    onPick={(t) => vatChoice(l, 'person', t)} onNumens={() => vatChoice(l, 'numens')} />
+                ) : (
+                  <span className="faint row" style={{ fontSize: 11, gap: 0 }}>
+                    {exp ? <>Zero-rated export · VAT 2{eff(l) !== 'zero' ? ` (normally ${eff(l) === 'exempt' ? 'exempt' : 'VATable'})` : ''}</>
+                      : exempt ? <>Exempt buyer · VAT 1{eff(l) !== 'exempt' ? ` (normally ${eff(l) === 'zero' ? 'zero-rated' : 'VATable'})` : ''}</>
+                      : !inv.org.vat_registered ? 'No VAT' : l.vat_treatment === 'zero' ? 'Zero-rated · VAT 2' : l.vat_treatment === 'exempt' ? 'Exempt · VAT 1' : l.item_id ? `VAT ${vatPct(f.issue_date)}` : null}
+                    <VatInfo side="sale" treatment={eff(l)} name={l.description} day={f.issue_date} exportSale={!!exp} vatRegistered={inv.org.vat_registered}
+                      item={inv.items.find((i) => i.id === l.item_id && i.vat_treatment === l.vat_treatment) || null} />
+                  </span>
+                )}
               </span>
               <input className="input input-sm num" inputMode="decimal" value={l.qty} onChange={(e) => upd(l.key, { qty: e.target.value })} aria-label="Quantity" />
               {svc ? null : l.item_id && l.pack > 1 ? <select className="input input-sm" value={l.unit} onChange={(e) => {
@@ -750,11 +776,11 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
           {svc ? (
             <div className="row wrap" style={{ padding: 12, gap: 8 }}>
               <button className="btn btn-secondary btn-sm" onClick={() => setLines((ls) => [...ls, serviceLine()])}><Icon name="plus" size={13} />{lines.length ? 'Add another service' : 'Add a service'}</button>
-              {inv.items.length > 0 && <div style={{ flex: '1 1 260px' }}><ItemPicker items={inv.items} placeholder="Or pick one of your saved services" onPick={(it) => setLines((ls) => [...ls.filter((l) => l.item_id || l.description.trim() || l.unit_price), { key: crypto.randomUUID(), item_id: it.id, description: it.name, qty: '1', unit: 'selling', unit_price: String(Number(it.price)), discount: '', vat_treatment: it.vat_treatment, revenue_account: '', pack: it.pack_size, units: [it.selling_unit, it.purchase_unit] }])} /></div>}
+              {inv.items.length > 0 && <div style={{ flex: '1 1 260px' }}><ItemPicker items={inv.items} placeholder="Or pick one of your saved services" onPick={(it) => setLines((ls) => [...ls.filter((l) => l.item_id || l.description.trim() || l.unit_price), { key: crypto.randomUUID(), item_id: it.id, description: it.name, qty: '1', unit: 'selling', unit_price: String(Number(it.price)), discount: '', vat_treatment: it.vat_treatment, vat_by: 'numens', revenue_account: '', pack: it.pack_size, units: [it.selling_unit, it.purchase_unit] }])} /></div>}
             </div>
           ) : (
             <div className="row wrap" style={{ padding: 12, gap: 8 }}>
-              <div style={{ flex: '1 1 300px' }}><ItemPicker items={inv.items} onPick={(it) => setLines((ls) => [...ls, { key: crypto.randomUUID(), item_id: it.id, description: it.name, qty: '1', unit: 'selling', unit_price: String(Number(it.price)), discount: '', vat_treatment: it.vat_treatment, revenue_account: '', pack: it.pack_size, units: [it.selling_unit, it.purchase_unit] }])} /></div>
+              <div style={{ flex: '1 1 300px' }}><ItemPicker items={inv.items} onPick={(it) => setLines((ls) => [...ls, { key: crypto.randomUUID(), item_id: it.id, description: it.name, qty: '1', unit: 'selling', unit_price: String(Number(it.price)), discount: '', vat_treatment: it.vat_treatment, vat_by: 'numens', revenue_account: '', pack: it.pack_size, units: [it.selling_unit, it.purchase_unit] }])} /></div>
               <button className="btn btn-secondary btn-sm" onClick={() => setLines((ls) => [...ls, serviceLine()])}><Icon name="plus" size={13} />Service or charge</button>
             </div>
           )}
@@ -781,6 +807,14 @@ export function DocEditor({ id, type, draft, onClose, onSaved }: { id?: string; 
         <button className="btn btn-secondary" disabled={busy} onClick={() => save(false)}>{type === 'quote' ? 'Save quote' : 'Save draft'}</button>
         {type === 'invoice' && <button className="btn btn-primary" disabled={busy} onClick={() => save(true)}>Issue invoice</button>}
       </div>
+      {check && <VatCheck day={f.issue_date} title="Check the VAT before issuing" action="Issue invoice"
+        sub={`Numens is not sure of the VAT on ${check.length === 1 ? 'this line' : 'these lines'}. Keep its answer or change it, then the invoice is issued.`}
+        lines={check.map((l) => ({ key: l.key, description: l.description, st: lineVat(l.description) }))} onClose={() => setCheck(null)}
+        onDone={(picks) => {
+          const byWords = new Map(check.map((l) => [vatKey(l.description), picks[l.key]]));
+          const next = lines.map((x) => (!x.item_id && byWords.get(vatKey(x.description)) && x.vat_by !== 'person' ? { ...x, vat_by: 'person' as const, vat_treatment: byWords.get(vatKey(x.description))! } : x));
+          setLines(next); setCheck(null); void save(true, next);
+        }} />}
     </Drawer>
   );
 }

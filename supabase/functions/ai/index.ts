@@ -711,6 +711,69 @@ async function vatClassifyText(sb: SupabaseClient, admin: SupabaseClient, body: 
   }) });
 }
 
+// ---------------------------------------------------------------- VAT on the lines typed on an invoice
+// The words of each line decide its VAT. What a business has on record for those words (Numens' answer, or a person's
+// choice, which Numens never replaces) comes back at once; the rest go to Numens, and its answers are kept for next time.
+// The page shows each answer with its reason, and asks the person about the ones below the business's threshold before
+// the invoice is issued. Anyone who records sales may ask (the database checks).
+async function vatLines(sb: SupabaseClient, admin: SupabaseClient, body: any) {
+  const orgId = String(body.org_id || '');
+  if (!isUuid(orgId)) return json({ ok: false, error: 'Choose the business.' }, 400);
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const l of Array.isArray(body.lines) ? body.lines : []) {
+    const name = String(l ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+    if (names.length >= 50) break;
+  }
+  if (!names.length) return json({ ok: true, threshold: 0.8, results: [] });
+  const { data: known, error } = await sb.rpc('line_vat_lookup', { p_org: orgId, p_lines: names });
+  if (error) return json({ ok: false, error: error.message }, 403);
+  const threshold = Number(known?.threshold ?? 0.8);
+  const rows: any[] = Array.isArray(known?.lines) ? known.lines : [];
+  const missing = rows.filter((r) => !r.treatment).slice(0, 30);
+  let aiError: string | undefined;
+  if (missing.length) {
+    if (await paused(admin, orgId)) aiError = 'paused';
+    else {
+      try {
+        const { data: org } = await admin.from('orgs').select('industry, principal_activity').eq('id', orgId).maybeSingle();
+        const trade = [org?.industry, org?.principal_activity].filter(Boolean).join(': ') || undefined;
+        const items: VatItem[] = missing.map((r, i) => ({ id: String(i + 1), org_id: orgId, name: String(r.description), item_type: 'service or charge on an invoice',
+          industry: trade }));
+        const { answers, error: e2 } = await classifyVat(admin, items);
+        if (e2 && !answers.length) aiError = aiOn() ? e2 : 'not_configured';
+        const byId = new Map(answers.map((a) => [a.id, a]));
+        const store = items.flatMap((it) => {
+          const a = byId.get(it.id);
+          return a ? [{ description: it.name, treatment: a.treatment, confidence: a.confidence, reason: a.reason, law: a.law, nrs_label: a.nrs_label ?? null,
+            source: a.source, model: a.model ?? null }] : [];
+        });
+        if (store.length) {
+          const { data: saved, error: e3 } = await admin.rpc('svc_line_vat_store', { p_org: orgId, p_rows: store });
+          if (e3) aiError = e3.message;
+          const byKey = new Map(((saved as any[]) || []).map((r) => [String(r.description).replace(/\s+/g, ' ').trim().toLowerCase(), r]));
+          for (let i = 0; i < rows.length; i++) {
+            const hit = !rows[i].treatment && byKey.get(String(rows[i].description).replace(/\s+/g, ' ').trim().toLowerCase());
+            if (hit) rows[i] = { ...hit, description: rows[i].description };
+          }
+        }
+      } catch (e) {
+        // What is on record still goes back; the page asks the person about the rest.
+        if (e instanceof CredentialError) { console.error('gemini credential', (e as Error).message); aiError = 'not_configured'; }
+        else aiError = (e as Error).message;
+      }
+    }
+  }
+  return json({ ok: true, threshold, results: rows.map((r) => ({
+    description: r.description, treatment: r.treatment ?? null, source: r.source ?? null, confidence: r.confidence ?? null, reason: r.reason ?? null,
+    law: r.law ?? null, nrs_label: r.nrs_label ?? null, by: r.by ?? null, at: r.at ?? null, ai: r.ai ?? null,
+  })), ...(aiError ? { ai_error: aiError } : {}) });
+}
+
 // ---------------------------------------------------------------- VAT on money in with no Counta invoice
 // A payment the business received with no invoice is taken as a sale; its VAT is decided per payment from what the business
 // sells and what the payment says. The database hands over the payments waiting (svc_receipts_for_vat) and books each answer
@@ -1248,9 +1311,10 @@ Deno.serve(async (req) => {
   if (!u?.user) return json({ ok: false, error: 'Sign in first.' }, 401);
   try {
     await loadKeys(admin);
-    // Everything but the status and the connection check waits while TaxStreem has paused AI reading.
+    // Everything but the status, the connection check and the VAT on invoice lines (which still reads what is on record)
+    // waits while TaxStreem has paused AI reading.
     const orgId = isUuid(body.org_id) ? body.org_id : null;
-    if (!['status', 'check'].includes(body.action) && await paused(admin, orgId)) return json(PAUSED);
+    if (!['status', 'check', 'vat_lines'].includes(body.action) && await paused(admin, orgId)) return json(PAUSED);
     switch (body.action) {
       case 'status': {
         const off = await paused(admin, orgId);
@@ -1280,6 +1344,7 @@ Deno.serve(async (req) => {
       case 'read_invoice': return await readInvoice(sb, admin, body, u.user.id);
       case 'read_purchase_invoice': return await readPurchaseInvoice(sb, admin, body);
       case 'vat_classify_text': return await vatClassifyText(sb, admin, body);
+      case 'vat_lines': return await vatLines(sb, admin, body);
       case 'ask': return await ask(body);
       case 'chat': return await chat(body);
       case 'voice': return await voice(body);

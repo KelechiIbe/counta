@@ -6,7 +6,7 @@
 //
 // /sell/recurring?customer=<id>&client=<practice client id> opens a new schedule for that customer (the accountant
 // portal's Fees page links here for a client's fees).
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
@@ -17,6 +17,8 @@ import { useVatRate } from '../../lib/vat';
 import { Icon } from '../../components/Icon';
 import { Alert, Drawer, Empty, Field, SkeletonRows, Spinner } from '../../components/ui';
 import { decidedText, waitsFor } from '../../lib/approvals';
+import { LineVat, VatCheck } from '../../components/LineVat';
+import { forgetLineVat, lineVatTreatment, linesToCheck, useLineVat, vatKey, type VatBy, type VatT } from '../../lib/lineVat';
 
 const FREQ: Record<RecurringSchedule['frequency'], string> = { monthly: 'Monthly', quarterly: 'Every three months', annually: 'Every year' };
 const STATUS: Record<RecurringSchedule['status'], [string, string]> = { active: ['Active', 't-green'], paused: ['Paused', 't-amber'], ended: ['Ended', 't-grey'] };
@@ -86,8 +88,9 @@ export default function Recurring() {
   );
 }
 
-type LineDraft = { key: string; description: string; qty: string; unit_price: string; vat_treatment: RecurringLine['vat_treatment']; once: boolean; saved: boolean };
-const blankLine = (): LineDraft => ({ key: crypto.randomUUID(), description: '', qty: '1', unit_price: '', vat_treatment: 'standard', once: false, saved: false });
+// Numens decides each line's VAT from its description, unless the person chose it (vat_by 'person', vat_treatment theirs).
+type LineDraft = { key: string; description: string; qty: string; unit_price: string; vat_treatment: RecurringLine['vat_treatment']; vat_by: VatBy; once: boolean; saved: boolean };
+const blankLine = (): LineDraft => ({ key: crypto.randomUUID(), description: '', qty: '1', unit_price: '', vat_treatment: 'standard', vat_by: 'numens', once: false, saved: false });
 
 function Editor({ s, preset, onClose, onSaved }: { s: RecurringSchedule | null; preset: { customer: string | null; client: string | null }; onClose: () => void;
   onSaved: (s: RecurringSchedule) => void }) {
@@ -104,27 +107,39 @@ function Editor({ s, preset, onClose, onSaved }: { s: RecurringSchedule | null; 
     start_date: s?.start_date || today, end_date: s?.end_date || '', due_days: String(s?.due_days ?? 14),
     auto_send: s ? s.auto_send && !downloadOnly : !downloadOnly, send_channel: s?.send_channel || 'email', notes: s?.notes || '',
   }));
-  const [lines, setLines] = useState<LineDraft[]>(() => s ? s.lines.map((l) => ({ ...l, key: crypto.randomUUID(), qty: String(l.qty), unit_price: String(l.unit_price), saved: true })) : [blankLine()]);
+  const [lines, setLines] = useState<LineDraft[]>(() => s ? s.lines.map((l) => ({ description: l.description, vat_treatment: l.vat_treatment, once: l.once, vat_by: 'numens' as const,
+    key: crypto.randomUUID(), qty: String(l.qty), unit_price: String(l.unit_price), saved: true })) : [blankLine()]);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
   const issued = !!s?.runs.some((r) => ['issued', 'waiting_nrs', 'sent'].includes(r.status));
   const vatOn = !!inv?.org.vat_registered;
-  const preview = useMemo(() => eachTotal(lines.map((l) => ({ ...l, qty: Number(l.qty) || 0, unit_price: money(l.unit_price) || 0 })), vatOn, vat.on(s?.next_run || f.start_date)),
-    [lines, vatOn, vat, s?.next_run, f.start_date]);
+  const lineVat = useLineVat(orgId, vatOn ? lines.map((l) => l.description) : []);
+  const [check, setCheck] = useState<LineDraft[] | null>(null);
+  // The VAT a line is saved with.
+  const eff = (l: LineDraft): VatT => (vatOn ? lineVatTreatment(lineVat(l.description), l.vat_by, l.vat_treatment) : l.vat_treatment);
+  const preview = eachTotal(lines.map((l) => ({ ...l, vat_treatment: eff(l), qty: Number(l.qty) || 0, unit_price: money(l.unit_price) || 0 })), vatOn, vat.on(s?.next_run || f.start_date));
   if (!inv) return null;
   const patch = (key: string, p: Partial<LineDraft>) => setLines((xs) => xs.map((x) => (x.key === key ? { ...x, ...p } : x)));
+  // The person's choice (or Numens again) for a line, and for every line here with the same words.
+  const vatChoice = (l: LineDraft, by: VatBy, t?: VatT) => setLines((xs) => xs.map((x) => (vatKey(x.description) === vatKey(l.description) ? { ...x, vat_by: by, vat_treatment: t ?? x.vat_treatment } : x)));
   const refresh = () => Promise.all([qc.invalidateQueries({ queryKey: ['recurring'] }), qc.invalidateQueries({ queryKey: ['sales'] })]);
 
-  async function save() {
+  async function save(checked?: LineDraft[]) {
     setErr(null);
     if (!f.customer_id) { setErr('Choose the customer.'); return; }
-    const clean = lines.filter((l) => l.description.trim() || l.unit_price.trim());
+    const clean = (checked || lines).filter((l) => l.description.trim() || l.unit_price.trim());
     if (!clean.length) { setErr('Add at least one line.'); return; }
     for (const l of clean) {
       if (!l.description.trim()) { setErr('Every line needs a description.'); return; }
       if (!(Number(l.qty) > 0)) { setErr(`Give "${l.description.trim()}" a quantity above 0.`); return; }
       if (money(l.unit_price) == null || (money(l.unit_price) as number) < 0) { setErr(`Give "${l.description.trim()}" a price.`); return; }
+    }
+    // Each invoice is issued with no one there, so the lines whose VAT Numens is not sure of are confirmed now.
+    if (vatOn && !checked) {
+      const c = linesToCheck(clean, lineVat);
+      if (c.waiting.length) { setErr('Numens is still checking the VAT. Save it again in a moment.'); return; }
+      if (c.unsure.length) { setCheck(c.unsure); return; }
     }
     setBusy('save');
     try {
@@ -132,8 +147,10 @@ function Editor({ s, preset, onClose, onSaved }: { s: RecurringSchedule | null; 
         ...(s ? { id: s.id } : {}), customer_id: f.customer_id, frequency: f.frequency, day_of_month: Number(f.day_of_month), start_date: f.start_date,
         end_date: f.end_date || null, due_days: Number(f.due_days) || 0, auto_send: downloadOnly ? false : f.auto_send, send_channel: f.send_channel,
         notes: f.notes.trim() || null, practice_client_id: s?.practice_client_id || preset.client || null,
-        lines: clean.map((l) => ({ description: l.description.trim(), qty: Number(l.qty), unit_price: money(l.unit_price), vat_treatment: l.vat_treatment, once: l.once })),
+        lines: clean.map((l) => ({ description: l.description.trim(), qty: Number(l.qty), unit_price: money(l.unit_price), vat_treatment: eff(l), once: l.once,
+          ...(vatOn ? { vat_by: l.vat_by } : {}) })),
       } });
+      forgetLineVat(orgId, clean.filter((l) => l.vat_by === 'person').map((l) => l.description));
       await refresh();
       toast(x.approval_state === 'pending' ? `Saved. It runs once ${waitsFor(x.approval || { approver: 'owner' })} approves it.`
         : s ? 'Saved' : `Set up: the first invoice is on ${fmtDay(x.next_run)}`);
@@ -222,10 +239,8 @@ function Editor({ s, preset, onClose, onSaved }: { s: RecurringSchedule | null; 
                 onChange={(e) => patch(l.key, { description: e.target.value })} aria-label="Description" />
               <input className="input input-sm num rec-qty" inputMode="decimal" value={l.qty} onChange={(e) => patch(l.key, { qty: e.target.value })} aria-label="Quantity" />
               <input className="input input-sm num rec-price" inputMode="decimal" placeholder="0.00" value={l.unit_price} onChange={(e) => patch(l.key, { unit_price: e.target.value })} aria-label="Unit price before VAT" />
-              <select className="input input-sm rec-vat" value={l.vat_treatment} disabled={!vatOn} onChange={(e) => patch(l.key, { vat_treatment: e.target.value as RecurringLine['vat_treatment'] })}
-                aria-label="VAT" data-testid="recurring-line-vat">
-                <option value="standard">VAT {vat.pct(s?.next_run || f.start_date)}</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option>
-              </select>
+              <span className="rec-vat">{vatOn ? <LineVat st={lineVat(l.description)} by={l.vat_by} treatment={eff(l)} name={l.description} day={s?.next_run || f.start_date}
+                testid="recurring-line-vat" onPick={(t) => vatChoice(l, 'person', t)} onNumens={() => vatChoice(l, 'numens')} /> : <span className="faint" style={{ fontSize: 12 }}>No VAT</span>}</span>
               <label className="check rec-once" title={issued && !l.saved ? 'This schedule has issued an invoice already: a new line marked once would never be billed.' : 'On the first invoice only'}>
                 <input type="checkbox" checked={l.once} disabled={issued && !l.saved && !l.once} onChange={(e) => patch(l.key, { once: e.target.checked })} data-testid="recurring-line-once" />First invoice only
               </label>
@@ -288,8 +303,16 @@ function Editor({ s, preset, onClose, onSaved }: { s: RecurringSchedule | null; 
         )}
         <span className="grow" />
         <button className="btn btn-secondary" onClick={onClose}>Close</button>
-        <button className="btn btn-primary" disabled={disabled} onClick={save} data-testid="recurring-save">{busy === 'save' ? <Spinner small /> : null}{s ? 'Save changes' : 'Set it up'}</button>
+        <button className="btn btn-primary" disabled={disabled} onClick={() => save()} data-testid="recurring-save">{busy === 'save' ? <Spinner small /> : null}{s ? 'Save changes' : 'Set it up'}</button>
       </div>
+      {check && <VatCheck day={s?.next_run || f.start_date} title="Check the VAT" action={s ? 'Save changes' : 'Set it up'}
+        sub={`Each invoice is issued without asking, and Numens is not sure of the VAT on ${check.length === 1 ? 'this line' : 'these lines'}. Keep its answer or change it.`}
+        lines={check.map((l) => ({ key: l.key, description: l.description, st: lineVat(l.description) }))} onClose={() => setCheck(null)}
+        onDone={(picks) => {
+          const byWords = new Map(check.map((l) => [vatKey(l.description), picks[l.key]]));
+          const next = lines.map((x) => (byWords.get(vatKey(x.description)) && x.vat_by !== 'person' ? { ...x, vat_by: 'person' as const, vat_treatment: byWords.get(vatKey(x.description))! } : x));
+          setLines(next); setCheck(null); void save(next);
+        }} />}
     </Drawer>
   );
 }

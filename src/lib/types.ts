@@ -107,6 +107,7 @@ export interface ReceiptLine {
 export interface NewItemDraft {
   name: string; category?: string; purchase_unit?: string; pack_size?: number; selling_unit?: string; price?: number | null;
   vat_treatment?: 'standard' | 'zero' | 'exempt'; track_batches?: boolean; barcode?: string | null;
+  vat_by?: 'person';  // the person chose the VAT; otherwise Numens decides once the item exists
 }
 export interface Receipt {
   id: string; org_id: string; ref: string; vendor_id: string | null; vendor_name: string | null; location_id: string | null;
