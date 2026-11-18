@@ -32,6 +32,7 @@
 // Anyone holding a document link (no sign-in):
 //   public_pay { token, method }                   -> a way to pay a shared invoice, receipt or order
 //   public_check { token }                         -> has it been paid
+//   public_paid { token, amount, name? }           -> the customer says they have paid: kept, and the wallet read at once
 // Rails:
 //   POST /payments/webhook/flutterwave             -> header verif-hash must equal FLW_WEBHOOK_HASH
 //   POST /payments/webhook/rail/<code>             -> header x-counta-signature: sha256=<HMAC of the body with the rail's webhook secret>
@@ -39,6 +40,7 @@
 //   { action: 'poll' }       -> re-checks unpaid requests, retries sweeps, re-checks payouts in progress, carries on
 //                               sending bulk payments and reads Flutterwave bulk transfers' results; checks and pays the
 //                               tax payments Flux posted and tells Flux of each one made
+//   { action: 'poll_direct' } -> every minute: the wallets with a sale waiting for a transfer, and unanswered claims
 //   { action: 'tax_instruction', instruction_id } -> (from the taxstreem function) checks one payment request from Flux
 //   { action: 'reconcile' }  -> compares every wallet with the books
 // The poll also renews Counta plans (svc_subscription_tick) and follows up plan payments still open.
