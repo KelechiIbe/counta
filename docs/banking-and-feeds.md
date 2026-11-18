@@ -55,10 +55,12 @@ Each new line, from a statement or a feed, runs through the matcher in this orde
 3. Money in: a transfer waiting for confirmation is confirmed.
 4. Money in: the narration names an open invoice or order (INV-0042, inv 42, Invoice no. 42), whoever paid it. Short by exactly what the customer was allowed to keep back (WHT, the 1% NCD levy, VAT withheld, or a mix; see [selling.md](selling.md#what-a-customer-keeps-back)), the invoice is settled in full and each part is booked. Paid over, the extra is held as the customer's credit and flagged.
 5. Money out: tax and levy payments go to their tax account. A bill named in the narration is paid, with WHT if the amount is net of it: by Counta's number, or by the supplier's own invoice number (with or without its punctuation, standing on its own in the narration) when the amount is what is owed or the supplier is named too.
-6. A customer or supplier named in the narration.
+6. A customer or supplier named in the narration. Money in from a named customer settles their open invoice when exactly one fits, as it stands or less what they were allowed to keep back; with several fitting, the books inbox asks which.
 7. Transfers between the business's own accounts.
 8. Rules learned from earlier answers, then known payees (bank charges, power, telecoms).
 9. Nobody named, but exactly one open invoice (or bill) is for that amount, as it stands or less WHT: the line is held in suspense and the books inbox asks "Is this ₦25,216.04 from Mama Nkechi Stores for INV-0016?". Yes settles the invoice in one tap; No, it was something else opens the usual answer.
+
+Answering a question with "a customer paying their invoices" (Trade receivables) and the customer settles that customer's invoices: the one the money fits, as it stands or less WHT and the levy, else the oldest first as far as the money goes, else it is held as their credit. A rule learned from that answer does the same for the payer's later transfers. Before migration `20261205000100_wallet_matching.sql` such an answer only moved the money to the customer's receivables, which left the invoices open.
 10. What is left goes to Atlas.
 
 VAT and WHT treatment beyond this follows the rule book when TaxStreem shares it.

@@ -23,6 +23,7 @@ export const STAGE: Record<string, string> = {
   vendor_no_bill: 'Vendor without a bill', transfer: 'Between our accounts', transfer_one_leg: 'Transfer, other side not seen', rule: 'Learned rule',
   registry: 'Known payee', ai: 'Atlas', user: 'Answered by a person', suspense: 'Suspense', invoice_ref: 'Invoice named in the narration',
   bill_ref: 'Bill named in the narration', invoice_amount: 'Invoice of the same amount, to confirm', bill_amount: 'Bill of the same amount, to confirm',
+  customer_invoice: 'Customer named, one invoice fits', wallet_request: 'Paid from the invoice page',
 };
 const ROLE_LABEL: Record<Role, string> = { date: 'Date', value_date: 'Value date', description: 'Narration', reference: 'Reference', debit: 'Money out', credit: 'Money in',
   amount: 'Amount', drcr: 'Dr / Cr', balance: 'Balance', ignore: 'Skip' };

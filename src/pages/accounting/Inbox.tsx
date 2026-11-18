@@ -109,16 +109,24 @@ function Question({ p }: { p: AiProposal }) {
   const [busy, setBusy] = useState(false);
   const [other, setOther] = useState(false);
   const canAnswer = can(inv, 'keep_books');
-  async function act(fn: () => Promise<any>, ok: string) {
+  async function act(fn: () => Promise<any>, ok: string | ((r: any) => string)) {
     setBusy(true);
-    try { await fn(); toast(ok); await Promise.all(['inbox', 'banking', 'inv', 'report', 'overview'].map((k) => qc.invalidateQueries({ queryKey: [k] }))); }
+    try {
+      const r = await fn();
+      toast(typeof ok === 'function' ? ok(r) : ok);
+      await Promise.all(['inbox', 'banking', 'inv', 'report', 'overview', 'sales', 'sale', 'customers'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
+    }
     catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
   }
   const needsParty = /^(1101|1102)/.test(code) ? 'customer' : /^(2101|2102)/.test(code) ? 'vendor' : null;
   const partyList = needsParty === 'customer' ? (customers.data?.customers || []).filter((c) => !c.is_walk_in) : needsParty === 'vendor' ? (bills.data?.vendors || []) : [];
+  const who = (id: string) => partyList.find((x: any) => x.id === id)?.name || 'the customer';
+  // Money from a customer to what they owe settles their invoices; the answer says which (or that it is held as their credit).
   const answer = (action: 'approve' | 'change' | 'ignore' | 'dismiss') => act(() => rpc('resolve_proposal', { p_proposal: p.id, p: {
-    action, account_code: code || null, party_type: needsParty, party_id: party || null, remember, note: note || null } }), action === 'ignore' ? 'Taken out of the books' : 'Posted');
+    action, account_code: code || null, party_type: needsParty, party_id: party || null, remember, note: note || null } }),
+    (r: any) => action === 'ignore' ? 'Taken out of the books' : r?.settled ? `${r.settled} ${String(r.settled).includes(',') ? 'paid' : 'settled'}`
+      : r?.credit ? `Held as credit for ${who(party)}` : 'Posted');
 
   if (p.kind === 'item_vat') {
     const t = p.proposal?.treatment;
@@ -146,6 +154,12 @@ function Question({ p }: { p: AiProposal }) {
         <div className="row" style={{ justifyContent: 'space-between' }}><b>{p.title}</b>{p.amount != null && <b className="num">{N2(p.amount)}</b>}</div>
         <div className="muted" style={{ fontSize: 13 }}>{p.question}</div>
         {p.kind === 'wallet_difference' && <div className="faint" style={{ fontSize: 12 }}>Wallet {N2(p.proposal?.provider)} · books {N2(p.proposal?.books)} · in transit {N2(p.proposal?.in_transit)}. Check the wallet's statement under Payments, then record what is missing.</div>}
+        {p.kind === 'payment_claim' && p.proposal?.sale_id && (
+          <div className="row wrap" style={{ gap: 8 }}>
+            <Link className="btn btn-secondary btn-sm" to={`/sell/sales?open=${p.proposal.sale_id}`}>Open {p.proposal.number || 'the invoice'}</Link>
+            <span className="faint" style={{ fontSize: 12 }}>This closes by itself once the money is matched or the payment is recorded.</span>
+          </div>
+        )}
         {canAnswer && <div className="row"><input className="input input-sm" placeholder="What you found" value={note} onChange={(e) => setNote(e.target.value)} />
           <button className="btn btn-secondary btn-sm" disabled={busy || note.trim().length < 3} onClick={() => answer('dismiss')}>Resolved</button></div>}
       </div>

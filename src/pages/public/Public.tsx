@@ -9,7 +9,7 @@ import { N2, fmtDay, when } from '../../lib/format';
 import { InvoiceDoc, PrintPortal, cleanHex, onColor } from '../../components/InvoiceDoc';
 import { qrSvg } from '../../lib/labels';
 import { Icon } from '../../components/Icon';
-import { Alert, Spinner } from '../../components/ui';
+import { Alert, Field, Spinner } from '../../components/ui';
 import { showPoweredBy } from '../../lib/whiteLabel';
 
 export function Frame({ children, org, whiteLabel }: { children: React.ReactNode; org?: any; whiteLabel?: boolean }) {
@@ -55,12 +55,41 @@ export function PublicDoc() {
     }, 5000);
     return () => window.clearInterval(t);
   }, [waiting, paid, token]);
+  // A customer coming back to the page finds the transfer they were already asked for (and can say they have paid it).
+  const docReady = !!d && d.org?.pay_online === true && !paid;
+  useEffect(() => {
+    if (!docReady) return;
+    let live = true;
+    edge<any>('payments', { action: 'public_check', token }).then((r) => {
+      if (!live || r.ok === false || !r.status) return;
+      setStatus({ status: r.status, balance: Number(r.balance) || 0 });
+      if (r.request?.status === 'pending') setReq((cur: any) => cur || r.request);
+    });
+    return () => { live = false; };
+  }, [docReady, token]);
   useEffect(() => { if (req?.method === 'qr' && req.link_url && !req.qr_image) qrSvg(req.link_url, 200).then(setQr); }, [req?.link_url]); // eslint-disable-line react-hooks/exhaustive-deps
   async function pay(method: 'account' | 'link' | 'qr') {
     setBusy(method); setErr(null);
     const r = await edge<any>('payments', { action: 'public_pay', token, method });
     if (r.ok === false) setErr(r.error || 'Paying online is not available right now. Pay by bank transfer to the business instead.');
     else { setReq(r.request); if (method === 'link' && r.request?.link_url) window.location.href = r.request.link_url; }
+    setBusy(null);
+  }
+  // The customer says they have paid: what they sent (less any WHT or levy they kept back) and the name on their account.
+  // Counta looks for the transfer at once; nothing is marked paid until the money is matched or the business confirms it.
+  const [claimOpen, setClaimOpen] = useState(false);
+  const [claimAmt, setClaimAmt] = useState('');
+  const [claimName, setClaimName] = useState('');
+  const claimNum = Number(claimAmt.replace(/[₦,\s]/g, ''));
+  function openClaim() {
+    setClaimAmt(String(req?.claim_amount ?? req?.amount ?? ''));
+    setClaimOpen(true); setErr(null);
+  }
+  async function claim() {
+    setBusy('claim'); setErr(null);
+    const r = await edge<any>('payments', { action: 'public_paid', token, amount: claimNum, name: claimName.trim() });
+    if (r.ok === false) setErr(r.error || 'That did not go through. Try again in a moment.');
+    else { setStatus({ status: r.status, balance: r.balance }); if (r.request) setReq(r.request); setClaimOpen(false); }
     setBusy(null);
   }
   if (doc.isLoading) return <Frame><div style={{ padding: 60, display: 'grid', placeItems: 'center' }}><Spinner /></div></Frame>;
@@ -90,23 +119,40 @@ export function PublicDoc() {
             </div>
           ) : req && req.status === 'pending' && req.method === 'account' ? (
             <div style={{ textAlign: 'center', background: '#F8FAFC', borderRadius: 12, padding: 16 }}>
-              <div className="muted" style={{ fontSize: 13 }}>Transfer exactly {N2(req.amount)} to</div>
+              <div className="muted" style={{ fontSize: 13 }}>Transfer {N2(req.amount)} to</div>
               <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: '.06em', margin: '6px 0' }}>{req.account_number}</div>
               <div style={{ fontWeight: 600 }}>{req.bank_name}</div><div className="muted" style={{ fontSize: 13 }}>{req.account_name}</div>
               {req.direct && req.pay_ref && (
                 <div style={{ marginTop: 10, fontSize: 14 }}>Write <b style={{ letterSpacing: '.02em' }}>{req.pay_ref}</b> in the transfer&apos;s description so it is matched to this {d.doc_type === 'order' ? 'order' : 'invoice'}.</div>
               )}
-              <div className="row" style={{ justifyContent: 'center', gap: 8, marginTop: 12, color: '#6B7280', fontSize: 13 }}><Spinner small />This page updates when the money lands.</div>
+              {d.doc_type !== 'receipt' && <div className="faint" style={{ marginTop: 6, fontSize: 12 }}>Keeping back WHT or the NCD levy? Send the rest; it is matched all the same.</div>}
+              <PaidClaim req={req} business={d.org?.name || 'The business'} open={claimOpen} onOpen={openClaim} />
             </div>
           ) : req && req.status === 'pending' && req.method === 'qr' ? (
             <div style={{ textAlign: 'center', background: '#F8FAFC', borderRadius: 12, padding: 16 }}>
               {req.qr_image ? <img src={req.qr_image} alt="QR code to pay" style={{ width: 200 }} /> : <div style={{ width: 200, margin: '0 auto' }} dangerouslySetInnerHTML={{ __html: qr }} />}
+              <PaidClaim req={req} business={d.org?.name || 'The business'} open={claimOpen} onOpen={openClaim} />
             </div>
           ) : waiting ? <div className="row" style={{ gap: 8, color: '#6B7280', fontSize: 13 }}><Spinner small />Checking your payment…</div> : (
             <div className="row wrap" data-testid="public-pay-online">
               <button className="btn btn-primary" style={brandBtn(d.org?.brand_color)} disabled={!!busy} onClick={() => pay('account')}><Icon name="building" size={16} color={onColor(cleanHex(d.org?.brand_color))} />{busy === 'account' ? 'Getting an account…' : 'Pay by bank transfer'}</button>
               <button className="btn btn-secondary" disabled={!!busy} onClick={() => pay('link')}><Icon name="card" size={16} />{busy === 'link' ? 'Opening…' : 'Card or USSD'}</button>
             </div>
+          )}
+          {claimOpen && req?.status === 'pending' && (
+            <form className="stack" data-testid="public-claim" style={{ gap: 10 }} onSubmit={(e) => { e.preventDefault(); void claim(); }}>
+              <div style={{ fontWeight: 600 }}>Tell {d.org?.name || 'the business'} you have paid</div>
+              <Field label="Amount you sent" hint="Change it if you kept back WHT or the NCD levy.">
+                <input className="input" inputMode="decimal" autoComplete="off" value={claimAmt} onChange={(e) => setClaimAmt(e.target.value)} />
+              </Field>
+              <Field label="Name on the account you paid from" hint="Optional. It helps match a transfer that has no reference.">
+                <input className="input" maxLength={80} autoComplete="name" value={claimName} onChange={(e) => setClaimName(e.target.value)} />
+              </Field>
+              <div className="row wrap" style={{ gap: 8 }}>
+                <button className="btn btn-primary btn-sm" type="submit" style={brandBtn(d.org?.brand_color)} disabled={!!busy || !(claimNum > 0)}>{busy === 'claim' ? 'Checking…' : 'Check for my payment'}</button>
+                <button className="btn btn-ghost btn-sm" type="button" disabled={!!busy} onClick={() => setClaimOpen(false)}>Cancel</button>
+              </div>
+            </form>
           )}
         </div>
       )}
@@ -118,6 +164,28 @@ export function PublicDoc() {
 }
 
 const brandBtn = (c?: string | null) => ({ background: cleanHex(c), borderColor: cleanHex(c), color: onColor(cleanHex(c)) });
+
+// Under the payment details: the customer's way to say they have paid, and what happens after they do.
+function PaidClaim({ req, business, open, onOpen }: { req: any; business: string; open: boolean; onOpen: () => void }) {
+  if (req.claimed_at) {
+    return (
+      <div className="stack" data-testid="public-claimed" style={{ gap: 6, marginTop: 12, alignItems: 'center' }}>
+        <Spinner small />
+        <div style={{ color: '#374151', fontSize: 13, maxWidth: 420 }}>
+          {req.claim_flagged ? `Your transfer of ${N2(req.claim_amount)} has not reached ${business} yet. They have been told and will confirm it when it arrives.`
+            : `Thank you. We are looking for your transfer of ${N2(req.claim_amount)}, and this page updates when it lands.`}
+        </div>
+        {!open && <button className="btn btn-ghost btn-xs" onClick={onOpen}>Change what I sent</button>}
+      </div>
+    );
+  }
+  return (
+    <div className="stack" style={{ gap: 8, marginTop: 12, alignItems: 'center' }}>
+      <div className="row" style={{ justifyContent: 'center', gap: 8, color: '#6B7280', fontSize: 13 }}><Spinner small />This page updates when the money lands.</div>
+      {!open && <button className="btn btn-secondary btn-sm" data-testid="public-paid" onClick={onOpen}>I&apos;ve made this payment</button>}
+    </div>
+  );
+}
 
 // Where an online order has got to: placed, confirmed, on its way (or ready for pickup), delivered.
 function OrderTracking({ t, brand }: { t: any; brand?: string | null }) {
