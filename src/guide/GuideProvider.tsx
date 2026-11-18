@@ -114,6 +114,10 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   // The tools read the latest values through refs, since the conversation keeps the functions it started with.
   const live = useRef({ orgId, nav, path: loc.pathname });
   live.current = { orgId, nav, path: loc.pathname };
+  // The business Martina guides. While a business is being set up she works on the one the page names (an existing
+  // business being completed, ?org=), or on the person's own new profile; never the business open behind the page,
+  // which may be the sample.
+  const guideOrg = () => (live.current.path.startsWith('/onboarding') ? onboardOrg() : live.current.orgId);
 
   // Everything said in this conversation, readable by the tools at once (the state updates a render later).
   const said = useRef<Line[]>([]);
@@ -152,7 +156,8 @@ export function GuideProvider({ children }: { children: ReactNode }) {
     const org = () => { if (!live.current.orgId) throw new Error('The business is not set up yet. Finish the profile first.'); return live.current.orgId; };
     return {
       get_progress: safe(async () => {
-        const g = await rpc<GuideState>('guide_state', live.current.orgId ? { p_org: live.current.orgId } : {});
+        const o = guideOrg();
+        const g = await rpc<GuideState>('guide_state', o ? { p_org: o } : {});
         const cats = qc.getQueryData<Category[]>(['business-categories']) || [];
         return { first_name: g.first_name, business: g.org?.name, language: g.language, next_step: g.next, done: `${g.done} of ${g.total}`,
           steps: g.steps.map((s) => `${s.id}: ${s.done ? 'done' : s.skipped ? 'skipped' : s.optional ? 'to do (optional)' : 'to do'}`),
@@ -327,7 +332,7 @@ export function GuideProvider({ children }: { children: ReactNode }) {
       const t = which === 'assistant'
         ? await edge<any>('voice', { action: 'assistant_token', text, org_id: live.current.orgId, page,
           ...(o.handsFree ? { hands_free: true, has_request: Boolean(String(o.first || '').trim()) } : {}) })
-        : await edge<any>('voice', { action: 'guide_token', text, ...(live.current.orgId ? { org_id: live.current.orgId } : {}) });
+        : await edge<any>('voice', { action: 'guide_token', text, ...(guideOrg() ? { org_id: guideOrg() } : {}) });
       if (!t.ok) throw new Error(t.error || 'Martina is not available just now.');
       const { Conversation } = await import('@elevenlabs/client');
       setTextOnly(text); textOnlyRef.current = text;
