@@ -7,7 +7,7 @@ Atlas is the accounting side of Counta. Agents read every bank line, sale, bill,
 | Agent | Works on | Where it runs |
 | --- | --- | --- |
 | Bookkeeper | Unmatched bank and wallet lines | `atlas` edge function (`classify_all` every three minutes from pg_cron, `run` from the Books inbox) |
-| Tax agent | The VAT treatment of every item, when it is added or renamed | `ai` edge function (`vat_classify_pending` from pg_cron, `vat_classify_item` from the item form) |
+| Tax agent | The VAT treatment of every item, when it is added or renamed, and of each line typed on an invoice | `ai` edge function (`vat_classify_pending` from pg_cron, `vat_classify_item` from the item form, `vat_lines` from the invoice screens) |
 | Payables | Bills from stock receipts, Prism and typed entry, with WHT worked out per supplier | Database (`write_bill`, `approve_bill`, `pay_bill`) |
 | Close | The month-end checklist, accruals, depreciation, the IAS 2 stock review and ECL | Database (`close_checklist`, `close_books`, `run_ecl`, `close_year`) |
 | Finance director | A written commentary on the period's numbers | `atlas` edge function (`commentary`); it reads figures and never posts |
@@ -76,9 +76,17 @@ Authorization: Bearer {NUMENS_API_KEY}
 200 { "model": "numens-…", "results": [{ "id", "treatment": "standard" | "zero" | "exempt", "confidence": 0.0-1.0, "reason": "…", "law": "NTA 2025 s.187(…)" }] }
 ```
 
-A person can change the treatment on the item (Inventory, Items, Details). That choice is final: renaming the item no longer sends it back to the agent. "Ask Numens again" clears the manual choice and asks once more.
+A person who edits prices or keeps the books can change the treatment on the item (Inventory, Items, Details, or the item form, where VAT on sales shows Numens' answer with a Change link). That choice is final: renaming the item no longer sends it back to the agent. "Ask Numens again" (or "Let Numens decide" on the form) clears the manual choice and asks once more. A new product created by Receive stock is decided the same way: Numens' sweep (`private.vat_tick`) picks it up once the receipt is posted, unless the person who chose its VAT on the receipt may set VAT, in which case it is recorded as their decision (`post_receipt_internal`, `new_item.vat_by = 'person'`).
 
 When the item is sold, its treatment decides the VAT on the invoice line, and the VAT is credited to 2201 (Output VAT).
+
+## VAT on lines typed on an invoice
+
+A service business describes its work on each invoice line rather than picking a product, and a product business can add a service or charge. Numens decides the VAT on those lines from their words (migration `20261204000100_vat_by_numens.sql`). The `ai` edge function's `vat_lines` action takes up to 50 descriptions from anyone who records sales: what the business has on record for the words (`line_vat`, one row per business and description, matched in lower case with spaces collapsed) comes back at once, and the rest go to Numens (Gemini until Numens is connected), whose answers are stored for next time through `svc_line_vat_store`. While TaxStreem has paused AI reading for the business, only what is on record comes back.
+
+The invoice editor, the phone invoice, recurring invoices and Martina show each answer on its line with the reason behind the information icon. An answer below the business's threshold (`orgs.auto_post_threshold`, never below 0.8) is still used, and issuing asks the person to keep it or change it first; so does a line Numens could not answer. Change, on any line, makes the person's choice the decision for those words: recorded by name in `line_vat` (source `person`, with Numens' earlier answer kept in `ai`), used for the same words from then on, and never replaced by Numens.
+
+The app marks these lines with `vat_by` (`numens` takes what is on record, `person` records the person's choice) and `private.write_lines` applies it, keeping the basis on `sale_lines.vat_basis` and Numens' NRS description on `nrs_vat_label` for zero-rated and exempt lines. `public.issue_invoice` refuses a draft with a line Numens is not sure of or has not answered (`vat_basis.source = 'waiting'`) in a VAT-registered business, unless the sale is an export or to an exempt buyer. Lines that are not marked (bank receipts, sales schedules, the till, the API) keep the treatment they bring. A recurring schedule is issued with no one there, so `recurring_save` refuses one with a line Numens is not sure of, and each run takes the decision on record for its lines' words.
 
 ## Reconciliation
 

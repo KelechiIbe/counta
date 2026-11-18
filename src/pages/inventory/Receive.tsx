@@ -12,7 +12,7 @@ import {
   toDraft, totals, unitLabel, unitOptions, uploadDocument, vatTreatment, type DraftLine, type Source,
 } from '../../lib/receive';
 import { Icon } from '../../components/Icon';
-import { VatInfo } from '../../components/VatInfo';
+import { ItemVat } from '../../components/LineVat';
 import { PeriodPicker } from '../../components/PeriodPicker';
 import { useScreenPeriod } from '../../lib/period';
 import { Alert, Chip, Empty, Label, Modal, SkeletonRows, Spinner, XButton } from '../../components/ui';
@@ -344,7 +344,7 @@ export function ReceiveFlow({ mode, receiptId, po, itemId, onClose, onAnother, o
               <div className="stack m-minw0" style={{ gap: 8, minWidth: 820 }}>
                 {lines.map((l) => (
                   <LineRow key={l.id} l={l} items={items} item={lineItem(inv, l)} docUrl={docUrl} hand={receipt.source === 'photo_handwritten'}
-                    canPrice={can(inv, 'edit_prices')} onPatch={(p, c) => patch(l.id, p, c)}
+                    canPrice={can(inv, 'edit_prices')} canVat={can(inv, 'edit_prices') || can(inv, 'keep_books')} onPatch={(p, c) => patch(l.id, p, c)}
                     onRemove={() => { dirty.current = true; setLines((ls) => ls.filter((x) => x.id !== l.id)); if (l.receipt_id) setRemoved((r) => [...r, l.id]); }} />
                 ))}
               </div>
@@ -578,8 +578,8 @@ function DocCrop({ url, bbox, raw, hand }: { url: string | null; bbox: number[] 
   );
 }
 
-function LineRow({ l, items, item, docUrl, hand, canPrice, onPatch, onRemove }: {
-  l: DraftLine; items: Item[]; item: Item | null; docUrl: string | null; hand: boolean; canPrice: boolean;
+function LineRow({ l, items, item, docUrl, hand, canPrice, canVat, onPatch, onRemove }: {
+  l: DraftLine; items: Item[]; item: Item | null; docUrl: string | null; hand: boolean; canPrice: boolean; canVat: boolean;
   onPatch: (p: Partial<DraftLine>, confirm?: boolean) => void; onRemove: () => void;
 }) {
   const doubtful = !l.confirmed;
@@ -598,7 +598,7 @@ function LineRow({ l, items, item, docUrl, hand, canPrice, onPatch, onRemove }: 
           <select className="input input-sm" value={l.item_id || (nw ? '__new' : '')} aria-label="Item"
             onChange={(e) => {
               const v = e.target.value;
-              if (v === '__new') onPatch({ item_id: null, new_item: { name: l.new_item?.name || (l.raw_text || '').slice(0, 80), purchase_unit: 'Carton', pack_size: 1, selling_unit: 'piece', category: 'General', vat_treatment: 'standard', track_batches: false } });
+              if (v === '__new') onPatch({ item_id: null, new_item: { name: l.new_item?.name || (l.raw_text || '').slice(0, 80), purchase_unit: 'Carton', pack_size: 1, selling_unit: 'piece', category: 'General', track_batches: false } });
               else {
                 const it = items.find((i) => i.id === v) || null;
                 const fill = it && !(Number(l.unit_cost) > 0) ? Math.round(Number(it.last_cost ?? it.wac ?? 0) * (l.unit_kind === 'purchase' ? it.pack_size : 1) * 100) / 100 : l.unit_cost;
@@ -644,7 +644,7 @@ function LineRow({ l, items, item, docUrl, hand, canPrice, onPatch, onRemove }: 
           </div>
         </div>
       )}
-      {nw && <NewItemFields nw={nw} canPrice={canPrice} cost={Number(l.unit_cost) / (l.unit_kind === 'purchase' ? Math.max(1, Number(nw.pack_size) || 1) : 1)} onChange={(p) => onPatch({ new_item: { ...nw, ...p } }, false)} />}
+      {nw && <NewItemFields nw={nw} canPrice={canPrice} canVat={canVat} cost={Number(l.unit_cost) / (l.unit_kind === 'purchase' ? Math.max(1, Number(nw.pack_size) || 1) : 1)} onChange={(p) => onPatch({ new_item: { ...nw, ...p } }, false)} />}
       {tracks && (
         <div className="row wrap" style={{ gap: 10, marginTop: 8 }}>
           <span className="faint" style={{ fontSize: 12 }}>Batch tracking</span>
@@ -657,12 +657,12 @@ function LineRow({ l, items, item, docUrl, hand, canPrice, onPatch, onRemove }: 
   );
 }
 
-function NewItemFields({ nw, canPrice, cost, onChange }: { nw: NonNullable<DraftLine['new_item']>; canPrice: boolean; cost: number; onChange: (p: Partial<NonNullable<DraftLine['new_item']>>) => void }) {
+function NewItemFields({ nw, canPrice, canVat, cost, onChange }: { nw: NonNullable<DraftLine['new_item']>; canPrice: boolean; canVat: boolean; cost: number; onChange: (p: Partial<NonNullable<DraftLine['new_item']>>) => void }) {
   const pack = Number(nw.pack_size);
   const packErr = !(pack >= 1 && Number.isInteger(pack));
   return (
     <div style={{ marginTop: 8, background: '#F0F7FF', borderRadius: 10, padding: '10px 12px' }}>
-      <div style={{ fontSize: 12, color: '#1E3A8A', marginBottom: 8 }}>New item will be created with this cost, pack size, VAT treatment and vendor.</div>
+      <div style={{ fontSize: 12, color: '#1E3A8A', marginBottom: 8 }}>New item will be created with this cost, pack size and vendor. Numens decides its VAT.</div>
       <div className="m-2" style={{ display: 'grid', gridTemplateColumns: 'minmax(180px,2fr) repeat(3,minmax(90px,1fr)) minmax(120px,1.2fr) minmax(130px,1.2fr)', gap: 8, alignItems: 'end' }}>
         <div className="m-full"><label className="field-label" style={{ fontSize: 12 }}>Name</label><input className="input input-sm" value={nw.name} onChange={(e) => onChange({ name: e.target.value })} /></div>
         <div><label className="field-label" style={{ fontSize: 12 }}>Buy by the</label>
@@ -670,8 +670,9 @@ function NewItemFields({ nw, canPrice, cost, onChange }: { nw: NonNullable<Draft
         <div><label className="field-label" style={{ fontSize: 12 }}>Contains</label><input className={'input input-sm' + (packErr ? ' err' : '')} type="number" min={1} step={1} value={nw.pack_size ?? 1} onChange={(e) => onChange({ pack_size: e.target.value as any })} /></div>
         <div><label className="field-label" style={{ fontSize: 12 }}>Sell by the</label>
           <select className="input input-sm" value={nw.selling_unit || 'piece'} onChange={(e) => onChange({ selling_unit: e.target.value })}>{['piece', 'pack', 'sachet', 'tin', 'bottle', 'derica', 'mudu', 'paint bucket', 'kg', 'roll'].map((u) => <option key={u}>{u}</option>)}</select></div>
-        <div><label className="field-label" style={{ fontSize: 12 }}>VAT on sales<VatInfo side="sale" treatment={nw.vat_treatment || 'standard'} name={nw.name} size={12} /></label>
-          <select className="input input-sm" value={nw.vat_treatment || 'standard'} onChange={(e) => onChange({ vat_treatment: e.target.value as any })}><option value="standard">Standard {vatPct()}</option><option value="zero">Zero-rated</option><option value="exempt">Exempt</option></select></div>
+        <div className="m-full" style={{ gridColumn: '1 / -1' }}><label className="field-label" style={{ fontSize: 12 }}>VAT on sales</label>
+          <ItemVat value={nw.vat_by === 'person' && nw.vat_treatment ? nw.vat_treatment : 'auto'} name={nw.name} canSet={canVat} testid="new-item-vat"
+            onChange={(v) => onChange(v === 'auto' ? { vat_treatment: undefined, vat_by: undefined } : { vat_treatment: v, vat_by: 'person' })} /></div>
         {canPrice ? (
           <div><label className="field-label" style={{ fontSize: 12 }}>Selling price / {nw.selling_unit || 'piece'}</label>
             <input className="input input-sm" type="number" min={0} placeholder={cost > 0 ? `≈ ${Math.round(cost * 1.15)}` : '₦'} value={nw.price ?? ''} onChange={(e) => onChange({ price: e.target.value === '' ? null : (e.target.value as any) })} /></div>

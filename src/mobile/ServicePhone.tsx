@@ -12,6 +12,8 @@ import { cap, useWords } from '../lib/wording';
 import { vatInside, vatPct, vatRateOn } from '../lib/vat';
 import { Icon } from '../components/Icon';
 import { Spinner } from '../components/ui';
+import { LineVat, VatCheck } from '../components/LineVat';
+import { forgetLineVat, lineVatTreatment, linesToCheck, useLineVat, vatKey, type VatBy, type VatT } from '../lib/lineVat';
 import { CustomerPicker, RecordPayment, SendBox } from '../pages/sell/common';
 import { MTop, QueueBanner, useM } from './ctx';
 import { Done } from './common';
@@ -54,8 +56,9 @@ export function TodayNumbers() {
 }
 
 // ---------------------------------------------------------------- issue an invoice
-type Line = { key: string; description: string; amount: string };
-const newLine = (): Line => ({ key: crypto.randomUUID(), description: '', amount: '' });
+// Numens decides each line's VAT from its description, unless the person chose it (vat_by 'person', vat_treatment theirs).
+type Line = { key: string; description: string; amount: string; vat_by: VatBy; vat_treatment: VatT };
+const newLine = (): Line => ({ key: crypto.randomUUID(), description: '', amount: '', vat_by: 'numens', vat_treatment: 'standard' });
 
 export function InvoicePhone() {
   const { data: inv } = useInventory();
@@ -70,28 +73,44 @@ export function InvoicePhone() {
   const [busy, setBusy] = useState(false);
   const [issuedId, setIssuedId] = useState<string | null>(null);
   const issued = useSale(issuedId);
+  const vatOn = !!inv?.org.vat_registered;
+  const lineVat = useLineVat(orgId, vatOn ? lines.map((l) => l.description) : []);
+  const [check, setCheck] = useState<Line[] | null>(null);
   if (!inv) return null;
   if (!can(inv, 'record_sales')) return <><MTop title="Issue an invoice" /><div className="m-pad muted">Your role does not issue invoices.</div></>;
   if (!queue.online && !issuedId) return <NeedsData title="Issue an invoice" />;
   const incl = !!inv.org.prices_include_vat;
   const day = today();
+  const eff = (l: Line): VatT => (vatOn ? lineVatTreatment(lineVat(l.description), l.vat_by, l.vat_treatment) : l.vat_treatment);
   const sum = lines.reduce((a, l) => a + (money(l.amount) || 0), 0);
-  const vat = inv.org.vat_registered ? (incl ? vatInside(sum, day) : sum * vatRateOn(day)) : 0;
+  const taxed = lines.reduce((a, l) => a + (eff(l) === 'standard' ? money(l.amount) || 0 : 0), 0);
+  const vat = vatOn ? (incl ? vatInside(taxed, day) : taxed * vatRateOn(day)) : 0;
   const total = incl ? sum : sum + vat;
   const filled = lines.filter((l) => l.description.trim() || l.amount.trim());
   const problem = !customer ? `Choose the ${w.customer}.` : !filled.length ? 'Describe the work and its price.'
     : filled.some((l) => !l.description.trim()) ? 'Describe the service on each line.' : filled.some((l) => !((money(l.amount) || 0) > 0)) ? 'Give each line a price above zero.' : null;
   const upd = (k: string, p: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === k ? { ...l, ...p } : l)));
-  async function save(issue: boolean) {
+  // The person's choice (or Numens again) for a line, and for every line here with the same words.
+  const vatChoice = (l: Line, by: VatBy, t?: VatT) => setLines((ls) => ls.map((x) => (vatKey(x.description) === vatKey(l.description) ? { ...x, vat_by: by, vat_treatment: t ?? x.vat_treatment } : x)));
+  async function save(issue: boolean, checked?: Line[]) {
     if (problem || !customer) { toast(problem || 'Check the invoice.', 'err'); return; }
+    const ls = (checked || lines).filter((l) => l.description.trim() || l.amount.trim());
+    // Before it is issued, the person looks at the lines whose VAT Numens is not sure of.
+    if (issue && vatOn && !checked) {
+      const c = linesToCheck(ls, lineVat);
+      if (c.waiting.length) { toast('Numens is still checking the VAT. Issue it again in a moment.', 'err'); return; }
+      if (c.unsure.length) { setCheck(c.unsure); return; }
+    }
     setBusy(true);
     try {
       const due = customer.terms_days ? new Date(Date.parse(day + 'T12:00:00Z') + customer.terms_days * 86400_000).toISOString().slice(0, 10) : null;
       const r = await rpc<Sale>('save_sale_doc', { p_org: orgId, p_doc: {
         id: null, doc_type: 'invoice', status: issue ? 'issue' : 'draft', customer_id: customer.id, issue_date: day, due_date: due, prices_include_vat: incl, delivery_fee: 0,
         notes: note.trim() || null, terms: inv!.org.invoice_note || null, reference: null,
-        lines: filled.map((l) => ({ description: l.description.trim(), qty: 1, unit_price: money(l.amount), discount: 0, vat_treatment: 'standard', revenue_account: null })),
+        lines: ls.map((l) => ({ description: l.description.trim(), qty: 1, unit_price: money(l.amount), discount: 0, vat_treatment: eff(l), revenue_account: null,
+          ...(vatOn ? { vat_by: l.vat_by } : {}) })),
       } });
+      forgetLineVat(orgId, ls.filter((l) => l.vat_by === 'person').map((l) => l.description));
       await Promise.all(['sales', 'sale', 'customers'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
       if (!issue) { toast(`${r.number} saved as a draft. Issue it from Sales when it is ready.`); setLines([newLine()]); setNote(''); setCustomer(null); }
       else setIssuedId(r.id);
@@ -126,6 +145,8 @@ export function InvoicePhone() {
           {lines.map((l, i) => (
             <div key={l.key} className="m-card stack" style={{ gap: 8 }}>
               <textarea className="input" rows={2} value={l.description} onChange={(e) => upd(l.key, { description: e.target.value })} placeholder="Describe the service rendered" aria-label={`Service ${i + 1}`} autoFocus={i === 0 && lines.length === 1} />
+              {vatOn && <LineVat st={lineVat(l.description)} by={l.vat_by} treatment={eff(l)} name={l.description} day={day} testid="line-vat"
+                onPick={(t) => vatChoice(l, 'person', t)} onNumens={() => vatChoice(l, 'numens')} />}
               <div className="row" style={{ gap: 8 }}>
                 <input className="input" inputMode="decimal" value={l.amount} onChange={(e) => upd(l.key, { amount: e.target.value })} placeholder="Price (₦)" aria-label={`Price of service ${i + 1}`} style={{ fontSize: 16, fontWeight: 600 }} />
                 {lines.length > 1 && <button className="btn btn-ghost btn-sm" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label="Remove this line"><Icon name="trash" size={14} /></button>}
@@ -136,7 +157,7 @@ export function InvoicePhone() {
         </div>
         <textarea className="input" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder={`Note to the ${w.customer} (optional)`} aria-label="Note" />
         <div className="m-card stack" style={{ gap: 4, fontSize: 13 }}>
-          {inv.org.vat_registered && <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">VAT {vatPct(day)}{incl ? ' (included)' : ''}</span><span>{N2(vat)}</span></div>}
+          {vatOn && <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">VAT {vatPct(day)}{incl ? ' (included)' : ''}</span><span>{N2(vat)}</span></div>}
           <div className="row" style={{ justifyContent: 'space-between', fontSize: 17, fontWeight: 700 }}><span>Total</span><span data-testid="invoice-total">{N2(total)}</span></div>
         </div>
         {problem && filled.length > 0 && <div className="faint" style={{ fontSize: 12 }}>{problem}</div>}
@@ -145,6 +166,14 @@ export function InvoicePhone() {
           <button className="m-btn" style={{ flex: 1 }} disabled={busy || !!problem} onClick={() => save(true)}>{busy ? 'Issuing…' : 'Issue invoice'}</button>
         </div>
       </div>
+      {check && <VatCheck day={day} title="Check the VAT" action="Issue invoice"
+        sub={`Numens is not sure of the VAT on ${check.length === 1 ? 'this line' : 'these lines'}. Keep its answer or change it, then the invoice is issued.`}
+        lines={check.map((l) => ({ key: l.key, description: l.description, st: lineVat(l.description) }))} onClose={() => setCheck(null)}
+        onDone={(picks) => {
+          const byWords = new Map(check.map((l) => [vatKey(l.description), picks[l.key]]));
+          const next = lines.map((x) => (byWords.get(vatKey(x.description)) && x.vat_by !== 'person' ? { ...x, vat_by: 'person' as const, vat_treatment: byWords.get(vatKey(x.description))! } : x));
+          setLines(next); setCheck(null); void save(true, next);
+        }} />}
     </>
   );
 }

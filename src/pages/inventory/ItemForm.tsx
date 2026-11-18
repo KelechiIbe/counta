@@ -3,9 +3,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { edge } from '../../lib/api';
 import { Drawer, Field, XButton, Alert, Thumb } from '../../components/ui';
 import { Icon } from '../../components/Icon';
-import { VatInfo } from '../../components/VatInfo';
+import { ItemVat } from '../../components/LineVat';
+import type { VatT } from '../../lib/lineVat';
 import { rpc, supabase } from '../../lib/supabase';
-import { useInventory, useSession, useToast } from '../../state/session';
+import { can, useInventory, useSession, useToast } from '../../state/session';
 import { useAction } from '../../lib/queries';
 import { N } from '../../lib/format';
 import { sumQty } from '../../lib/domain';
@@ -13,7 +14,6 @@ import { ITEM_TYPES, defaultVat, fieldsFor, industryOf, typeSells, type FieldDef
 import type { Item } from '../../lib/types';
 import type { Drafts } from '../../lib/drafts';
 import { shrinkImage } from '../../lib/images';
-import { vatPct } from '../../lib/vat';
 
 // Kept for screens that still offer the older fixed lists.
 export const CATEGORIES = ['Staples', 'Noodles', 'Dairy', 'Beverages', 'Drinks', 'Household', 'Personal care', 'OTC medicine', 'Breakfast', 'Snacks', 'Baby', 'Frozen', 'General'];
@@ -114,9 +114,10 @@ export default function ItemForm({ item, draft, note, onClose, onSaved }: {
       cleanAttrs[fd.key] = fd.type === 'number' ? Number(v) : v;
     }
     for (const [k, v] of Object.entries(attrs)) if (!(k in cleanAttrs) && v !== '' && v != null && ![...indFields, ...commonFields].some((x) => x.key === k)) cleanAttrs[k] = v;
-    // 'auto' lets the tax agent (Numens) decide after saving; until it answers, the industry default applies.
+    // 'auto' lets the tax agent (Numens) decide after saving; until it answers, a new item has the industry default and a
+    // saved one keeps its VAT.
     const auto = f.vat_treatment === 'auto';
-    const chosenVat = auto ? defaultVat(ind.id) : f.vat_treatment;
+    const chosenVat = auto ? (editing ? item!.vat_treatment : defaultVat(ind.id)) : f.vat_treatment;
     const vatChanged = !auto && (!editing || f.vat_treatment !== item?.vat_treatment);
     const payload: any = {
       ...f, vat_treatment: chosenVat, id: item?.id, pack_size: pack, price: sells ? price : (price > 0 ? price : 0), cost: !editing || !hasStock ? cost : null,
@@ -148,7 +149,9 @@ export default function ItemForm({ item, draft, note, onClose, onSaved }: {
       // A person's choice is final for the agent, so it is recorded as a manual decision.
       await rpc('set_item_vat', { p_item: id, p_treatment: f.vat_treatment, p_reason: editing ? 'Changed on the item' : 'Set when the item was added' }).catch(() => undefined);
     } else if (auto) {
-      edge('ai', { action: 'vat_classify_item', item_id: id }).then(() => qc.invalidateQueries({ queryKey: ['inv'] })).catch(() => undefined);
+      // A saved item handed back to Numens loses the person's decision first, so Numens may decide again.
+      (editing ? rpc('recheck_item_vat', { p_item: id }) : Promise.resolve())
+        .then(() => edge('ai', { action: 'vat_classify_item', item_id: id })).then(() => qc.invalidateQueries({ queryKey: ['inv'] })).catch(() => undefined);
     }
     onSaved?.(id); onClose();
   }
@@ -186,11 +189,11 @@ export default function ItemForm({ item, draft, note, onClose, onSaved }: {
             <input className="input" list="item-brands" value={f.brand} onChange={(e) => set('brand', e.target.value)} placeholder="Optional" />
             <datalist id="item-brands">{brands.map((b) => <option key={b} value={b} />)}</datalist>
           </Field>
-          <Field label={<>VAT treatment{f.vat_treatment !== 'auto' && <VatInfo side="sale" treatment={f.vat_treatment} name={f.name} item={editing && item?.vat_treatment === f.vat_treatment ? item : null} vatRegistered={inv?.org.vat_registered} />}</>} hint={f.vat_treatment === 'auto' ? 'Numens reads the item and sets its VAT under the NTA 2025. You can change it later.' : undefined}>
-            <select className="input" value={f.vat_treatment} onChange={(e) => set('vat_treatment', e.target.value)}>
-              {!editing && <option value="auto">Let Numens decide</option>}
-              <option value="standard">Standard · {vatPct()}</option><option value="zero">Zero-rated (basic food, medicine, farm inputs)</option><option value="exempt">Exempt (baby products, petroleum products…)</option>
-            </select>
+          <Field label="VAT on sales">
+            <div style={{ minHeight: 40, display: 'flex', alignItems: 'center' }}>
+              <ItemVat item={editing ? item : null} value={f.vat_treatment as VatT | 'auto'} name={f.name} vatRegistered={inv?.org.vat_registered} testid="item-vat"
+                canSet={can(inv, 'edit_prices') || can(inv, 'keep_books')} canAsk={!editing || can(inv, 'edit_prices')} onChange={(v) => set('vat_treatment', v)} />
+            </div>
           </Field>
         </div>
         {editing && hasStock && item?.item_type && item.item_type !== f.item_type && (

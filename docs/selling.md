@@ -15,7 +15,7 @@ An issued sale writes one journal:
 
 Money received posts separately as a collection: Dr till cash, bank or wallet (and Dr 6701 for a provider's fee), Cr 1101. Anything paid beyond what is owed goes to 2107 Customer advances. Cash confirms itself. Transfers, POS, cheques and other channels stay pending until a manager or the bookkeeper confirms them against the bank (Sales, Payments to confirm). A business with its Moniepoint terminals connected has POS payments confirmed by Moniepoint itself (see [pos-terminals.md](pos-terminals.md)). Flutterwave and partner-rail payments confirm themselves once the rail's record says paid. Until a payment is confirmed the customer still owes the money.
 
-The VAT on each line comes from the item's treatment, which the tax agent sets when the item is added (see [atlas.md](atlas.md)).
+The VAT on each line comes from the item's treatment, which the tax agent sets when the item is added. A line typed on the invoice (a service, a fee, a charge) has its VAT decided by Numens from its words; the person confirms the answers Numens is not sure of before the invoice is issued, and can change any of them (see [atlas.md](atlas.md)).
 
 ## The till
 
@@ -52,7 +52,7 @@ A sale logged with Later waits in Sales, To settle, for someone who keeps the bo
 Sell, Recurring invoices bills a customer the same way on a schedule: a retainer, a rent, a subscription. Anyone who records sales sets one up (`recurring_save`):
 
 - **When.** Monthly on a day from 1 to 28 (so every month has it), every three months, or every year, from a start date to an optional end date.
-- **What.** One to fifty lines. Prices are before VAT. In a VAT-registered business a standard line carries VAT at the rate of the invoice's date; zero-rated and exempt lines carry none, and a business not registered for VAT charges none. A line marked **first invoice only** (a deposit, a set-up fee) goes on the first invoice, and cannot be added once the schedule has issued one.
+- **What.** One to fifty lines. Prices are before VAT. In a VAT-registered business Numens decides each line's VAT from its words, and the person confirms the ones it is not sure of before the schedule is saved (each invoice is issued without asking). A standard line carries VAT at the rate of the invoice's date; zero-rated and exempt lines carry none, and a business not registered for VAT charges none. A line marked **first invoice only** (a deposit, a set-up fee) goes on the first invoice, and cannot be added once the schedule has issued one.
 - **Sending.** Each invoice can be sent to the customer by email or WhatsApp, or issued for you to send. A download-only business never sends. The note on the schedule is printed on each invoice, so the customer sees it.
 
 Every hour (`private.recurring_tick`, the `counta-recurring` cron job) Counta issues each schedule's invoice on its day in the business's own time zone (Lagos by default), dated that day, then moves the schedule on. One invoice per schedule and day, however far behind it was, and no backfill. When e-invoicing has NRS sign an invoice first, it is held and sent once signed. A failure keeps the day, records why, and pauses the schedule after three in a row.

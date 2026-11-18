@@ -5,7 +5,8 @@
 // (paying a bill, a payout, a bulk or tax payment) is never done here: Martina opens it on screen and the person taps.
 import { useSyncExternalStore } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
-import { rpc } from '../lib/supabase';
+import { ai, rpc } from '../lib/supabase';
+import { lineVatThreshold, vatLabel, type LineVatState } from '../lib/lineVat';
 import { N2 } from '../lib/format';
 import { parseLines } from '../lib/drafts';
 import { can } from '../state/session';
@@ -112,15 +113,38 @@ export function voiceActions(ctx: Ctx): Record<string, (p: any) => Promise<unkno
       const days = Number(due_in_days) >= 0 && due_in_days !== '' && due_in_days != null ? Number(due_in_days) : Number(inv.org.invoice_terms_days ?? 14);
       const due = addDays(today, days);
       const total = parsed.reduce((s, l) => s + l.qty * Number(l.unit_price), 0);
+      // Numens decides the VAT on lines that are not products, from their words. The card shows each answer; the yes
+      // that issues the invoice is the person's confirmation of the ones Numens is not sure of.
+      const vatOn = !!inv.org.vat_registered;
+      const typed = parsed.filter((l) => !l.item_id);
+      const vatOf = new Map<string, LineVatState>();
+      if (vatOn && typed.length) {
+        const r = await ai<{ threshold: number; results: any[] }>('vat_lines', { org_id: o, lines: typed.map((l) => l.name) });
+        const sure = Number(r?.threshold) > 0 ? Number(r.threshold) : lineVatThreshold(o);
+        for (const l of typed) {
+          const a = (r?.results || []).find((x: any) => String(x.description).replace(/\s+/g, ' ').trim().toLowerCase() === l.name.replace(/\s+/g, ' ').trim().toLowerCase());
+          vatOf.set(l.name, a?.treatment ? { answer: a, loading: false, failed: false, unsure: a.source !== 'person' && (a.confidence ?? 0) < sure } : { answer: null, loading: false, unsure: false, failed: true });
+        }
+      }
+      const vatNote = (name: string) => {
+        const st = vatOf.get(name);
+        if (!st) return '';
+        if (!st.answer) return ` · ${vatLabel('standard', today)}, Numens could not decide`;
+        return ` · ${vatLabel(st.answer.treatment, today)}${st.unsure ? ', Numens is not sure' : ''}`;
+      };
+      const asked = typed.filter((l) => { const st = vatOf.get(l.name); return !!st && (!st.answer || st.unsure); });
       const p = hold({
         id: id(), kind: 'invoice', title: `Issue an invoice to ${c.name}`, at: Date.now(), total: Math.round(total * 100) / 100,
-        lines: [...parsed.map((l) => `${l.qty} × ${l.name} at ${N2(Number(l.unit_price))}`), `Due ${due}`],
-        note: [inv.org.prices_include_vat ? 'Prices include VAT' : inv.org.vat_registered ? 'VAT is added on top where it applies' : '', channel ? `Sent to ${to} by ${channel === 'whatsapp' ? 'WhatsApp' : 'email'}` : 'Not sent to the customer'].filter(Boolean).join('. '),
+        lines: [...parsed.map((l) => `${l.qty} × ${l.name} at ${N2(Number(l.unit_price))}${l.item_id ? '' : vatNote(l.name)}`), `Due ${due}`],
+        note: [inv.org.prices_include_vat ? 'Prices include VAT' : inv.org.vat_registered ? 'VAT is added on top where it applies' : '',
+          asked.length ? `Saying yes confirms the VAT shown on ${asked.map((l) => l.name).join(', ')}` : '',
+          channel ? `Sent to ${to} by ${channel === 'whatsapp' ? 'WhatsApp' : 'email'}` : 'Not sent to the customer'].filter(Boolean).join('. '),
         run: async () => {
           const s = await rpc<any>('save_sale_doc', { p_org: o, p_doc: { id: null, doc_type: 'invoice', status: 'issue', customer_id: c.id, issue_date: today, due_date: due,
             prices_include_vat: Boolean(inv.org.prices_include_vat), delivery_fee: 0, notes: 'Raised by Martina on a spoken yes', terms: null, reference: null,
             lines: parsed.map((l) => (l.item_id ? { item_id: l.item_id, qty: l.qty, unit: 'selling', unit_price: Number(l.unit_price), discount: 0 }
-              : { description: l.name, qty: l.qty, unit_price: Number(l.unit_price), discount: 0, vat_treatment: 'standard', revenue_account: null })) } });
+              : { description: l.name, qty: l.qty, unit_price: Number(l.unit_price), discount: 0, vat_treatment: vatOf.get(l.name)?.answer?.treatment || 'standard', revenue_account: null,
+                  ...(vatOn ? { vat_by: asked.includes(l) ? 'person' : 'numens' } : {}) })) } });
           // An invoice that needs approval (the firm's, or past the discount limit) waits for it, unsent.
           const w = (s.approvals || []).find((a: any) => a.status === 'pending');
           if (s.status === 'draft' && w) {
