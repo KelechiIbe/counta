@@ -160,4 +160,21 @@ Deno.test('Moniepoint\'s success codes', () => {
   assertEquals(t?.kind, 'transfer');
 });
 
+Deno.test('an event Counta does not record is described without the payer\'s details', () => {
+  const body = { eventId: 'e9', eventType: 'V1_TRANSFER_TRANSACTION', createdAt: '2026-11-20T09:00:00Z', subject: { domain: 'transfer' },
+    data: { businessId: 77, amount: 10000, transactionReference: 'MP-T-1', transactionType: 'TRANSFER', transactionStatus: 'COMPLETED', responseCode: '20000',
+      senderName: 'ADA OBI', senderAccountNumber: '0123456789', narration: 'INV-0042 thank you' } };
+  assertEquals(mp.fromEvent(body, 'kobo'), null);
+  const shape = mp.eventShape(body);
+  assertEquals(shape.eventType, 'V1_TRANSFER_TRANSACTION');
+  assertEquals(shape.transactionType, 'TRANSFER');
+  assertEquals(shape.amount, 10000);
+  assertEquals(shape.terminal, false);
+  assert(shape.fields.includes('narration') && shape.fields.includes('senderName'));
+  const text = JSON.stringify(shape);
+  for (const secret of ['ADA OBI', '0123456789', 'INV-0042', 'MP-T-1']) assert(!text.includes(secret), secret);
+  assertEquals(mp.eventShape(null).fields, []);
+  assertEquals(mp.eventShape({ payload: JSON.stringify(body) }).eventType, 'V1_TRANSFER_TRANSACTION');
+});
+
 Deno.test({ name: 'stop the stand-in', fn: async () => { await server.shutdown(); }, sanitizeOps: false, sanitizeResources: false });
