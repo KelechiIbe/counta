@@ -265,6 +265,7 @@ async function moniepointWebhook(req: Request, token: string) {
   await svc('svc_pos_note', { p_connection: id, p: { event: true } });
   const unit = conn.amount_unit === 'naira' ? 'naira' : 'kobo';
   const t = mp.fromEvent(body, unit);
+  console.log('pos event', JSON.stringify({ connection: id, recorded: Boolean(t), ...mp.eventShape(body) }));
   if (!t) return json({ ok: true, ignored: true });
   if (t.business_id && conn.business_ref && t.business_id !== String(conn.business_ref)) return json({ ok: true, ignored: 'another business' });
   if (!t.event_id) t.event_id = hid;

@@ -311,6 +311,21 @@ export function fromEvent(body: any, unit: 'kobo' | 'naira'): Txn | null {
   };
 }
 
+// What an event looks like, without the payer's details: its type, the status fields, the amount and the names of the fields it
+// carries. Logged for every signed event, so event types Counta does not record yet (V1_TRANSFER_TRANSACTION) can be studied.
+export function eventShape(body: any) {
+  const payload = typeof body?.payload === 'string' ? safeJson(body.payload) : body?.payload;
+  const env = payload && payload.data ? payload : body;
+  const d = env?.data && typeof env.data === 'object' ? env.data : {};
+  const word = (v: unknown) => (v == null || v === '' ? undefined : String(v).slice(0, 40));
+  return {
+    eventType: word(env?.eventType), transactionType: word(d.transactionType), transactionStatus: word(d.transactionStatus),
+    responseCode: word(d.responseCode), paymentMethod: word(d.paymentMethod ?? d.actualPaymentMethod), amount: Number.isFinite(Number(d.amount)) ? Number(d.amount) : undefined,
+    terminal: Boolean(d.terminalSerial), merchantReference: Boolean(d.merchantReference), transactionReference: Boolean(d.transactionReference),
+    fields: Object.keys(d).sort().slice(0, 60), envelope: Object.keys(env || {}).sort().slice(0, 30),
+  };
+}
+
 // The answer to GET /v1/transactions/merchants/{merchantReference}.
 export function fromStatus(s: any, unit: 'kobo' | 'naira'): Txn & { processing: string } {
   const ps = String(s?.processingStatus || '').toUpperCase();
