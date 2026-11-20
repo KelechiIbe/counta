@@ -6,13 +6,24 @@ The code lives in `supabase/functions/pos` (the `pos` Edge Function, with Moniep
 
 ## Connecting
 
-Only the owner connects, because the key can push amounts to every terminal the business has. The sample business cannot connect.
+Only the owner connects, because the credentials can push amounts to every terminal the business has. The sample business cannot connect.
 
-In the Moniepoint Business app the owner opens Settings, POS Terminal Configuration, switches on ERP Integration, then creates a client under POS App Developers for the live environment with transaction push, transaction read, webhook read and webhook write. Moniepoint shows the key once. The owner pastes it into Counta's Connect Moniepoint form and picks the bank account the terminals pay into. When no account in Counta looks like Moniepoint, the form offers to open one called Moniepoint (bank name Moniepoint MFB), with an optional account number.
+In the Moniepoint Business app the owner opens Settings, POS Terminal Configuration, switches on ERP Integration, then creates a client under POS App Developers for the live environment with transaction push, transaction read, webhook read and webhook write (and webhook delete where the app offers it). Moniepoint shows a client ID and an API key, the key only once. The owner pastes both into Counta's Connect Moniepoint form and picks the bank account the terminals pay into. When no account in Counta looks like Moniepoint, the form offers to open one called Moniepoint (bank name Moniepoint MFB), with an optional account number. The form keeps the key out of the browser's password filling: it is a plain text box drawn as dots, with a button to show it.
 
-Counta then asks Moniepoint about the key (`GET /v1/introspect`). A sandbox key is refused, since it never sees real payments. A key that lacks one of the four permissions is refused with the missing ones named. A key for several Moniepoint businesses gets a second question, which business this is. Counta subscribes to `V1_POS_PURCHASE_TRANSACTION` and `V1_POS_TRANSFER_TRANSACTION` at a webhook address with a random 48-character token, reads the subscription's signing secret, and sets Basic auth on the webhook with a random password where Moniepoint allows it. The key, the signing secret and the password are kept in Vault; the screens only ever show the key's last four characters.
+Moniepoint takes a client's credentials in one of two ways, and Counta tries them in turn (`resolve` in `moniepoint.ts`):
 
-Replacing the key runs the same steps and removes the old subscription. Disconnecting removes the subscription at Moniepoint, wipes the three secrets and stops the till sending to the terminals. Payments already in the books stay where they are.
+1. The API key on its own as a Bearer token on `api.pos.moniepoint.com` (`GET /v1/introspect`). Counta keeps the key.
+2. With a client ID, the two traded for an access token (`POST https://channel.moniepoint.com/v1/auth` with `clientId` and `clientSecret`; the token lasts a couple of hours). The token is tried on `api.pos.moniepoint.com`; if that host takes it, everything works as in the first way. If it refuses the token, sales go through `channel.moniepoint.com`, which only sends amounts to terminals and answers how a payment went. Counta keeps a small JSON record (`{ v, client_id, secret, host }`) in place of the key, and fetches a fresh token whenever the old one lapses or Moniepoint refuses it.
+
+A key refused on its own with no client ID gets "add the client ID"; a client ID and key Moniepoint refuses together get that message instead.
+
+When `api.pos.moniepoint.com` takes the credentials, Counta checks what they may do. A sandbox key is refused, since it never sees real payments. A key that lacks one of the four permissions is refused with the missing ones named. A key for several Moniepoint businesses gets a second question, which business this is. Counta subscribes to `V1_POS_PURCHASE_TRANSACTION` and `V1_POS_TRANSFER_TRANSACTION` at a webhook address with a random 48-character token, reads the subscription's signing secret, and sets Basic auth on the webhook with a random password where Moniepoint allows it.
+
+When only `channel.moniepoint.com` takes them, Counta cannot make the webhook, so the form moves to a second step: it shows the webhook address and asks the owner to add it in the Moniepoint Business app (POS App Developers, Webhooks, New Subscription, the purchase and transfer transactions) and paste back the secret Moniepoint shows. The connection is saved with the scopes `transaction:push` and `transaction:read`; the missing `webhook:write` is how the screens know the webhook was added by hand. Such a connection has no Basic auth on the webhook, no event history to read every six hours, and no business on file, so events are not checked against one.
+
+The credentials, the signing secret and the password are kept in Vault; the screens only ever show the key's last four characters.
+
+Replacing the credentials runs the same steps on the same connection, so its terminals and its ₦100 test stay, and removes the subscription the old credentials made. Disconnecting removes the subscription at Moniepoint (or, for a webhook added by hand, asks the owner to delete it in the app), wipes the secrets and stops the till sending to the terminals. Payments already in the books stay where they are.
 
 ## Terminals and the ₦100 test
 
@@ -28,11 +39,11 @@ Taking the payment saves the sale as waiting, opens a request with a reference o
 
 A decline shows Moniepoint's reason. The cashier can send it again to the same terminal or another, as card, transfer or either. "Stop waiting" withdraws the request in Counta, and the cashier should cancel it on the terminal too. "Keep waiting in the background" closes the screen; a banner on the till lists every sale still waiting at a terminal, and each opens the waiting screen again. A request that never reached its terminal expires after ten minutes, and one the terminal never answered expires after thirty. If the customer paid after that, the payment still finds its sale, as below.
 
-The money is recorded from Moniepoint's own answer for that reference, never from the webhook's body alone.
+The money is recorded from Moniepoint's own answer for that reference, never from the webhook's body alone. Moniepoint marks a successful payment with response code `00` or, in its webhook documentation, `20000`; both count as approved.
 
 ## Payments keyed by hand
 
-A payment on a terminal that Counta did not send arrives by webhook. Counta checks the HMAC signature (`moniepoint-webhook-signature`, Base64 HMAC-SHA256 of `id__timestamp__body` with the subscription's secret), the Basic auth password when one is set, the age of the event (more than seven days old is refused) and the business. It records the payment straight away and then looks the event up at Moniepoint (`GET /v1/webhook-subscription-events/{id}`) to confirm it. Each payment is then placed in this order:
+A payment on a terminal that Counta did not send arrives by webhook. Counta checks the HMAC signature (`moniepoint-webhook-signature`, Base64 HMAC-SHA256 of `id__timestamp__body` with the subscription's secret), the Basic auth password when one is set, the age of the event (more than seven days old is refused) and the business. It records the payment straight away and then looks the event up at Moniepoint (`GET /v1/webhook-subscription-events/{id}`) to confirm it, where the credentials reach that API; for a webhook added by hand the signature is the proof. Each payment is then placed in this order:
 
 1. A sale the till sent to a terminal for exactly this amount in the last four days, still unpaid. The cashier keyed it by hand, or the customer paid after the till gave up. The nearest in time wins, the same terminal first, and when more than one sale was waiting the payment carries a note asking someone to check with the cashier.
 2. A POS, card or transfer payment a cashier recorded in the last two days and that waits to be confirmed, for this amount (from the full till's "record it only", or the phone app's POS). It is confirmed. When several match, the one from the terminal's own branch wins; with several and none from that branch, the payment goes on to the next steps.
@@ -53,7 +64,7 @@ A database cron job, `counta-pos`, calls the function every two minutes while an
 
 ## Supabase settings
 
-The function needs no secrets of its own beyond Supabase's: each business's key lives in Vault. It is deployed with JWT verification off, because Moniepoint's webhook carries no Supabase token; the function checks the user's token itself for every other action. `MONIEPOINT_POS_BASE_URL` overrides `https://api.pos.moniepoint.com` for tests, and `POS_ALLOW_SANDBOX=1` lets the test harness use sandbox keys.
+The function needs no secrets of its own beyond Supabase's: each business's key lives in Vault. It is deployed with JWT verification off, because Moniepoint's webhook carries no Supabase token; the function checks the user's token itself for every other action. `MONIEPOINT_POS_BASE_URL` and `MONIEPOINT_CHANNEL_BASE_URL` override `https://api.pos.moniepoint.com` and `https://channel.moniepoint.com` for tests, and `POS_ALLOW_SANDBOX=1` lets the test harness use sandbox keys. `supabase/functions/pos/moniepoint_test.ts` runs the credential paths against a stand-in for both hosts.
 
 ## Not built yet
 

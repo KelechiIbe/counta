@@ -58,6 +58,9 @@ export function PosTerminals() {
   );
 }
 
+// A connection whose webhook the owner added in the Moniepoint app: its credentials cannot make webhooks.
+const handMade = (c: PosConnection) => !(c.scopes || []).includes('webhook:write');
+
 function ConnectionCard({ c, d, onReplace }: { c: PosConnection; d: PosOverview; onReplace: () => void }) {
   const toast = useToast();
   const qc = useQueryClient();
@@ -82,7 +85,7 @@ function ConnectionCard({ c, d, onReplace }: { c: PosConnection; d: PosOverview;
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 17, fontWeight: 600 }}>{c.provider_name}{c.business_name ? ` · ${c.business_name}` : ''}</div>
           <div className="faint" style={{ fontSize: 12, marginTop: 2 }}>
-            {c.key_hint ? `Key ending ${c.key_hint} · ` : ''}{c.last_event_at ? `last heard from ${when(c.last_event_at)}` : 'no payments yet'}{c.connected_by ? ` · connected by ${c.connected_by}` : ''}
+            {c.key_hint ? `Key ending ${c.key_hint} · ` : ''}{c.last_event_at ? `last heard from ${when(c.last_event_at)}` : 'no payments yet'}{c.connected_by ? ` · connected by ${c.connected_by}` : ''}{handMade(c) ? ' · webhook added in the Moniepoint app' : ''}
           </div>
         </div>
         <span className={'chip ' + (live ? 't-green' : 't-red')}>{live ? 'Connected' : 'Stopped answering'}</span>
@@ -179,42 +182,95 @@ function TerminalRow({ t, d, busy, save }: { t: PosTerminal; d: PosOverview; bus
   );
 }
 
+// A secret pasted by the owner: shown as dots unless they ask to see it, and kept out of the browser's password filling.
+function SecretInput({ value, onChange, label, placeholder, disabled }: { value: string; onChange: (v: string) => void; label: string; placeholder: string; disabled?: boolean }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="row" style={{ gap: 6 }}>
+      <input className="input" type="text" name={`mp-${label.toLowerCase().replace(/\W+/g, '-')}`} autoComplete="off" autoCorrect="off" autoCapitalize="off"
+        spellCheck={false} data-1p-ignore data-lpignore="true" data-form-type="other" value={value} disabled={disabled}
+        onChange={(e) => onChange(e.target.value)} aria-label={label} placeholder={placeholder}
+        style={{ flex: 1, minWidth: 0, ...(show ? {} : { WebkitTextSecurity: 'disc' }) } as React.CSSProperties} />
+      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShow(!show)} aria-label={show ? `Hide the ${label.toLowerCase()}` : `Show the ${label.toLowerCase()}`}>
+        <Icon name={show ? 'eye-off' : 'eye'} size={14} />
+      </button>
+    </div>
+  );
+}
+
 function ConnectModal({ d, existing, onClose }: { d: PosOverview; existing: PosConnection | null; onClose: () => void }) {
   const toast = useToast();
   const qc = useQueryClient();
   const { orgId } = useSession();
   const guess = d.accounts.find((a) => /moniepoint/i.test(`${a.name} ${a.bank_name || ''}`));
+  const [clientId, setClientId] = useState('');
   const [key, setKey] = useState('');
   const [acct, setAcct] = useState(existing?.bank_account_id || guess?.id || '');
   const [acctNo, setAcctNo] = useState('');
   const [choose, setChoose] = useState<{ id: string; name: string }[] | null>(null);
   const [biz, setBiz] = useState(existing?.business_ref || '');
+  // Set when Moniepoint wants the owner to add the webhook in its app: the address to paste there, and the secret it gives back.
+  const [hook, setHook] = useState<{ url: string; token: string } | null>(null);
+  const [hookSecret, setHookSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   async function go() {
     setBusy(true); setErr(null);
-    const r = await edge<{ choose?: { id: string; name: string }[]; connection?: PosConnection }>('pos', { action: 'connect', org_id: orgId,
-      key: key.trim(), business_id: biz || undefined, bank_account_id: acct || undefined, account_number: !acct && acctNo ? acctNo : undefined });
+    const r = await edge<{ choose?: { id: string; name: string }[]; connection?: PosConnection; webhook?: { url: string; token: string } }>('pos', {
+      action: 'connect', org_id: orgId, key: key.trim(), client_id: clientId.trim() || undefined, business_id: biz || undefined,
+      bank_account_id: acct || undefined, account_number: !acct && acctNo ? acctNo : undefined, connection_id: existing?.id,
+      hook_token: hook?.token, webhook_secret: hook ? hookSecret.trim() : undefined });
     setBusy(false);
     if (r.ok === false) { setErr(r.error || 'Moniepoint did not answer. Try again.'); return; }
     if (r.choose) { setChoose(r.choose); setBiz(r.choose[0]?.id || ''); return; }
+    if (r.webhook) { setHook(r.webhook); return; }
     toast(existing ? 'The new key is in use' : 'Moniepoint is connected. Add your terminals and run the ₦100 test.');
     await Promise.all(['pos_overview', 'pos_till'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
     onClose();
   }
+  const copy = (t: string) => navigator.clipboard?.writeText(t).then(() => toast('Address copied'), () => toast('Select the address and copy it', 'err'));
+  const ready = key.trim().length >= 16 && (!hook || hookSecret.trim().length >= 8);
   return (
     <Modal onClose={onClose} width={560}>
       <ModalHead title={existing ? 'Replace the Moniepoint key' : 'Connect Moniepoint'} onClose={onClose} />
       <div className="modal-body stack" style={{ gap: 12 }}>
-        <ol style={{ margin: 0, paddingLeft: 18, fontSize: 14, lineHeight: 1.7 }} className="muted">
-          <li>In the Moniepoint Business app, open Settings, then POS Terminal Configuration, and switch on ERP Integration.</li>
-          <li>Open POS App Developers and create a client (an API key) for the live environment.</li>
-          <li>Tick transaction push, transaction read, webhook read and webhook write.</li>
-          <li>Copy the key straight away: Moniepoint shows it once. Paste it below.</li>
-        </ol>
-        <Field label="API key" req>
-          <input className="input" type="password" autoComplete="off" spellCheck={false} value={key} onChange={(e) => setKey(e.target.value)} aria-label="API key" placeholder="Paste the key" />
-        </Field>
+        {!hook ? (
+          <>
+            <ol style={{ margin: 0, paddingLeft: 18, fontSize: 14, lineHeight: 1.7 }} className="muted">
+              <li>In the Moniepoint Business app, open Settings, then POS Terminal Configuration, and switch on ERP Integration.</li>
+              <li>Open POS App Developers and create a client for the live environment. Tick transaction push, transaction read, webhook read and webhook write (and webhook delete, if the app offers it).</li>
+              <li>Moniepoint shows the client ID and the API key. Copy both straight away, because the key is shown only once, and paste them below.</li>
+            </ol>
+            <div className="faint" style={{ fontSize: 12 }}>You don't need to make a webhook. Counta makes its own, or tells you if Moniepoint wants you to add it in the app.</div>
+            <Field label="Client ID">
+              <input className="input" type="text" name="mp-client-id" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+                data-1p-ignore data-lpignore="true" data-form-type="other" value={clientId} onChange={(e) => setClientId(e.target.value)}
+                aria-label="Client ID" placeholder="Paste the client ID" />
+            </Field>
+            <Field label="API key" req>
+              <SecretInput value={key} onChange={setKey} label="API key" placeholder="Paste the API key" />
+            </Field>
+          </>
+        ) : (
+          <div className="stack" style={{ gap: 10 }} data-testid="pos-hook-step">
+            <Alert kind="amber" icon="info">Moniepoint accepted the client ID and key, but it only lets you add this client's webhook in the app. It takes a minute.</Alert>
+            <ol style={{ margin: 0, paddingLeft: 18, fontSize: 14, lineHeight: 1.7 }} className="muted">
+              <li>In the Moniepoint Business app, open POS App Developers, then Webhooks, and tap New Subscription.</li>
+              <li>Paste this address as the notification URL.</li>
+              <li>Tick the purchase and transfer transactions taken on your terminals, then save.</li>
+              <li>Copy the secret Moniepoint shows (it is shown only once) and paste it below.</li>
+            </ol>
+            <Field label="Webhook address">
+              <div className="row" style={{ gap: 6 }}>
+                <input className="input num" readOnly value={hook.url} onFocus={(e) => e.target.select()} aria-label="Webhook address" style={{ flex: 1, minWidth: 0, fontSize: 12 }} />
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => copy(hook.url)} aria-label="Copy the webhook address"><Icon name="copy" size={14} />Copy</button>
+              </div>
+            </Field>
+            <Field label="Webhook secret" req>
+              <SecretInput value={hookSecret} onChange={setHookSecret} label="Webhook secret" placeholder="Paste the secret Moniepoint showed" />
+            </Field>
+          </div>
+        )}
         {choose && (
           <Field label="This key covers several businesses. Which one is this?">
             <select className="input" value={biz} onChange={(e) => setBiz(e.target.value)} aria-label="Moniepoint business">
@@ -222,7 +278,7 @@ function ConnectModal({ d, existing, onClose }: { d: PosOverview; existing: PosC
             </select>
           </Field>
         )}
-        {!existing && (
+        {!existing && !hook && (
           <Field label="The terminals pay into" hint="Counta keeps POS money as being confirmed until this account's statement or feed shows it.">
             <select className="input" value={acct} onChange={(e) => setAcct(e.target.value)} aria-label="The terminals pay into">
               <option value="">A new account called Moniepoint</option>
@@ -230,7 +286,7 @@ function ConnectModal({ d, existing, onClose }: { d: PosOverview; existing: PosC
             </select>
           </Field>
         )}
-        {!existing && !acct && (
+        {!existing && !acct && !hook && (
           <Field label="Its account number (optional)">
             <input className="input num" inputMode="numeric" maxLength={10} value={acctNo} onChange={(e) => setAcctNo(e.target.value.replace(/\D/g, ''))} aria-label="Moniepoint account number" />
           </Field>
@@ -239,8 +295,10 @@ function ConnectModal({ d, existing, onClose }: { d: PosOverview; existing: PosC
         <div className="faint" style={{ fontSize: 12 }}>Counta keeps the key locked away and uses it only to send amounts to your terminals and read their payments. It cannot move money out of the account.</div>
       </div>
       <div className="modal-ft">
-        <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" disabled={busy || key.trim().length < 16} onClick={go}>{busy ? 'Checking with Moniepoint…' : choose ? 'Connect this business' : existing ? 'Use the new key' : 'Connect'}</button>
+        <button className="btn btn-secondary" onClick={hook ? () => { setHook(null); setHookSecret(''); setErr(null); } : onClose}>{hook ? 'Back' : 'Cancel'}</button>
+        <button className="btn btn-primary" disabled={busy || !ready} onClick={go}>
+          {busy ? 'Checking with Moniepoint…' : hook ? 'Finish connecting' : choose ? 'Connect this business' : existing ? 'Use the new key' : 'Connect'}
+        </button>
       </div>
     </Modal>
   );
@@ -327,7 +385,11 @@ function DisconnectModal({ c, onClose }: { c: PosConnection; onClose: () => void
     <Modal onClose={onClose} width={440}>
       <ModalHead title="Disconnect Moniepoint?" onClose={onClose} />
       <div className="modal-body">
-        <div className="muted" style={{ fontSize: 14, lineHeight: 1.6 }}>The till stops sending sales to the terminals, Moniepoint stops sending their payments to Counta, and the key is wiped. Payments already in the books stay.</div>
+        <div className="muted" style={{ fontSize: 14, lineHeight: 1.6 }}>
+          {handMade(c)
+            ? 'The till stops sending sales to the terminals, Counta ignores the payments Moniepoint sends, and the key is wiped. Delete the webhook in the Moniepoint Business app too (POS App Developers, Webhooks). Payments already in the books stay.'
+            : 'The till stops sending sales to the terminals, Moniepoint stops sending their payments to Counta, and the key is wiped. Payments already in the books stay.'}
+        </div>
       </div>
       <div className="modal-ft">
         <button className="btn btn-secondary" onClick={onClose}>Keep it</button>
