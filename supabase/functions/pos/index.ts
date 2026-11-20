@@ -3,11 +3,14 @@
 // Payments keyed on a terminal by hand reach Counta through the same webhook and are matched in the database.
 //
 // Signed-in callers (Authorization: Bearer <user JWT>), POST { action, ... }:
-//   connect { org_id, key, business_id?, bank_account_id?, account_number? } -> checks the key with Moniepoint (the owner only), subscribes
-//                     Counta to the terminals' payments and keeps the key and the webhook secret in Vault. With a key for several
-//                     businesses and none chosen, answers { choose: [{ id, name }] }.
-//   test_key { connection_id }      -> asks Moniepoint whether the key still works
-//   disconnect { connection_id }    -> removes the webhook at Moniepoint and wipes the keys
+//   connect { org_id, key, client_id?, business_id?, bank_account_id?, account_number?, connection_id?, hook_token?, webhook_secret? }
+//                  -> checks the credentials with Moniepoint (the owner only), subscribes Counta to the terminals' payments and keeps the
+//                     credentials and the webhook secret in Vault. With a key for several businesses and none chosen, answers
+//                     { choose: [{ id, name }] }. When only channel.moniepoint.com takes the credentials, Counta cannot make the
+//                     webhook itself: it answers { webhook: { url, token } } for the owner to add in the Moniepoint Business app, and
+//                     the same call comes back with hook_token and the webhook_secret Moniepoint showed.
+//   test_key { connection_id }      -> asks Moniepoint whether the credentials still work
+//   disconnect { connection_id }    -> removes the webhook at Moniepoint (or asks the owner to, for one added by hand) and wipes the keys
 //   push { request_id }             -> sends a request the till opened to its terminal (once)
 //   check { request_id }            -> asks Moniepoint how a request went and records the payment when it is approved
 // Moniepoint (no sign-in): POST /pos/webhook/moniepoint/<token>, with Basic auth when set and the moniepoint-webhook-signature header
@@ -77,8 +80,15 @@ async function noteError(connectionId: string, e: unknown) {
 async function connect(sb: any, b: any) {
   const check = await asUser<any>(sb, 'pos_connect_check', { p_org: b.org_id });
   const key = String(b.key || '').trim();
+  const clientId = String(b.client_id || '').trim();
   if (key.length < 16 || key.length > 600 || /\s/.test(key)) throw new UserError('Paste the API key exactly as the Moniepoint Business app showed it.');
-  const intro = await mp.introspect(key);
+  if (clientId && (clientId.length > 200 || /\s/.test(clientId))) throw new UserError('Paste the client ID exactly as the Moniepoint Business app shows it.');
+  if (clientId && clientId === key) throw new UserError('The client ID and the API key are the same. Paste each into its own box.');
+  const { stored, intro } = await mp.resolve(key, clientId || null);
+  const bank = { bank_account_id: b.bank_account_id || null,
+    account_number: b.account_number ? String(b.account_number).replace(/\D/g, '').slice(0, 10) : null };
+  const replacing = b.connection_id ? (check.connections || []).find((c: any) => c.id === b.connection_id) || null : null;
+  if (!intro) return await connectByHand(b, check, stored, key, bank, replacing);
   if (intro.environment === 'sandbox' && !ALLOW_SANDBOX) {
     throw new UserError('This is a sandbox key, which sees no real payments. Create a key for the live environment in the Moniepoint Business app.');
   }
@@ -90,29 +100,56 @@ async function connect(sb: any, b: any) {
   let biz = intro.businesses.find((x) => x.id === String(b.business_id || ''));
   if (!biz && intro.businesses.length === 1) biz = intro.businesses[0];
   if (!biz) return { ok: true, choose: intro.businesses };
-  const old = (check.connections || []).find((c: any) => c.provider === 'moniepoint' && String(c.business_ref || '') === biz!.id) || null;
+  // Replacing credentials keeps the connection, its terminals and its ₦100 test. One connected by hand never learnt its business,
+  // so it stays without one rather than splitting into two connections.
+  const old = replacing || (check.connections || []).find((c: any) => c.provider === 'moniepoint' && String(c.business_ref || '') === biz!.id) || null;
+  const businessRef = replacing && !replacing.business_ref ? null : biz.id;
   const oldFull = old ? await svc<any>('svc_pos_connection', { p_connection: old.id }) : null;
   const token = randomHex(24), password = randomHex(18);
-  const subId = await mp.createSubscription(key, biz.id, hookUrl(token));
+  const subId = await mp.createSubscription(stored, biz.id, hookUrl(token));
   let secret: string;
   let usePassword = true;
   try {
-    secret = await mp.subscriptionSecret(key, subId);
+    secret = await mp.subscriptionSecret(stored, subId);
   } catch (e) {
-    await mp.deleteSubscription(key, subId).catch(() => {});
+    await mp.deleteSubscription(stored, subId).catch(() => {});
     throw e;
   }
   // Basic auth on the webhook is a second lock; the signature is the first. If Moniepoint will not set it, the signature alone guards it.
-  try { await mp.setBasicAuth(key, subId, 'counta', password); } catch (e) { usePassword = false; console.log('pos basic auth', (e as Error).message); }
+  try { await mp.setBasicAuth(stored, subId, 'counta', password); } catch (e) { usePassword = false; console.log('pos basic auth', (e as Error).message); }
   const saved = await svc<any>('svc_pos_connection_save', { p: {
-    org_id: b.org_id, member_id: check.member_id, provider: 'moniepoint', label: 'Moniepoint', environment: intro.environment, business_ref: biz.id,
-    business_name: biz.name, scopes: intro.scopes, key, key_hint: key.slice(-4), hook_token: token, hook_secret: secret,
-    hook_password: usePassword ? password : '', subscription_ref: subId, bank_account_id: b.bank_account_id || null,
-    account_number: b.account_number ? String(b.account_number).replace(/\D/g, '').slice(0, 10) : null } });
-  // The subscription the old key made stops, so Moniepoint does not send every payment twice.
+    org_id: b.org_id, member_id: check.member_id, provider: 'moniepoint', label: 'Moniepoint', environment: intro.environment, business_ref: businessRef,
+    business_name: biz.name, scopes: intro.scopes, key: stored, key_hint: key.slice(-4), hook_token: token, hook_secret: secret,
+    hook_password: usePassword ? password : '', subscription_ref: subId, ...bank } });
+  // The subscription the old credentials made stops, so Moniepoint does not send every payment twice.
   if (oldFull?.subscription_ref && oldFull.subscription_ref !== subId) {
-    await mp.deleteSubscription(key, oldFull.subscription_ref).catch((e) => console.log('pos old subscription', (e as Error).message));
+    const by = oldFull.key && !mp.handMadeWebhook(oldFull.key) ? oldFull.key : stored;
+    await mp.deleteSubscription(by, oldFull.subscription_ref).catch((e) => console.log('pos old subscription', (e as Error).message));
   }
+  return { ok: true, connection: saved };
+}
+
+// Credentials only channel.moniepoint.com takes: Counta cannot make the webhook or learn which business they cover, so the owner adds
+// the webhook in the Moniepoint Business app. The first call answers the address to paste there; the second brings back its secret.
+async function connectByHand(b: any, check: any, stored: string, key: string, bank: Record<string, unknown>, replacing: any) {
+  const token = /^[a-f0-9]{48}$/.test(String(b.hook_token || '')) ? String(b.hook_token) : randomHex(24);
+  const secret = String(b.webhook_secret || '').trim();
+  if (!secret) return { ok: true, webhook: { url: hookUrl(token), token } };
+  if (secret.length < 8 || secret.length > 300 || /\s/.test(secret)) {
+    throw new UserError('Paste the webhook secret exactly as the Moniepoint Business app showed it, after you saved the webhook.');
+  }
+  if (secret === key) throw new UserError('That is the API key. Paste the secret Moniepoint showed when you saved the webhook.');
+  // A webhook Counta made with earlier credentials stops, so Moniepoint does not send every payment twice.
+  const oldFull = replacing ? await svc<any>('svc_pos_connection', { p_connection: replacing.id }) : null;
+  if (oldFull?.key && oldFull.subscription_ref && !mp.handMadeWebhook(oldFull.key)) {
+    await mp.deleteSubscription(oldFull.key, oldFull.subscription_ref).catch((e) => console.log('pos old subscription', (e as Error).message));
+  }
+  const saved = await svc<any>('svc_pos_connection_save', { p: {
+    org_id: b.org_id, member_id: check.member_id, provider: 'moniepoint', label: 'Moniepoint', environment: 'production',
+    // All these credentials can do is send amounts and read how payments went; no webhook:write means the webhook was added by hand.
+    business_ref: replacing?.business_ref || null, business_name: replacing?.business_name || null, scopes: ['transaction:push', 'transaction:read'],
+    key: stored, key_hint: key.slice(-4),
+    hook_token: token, hook_secret: secret, hook_password: '', ...bank } });
   return { ok: true, connection: saved };
 }
 
@@ -120,7 +157,9 @@ async function disconnect(sb: any, b: any) {
   const c = await asUser<any>(sb, 'pos_connection_manage', { p_connection: b.connection_id });
   const full = await svc<any>('svc_pos_connection', { p_connection: c.id });
   let warning: string | null = null;
-  if (full?.key && full.subscription_ref) {
+  if (full?.key && mp.handMadeWebhook(full.key)) {
+    warning = 'Delete the webhook you added in the Moniepoint Business app too (POS App Developers, Webhooks). Counta ignores its payments from now on.';
+  } else if (full?.key && full.subscription_ref) {
     try { await mp.deleteSubscription(full.key, full.subscription_ref); }
     catch { warning = 'Moniepoint did not confirm it stopped sending payments; Counta ignores them from now on.'; }
   }
@@ -132,9 +171,13 @@ async function testKey(sb: any, b: any) {
   const c = await asUser<any>(sb, 'pos_connection_manage', { p_connection: b.connection_id });
   const full = await svc<any>('svc_pos_connection', { p_connection: c.id });
   try {
-    const intro = await mp.introspect(full.key);
+    const intro = await mp.check(full.key);
+    if (!intro) {
+      await svc('svc_pos_note', { p_connection: c.id, p: { error: null } });
+      return { ok: true, error: null, environment: 'production' };
+    }
     const missing = mp.MP_SCOPES.filter((s) => !intro.scopes.includes(s));
-    const known = intro.businesses.some((x) => x.id === String(full.business_ref || ''));
+    const known = !full.business_ref || intro.businesses.some((x) => x.id === String(full.business_ref));
     const problem = !known ? 'The key no longer covers this business.' : missing.length ? `The key lost permissions: ${missing.join(', ')}.` : null;
     await svc('svc_pos_note', { p_connection: c.id, p: { error: problem, hard: Boolean(problem) } });
     return { ok: !problem, error: problem, environment: intro.environment };
@@ -263,6 +306,11 @@ async function lookUpEvent(id: string, conn: any, t: mp.Txn, unit: 'kobo' | 'nai
 async function pull(id: string) {
   const conn = await svc<any>('svc_pos_connection', { p_connection: id });
   if (!conn?.key || !conn.subscription_ref) return { pulled: 0 };
+  // A webhook added by hand has no history Counta can read; the address of an earlier subscription may still be on file.
+  if (mp.handMadeWebhook(conn.key)) {
+    await svc('svc_pos_note', { p_connection: id, p: { pulled: true } });
+    return { pulled: 0 };
+  }
   const unit = conn.amount_unit === 'naira' ? 'naira' : 'kobo';
   const to = lagosDay(new Date()), from = lagosDay(new Date(Date.now() - 86_400_000));
   let n = 0;
