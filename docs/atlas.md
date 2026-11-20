@@ -92,7 +92,7 @@ The app marks these lines with `vat_by` (`numens` takes what is on record, `pers
 
 Bank statements come in as CSV or Excel (Accounting, Banking). Counta maps the columns, skips lines it already holds (each line carries a fingerprint) and takes the statement's closing balance as the account's anchor. Each account is reconciled to a statement balance at a date, listing what is in the books but not on the statement and the reverse. The difference must be zero before the month can close.
 
-The Flutterwave wallet is reconciled every night at 00:40 by the `payments` function: it reads the wallet statement from Flutterwave, records any credit the books do not have, and compares the wallet balance with the wallet's ledger account (under 1014). A difference raises a question in the Books inbox.
+The Flutterwave wallet is reconciled every night at 00:40 by the `payments` function: it reads the wallet statement from Flutterwave, records any credit the books do not have, and compares Flutterwave's available balance with the wallet's ledger account (under 1014). A difference raises a question in the Books inbox; a later check that agrees closes it.
 
 ## Period close
 

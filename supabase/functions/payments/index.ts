@@ -34,7 +34,9 @@
 //   public_check { token }                         -> has it been paid
 //   public_paid { token, amount, name? }           -> the customer says they have paid: kept, and the wallet read at once
 // Rails:
-//   POST /payments/webhook/flutterwave             -> header verif-hash must equal FLW_WEBHOOK_HASH
+//   POST /payments/webhook/flutterwave             -> header verif-hash must equal FLW_WEBHOOK_HASH. A wallet-funding event
+//                                                     (transfer.completed, reference PSA_...) records the transfer into that
+//                                                     wallet at once (walletFunding)
 //   POST /payments/webhook/rail/<code>             -> header x-counta-signature: sha256=<HMAC of the body with the rail's webhook secret>
 // Database cron (header x-counta-hook: <PUSH_HOOK_SECRET>):
 //   { action: 'poll' }       -> re-checks unpaid requests, retries sweeps, re-checks payouts in progress, carries on
@@ -263,6 +265,10 @@ function ngPhone(p?: string | null): string | undefined {
   return n.length >= 10 && n.length <= 14 ? n : undefined;
 }
 
+// A transfer into a wallet's own account number, as Flutterwave's funding webhook names it (PSA_<bank session id>) and as
+// the wallet's statement lists it (the session id alone).
+const fundingRef = (ref: unknown) => String(ref || '').trim().replace(/^PSA_/i, '');
+
 // Flutterwave could not make the account number for a new wallet ("Error occurred while generating your nuban account").
 const nubanFailed = (e: unknown) => /nuban|account number|generat/i.test(String((e as Error)?.message || ''));
 
@@ -406,7 +412,10 @@ const flutterwave: Rail = {
   },
   async balance(accountRef) {
     const r = await flw(`/payout-subaccounts/${encodeURIComponent(accountRef)}/balances?currency=NGN`);
-    return { available: num(r.data?.available_balance), ledger: num(r.data?.ledger_balance ?? r.data?.available_balance) };
+    // On live accounts the ledger_balance of a payout subaccount reads 0.00 while available_balance is the money in it (it
+    // agreed with the books to the kobo on 20 November 2026), so the available balance is the one Counta compares and shows.
+    const available = num(r.data?.available_balance);
+    return { available, ledger: available };
   },
   async sweep(barterId, amount, reference, narration) {
     try {
@@ -430,7 +439,8 @@ const flutterwave: Rail = {
       const list: any[] = r.data?.transactions || [];
       for (const t of list) {
         if (String(t.type).toUpperCase() !== 'C' || (t.currency && t.currency !== 'NGN') || !t.reference) continue;
-        out.push({ reference: String(t.reference), amount: num(t.amount), at: t.date ? flwDate(t.date, 0) : undefined, narration: t.remarks || '' });
+        // The same transfer's funding webhook says PSA_<reference>: both are recorded under the bare reference.
+        out.push({ reference: fundingRef(t.reference), amount: num(t.amount), at: t.date ? flwDate(t.date, 0) : undefined, narration: t.remarks || '' });
       }
       const info = r.data?.page_info;
       if (!info || num(info.current_page) >= num(info.total_pages)) break;
@@ -1199,6 +1209,46 @@ async function savePartnerBank(sb: SupabaseClient, userId: string, body: any) {
 }
 
 // ------------------------------------------------------------------ webhooks
+// Money paid into a wallet's own account number. Flutterwave's funding webhook arrives within a second of the transfer and
+// names the wallet (account_number is the wallet's own number), the amount, the sender and the reference; the wallet's
+// statement lists the same transfer 10 to 20 minutes later. Counta asks Flutterwave for the transfer by its id and records it
+// at once, so the invoice it pays is settled straight away. When Flutterwave's record differs from the event, nothing is
+// recorded and the statement settles it. When Flutterwave has no record to give (or does not answer), the event is recorded
+// on its verified signature: the statement then lists it under the same reference (seen as the same line), and the wallet
+// check against Flutterwave's balance shows any money that never arrived.
+async function walletFunding(d: any): Promise<string> {
+  const ref = fundingRef(d.reference);
+  const account = String(d.account_number || '').replace(/\D/g, '');
+  const amount = num(d.amount);
+  const backup = () => later(syncWallets(1, undefined, 'direct').then(() => syncWallets(1, undefined, 'all_and_tax')));
+  if (!ref || !/^\d{10}$/.test(account) || amount <= 0 || String(d.status || '').toUpperCase() !== 'SUCCESSFUL' || (d.currency && d.currency !== 'NGN')) {
+    backup();
+    return 'wallet_funding:unreadable';
+  }
+  let check = 'signature';
+  if (d.id) {
+    try {
+      const t = (await flw(`/transfers/${encodeURIComponent(String(d.id))}`))?.data || {};
+      const same = Math.abs(num(t.amount) - amount) < 0.005 && String(t.status || '').toUpperCase() === 'SUCCESSFUL';
+      console.log('wallet funding check', JSON.stringify({ id: d.id, found: true, same, reference: fundingRef(t.reference) === ref,
+        account: String(t.account_number || '') === account, fields: Object.keys(t).sort() }));
+      if (!same) { backup(); return 'wallet_funding:differs'; }
+      check = 'flutterwave';
+    } catch (e) {
+      console.log('wallet funding check', JSON.stringify({ id: d.id, found: false, answer: flwAnswer(e) }));
+    }
+  }
+  const name = String(d.fullname || '').replace(/\s+/g, ' ').trim();
+  const sender = { ...(name ? { name } : {}), ...(d.meta?.sender_account_number ? { account: String(d.meta.sender_account_number) } : {}) };
+  let res: any;
+  try {
+    res = await svc<any>('svc_wallet_inflow', { p_rail: 'flutterwave', p_account_ref: account, d: { amount, reference: ref, provider_ref: ref,
+      narration: name ? `Received Money from ${name}` : 'Received Money', sender, at: d.created_at || undefined } });
+  } catch (e) { backup(); throw e; }
+  if (!res?.ok) { backup(); return `wallet_funding:${res?.reason || 'not_recorded'}`; }
+  return `wallet_funding:${res.duplicate ? 'duplicate' : res.matched ? 'matched' : 'recorded'}:${check}`;
+}
+
 async function flutterwaveWebhook(req: Request) {
   const hash = await secret('FLW_WEBHOOK_HASH');
   const got = req.headers.get('verif-hash') || '';
@@ -1258,9 +1308,10 @@ async function flutterwaveWebhook(req: Request) {
         const ok = String(d.status).toUpperCase() === 'SUCCESSFUL';
         if (tx) await svc('svc_sweep_update', { p_tx_ref: tx, p_status: ok ? 'sent' : 'failed', p_error: ok ? null : d.complete_message, p_ref: ref });
         outcome = 'sweep';
+      } else if (/^PSA_/i.test(ref)) {
+        outcome = await walletFunding(d);
       } else {
-        // Money paid into a business wallet's own account number (reference PSA_...). The event does not say reliably which
-        // wallet it reached, so Counta reads the wallets' statements at Flutterwave instead of trusting the event's fields.
+        // Any other transfer Counta did not start: the wallets' statements at Flutterwave say what it was.
         later(syncWallets(1, undefined, 'direct').then(() => syncWallets(1, undefined, 'all_and_tax')));
         outcome = 'wallet_sync';
       }
