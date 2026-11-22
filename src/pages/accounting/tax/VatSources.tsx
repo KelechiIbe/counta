@@ -2,7 +2,7 @@
 // claim the input VAT), and money received into the bank with no Counta invoice behind it.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useInventory, useSession, useToast } from '../../../state/session';
 import { rpc, supabase } from '../../../lib/supabase';
 import { edge, money, moneyAccounts, today } from '../../../lib/api';
@@ -158,6 +158,7 @@ export function SchedulesPanel({ data, canWork }: { data: any; canWork: boolean 
           {canWork && <button className="btn btn-primary btn-sm" disabled={!data?.settings?.vat_registered} onClick={() => setUpload(true)}><Icon name="upload" size={14} color="#fff" />Upload a schedule</button>}
         </div>
         {!data?.settings?.vat_registered && <Alert kind="grey" icon="info">Turn on charging VAT first (above) to load sales for the VAT return.</Alert>}
+        <Alert kind="blue" icon="info">To keep the books as well (stock and cost of sales, card and transfer payments matched to the bank, sales on credit, returns), upload the file in <Link to="/sell/import">Sell → Import sales</Link> instead. Use one or the other for a month, not both.</Alert>
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
         {!list.length ? <div style={{ padding: 20 }}><Empty>Schedules you upload appear here, as drafts to check and then posted.</Empty></div> : list.map((s) => (

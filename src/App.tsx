@@ -45,6 +45,7 @@ const Orders = lazy(() => import('./pages/sell/Orders'));
 const PriceLists = lazy(() => import('./pages/sell/PriceLists'));
 const Shop = lazy(() => import('./pages/sell/Shop'));
 const Recurring = lazy(() => import('./pages/sell/Recurring'));
+const SalesImport = lazy(() => import('./pages/sell/SalesImport'));
 const Payments = lazy(() => import('./pages/payments/Payments'));
 const Bills = lazy(() => import('./pages/purchases/Bills'));
 const Vendors = lazy(() => import('./pages/purchases/Vendors'));
@@ -237,6 +238,7 @@ export default function App() {
         <Route path="/sell/price-lists" element={<PriceLists />} />
         <Route path="/sell/shop" element={<Shop />} />
         <Route path="/sell/recurring" element={<Recurring />} />
+        <Route path="/sell/import" element={<SalesImport />} />
         <Route path="/payments" element={<Payments />} />
         <Route path="/approvals" element={<Approvals />} />
         <Route path="/purchases/bills" element={<Bills />} />
