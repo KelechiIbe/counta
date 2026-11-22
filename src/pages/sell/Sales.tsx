@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
-import { rpc } from '../../lib/supabase';
+import { ai, rpc } from '../../lib/supabase';
 import { DOC_LABEL, METHOD_LABEL, VAT_STATUS, money, today, useChart, useCustomers, usePosToMatch, useSale, useSales, type Customer, type DocType, type Sale, type SaleRow, moneyAccounts } from '../../lib/api';
 import { PosToMatch } from '../payments/PosMatch';
 import { countryName, isExport } from '../../lib/countries';
@@ -138,38 +138,68 @@ export function VatStatusChips({ codes }: { codes?: number[] }) {
   );
 }
 
-// What the customer may keep back from this invoice: WHT at the rate expected on it, the NCD levy for an oil and gas
-// customer, VAT for a withholding agent. A payment short by exactly these settles the invoice. For the business only.
-const RATE_FROM: Record<string, string> = { invoice: 'set on this invoice', customer: 'what this customer deducts', business: 'usual for your type of work', person: 'a person rarely deducts WHT' };
+// What the customer may keep back from this invoice: WHT worked out line by line at each line's type (Numens' answer for
+// the line's words, or a person's choice), else one rate on the whole invoice; the NCD levy for an oil and gas customer;
+// VAT for a withholding agent. A payment short by exactly these settles the invoice. For the business only.
+const RATE_FROM: Record<string, string> = { invoice: 'set on this invoice', customer: 'what this customer deducts', business: 'usual for your type of work',
+  person: 'a person rarely deducts WHT', lines: 'line by line' };
+const pctText = (r: number) => `${Math.round(Number(r || 0) * 1000) / 10}%`;
 function Withholding({ sale }: { sale: Sale }) {
+  const { orgId } = useSession();
   const toast = useToast();
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['sale', sale.id, 'withholding', sale.amount_paid], queryFn: () => rpc<any>('sale_withholding', { p_sale: sale.id }), staleTime: 30_000 });
+  const key = ['sale', sale.id, 'withholding', sale.amount_paid, sale.status];
+  const q = useQuery({ queryKey: key, queryFn: () => rpc<any>('sale_withholding', { p_sale: sale.id }), staleTime: 30_000 });
   const [busy, setBusy] = useState(false);
+  const [asked, setAsked] = useState(false);
   const w = q.data;
+  // Lines with no WHT type yet: Numens is asked once while the invoice is open.
+  useEffect(() => {
+    if (!w || asked || w.walk_in || !Number(w.missing) || w.expected?.source === 'invoice' || w.expected?.source === 'person') return;
+    setAsked(true);
+    ai('wht_lines', { org_id: orgId, sale_id: sale.id }).then((r) => { if (r?.ok && Number((r as any).classified) > 0) qc.invalidateQueries({ queryKey: ['sale', sale.id, 'withholding'] }); }, () => {});
+  }, [w, asked, orgId, sale.id, qc]);
   if (!w || w.walk_in) return null;
   const rate = Number(w.expected?.rate || 0);
-  const pctText = (r: number) => `${Math.round(r * 1000) / 10}%`;
+  const byLine = w.expected?.source === 'lines';
   const rates = [0, 0.02, 0.05, 0.1, ...(w.business?.doubled ? [0.04, 0.2] : [])].sort((a, b) => a - b);
-  async function setRate(v: string) {
+  const types: { code: string; name: string; rate: number }[] = w.types || [];
+  async function run(fn: () => Promise<any>, ok: string) {
     setBusy(true);
-    try { await rpc('set_sale_wht_rate', { p_sale: sale.id, p_rate: v === '' ? null : Number(v) }); toast('Expected WHT saved'); await qc.invalidateQueries({ queryKey: ['sale', sale.id, 'withholding'] }); }
+    try { await fn(); toast(ok); await qc.invalidateQueries({ queryKey: ['sale', sale.id, 'withholding'] }); }
     catch (e) { toast((e as Error).message, 'err'); }
     setBusy(false);
   }
+  const setRate = (v: string) => run(() => rpc('set_sale_wht_rate', { p_sale: sale.id, p_rate: v === '' ? null : Number(v) }), 'Expected WHT saved');
+  const setType = (line: string, code: string) => run(() => rpc('set_sale_line_wht', { p_line: line, p_category: code || null }), code ? 'WHT type saved for these words' : 'Numens decides this line again');
+  const lineWhy = (l: any) => l.source === 'person' ? 'your choice' : l.typed ? `Numens${l.confidence != null ? `, ${Math.round(Number(l.confidence) * 100)}% sure` : ''}` : 'usual rate, waiting for Numens';
   return (
     <div className="stack" style={{ gap: 6, border: '1px solid var(--line)', borderRadius: 12, padding: '10px 14px', fontSize: 13 }} data-testid="withholding">
       <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
         <span className="label" style={{ margin: 0 }}>What the customer may keep back</span>
         <span className="faint" style={{ fontSize: 11 }}>Not shown to the customer</span>
       </div>
+      {byLine && (w.lines || []).map((l: any) => (
+        <div key={l.line_id} className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }} data-testid="withholding-line">
+          <span className="grow" style={{ minWidth: 140 }}><span className="ellipsis" style={{ display: 'block' }}>{l.description}</span>
+            <span className="faint" style={{ fontSize: 11 }} title={l.reason || undefined}>{l.name ? `${l.name} at ${pctText(l.rate)}` : `${pctText(l.rate)}`} · {lineWhy(l)}</span></span>
+          <span className="row" style={{ gap: 8 }}>
+            <b className="num">{N2(l.wht)}</b>
+            {w.can_change && <select className="input input-sm" style={{ width: 150 }} value={l.source === 'person' ? (l.category || '') : ''} disabled={busy}
+              onChange={(e) => setType(l.line_id, e.target.value)} aria-label={`WHT type of ${l.description}`}>
+              <option value="">{l.source === 'person' ? 'Let Numens decide' : 'Change type'}</option>
+              {types.map((t) => <option key={t.code} value={t.code}>{t.name} ({pctText(t.rate)})</option>)}
+            </select>}
+          </span>
+        </div>
+      ))}
       <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
-        <span>{rate > 0 ? `WHT at ${pctText(rate)}` : 'No WHT expected'}<span className="faint"> · {RATE_FROM[w.expected?.source] || ''}</span></span>
+        <span>{byLine ? 'WHT expected' : rate > 0 ? `WHT at ${pctText(rate)}` : 'No WHT expected'}<span className="faint"> · {RATE_FROM[w.expected?.source] || ''}</span></span>
         <span className="row" style={{ gap: 8 }}>
-          {rate > 0 && <b className="num">{N2(w.wht)}</b>}
+          {(byLine || rate > 0) && <b className="num">{N2(w.wht)}</b>}
           {w.can_change && <select className="input input-sm" style={{ width: 'auto' }} value={w.expected?.source === 'invoice' ? String(rate) : ''} disabled={busy}
-            onChange={(e) => setRate(e.target.value)} aria-label="WHT expected on this invoice">
-            <option value="">{w.expected?.source === 'invoice' ? 'Back to the usual' : 'Change'}</option>
+            onChange={(e) => setRate(e.target.value)} aria-label="One WHT rate for the whole invoice">
+            <option value="">{w.expected?.source === 'invoice' ? (byLine ? 'Back to the lines' : 'Back to the usual') : 'One rate for all'}</option>
             {rates.map((r) => <option key={r} value={String(r)}>{r ? pctText(r) : 'None'}</option>)}
           </select>}
         </span>
@@ -177,10 +207,26 @@ function Withholding({ sale }: { sale: Sale }) {
       {w.ncd_levy && <div className="row" style={{ justifyContent: 'space-between' }}><span>NCD levy at 1%<span className="faint"> · oil and gas customer</span></span><b className="num">{N2(w.ncd_net)}</b></div>}
       {w.wvat_agent && Number(w.vat) > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span>VAT withheld<span className="faint"> · withholding VAT agent</span></span><b className="num">{N2(w.vat)}</b></div>}
       <div className="faint" style={{ fontSize: 12 }}>{w.ncd_levy || (w.wvat_agent && Number(w.vat) > 0) ? 'A payment short by exactly these is recorded as paid in full.'
+        : byLine ? 'A payment short by exactly this (line by line, on the values before or with VAT), or by one usual rate on the whole invoice, is recorded as paid in full.'
         : rate > 0 ? 'A payment short by exactly this, with or without the 1% NCD levy oil and gas customers deduct, is recorded as paid in full.'
         : 'A payment short by exactly the 1% NCD levy oil and gas customers deduct is recorded as paid in full.'}</div>
     </div>
   );
+}
+
+// Which VAT returns this sale's output VAT goes in: on payment basis, the months its customer paid, and what still waits for
+// payment; on invoice basis, the month it is dated. For the business only.
+function VatMonths({ sale }: { sale: Sale }) {
+  const q = useQuery({ queryKey: ['sale', sale.id, 'vat_months', sale.amount_paid, sale.credited], queryFn: () => rpc<any>('sale_vat_months', { p_sale: sale.id }), staleTime: 30_000 });
+  const v = q.data;
+  if (!v || !(Number(v.vat) > 0)) return null;
+  const mon = (d: string) => new Date(String(d).slice(0, 7) + '-15T12:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const months: { month: string; vat: number }[] = v.months || [];
+  const words = v.basis === 'invoice'
+    ? `Output VAT of ${N2(v.vat)} goes in the VAT return for ${months[0] ? mon(months[0].month) : 'the month it is dated'}.`
+    : [months.length ? `Output VAT goes in the VAT return for ${months.map((m) => `${mon(m.month)} (${N2(m.vat)})`).join(', ')}.` : '',
+       Number(v.waiting) > 0 ? `${N2(v.waiting)} waits until the customer pays.` : ''].filter(Boolean).join(' ');
+  return <div className="faint" style={{ fontSize: 12 }} data-testid="sale-vat-months">{words}</div>;
 }
 
 // ---------------------------------------------------------------- one document
@@ -257,7 +303,8 @@ export function SaleDrawer({ id, onClose, onEdit, actions }: { id: string; onClo
             {s.viewed_at && <div className="faint" style={{ fontSize: 12 }}>The customer opened it {when(s.viewed_at)}.</div>}
             <SaleLines sale={s} />
             <PaymentsList sale={s} />
-            {owed && ['invoice', 'order'].includes(s.doc_type) && s.journal_id && <Withholding sale={s} />}
+            {((owed && ['invoice', 'order'].includes(s.doc_type) && s.journal_id) || (s.doc_type === 'invoice' && s.status === 'draft')) && <Withholding sale={s} />}
+            {['invoice', 'receipt'].includes(s.doc_type) && s.journal_id && s.status !== 'void' && Number(s.vat_total) > 0 && <VatMonths sale={s} />}
             {(s.credit_notes || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Credit notes</div>{s.credit_notes.map((c: any) => <div key={c.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{c.number} · {c.notes || ''}</span><b className="num">{N2(c.total)}</b></div>)}</div>}
             {(s.deliveries || []).length > 0 && <div className="stack" style={{ gap: 4 }}><div className="label">Delivery</div>{s.deliveries.map((d: any) => <div key={d.id} className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span>{d.number} · {d.address || ''}</span><StatusChip s={d.status} /></div>)}</div>}
             {s.notes && <div className="muted" style={{ fontSize: 13 }}>{s.notes}</div>}

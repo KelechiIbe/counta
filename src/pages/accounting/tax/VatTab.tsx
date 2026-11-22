@@ -1,8 +1,9 @@
 // VAT month by month: output VAT on sales, input VAT on bills and stock (and VAT self-charged on services from abroad), VAT
 // customers withheld, what is payable, and the input VAT credit carried forward. A month is filed once it has ended (freezing
-// its figures and clearing the VAT accounts), then paid. Whether the business must charge VAT at all is decided here too.
+// its figures and clearing the VAT accounts), then paid. Whether the business must charge VAT at all is decided here too, and
+// when its output VAT falls due: as customers pay (payment basis) or in the month of the invoice (invoice basis).
 import { useEffect, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useInventory, useSession, useToast } from '../../../state/session';
 import { rpc } from '../../../lib/supabase';
 import { money, moneyAccounts, today } from '../../../lib/api';
@@ -34,7 +35,7 @@ export default function VatTab() {
   const to = period.to.slice(0, 7);
   const q = useVatPosition(from + '-01', to + '-01');
   const [open, setOpen] = useState<any>(null);
-  const [modal, setModal] = useState<null | { kind: 'file' | 'pay' | 'reopen' | 'charge'; m?: any; charge?: boolean }>(null);
+  const [modal, setModal] = useState<null | { kind: 'file' | 'pay' | 'reopen' | 'charge' | 'basis'; m?: any; charge?: boolean }>(null);
   // ?view=schedules opens a tab (the Home row for payments to check links to Sales from another POS).
   const [params] = useSearchParams();
   const asked = params.get('view');
@@ -44,11 +45,12 @@ export default function VatTab() {
   const d = q.data;
   const st = d?.status || {};
   const months: any[] = d?.months || [];
+  const bankWaiting: Record<string, BankWaiting> = d?.bank_waiting || {};
   return (
     <div className="stack" style={{ gap: 14 }}>
       {q.isLoading ? <SkeletonRows n={6} /> : q.error ? <Alert kind="yellow" icon="shield">{(q.error as Error).message}</Alert> : d && (
         <>
-          <VatStatus st={st} onChange={(charge) => setModal({ kind: 'charge', charge })} />
+          <VatStatus st={st} basis={d.basis} onChange={(charge) => setModal({ kind: 'charge', charge })} onBasis={() => setModal({ kind: 'basis' })} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 8 }}>
             <Stat label="Input VAT credit carried forward" value={N2(d.credit_cf)} color="#0072F5" />
             <Stat label="Refund can be claimed on" value={N2(d.refundable)} sub="credit from the last 12 months" />
@@ -90,7 +92,9 @@ export default function VatTab() {
                   <span className="right num" style={{ fontWeight: 600, color: Number(m.payable) ? '#C2410C' : undefined }}>{N2(m.payable)}</span>
                   <span className="right num">{N2(m.credit_cf)}</span>
                   <span><span className={'chip ' + s.tone}>{s.label}</span>{m.overdue && <span className="chip t-red" style={{ marginLeft: 4 }}>late</span>}
-                    {m.changed_since_filing && <span className="chip t-amber" style={{ marginLeft: 4 }} title="The documents for this month changed after it was filed">changed</span>}</span>
+                    {m.changed_since_filing && <span className="chip t-amber" style={{ marginLeft: 4 }} title="The documents for this month changed after it was filed">changed</span>}
+                    {bankWaiting[m.period] && m.status === 'open' && <span className="chip t-amber" style={{ marginLeft: 4 }} data-testid="vat-bank-waiting"
+                      title={`${bankWaiting[m.period].lines} bank lines from this month are not in the books yet`}>{bankWaiting[m.period].lines} bank {bankWaiting[m.period].lines === 1 ? 'line' : 'lines'} waiting</span>}</span>
                   <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
                     <button className="btn btn-ghost btn-xs" title="The NRS VAT return (Form VAT 002) for the month" onClick={() => setNrs(m.period)}><Icon name="download" size={12} />NRS</button>
                     {m.ended && m.status === 'open' && d.can_file && <button className="btn btn-primary btn-xs" onClick={() => setModal({ kind: 'file', m })}>File</button>}
@@ -100,18 +104,20 @@ export default function VatTab() {
               );
             })}
           </div>
-          <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>A month's return and payment are due on the 21st of the next month. Input VAT on a bill is claimed in the month the bill is paid in full, never before the month of the invoice;
+          <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>A month's return and payment are due on the 21st of the next month. {d.basis?.current === 'invoice'
+              ? 'Output VAT on an invoice falls in the month it is dated.' : 'Output VAT on an invoice falls in the months its customer pays, by each payment\'s share of it.'} Input VAT on a bill is claimed in the month the bill is paid in full, never before the month of the invoice;
             what is left over is carried forward and used in later months, oldest first, for up to five years. VAT on standard-rated stock written off is taken back
             in the month it is written off. NRS gives the month's return on the NRS template, ready to upload.</div>
           </>}
         </>
       )}
-      {open && <MonthModal m={open} canFile={!!d?.can_file} onClose={() => setOpen(null)} onAct={(kind) => { setModal({ kind, m: open }); setOpen(null); }}
+      {open && <MonthModal m={open} canFile={!!d?.can_file} waiting={bankWaiting[open.period]} onClose={() => setOpen(null)} onAct={(kind) => { setModal({ kind, m: open }); setOpen(null); }}
         onNrs={() => { setNrs(open.period); setOpen(null); }} />}
       {nrs && <VatReturnModal period={nrs} onClose={() => setNrs(null)} />}
       {modal?.kind === 'file' && <FileModal m={modal.m} refundable={Number(d?.refundable || 0)} onClose={() => setModal(null)} />}
       {modal?.kind === 'pay' && <PayModal m={modal.m} onClose={() => setModal(null)} />}
       {modal?.kind === 'reopen' && <ReopenModal m={modal.m} onClose={() => setModal(null)} />}
+      {modal?.kind === 'basis' && d?.basis && <BasisModal basis={d.basis} onClose={() => setModal(null)} />}
       {modal?.kind === 'charge' && (
         <Modal onClose={() => setModal(null)} width={480}>
           <ModalHead title={modal.charge ? 'Start charging VAT' : 'Stop charging VAT'} onClose={() => setModal(null)} />
@@ -130,7 +136,9 @@ export default function VatTab() {
   );
 }
 
-function VatStatus({ st, onChange }: { st: any; onChange: (charge: boolean) => void }) {
+type BankWaiting = { lines: number; money_in: number; money_out: number; in_lines: number };
+
+function VatStatus({ st, basis: due, onChange, onBasis }: { st: any; basis?: any; onChange: (charge: boolean) => void; onBasis: () => void }) {
   const basis = st.basis === 'last_year' ? `the last full year (${fmtDay(st.from)} to ${fmtDay(st.to)})` : `this year so far (from ${fmtDay(st.from)})`;
   return (
     <div className="card card-pad stack" style={{ gap: 8 }}>
@@ -147,7 +155,52 @@ function VatStatus({ st, onChange }: { st: any; onChange: (charge: boolean) => v
       {st.advice === 'must_start' && <Alert kind="red" icon="alert"><span data-testid="vat-must-start">{st.crossed ? `Sales this year have passed ₦100 million (${N2(st.year_to_date)}).` : 'The business is above the small company limits (turnover up to ₦100 million, fixed assets up to ₦250 million, no professional services).'} It must charge VAT and file monthly returns.{st.auto_on ? ` Counta turns VAT on at its next morning check, around 7am, and tells the people who keep the books.${st.can_change ? ' You can turn it on now instead.' : ''}` : st.can_change ? '' : ' Ask the owner to turn VAT on.'}</span></Alert>}
       {st.last_change && <div className="faint" style={{ fontSize: 13 }} data-testid="vat-last-change">{changeWords(st.last_change)}</div>}
       {st.advice === 'may_stop' && <Alert kind="blue" icon="info">As a small company the business need not charge VAT. Keeping it on means filing every month, but lets the business recover the input VAT on its purchases.</Alert>}
+      {due && st.charging && <div className="row wrap" style={{ justifyContent: 'space-between', gap: 10, borderTop: '1px solid var(--line)', paddingTop: 8 }} data-testid="vat-basis">
+        <div style={{ fontSize: 13 }}>
+          <b>{due.current === 'invoice' ? 'Output VAT falls due on the invoice date' : 'Output VAT falls due as customers pay'}</b>
+          <div className="muted" style={{ marginTop: 2 }}>{due.current === 'invoice'
+            ? 'Each invoice\'s VAT goes in the return for the month it is dated, paid or not.'
+            : `Each invoice's VAT goes in the returns for the months its customer pays, by each payment's share.${Number(due.waiting?.vat) > 0
+              ? ` ${N2(due.waiting.vat)} of VAT on ${due.waiting.sales} unpaid ${Number(due.waiting.sales) === 1 ? 'invoice' : 'invoices'} waits for payment.` : ''}`}</div>
+        </div>
+        {due.can_change && <button className="btn btn-ghost btn-sm" onClick={onBasis}>Change</button>}
+      </div>}
     </div>
+  );
+}
+
+// The owner or the business's accountant chooses when output VAT falls due. A change applies from the month after the last
+// return filed, so filed months never move.
+function BasisModal({ basis, onClose }: { basis: any; onClose: () => void }) {
+  const { orgId } = useSession();
+  const toast = useToast();
+  const refresh = useTaxRefresh();
+  const [pick, setPick] = useState<'payment' | 'invoice'>(basis.current === 'invoice' ? 'invoice' : 'payment');
+  const [busy, setBusy] = useState(false);
+  const from = basis.next_from ? monthName(String(basis.next_from).slice(0, 7)) : null;
+  const opt = (id: 'payment' | 'invoice', title: string, words: string) => (
+    <label className="card card-pad click" style={{ display: 'flex', gap: 10, alignItems: 'flex-start', borderColor: pick === id ? '#0072F5' : undefined }}>
+      <input type="radio" name="vat-basis" checked={pick === id} onChange={() => setPick(id)} style={{ marginTop: 3 }} />
+      <span><b>{title}</b><span className="muted" style={{ display: 'block', fontSize: 13, marginTop: 2 }}>{words}</span></span>
+    </label>
+  );
+  return (
+    <Modal onClose={onClose} width={520}>
+      <ModalHead title="When output VAT falls due" onClose={onClose} />
+      <div className="modal-body stack" style={{ gap: 10, fontSize: 14 }}>
+        {opt('payment', 'As customers pay (payment basis)', 'An invoice\'s VAT goes in the return for the month its customer pays, in proportion to what they pay. What a customer keeps back as WHT or the NCD levy counts as paid.')}
+        {opt('invoice', 'On the invoice date (invoice basis)', 'An invoice\'s VAT goes in the return for the month it is dated, whether or not the customer has paid.')}
+        <div className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>{from ? `The change applies to invoices dated from ${from}, the month after the last return filed. Returns already filed stay as they are.`
+          : 'No return has been filed in Counta yet, so the change applies to every invoice.'} Input VAT on bills is claimed in the month a bill is paid in full either way.</div>
+      </div>
+      <div className="modal-ft"><button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy || pick === basis.current} onClick={async () => {
+          setBusy(true);
+          try { await rpc('set_vat_basis', { p_org: orgId, p_basis: pick }); toast(pick === 'payment' ? 'Output VAT now falls due as customers pay' : 'Output VAT now falls due on the invoice date'); await refresh(); onClose(); }
+          catch (e) { toast((e as Error).message, 'err'); }
+          setBusy(false);
+        }}>Save</button></div>
+    </Modal>
   );
 }
 
@@ -168,7 +221,7 @@ function Row({ label, value, strong, muted }: { label: ReactNode; value: unknown
   return <div className="row" style={{ justifyContent: 'space-between', fontWeight: strong ? 700 : undefined, color: muted ? '#6B7280' : undefined }}><span>{label}</span><span className="num">{N2(Number(value || 0))}</span></div>;
 }
 
-function MonthModal({ m, canFile, onClose, onAct, onNrs }: { m: any; canFile: boolean; onClose: () => void; onAct: (k: 'file' | 'reopen') => void; onNrs: () => void }) {
+function MonthModal({ m, canFile, waiting, onClose, onAct, onNrs }: { m: any; canFile: boolean; waiting?: BankWaiting; onClose: () => void; onAct: (k: 'file' | 'reopen') => void; onNrs: () => void }) {
   return (
     <Modal onClose={onClose} width={520}>
       <ModalHead title={`VAT for ${monthName(m.period)}`} sub={`Due ${fmtDay(m.due_date)}${m.filed_at ? ` · filed ${fmtDay(String(m.filed_at).slice(0, 10))}` : ''}${m.journal_ref ? ` · ${m.journal_ref}` : ''}`} onClose={onClose} />
@@ -189,6 +242,9 @@ function MonthModal({ m, canFile, onClose, onAct, onNrs }: { m: any; canFile: bo
         {Number(m.refund_claimed) > 0 && <Row label="Refund claimed" value={m.refund_claimed} muted />}
         <Row label="Payable" value={m.payable} strong />
         <Row label="Credit carried forward" value={m.credit_cf} />
+        {waiting && m.status === 'open' && <Alert kind="amber" icon="alert" style={{ marginTop: 8 }}><span data-testid="vat-month-bank-waiting">{waiting.lines} bank {waiting.lines === 1 ? 'line' : 'lines'} from
+          this month {waiting.lines === 1 ? 'is' : 'are'} not in the books yet ({N2(waiting.money_in)} in, {N2(waiting.money_out)} out). Money in that is a sale adds output VAT once it is
+          confirmed. <Link to="/accounting/inbox">Open the Books inbox</Link></span></Alert>}
         {m.changed_since_filing && <Alert kind="amber" icon="alert" style={{ marginTop: 8 }}>Documents for this month changed after it was filed: output {N2(m.changed_since_filing.output)}, input {N2(m.changed_since_filing.input)} now. Reopen it to file again, or correct it in a later month.</Alert>}
       </div>
       <div className="modal-ft">
