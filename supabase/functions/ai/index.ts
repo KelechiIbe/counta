@@ -5,6 +5,7 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 import { cleanVat, numens, VAT_SCHEMA, VAT_SYSTEM, type VatAnswer, type VatItem, vatPrompt } from './vat.ts';
+import { cleanWht, WHT_SCHEMA, WHT_SYSTEM, type WhtAnswer, type WhtBusiness, whtPrompt, type WhtType } from './wht.ts';
 import { catalogueText, CIT_MAP_SCHEMA, CIT_MAP_SYSTEM, cleanCitLines, type TbRow, tbText, type TemplateLine } from './cit.ts';
 import { CAC_DOC_SCHEMA, CAC_DOC_SYSTEM, cacDocChecks, type Category, cleanCacDoc, cleanInsight, cleanNinSlip, INSIGHT_SYSTEM, insightPrompt, looseJson,
   NIN_SLIP_SCHEMA, NIN_SLIP_SYSTEM } from './kyc.ts';
@@ -711,6 +712,69 @@ async function vatClassifyText(sb: SupabaseClient, admin: SupabaseClient, body: 
   }) });
 }
 
+// ---------------------------------------------------------------- the WHT type of each invoice line
+// What a customer that withholds will keep back from an invoice depends on what each line supplies (technical services 5%,
+// goods 2%). The words of lines with no type yet go to the model with the business's trade and the types it may choose,
+// and the answers are kept for those words; a person's choice is never replaced. A person opening an invoice asks for its
+// lines at once; the database's three-minute tick asks for the rest.
+async function classifyWht(org: string, business: WhtBusiness, types: WhtType[], lines: string[]): Promise<{ answers: WhtAnswer[]; error?: string }> {
+  if (!lines.length) return { answers: [] };
+  if (!aiOn()) return { answers: [], error: 'No tax model is connected yet. TaxStreem is setting it up.' };
+  const answers: WhtAnswer[] = [];
+  for (let i = 0; i < lines.length; i += 40) {
+    const chunk = lines.slice(i, i + 40);
+    const { data, model } = await gemini(WHT_SYSTEM, [{ text: whtPrompt(business, types, chunk) }], WHT_SCHEMA, 0.1, { thinking: 'low', org, kind: 'wht_classify' });
+    answers.push(...cleanWht(chunk, data?.results || [], types, model));
+  }
+  return { answers };
+}
+
+async function storeWht(admin: SupabaseClient, org: string, answers: WhtAnswer[]) {
+  const rows = answers.filter((a) => a.category).map((a) => ({ description: a.description, category: a.category, confidence: a.confidence, reason: a.reason,
+    source: a.source, model: a.model ?? null }));
+  if (!rows.length) return 0;
+  const { error } = await admin.rpc('svc_line_wht_store', { p_org: org, p_rows: rows });
+  if (error) throw new Error(error.message);
+  return rows.length;
+}
+
+// A person opening an invoice: its lines with no WHT type (the database checks the person may see the sale).
+async function whtLines(sb: SupabaseClient, admin: SupabaseClient, body: any) {
+  const saleId = String(body.sale_id || '');
+  if (!isUuid(saleId)) return json({ ok: false, error: 'Choose the invoice.' }, 400);
+  const { data, error } = await sb.rpc('sale_wht_lines', { p_sale: saleId });
+  if (error) return json({ ok: false, error: error.message }, 403);
+  const org = String(data?.org_id || '');
+  const lines = (Array.isArray(data?.lines) ? data.lines : []).map((l: unknown) => String(l).replace(/\s+/g, ' ').trim().slice(0, 300)).filter(Boolean).slice(0, 40);
+  if (!lines.length) return json({ ok: true, classified: 0 });
+  if (await paused(admin, org)) return json(PAUSED);
+  try {
+    const { answers, error: e2 } = await classifyWht(org, data.business || {}, data.types || [], lines);
+    if (e2 && !answers.length) return json({ ok: false, reason: aiOn() ? 'error' : 'not_configured', error: e2 });
+    return json({ ok: true, classified: await storeWht(admin, org, answers) });
+  } catch (e) {
+    return json({ ok: false, reason: 'error', error: (e as Error).message });
+  }
+}
+
+// The three-minute tick: words on recent invoices to business customers, by business.
+async function whtLinesPending(admin: SupabaseClient) {
+  if (!aiOn()) return { ok: false, error: 'No AI model is connected yet.' };
+  const { data, error } = await admin.rpc('svc_lines_for_wht', { p_limit: 60 });
+  if (error) return { ok: false, error: error.message };
+  const out = { businesses: 0, lines: 0, classified: 0, errors: [] as string[] };
+  for (const g of (data as { org_id: string; business: WhtBusiness; types: WhtType[]; lines: string[] }[]) || []) {
+    if (await paused(admin, g.org_id)) continue;
+    out.businesses++;
+    out.lines += g.lines.length;
+    try {
+      const { answers } = await classifyWht(g.org_id, g.business || {}, g.types || [], g.lines);
+      out.classified += await storeWht(admin, g.org_id, answers);
+    } catch (e) { out.errors.push((e as Error).message.slice(0, 200)); }
+  }
+  return { ok: true, ...out, errors: out.errors.slice(0, 5) };
+}
+
 // ---------------------------------------------------------------- VAT on the lines typed on an invoice
 // The words of each line decide its VAT. What a business has on record for those words (Numens' answer, or a person's
 // choice, which Numens never replaces) comes back at once; the rest go to Numens, and its answers are kept for next time.
@@ -1283,11 +1347,12 @@ Deno.serve(async (req) => {
     if (!expected || !sameSecret(expected, hook)) return json({ ok: false, error: 'Not allowed.' }, 401);
     let hb: any = {};
     try { hb = await req.json(); } catch { /* empty body */ }
-    if (!['vat_classify_pending', 'vat_receipts_pending', 'nrs_codes_pending'].includes(hb.action)) return json({ ok: false, error: 'Unknown action.' }, 400);
+    if (!['vat_classify_pending', 'vat_receipts_pending', 'nrs_codes_pending', 'wht_lines_pending'].includes(hb.action)) return json({ ok: false, error: 'Unknown action.' }, 400);
     try {
       await loadKeys(admin);
       if (hb.action === 'vat_receipts_pending') return json(await vatReceiptsPending(admin));
       if (hb.action === 'nrs_codes_pending') return json(await nrsCodesPending(admin));
+      if (hb.action === 'wht_lines_pending') return json(await whtLinesPending(admin));
       const { data: items } = await admin.rpc('svc_items_for_vat', { p_limit: 60 });
       const open = new Map<string, boolean>();
       const keep: VatItem[] = [];
@@ -1345,6 +1410,7 @@ Deno.serve(async (req) => {
       case 'read_purchase_invoice': return await readPurchaseInvoice(sb, admin, body);
       case 'vat_classify_text': return await vatClassifyText(sb, admin, body);
       case 'vat_lines': return await vatLines(sb, admin, body);
+      case 'wht_lines': return await whtLines(sb, admin, body);
       case 'ask': return await ask(body);
       case 'chat': return await chat(body);
       case 'voice': return await voice(body);

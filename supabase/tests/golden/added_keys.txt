@@ -50,3 +50,8 @@ must_reason
 practice.letterhead
 practice.letterhead_set_at
 practice.letterhead_set_by
+# Output VAT on payment basis: the day a sale was settled in full
+settled_on
+# WHT worked out line by line: each line's type, for the business only (never on the customer's page)
+wht_type
+wht_basis
