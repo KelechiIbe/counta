@@ -1329,6 +1329,57 @@ async function readProduct(sb: SupabaseClient, admin: SupabaseClient, body: any,
   }
 }
 
+// ---------------------------------------------------------------- from Martina on WhatsApp (the chat function, with the hook secret)
+// A supplier's invoice someone on the team sent Martina: the chat function saved it under the business's bills; it is read as
+// if they had uploaded it in Counta (the same checks and the same notices).
+async function siUploadHook(admin: SupabaseClient, b: any) {
+  const orgId = String(b.org_id || ''), userId = String(b.user_id || ''), path = String(b.path || '');
+  if (!isUuid(orgId) || !isUuid(userId) || !path.startsWith(orgId + '/bills/') || path.includes('..')) return json({ ok: false, error: 'Bad request.' }, 400);
+  const { data: me } = await admin.from('members').select('id').eq('org_id', orgId).eq('user_id', userId).eq('status', 'active').maybeSingle();
+  if (!me) return json({ ok: false, error: 'You are not on this business\'s team.' });
+  const { data: blob, error: dErr } = await admin.storage.from('documents').download(path);
+  if (dErr || !blob) return json({ ok: false, error: 'Could not open the file.' });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (bytes.length > MAX_INVOICE) return json({ ok: false, error: 'The file is larger than 8 MB.' });
+  const mime = sniff(bytes);
+  if (!mime) return json({ ok: false, error: 'Send the invoice as a PDF or a photo (JPEG, PNG or WebP).' });
+  const { data: open, error } = await admin.rpc('svc_si_open', { p: { source: 'upload', org_id: orgId, member_id: me.id, path, mime,
+    file_name: String(b.file_name || 'WhatsApp').slice(0, 160), file_size: bytes.length, sha256: await sha256hex(bytes) } });
+  if (error) return json({ ok: false, error: error.message });
+  await readLater(admin, open, bytes, mime);
+  return json({ ok: true, invoice: { id: open.id, number: open.number, status: 'reading' } });
+}
+
+// A product photo someone on the team sent Martina, read as Counta reads one taken in the app.
+async function readProductHook(admin: SupabaseClient, b: any) {
+  const orgId = String(b.org_id || ''), userId = String(b.user_id || '');
+  if (!isUuid(orgId) || !isUuid(userId)) return json({ ok: false, error: 'Bad request.' }, 400);
+  if (!aiOn()) return json(notConfigured());
+  if (await paused(admin, orgId)) return json(PAUSED);
+  const { data: me } = await admin.from('members').select('role, p_add_items, p_edit_prices').eq('org_id', orgId).eq('user_id', userId).eq('status', 'active').maybeSingle();
+  if (!me || !(me.role === 'owner' || me.p_add_items || me.p_edit_prices)) return json({ ok: false, error: 'Your role does not add products. Ask the owner for "Add products".' });
+  const images: { mime: string; data: string }[] = (Array.isArray(b.images) ? b.images : []).slice(0, 2)
+    .filter((i: any) => i && /^image\/(jpeg|png|webp)$/.test(String(i.mime)) && typeof i.data === 'string' && i.data.length < 11_000_000);
+  if (!images.length) return json({ ok: false, error: 'Send a photo of the product.' }, 400);
+  const { data: allowed } = await admin.rpc('svc_kyc_take', { p_user: userId, p_kind: 'product' });
+  if (!allowed) return json({ ok: false, reason: 'limit', error: 'That is a lot of products for one day. Add the rest in Counta.' });
+  const [{ data: org }, { data: cats }] = await Promise.all([admin.from('orgs').select('industry').eq('id', orgId).maybeSingle(),
+    admin.from('items').select('category').eq('org_id', orgId).eq('archived', false).limit(1000)]);
+  const categories = [...new Set(((cats || []) as { category: string | null }[]).map((c) => String(c.category || '')).filter(Boolean))].slice(0, 60);
+  const parts: Part[] = [{ text: [`The business: ${String(org?.industry || 'retail').slice(0, 40)}.`, `Its categories: ${categories.join(', ') || 'none yet'}.`,
+    'The phone could not read a barcode.', images.length > 1 ? 'The first photo is the front of the product, the second the back.' : 'One photo of the product.'].join(NL) }];
+  for (const im of images) parts.push({ inlineData: { mimeType: im.mime, data: im.data } });
+  try {
+    const { data, model } = await gemini(PRODUCT_SYSTEM, parts, PRODUCT_SCHEMA, 0.1, { thinking: 'low', timeoutMs: 45_000, org: orgId, kind: 'read_product' });
+    const product = cleanProduct(data, null, categories);
+    if (!product.name) return json({ ok: false, error: 'The photo did not show the product name clearly. Take it again closer, or add it in Counta.' });
+    return json({ ok: true, product, model });
+  } catch (e) {
+    if (e instanceof CredentialError) return json(notConfigured());
+    return json({ ok: false, reason: 'error', error: 'The photo could not be read just now. Try again, or add it in Counta.' });
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
@@ -1347,9 +1398,14 @@ Deno.serve(async (req) => {
     if (!expected || !sameSecret(expected, hook)) return json({ ok: false, error: 'Not allowed.' }, 401);
     let hb: any = {};
     try { hb = await req.json(); } catch { /* empty body */ }
-    if (!['vat_classify_pending', 'vat_receipts_pending', 'nrs_codes_pending', 'wht_lines_pending'].includes(hb.action)) return json({ ok: false, error: 'Unknown action.' }, 400);
+    if (!['vat_classify_pending', 'vat_receipts_pending', 'nrs_codes_pending', 'wht_lines_pending', 'si_upload', 'read_product_hook'].includes(hb.action)) {
+      return json({ ok: false, error: 'Unknown action.' }, 400);
+    }
     try {
       await loadKeys(admin);
+      // Martina on WhatsApp: a supplier's invoice someone sent her, and a product photo.
+      if (hb.action === 'si_upload') return await siUploadHook(admin, hb);
+      if (hb.action === 'read_product_hook') return await readProductHook(admin, hb);
       if (hb.action === 'vat_receipts_pending') return json(await vatReceiptsPending(admin));
       if (hb.action === 'nrs_codes_pending') return json(await nrsCodesPending(admin));
       if (hb.action === 'wht_lines_pending') return json(await whtLinesPending(admin));

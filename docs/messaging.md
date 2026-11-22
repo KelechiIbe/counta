@@ -126,6 +126,16 @@ on the team list is not used. Migration `20261103000100_whatsapp_alerts.sql`.
 - **From.** TaxStreem's number on OpenWA, where Martina answers, even when the business linked its own number for customers.
   When the person's Martina chat is on the same business, the alert ends with "Reply here to ask Martina about it." and joins
   that chat, so she knows what a reply refers to.
+- **The books inbox.** A question that lands in the books inbox pushes at once to everyone who keeps the books (one push per
+  burst, `ai_proposals_inbox_push`). WhatsApp and email wait for the morning: at 8:00 Lagos time each of them gets one
+  message with how many questions wait and since when, until the inbox is clear (`private.inbox_digest`, cron
+  `counta-inbox-digest`). Between the 10th and the 20th the same message carries the transactions to confirm before the
+  returns, so nobody gets two. A WhatsApp reply of "inbox" has Martina go through them in the chat. Payment matches stay
+  in that message and the bell; they no longer go to WhatsApp one by one.
+- **Customers waiting.** A customer on WhatsApp whom Martina handed to the team goes to WhatsApp at once, to everyone who
+  records sales (see [whatsapp-martina.md](whatsapp-martina.md#customers-talking-to-martina)).
+- **The daily report.** A PDF of the day each evening, by WhatsApp and email, to the owner and whoever keeps the books unless
+  they switch it off (see [whatsapp-martina.md](whatsapp-martina.md#the-daily-report)).
 - **Sample business.** It sends them too, to its own people only.
 - **Allowance.** Counta's own alerts, by email or WhatsApp, do not count against the business's monthly messages in its plan.
   Cost of service still counts them as TaxStreem's cost.
@@ -134,7 +144,7 @@ on the team list is not used. Migration `20261103000100_whatsapp_alerts.sql`.
   their numbers, are not in it.
 
 Through the official Cloud API (`WHATSAPP_PROVIDER = meta`), only the alerts with a template below can go; the rest are
-marked failed with "This message can only go by email." Submit these three in the Utility category, language English.
+marked failed with "This message can only go by email." Submit these four in the Utility category, language English.
 
 **counta_tax_deadline** (6 variables)
 
@@ -162,6 +172,15 @@ Sent by Counta.
 ```
 
 Example: Ada, Bright Pharmacy Ltd, 12, September 2026, 21 Oct
+
+**counta_books_inbox** (4 variables)
+
+```
+Hello {{1}}, {{2}} has {{3}} questions waiting in the books inbox, the oldest from {{4}}. Open Counta to answer them, or reply to Martina on WhatsApp.
+Sent by Counta.
+```
+
+Example: Ada, Bright Pharmacy Ltd, 5, 18 Nov
 
 Which channel each alert uses, cheapest first: the red number in the menu and a push notification are free and cover
 everything; email (a fraction of a kobo) carries the important ones; WhatsApp (a paid utility conversation) the same, a

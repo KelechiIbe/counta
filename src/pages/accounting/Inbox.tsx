@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
-import { rpc } from '../../lib/supabase';
+import { rpc, signedDoc } from '../../lib/supabase';
 import { edge, useChart, useCustomers, useInbox, useBills, type AiProposal } from '../../lib/api';
 import { N2, fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
@@ -157,7 +157,10 @@ function Question({ p }: { p: AiProposal }) {
         {p.kind === 'payment_claim' && p.proposal?.sale_id && (
           <div className="row wrap" style={{ gap: 8 }}>
             <Link className="btn btn-secondary btn-sm" to={`/sell/sales?open=${p.proposal.sale_id}`}>Open {p.proposal.number || 'the invoice'}</Link>
-            <span className="faint" style={{ fontSize: 12 }}>This closes by itself once the money is matched or the payment is recorded.</span>
+            {p.proposal.chat_id && <Link className="btn btn-ghost btn-sm" to={`/sell/chats?open=${p.proposal.chat_id}`}><Icon name="wa" size={14} />The WhatsApp chat</Link>}
+            {p.proposal.proof_path && <button className="btn btn-ghost btn-sm" onClick={async () => { const u = await signedDoc(p.proposal.proof_path); if (u) window.open(u, '_blank', 'noopener'); }}>
+              <Icon name="file" size={14} />The slip they sent</button>}
+            <span className="faint" style={{ fontSize: 12 }}>This closes by itself once the money is matched or the payment is recorded. A slip is not proof the money arrived.</span>
           </div>
         )}
         {canAnswer && <div className="row"><input className="input input-sm" placeholder="What you found" value={note} onChange={(e) => setNote(e.target.value)} />

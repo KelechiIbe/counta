@@ -1,6 +1,7 @@
-// Price lists for distributors and wholesale buyers: a percentage off retail, a markup on cost, or fixed prices per item
+// Customer prices (the menu's name for price lists): special prices for distributors and wholesale buyers: a percentage off retail, a markup on cost, or fixed prices per item
 // with quantity breaks (10 cartons at one price, 50 at a lower one). A customer's list applies at the till and on invoices.
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { can, useInventory, useSession, useToast } from '../../state/session';
 import { rpc } from '../../lib/supabase';
@@ -22,8 +23,8 @@ export default function PriceLists() {
   return (
     <div className="container" style={{ maxWidth: 1000 }}>
       <div className="row wrap" style={{ justifyContent: 'space-between' }}>
-        <div className="muted" style={{ fontSize: 14, maxWidth: 620 }}>Give distributors and bulk buyers their own prices. Put the list on the customer and the till and invoices charge it; anyone can still sell at retail.</div>
-        {can(inv, 'edit_prices') && <button className="btn btn-primary btn-sm" onClick={() => setOpen('new')}><Icon name="plus" size={14} color="#fff" />Price list</button>}
+        <div className="muted" style={{ fontSize: 14, maxWidth: 640, lineHeight: 1.5 }}>Special prices for particular customers, such as distributors and bulk buyers. Make a price list, put it on the customer, and the till, invoices and orders charge it; everyone else pays retail. Your products and their retail prices are in <Link to="/inventory/items">Products</Link>.</div>
+        {can(inv, 'edit_prices') && <button className="btn btn-primary btn-sm" onClick={() => setOpen('new')}><Icon name="plus" size={14} color="#fff" />New price list</button>}
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
         {data.isLoading ? <SkeletonRows n={4} /> : !lists.length ? <div style={{ padding: 20 }}><Empty>No price lists yet. Everyone pays retail.</Empty></div> : lists.map((l) => (

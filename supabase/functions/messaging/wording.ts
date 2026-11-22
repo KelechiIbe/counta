@@ -190,11 +190,18 @@ export function displayName(name: string, whiteLabel?: boolean): string {
 // The same words as the email, as WhatsApp text. An alert to someone whose Martina chat is on the same business says that
 // a reply reaches her. A white-labelled business's message has no footer line.
 export function waText(m: Msg): string {
-  const w = wording(m) as ReturnType<typeof wording> & { greet?: string; footer?: string };
   const p = m.params || {};
+  // A person at the business answering a customer in their chat: their words as typed. On TaxStreem's number, which writes
+  // for many businesses, the business's name comes first so the customer knows who is answering.
+  if (m.template === 'chat') {
+    const t = String(p.text || '').trim().slice(0, 3500);
+    return p.via === 'own' ? t : `*${String(p.business || m.org?.name || '').replace(/[*_~`]/g, '').trim()}*\n${t}`;
+  }
+  const w = wording(m) as ReturnType<typeof wording> & { greet?: string; footer?: string };
   const hello = `Hello ${w.greet ?? first(p.customer_name)},`;
   const biz = p.business || m.org?.name || '';
-  const reply = m.template === 'alert' && p.reply_hint === true ? ['Reply here to ask Martina about it.'] : [];
+  const reply = m.template === 'alert' && p.reply_hint === true
+    ? [typeof p.reply_line === 'string' && p.reply_line.trim() ? p.reply_line.trim().slice(0, 200) : 'Reply here to ask Martina about it.'] : [];
   const footer = w.footer || (m.org?.white_label ? '' : biz ? `Sent for ${biz} by Counta` : 'Sent by Counta');
   return waFormat(w.heading, [hello, '', ...w.lines, ...reply], w.link, w.button, footer);
 }

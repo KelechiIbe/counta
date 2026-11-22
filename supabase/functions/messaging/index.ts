@@ -10,6 +10,9 @@
 //                                            director_code, director_admin): svc_practice_mail writes it and mints its link
 //                                            or code, sent in the firm's name only (no "via Counta"); director_admin goes
 //                                            to each of TaxStreem's reviewers, one email each (practice_mail.ts)
+//   { action: 'daily_report', id }      -> one person's daily report (svc_daily_report): a PDF in the business's documents,
+//                                          sent to their WhatsApp (TaxStreem's number, OpenWA) and, for the evening one,
+//                                          their email (report.ts)
 //   { action: 'identity_mail', kind, id } -> a director's or recovering director's code (by email and by SMS through
 //                                            Termii), and the recovery's messages to the holder, the director, the previous
 //                                            owner, TaxStreem's reviewers and the support address; a full-mandate client's
@@ -21,6 +24,8 @@
 //                                      starts its session and answers the QR code to scan
 //   { action: 'wa_status', org_id } -> the business's own number: its state, and the QR code while it waits for a scan
 //   { action: 'wa_unlink', org_id } -> unlinks it; messages go from TaxStreem's number again
+//   { action: 'wa_hooks', org_id }  -> sets the business's own number's webhooks again (receipts here, its customers'
+//                                      messages to the chat function, which answers them only when the business allows it)
 //   { action: 'practice_email', kind: 'member'|'client'|'accountant'|'handover', id }
 //                                   -> emails an accountant-portal invitation (to a practice's new staff, from a practice to a
 //                                      business owner, from a business to its accountant, or from a practice to the person
@@ -40,7 +45,9 @@
 // are plain text with the same wording.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { displayName, emailHtml, emailText, type Msg, mandateBlocked, senderAddress, waText, wording } from './wording.ts';
-import { ensureSession, type OpenWa, owa, owaError, RECEIPT_EVENTS, sendText, sessionState, setWebhooks, signatureOk, waDigits, waFormat } from './openwa.ts';
+import { ensureSession, INBOUND_EVENTS, type OpenWa, owa, owaError, RECEIPT_EVENTS, sendDocument, sendText, sessionState, setWebhooks, signatureOk, waDigits,
+  waFormat } from './openwa.ts';
+import { type Report, reportCaption, reportFileName, reportPdf, headline, sections, dayWords } from './report.ts';
 import { practiceMail } from './practice_mail.ts';
 import { identityMail, type IdentityMailDeps, termiiSend } from './identity_mail.ts';
 
@@ -139,7 +146,9 @@ async function sendOpenWa(m: Msg): Promise<string> {
   const cfg = await openwaCfg();
   if (!cfg) throw new Error(NOT_ON);
   // Counta's own alerts come from TaxStreem's number, where Martina answers; a business's own linked number is for its customers.
-  const { data: s } = await admin.rpc('svc_wa_sender', { p_org: m.template === 'alert' ? null : m.org_id || null });
+  // A reply in a customer chat goes from the number the customer wrote to.
+  const fromCounta = m.template === 'alert' || (m.template === 'chat' && m.params?.via !== 'own');
+  const { data: s } = await admin.rpc('svc_wa_sender', { p_org: fromCounta ? null : m.org_id || null });
   if (!s?.session || s.status !== 'ready') throw new Error(NOT_ON.replace('yet. TaxStreem is setting it up', 'at the moment: the WhatsApp number is not connected'));
   const phone = waDigits(m.to_address);
   if (!phone) throw new Error('That phone number does not look right for WhatsApp.');
@@ -154,6 +163,15 @@ async function sendWhatsApp(m: Msg): Promise<string> {
   const token = await secret('WHATSAPP_TOKEN');
   const phoneId = await secret('WHATSAPP_PHONE_NUMBER_ID');
   if (!token || !phoneId) throw new Error('WhatsApp is not switched on yet. TaxStreem is setting it up; the message goes out once it is.');
+  // A reply in a customer chat is ordinary text: the customer wrote first, so it goes inside WhatsApp's 24-hour window.
+  if (m.template === 'chat') {
+    const res = await fetch(`${GRAPH_URL}/${phoneId}/messages`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: m.to_address.replace(/[^0-9]/g, ''), type: 'text',
+        text: { body: waText(m), preview_url: false } }), signal: AbortSignal.timeout(20_000) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`WhatsApp: ${body?.error?.error_user_msg || body?.error?.message || res.status}`);
+    return String(body?.messages?.[0]?.id || '');
+  }
   const w = wording(m);
   if (!w.wa) throw new Error('This message can only go by email.');
   const lang = (await secret('WHATSAPP_TEMPLATE_LANG')) || 'en';
@@ -295,12 +313,25 @@ async function openwaWebhook(req: Request) {
 }
 
 // ------------------------------------------------------------------ a business's own number
+// Receipts and session changes here; its customers' messages to the chat function, which answers them only when the business
+// turned that on (Sell, Customer chats).
+const businessHooks = () => [{ url: `${SUPABASE_URL}/functions/v1/messaging/openwa`, events: RECEIPT_EVENTS },
+  { url: `${SUPABASE_URL}/functions/v1/chat/openwa`, events: INBOUND_EVENTS }];
+
 async function businessNumber(sb: any, orgId: string, action: string) {
   const { data: who, error } = await sb.rpc('whatsapp_link_check', { p_org: orgId });
   if (error) return { ok: false, error: error.message };
   const cfg = await openwaCfg();
   if (!cfg || (await provider()) !== 'openwa') return { ok: false, reason: 'not_configured', error: 'Linking your own number is not available yet. Messages go from TaxStreem\'s WhatsApp number.' };
   const sess = who.session as any;
+  if (action === 'wa_hooks') {
+    if (!sess?.id) return { ok: true, status: 'none' };
+    const hookSecret = await secret('OPENWA_WEBHOOK_SECRET');
+    if (!hookSecret) return { ok: false, reason: 'not_configured', error: 'WhatsApp is still being set up by TaxStreem.' };
+    try { await setWebhooks(cfg, String(sess.id), `${SUPABASE_URL}/functions/v1/`, hookSecret, businessHooks()); }
+    catch (e) { return { ok: false, error: `The WhatsApp server did not take the change: ${(e as Error).message}` }; }
+    return { ok: true, status: 'hooks_set' };
+  }
   if (action === 'wa_unlink') {
     if (sess?.id) {
       await owa(cfg, `/sessions/${encodeURIComponent(sess.id)}/logout`, { method: 'POST', body: {} });
@@ -318,7 +349,7 @@ async function businessNumber(sb: any, orgId: string, action: string) {
     let s: any;
     try {
       s = await ensureSession(cfg, `org-${orgId.slice(0, 8)}`);
-      await setWebhooks(cfg, String(s.id), `${SUPABASE_URL}/functions/v1/`, hookSecret, [{ url: `${SUPABASE_URL}/functions/v1/messaging/openwa`, events: RECEIPT_EVENTS }]);
+      await setWebhooks(cfg, String(s.id), `${SUPABASE_URL}/functions/v1/`, hookSecret, businessHooks());
     } catch (e) { return { ok: false, error: `The WhatsApp server did not set up the link: ${(e as Error).message}` }; }
     await admin.rpc('svc_wa_session_save', { p: { id: String(s.id), kind: 'business', org_id: orgId, name: String(s.name || ''), status: String(s.status || 'created'),
       created_by: who.user_id } });
@@ -381,6 +412,79 @@ const identityMailDeps: IdentityMailDeps = {
   },
 };
 
+// ------------------------------------------------------------------ the daily report
+const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+function reportEmailHtml(r: Report) {
+  const color = /^#[0-9a-f]{6}$/i.test(String(r.business.brand_color || '')) ? String(r.business.brand_color) : '#0072F5';
+  const rows = sections(r.data || {}).map((s) => `<h2 style="margin:18px 0 6px;font-size:15px;color:${color}">${esc(s.heading)}</h2>`
+    + s.rows.map(([a, b]) => `<p style="margin:0 0 4px;font-size:14px;color:#1f2933">${esc(a)}${b ? `: <b>${esc(b)}</b>` : ''}</p>`).join('')).join('');
+  return `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">
+<table role="presentation" width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;padding:28px;border-top:4px solid ${color}" cellpadding="0" cellspacing="0"><tr><td>
+<p style="margin:0 0 4px;font-size:13px;color:#52606d">${esc(r.business.name)}</p>
+<h1 style="margin:0 0 12px;font-size:20px;color:#102a43">Daily report for ${esc(dayWords(r.day))}</h1>
+<p style="margin:0 0 12px;font-size:15px;color:#1f2933">${esc(headline(r).join(' ') || 'Here is the day in Counta.')}</p>${rows}
+<p style="margin:20px 0 0;font-size:13px;color:#52606d">The full report is attached as a PDF. You can change the time or turn it off in Settings, Martina on WhatsApp and Siri.</p>
+</td></tr></table></td></tr></table></body></html>`;
+}
+function reportEmailText(r: Report) {
+  return [`Daily report for ${dayWords(r.day)}, ${r.business.name}`, '', headline(r).join(' '), '',
+    ...sections(r.data || {}).flatMap((s) => [s.heading, ...s.rows.map(([a, b]) => `${a}${b ? `: ${b}` : ''}`), '']),
+    'The full report is attached as a PDF. You can change the time or turn it off in Settings, Martina on WhatsApp and Siri.'].join('\n');
+}
+
+async function dailyReport(id: string) {
+  const { data: r, error } = await admin.rpc('svc_daily_report', { p_id: id });
+  if (error) throw new Error(error.message);
+  if (!r) return { id, skipped: true };
+  const done = (p: Record<string, unknown>) => admin.rpc('svc_daily_report_done', { p_id: id, p });
+  const rep = r as Report;
+  // A quiet day is not sent on schedule; one they asked for goes anyway, since it still shows what waits for them.
+  if (rep.data?.empty && rep.kind !== 'asked') { await done({ status: 'empty' }); return { id, status: 'empty' }; }
+  const pdf = await reportPdf(rep);
+  const name = reportFileName(rep);
+  const path = `${rep.org_id}/reports/daily/${rep.day}-${id.slice(0, 8)}.pdf`;
+  const up = await admin.storage.from('documents').upload(path, pdf, { contentType: 'application/pdf', upsert: true });
+  if (up.error) { await done({ status: 'failed', error: `Could not save the PDF: ${up.error.message}` }); return { id, status: 'failed', error: up.error.message }; }
+  const channels: string[] = [], problems: string[] = [];
+  if (rep.person?.whatsapp && rep.channels?.whatsapp) {
+    try {
+      const cfg = await openwaCfg();
+      if (!cfg || (await provider()) !== 'openwa') throw new Error('WhatsApp documents need TaxStreem\'s OpenWA number.');
+      const { data: s } = await admin.rpc('svc_wa_sender', { p_org: null });
+      if (!s?.session || s.status !== 'ready') throw new Error('The WhatsApp number is not connected.');
+      const { data: signed, error: se } = await admin.storage.from('documents').createSignedUrl(path, 3600);
+      if (se || !signed?.signedUrl) throw new Error('Could not share the PDF.');
+      const phone = waDigits(rep.person.whatsapp);
+      if (!phone) throw new Error('That WhatsApp number does not look right.');
+      const caption = reportCaption(rep);
+      await sendDocument(cfg, String(s.session), phone, { url: signed.signedUrl, filename: name, mimetype: 'application/pdf', caption });
+      channels.push('whatsapp');
+      // In the person's Martina chat, so a reply about it makes sense to her.
+      if (rep.person.link_id) await admin.rpc('svc_chat_log', { p_link: rep.person.link_id, p_role: 'assistant', p_text: caption, p_meta: { report: id } });
+    } catch (e) { problems.push(`WhatsApp: ${(e as Error).message}`); }
+  }
+  if (rep.kind === 'scheduled' && rep.person?.email && rep.channels?.email) {
+    try {
+      const key = await secret('RESEND_API_KEY'), from = senderAddress(await secret('RESEND_FROM'));
+      if (!key || !from) throw new Error('Email is not switched on yet.');
+      let b64 = '';
+      for (let i = 0; i < pdf.length; i += 0x8000) b64 += String.fromCharCode(...pdf.subarray(i, i + 0x8000));
+      const res = await fetch(`${RESEND_URL}/emails`, { method: 'POST', signal: AbortSignal.timeout(30_000),
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': `counta-report-${id}` },
+        body: JSON.stringify({ from: `${rep.business.white_label ? displayName(rep.business.name, true) : 'Counta'} <${from}>`, to: [rep.person.email],
+          subject: `Daily report for ${rep.business.name}, ${dayWords(rep.day)}`, html: reportEmailHtml(rep), text: reportEmailText(rep),
+          attachments: [{ filename: name, content: btoa(b64) }], tags: [{ name: 'template', value: 'daily_report' }] }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(`Resend: ${body?.message || body?.error || res.status}`);
+      channels.push('email');
+    } catch (e) { problems.push(`Email: ${(e as Error).message}`); }
+  }
+  const status = channels.length ? 'sent' : 'failed';
+  await done({ status, channels, path, error: problems.join(' ').slice(0, 300) || null });
+  return { id, status, channels, error: problems.join(' ') || undefined };
+}
+
 // ------------------------------------------------------------------ entry
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -404,6 +508,10 @@ Deno.serve(async (req) => {
       }
       if (body.action === 'practice_mail') return json(await practiceMail(String(body.kind || ''), String(body.id || ''), practiceMailDeps));
       if (body.action === 'identity_mail') return json(await identityMail(String(body.kind || ''), String(body.id || ''), identityMailDeps));
+      if (body.action === 'daily_report') {
+        if (!/^[0-9a-f-]{36}$/i.test(String(body.id || ''))) return json({ ok: false, error: 'Bad request.' }, 400);
+        return json({ ok: true, result: await dailyReport(String(body.id)) });
+      }
       return json({ ok: false, error: 'Unknown action.' }, 400);
     }
 
@@ -422,7 +530,7 @@ Deno.serve(async (req) => {
         paused: { email: !emailOn, whatsapp: !waOn } });
     }
     if (body.action === 'practice_email') return json(await practiceEmail(sb, String(body.kind || ''), String(body.id || '')));
-    if (['wa_link', 'wa_status', 'wa_unlink'].includes(body.action)) {
+    if (['wa_link', 'wa_status', 'wa_unlink', 'wa_hooks'].includes(body.action)) {
       const orgId = typeof body.org_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.org_id) ? body.org_id : '';
       if (!orgId) return json({ ok: false, error: 'Choose the business.' }, 400);
       return json(await businessNumber(sb, orgId, body.action));

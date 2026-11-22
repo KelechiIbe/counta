@@ -43,6 +43,7 @@ const Sales = lazy(() => import('./pages/sell/Sales'));
 const Customers = lazy(() => import('./pages/sell/Customers'));
 const Orders = lazy(() => import('./pages/sell/Orders'));
 const PriceLists = lazy(() => import('./pages/sell/PriceLists'));
+const Chats = lazy(() => import('./pages/sell/Chats'));
 const Shop = lazy(() => import('./pages/sell/Shop'));
 const Recurring = lazy(() => import('./pages/sell/Recurring'));
 const SalesImport = lazy(() => import('./pages/sell/SalesImport'));
@@ -236,6 +237,7 @@ export default function App() {
         <Route path="/sell/customers" element={<Customers />} />
         <Route path="/sell/orders" element={<Orders />} />
         <Route path="/sell/price-lists" element={<PriceLists />} />
+        <Route path="/sell/chats" element={<Chats />} />
         <Route path="/sell/shop" element={<Shop />} />
         <Route path="/sell/recurring" element={<Recurring />} />
         <Route path="/sell/import" element={<SalesImport />} />
