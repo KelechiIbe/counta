@@ -463,7 +463,7 @@ begin
   assert private.meter_usage(o, 'emails') = e and private.meter_usage(o, 'whatsapp') = w, 'outbound_meter';
   -- Nor in the admin average across businesses.
   assert private.meter_average('emails') = round((select count(*) from messages m join orgs x on x.id = m.org_id where not x.is_sample and m.channel = 'email'
-      and m.status not in ('failed', 'suppressed') and m.created_at >= now() - interval '30 days')::numeric
+      and m.template <> 'alert' and m.status not in ('failed', 'suppressed') and m.created_at >= now() - interval '30 days')::numeric
     / (select count(*) from orgs x where not x.is_sample and exists (select 1 from members mb where mb.org_id = x.id and mb.status = 'active')), 2)
      and (select count(*) from messages where status = 'suppressed' and channel = 'email') > 0, 'outbound_meter: the admin average';
   update orgs set send_mode = 'send' where id = o;

@@ -42,10 +42,18 @@ For a customer Martina has a narrow brief (`chat/customer.ts`):
 
 A reply from Customer chats goes to the customer from the number they wrote to, and Martina keeps out of that chat for twelve hours; the team can hand it back sooner, or keep her out for a week. A business can switch Martina off for its customers, and then every message waits for a person. More than thirty messages in an hour from one customer stops her answering and hands the chat to the team. Pictures customers send are kept under the business's documents at `chats/`.
 
+## What it costs and how it counts
+
+Martina runs on Gemini (google.ts, Vertex AI or the Gemini API key). Her instructions come in two parts. `RULES` in `chat/martina.ts` is the same for every business, and so is her tool list, so both are kept in Gemini's context cache (`chat/cache.ts`) and each call sends only Counta's note and the conversation; Google bills cached tokens at a tenth of the input price. Counta's note (`contextNote`) says who the person is, their business and its words, the date, what their role allows and what waits for their yes or PIN; it travels in square brackets with the person's latest message and is never logged.
+
+The cache is made when a message comes and none is live, kept fifteen minutes and extended while messages keep coming; with no traffic it lapses by itself. Its name is a hash of the model and the instructions, so a change to either makes a new one, and other isolates find it through Google's list. When Google refuses a cache (too small for the model, or no permission) Counta does not ask again for six hours, and a call made with a cache that fails goes out again in full, so caching never stops Martina answering. Each call records the tokens Gemini took from a cache (`usage_events.qty_cached`), and making and keeping the cache is recorded with no business named, so the Cost of service page shows what it saves and what it costs. Customers' chats send their shorter brief in full.
+
+Plans count one per message Martina answers: the first Gemini call of a turn (`chat`, `customer_chat`) counts, a photo the team sends counts once (`whatsapp_media`), and the calls within the same message (`chat_step`, `customer_chat_step`, `transcribe`, `customer_media`) only add to its cost. With the month's messages used up, Martina tells the team so, and hands customers to the team in Customer chats. See [plans-and-costs.md](plans-and-costs.md). Migration `20261211000100_martina_cache_counting.sql`.
+
 ## Alerts
 
 The books inbox pushes as questions land and sends one WhatsApp and one email each morning until it is clear; see [messaging.md](messaging.md#alerts-on-whatsapp), which also has the `counta_books_inbox` template for the official API.
 
 ## Tests
 
-`supabase/tests/sql/29_whatsapp_everywhere.sql` covers the inbox alerts, the PIN, what Martina may call and on which records, the report's parts and queue, and the customer side (finding the business, their own records only, a claim, the team's reply, an order). `chat/more_test.ts` covers the account a person's words name, picture reading and file types; `messaging/report_test.ts` the report's parts, wording and pages.
+`supabase/tests/sql/29_whatsapp_everywhere.sql` covers the inbox alerts, the PIN, what Martina may call and on which records, the report's parts and queue, and the customer side (finding the business, their own records only, a claim, the team's reply, an order). `chat/more_test.ts` covers the account a person's words name, picture reading and file types; `chat/cache_test.ts` the cache (made, found, extended, refused, set aside, on Vertex AI and the Gemini API); `messaging/report_test.ts` the report's parts, wording and pages; `supabase/tests/sql/30_martina_counting.sql` the counting and the cached tokens' cost.

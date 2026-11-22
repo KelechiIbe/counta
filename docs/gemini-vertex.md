@@ -32,3 +32,7 @@ The functions read the secrets again every minute, so nothing needs redeploying.
 The default is `gemini-3.8-flash` (or `GEMINI_MODEL`). Vertex AI serves the newer Gemini models on its global endpoint rather than in every region, so a model `us-central1` does not have is asked for on the global endpoint and remembered. When a model is busy or not offered at all, the functions try `gemini-3.6-flash`, `gemini-3.5-flash` and then `gemini-2.5-flash`. A refused permission (401 or 403) stops at once with the reason, because no other model would fix it.
 
 Gemini 3 and later models are left at their default temperature (Google warns that a lower one makes them loop or lose accuracy); a temperature is set only for 2.x models. Quick structured jobs ask for low thinking: `thinkingLevel: LOW` on Gemini 3 and later, a thinking budget of 0 on 2.5.
+
+## Context cache
+
+Martina on WhatsApp and Siri keeps her fixed instructions and tool list in Gemini's context cache (`chat/cache.ts`; see [whatsapp-martina.md](whatsapp-martina.md#what-it-costs-and-how-it-counts)). On Vertex AI the cache is made in the same location as the calls (the global location when the region does not offer the model) and uses the same credential; the Vertex AI User role already allows it. When Google refuses a cache, for example because Martina's instructions are under the model's minimum size for one, the functions log `martina cache refused` with Google's reason and answer without the cache, and Google's automatic caching still applies where it can.
