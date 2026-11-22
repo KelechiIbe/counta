@@ -89,8 +89,8 @@ export function headline(r: Report): string[] {
 
 // ------------------------------------------------------------------ text the standard fonts can draw (as practice/pdf.ts)
 export function pdfSafe(s: string): string {
-  const t = String(s ?? '').replace(/\u20a6\s*/g, 'NGN ').replace(/[\u2018\u2019\u201a\u201b]/g, "'").replace(/[\u201c\u201d\u201e\u201f]/g, '"')
-    .replace(/[\u2010-\u2015\u2212]/g, '-').replace(/\u2026/g, '...').replace(/[\t\u00a0\u2000-\u200a\u202f]/g, ' ');
+  const t = String(s ?? '').replace(/₦\s*/g, 'NGN ').replace(/[‘’‚‛]/g, "'").replace(/[“”„‟]/g, '"')
+    .replace(/[‐-―−]/g, '-').replace(/…/g, '...').replace(/[\t  -  ]/g, ' ');
   let out = '';
   for (const ch of t) {
     const c = ch.codePointAt(0)!;
