@@ -207,7 +207,9 @@ export type Attention = { invoices_overdue: number; orders_to_confirm: number; p
   // Requests from the accountant waiting for an answer (owners and admins); payments taken as sales whose VAT a person should check.
   accountant_requests?: number; receipts_vat?: number;
   // Requests waiting for this person's approval (owners and admins), and theirs that wait.
-  approvals?: number; approvals_mine?: number };
+  approvals?: number; approvals_mine?: number;
+  // Customers on WhatsApp waiting for a person to answer (Sell, Customer chats).
+  customer_chats?: number };
 export const useAttention = (enabled = true) => useOrgQuery<Attention>(['attention'], (o) => rpc('get_attention', { p_org: o }), enabled, 120_000);
 export const useAssets = (enabled = true) => useOrgQuery<any>(['assets'], (o) => rpc('get_assets', { p_org: o }), enabled);
 // Home's figures for a period (this month when none is given) and the balances at its end.

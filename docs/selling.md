@@ -98,7 +98,7 @@ Companies, government bodies and oil and gas operators often pay an invoice less
 
 ## Distributors
 
-- Price lists: fixed prices per item with quantity tiers, a percentage off retail, or a markup on cost. A customer's list applies at the till and on invoices.
+- Customer prices (Sell, Customer prices; the screen was called Price lists): special prices for particular customers, as a price list with fixed prices per item and quantity tiers, a percentage off retail, or a markup on cost. A customer's list applies at the till, on invoices and on orders. The products themselves and their retail prices are in Inventory, Items, which Sell also links to as Products.
 - Orders: taken by phone or by a sales rep (Sell, Orders and deliveries) or placed in the online shop. An order waits unposted until it is confirmed; deposits sit as customer advances. Confirming posts the sale, moves the stock, applies any deposit and opens a delivery when the customer asked for one.
 - Deliveries: each delivery has a delivery note to print, a status (pending, dispatched, delivered, failed or cancelled) and can be assigned to a van.
 - Vans: a van is a location. Stock is transferred to it and sold from it like any branch, and a stock count at the end of the day shows what came back.
@@ -133,6 +133,10 @@ Invoices, receipts, quotes, orders and credit notes print in one of three templa
 | Minimal | Plain and spacious; the brand colour only on the title and the total |
 
 Every document carries the business's logo, office address, phone, email, website, Tax ID and RC number, the customer's name, contact person, address and Tax ID, the VAT status of each line, the amount in words, the payment details and an optional signature line. Each of Tax ID, RC number, VAT status, amount in words and signature can be switched off. Counta picks black or white text for whatever colour is chosen. The same document is the customer's online copy, the A4 print and the PDF ("View, print or PDF" on any document), and the emails use the same logo and colour.
+
+## Customer chats
+
+Sell, Customer chats holds a business's customers on WhatsApp. A customer who writes back to TaxStreem's number about an invoice, receipt, order, reminder or statement Counta sent them in the last 45 days talks to Martina for that business; a business that linked its own number can let her answer there too. She answers from the business's records: what the customer owes and the links to pay, the business's products and prices, an order from the online shop, and a customer's word that they paid. Anything else, or a customer who asks for a person, comes to this screen with a push and a WhatsApp alert to everyone who records sales. A reply from the screen goes to the customer on WhatsApp, and Martina then keeps out of that chat for twelve hours. See [whatsapp-martina.md](whatsapp-martina.md#customers-talking-to-martina).
 
 ## Customers
 

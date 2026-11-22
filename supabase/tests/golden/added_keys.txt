@@ -55,3 +55,7 @@ settled_on
 # WHT worked out line by line: each line's type, for the business only (never on the customer's page)
 wht_type
 wht_basis
+# Customers talk to Martina: the business's choice for its customer chats on WhatsApp
+customer_chat
+# Customers on WhatsApp waiting for a person, beside the menu
+customer_chats

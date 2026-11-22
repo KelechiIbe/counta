@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { rpc, SUPABASE_URL } from '../../lib/supabase';
 import { can, useInventory, useSession, useToast } from '../../state/session';
-import { when } from '../../lib/format';
+import { fmtDay, when } from '../../lib/format';
 import { Icon } from '../../components/Icon';
 import { Alert, Field, Spinner } from '../../components/ui';
 
@@ -54,8 +54,8 @@ function WhatsAppLink({ data }: { data: Mine }) {
   return (
     <div className="stack" style={{ gap: 10 }} data-testid="wa-link">
       <div className="ink3" style={{ fontSize: 13.5, lineHeight: 1.55 }}>
-        Chat with Martina on WhatsApp at <b>{pretty(data.whatsapp.number)}</b>. Ask how sales are going, who owes you or what is running low, by text or voice note. She records sales, raises invoices, approves bills and sends reminders after she reads them back and you answer yes. She never sends money: payments open in Counta for you to tap.
-        {' '}Counta also sends your alerts to this chat: tax returns due, invoices overdue, and anything waiting for you, such as a bill to review or a payout to approve.
+        Chat with Martina on WhatsApp at <b>{pretty(data.whatsapp.number)}</b>, by text or voice note. Ask how sales are going, who owes you or what is running low. She records sales, raises invoices and quotes, confirms orders, updates deliveries, moves stock between branches, answers the questions in the books inbox and approves tax returns with your approval PIN, each after she reads it back and you answer yes. Send her a photo of a supplier&apos;s invoice and it becomes a bill to check; send a product photo and she adds it to your products. She never sends money: payouts and tax payments open in Counta for you to approve.
+        {' '}Counta also sends your alerts to this chat, and the daily report below if you want it.
       </div>
       {linked.map((l) => (
         <div key={l.id} className="row wrap" style={{ gap: 10, alignItems: 'center' }}>
@@ -176,6 +176,117 @@ function TeamLinks() {
   );
 }
 
+type PinStatus = { set: boolean; set_at: string | null; last_used_at: string | null; locked_until: string | null };
+
+// The six digits Martina asks for before she files a tax return on WhatsApp. Counta keeps only a hash of it.
+function ApprovalPin() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['approval-pin'], queryFn: () => rpc<PinStatus>('approval_pin_status') });
+  const [open, setOpen] = useState(false);
+  const [pin, setPin] = useState('');
+  const [again, setAgain] = useState('');
+  const [busy, setBusy] = useState(false);
+  const digits = (v: string) => v.replace(/\D/g, '').slice(0, 6);
+  async function save() {
+    if (pin !== again) { toast('The two PINs are different. Type it again.', 'err'); return; }
+    setBusy(true);
+    try { qc.setQueryData(['approval-pin'], await rpc<PinStatus>('set_approval_pin', { p_pin: pin })); setOpen(false); setPin(''); setAgain(''); toast('Approval PIN saved'); }
+    catch (e) { toast((e as Error).message, 'err'); }
+    setBusy(false);
+  }
+  async function clear() {
+    try { qc.setQueryData(['approval-pin'], await rpc<PinStatus>('clear_approval_pin')); toast('Approval PIN removed. Tax returns are approved in Counta only.'); }
+    catch (e) { toast((e as Error).message, 'err'); }
+  }
+  const st = q.data;
+  if (!st) return q.isLoading ? <Spinner small /> : null;
+  return (
+    <div className="stack" style={{ gap: 10 }} data-testid="approval-pin">
+      <div className="ink3" style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+        Martina files a tax return from WhatsApp only after you type this PIN in the chat as a message on its own. It is yours alone; Counta keeps only a scrambled copy, and five wrong tries lock it for an hour.
+      </div>
+      {st.locked_until && <Alert kind="amber" icon="lock">Locked after too many wrong tries until {when(st.locked_until)}. Approve returns in Counta until then, or set a new PIN.</Alert>}
+      {st.set && !open && (
+        <div className="row wrap" style={{ gap: 10, alignItems: 'center' }}>
+          <span className="chip t-green">PIN set</span>
+          <span className="faint" style={{ fontSize: 12 }}>{st.last_used_at ? `last used ${when(st.last_used_at)}` : `set ${when(st.set_at)}`}</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => setOpen(true)}>Change</button>
+          <button className="btn btn-ghost btn-sm" onClick={clear}>Remove</button>
+        </div>
+      )}
+      {(open || !st.set) && (
+        <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
+          <Field label={st.set ? 'New PIN' : 'Choose a six-digit PIN'} style={{ maxWidth: 180 }}>
+            <input className="input mono" type="password" inputMode="numeric" autoComplete="new-password" value={pin} onChange={(e) => setPin(digits(e.target.value))} aria-label="Approval PIN" />
+          </Field>
+          <Field label="Type it again" style={{ maxWidth: 180 }}>
+            <input className="input mono" type="password" inputMode="numeric" autoComplete="new-password" value={again} onChange={(e) => setAgain(digits(e.target.value))} aria-label="Approval PIN again" />
+          </Field>
+          <button className="btn btn-secondary" disabled={busy || pin.length !== 6 || again.length !== 6} onClick={save}>{busy ? <Spinner small /> : <Icon name="lock" size={16} />}Save PIN</button>
+          {st.set && <button className="btn btn-ghost" onClick={() => { setOpen(false); setPin(''); setAgain(''); }}>Cancel</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type ReportPrefs = { enabled: boolean; hour: number; email: boolean; whatsapp: boolean; explicit: boolean; allowed: boolean; parts: string[]; email_to: string | null;
+  whatsapp_linked: boolean; last: { day: string; status: string; channels: string[] | null; at: string; error: string | null } | null };
+const PART: Record<string, string> = { sales: 'sales', money: 'money in and out', orders: 'orders and deliveries', stock: 'stock', books: 'the books', tax: 'tax coming due', people: 'who did what' };
+const hourWords = (h: number) => `${h === 12 ? 12 : h % 12}:00 ${h < 12 ? 'am' : 'pm'}`;
+
+// The day's activity as a PDF, each evening by WhatsApp and email. Each person chooses for themselves.
+function DailyReport() {
+  const { orgId } = useSession();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['daily-report', orgId], enabled: !!orgId, queryFn: () => rpc<ReportPrefs>('get_daily_report_prefs', { p_org: orgId }) });
+  const p = q.data;
+  if (!p) return q.isLoading ? <Spinner small /> : null;
+  if (!p.allowed) return <div className="faint" style={{ fontSize: 13 }}>Daily reports are not sent for this business.</div>;
+  async function save(change: Partial<ReportPrefs>) {
+    const before = p!;
+    const next = { enabled: p!.enabled, hour: p!.hour, email: p!.email, whatsapp: p!.whatsapp, ...change };
+    // Shown as chosen at once; put back if saving fails.
+    qc.setQueryData(['daily-report', orgId], { ...before, ...change });
+    try { qc.setQueryData(['daily-report', orgId], await rpc<ReportPrefs>('save_daily_report_prefs', { p_org: orgId, p: next })); }
+    catch (e) { qc.setQueryData(['daily-report', orgId], before); toast((e as Error).message, 'err'); }
+  }
+  const parts = p.parts.map((k) => PART[k] || k);
+  return (
+    <div className="stack" style={{ gap: 10 }} data-testid="daily-report">
+      <div className="ink3" style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+        Each evening Counta sends you a short PDF of the day: {parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] || 'what your role sees'}. A day with nothing recorded is skipped. You can also ask Martina on WhatsApp for any day&apos;s report.
+      </div>
+      <label className="check" style={{ fontSize: 13.5 }}>
+        <input type="checkbox" checked={p.enabled} onChange={(e) => save({ enabled: e.target.checked })} aria-label="Send me the daily report" /> Send me the daily report
+      </label>
+      {p.enabled && (
+        <div className="row wrap" style={{ gap: 14, alignItems: 'center' }}>
+          <Field label="At" style={{ maxWidth: 130 }}>
+            <select className="input" value={p.hour} onChange={(e) => save({ hour: Number(e.target.value) })} aria-label="Time of the daily report">
+              {Array.from({ length: 17 }, (_, i) => i + 6).map((h) => <option key={h} value={h}>{hourWords(h)}</option>)}
+            </select>
+          </Field>
+          <label className="check" style={{ fontSize: 13 }}>
+            <input type="checkbox" checked={p.whatsapp} onChange={(e) => save({ whatsapp: e.target.checked })} /> On WhatsApp{!p.whatsapp_linked && <span className="faint"> (link your number above first)</span>}
+          </label>
+          <label className="check" style={{ fontSize: 13 }}>
+            <input type="checkbox" checked={p.email} onChange={(e) => save({ email: e.target.checked })} /> By email{p.email_to ? <span className="faint"> to {p.email_to}</span> : null}
+          </label>
+        </div>
+      )}
+      {p.last && (
+        <div className="faint" style={{ fontSize: 12 }}>
+          Last report, for {fmtDay(p.last.day)}: {p.last.status === 'sent' ? `sent ${when(p.last.at)}${p.last.channels?.length ? ` by ${p.last.channels.map((c) => (c === 'whatsapp' ? 'WhatsApp' : 'email')).join(' and ')}` : ''}`
+            : p.last.status === 'empty' ? 'nothing was recorded that day' : p.last.status === 'failed' ? `not sent (${p.last.error || 'it failed'})` : 'on its way'}.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MartinaAnywhere() {
   const { data: inv } = useInventory();
   const q = useChatLinks();
@@ -184,6 +295,8 @@ export function MartinaAnywhere() {
   return (
     <div className="stack" style={{ gap: 18 }}>
       <div className="stack" style={{ gap: 8 }}><div className="field-label"><Icon name="wa" size={14} /> WhatsApp</div><WhatsAppLink data={q.data} /></div>
+      <div className="stack" style={{ gap: 8 }}><div className="field-label"><Icon name="lock" size={14} /> Approval PIN for tax returns</div><ApprovalPin /></div>
+      <div className="stack" style={{ gap: 8 }}><div className="field-label"><Icon name="file" size={14} /> Daily report</div><DailyReport /></div>
       <div className="stack" style={{ gap: 8 }}><div className="field-label"><Icon name="mic" size={14} /> Siri on iPhone</div><SiriKeys data={q.data} /></div>
       {can(inv, 'manage_team') && <TeamLinks />}
     </div>

@@ -56,6 +56,10 @@
 //                                        -> an accountant's changed return or statements, uploaded by the app to path (under
 //                                           <org>/tax/accountant/): Counta reads its figures, compares them with its own (or
 //                                           with the version in use) and keeps it for review (docs/accountant-portal.md).
+// Martina on WhatsApp (the chat function, header x-counta-hook: <PUSH_HOOK_SECRET>), after the person approved a return with
+// their approval PIN, with the link they spoke through:
+//   { action: 'flux_send', link_id, org_id, tax, period }   and   { action: 'cit_send', link_id, org_id, year }
+//                                        -> the same as above, made as that person (svc_chat_rpc runs each step as them).
 // While an accountant's version of a return is in use, the files above are that version (pass original: true for Counta's
 // own), and Flux is told who changed it and that they take responsibility.
 // Flux settings (admin portal, or Edge Function secrets): FLUX_URL (base URL) and FLUX_SECRET (shared HMAC secret). Requests carry
@@ -673,11 +677,64 @@ async function fluxNewAccount(sb: SupabaseClient, id: string) {
   return { ok: true, status: 'renewing' };
 }
 
+// ------------------------------------------------------------------ as a person who spoke to Martina
+async function hookSecret() {
+  const env = (Deno.env.get('PUSH_HOOK_SECRET') || '').trim();
+  if (env) return env;
+  const { data } = await admin.rpc('app_secret', { p_name: 'PUSH_HOOK_SECRET' });
+  return typeof data === 'string' ? data.trim() : '';
+}
+function sameSecret(a: string, b: string) {
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+  let d = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) d |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return d === 0;
+}
+// A client whose calls run as the person behind a Martina link: each rpc goes through svc_chat_rpc, which allows only the
+// calls these files need, in that link's business. The arguments lose their p_ prefix and the business (the link decides it).
+function asLink(linkId: string): SupabaseClient {
+  return { rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+    const p = Object.fromEntries(Object.entries(args).filter(([k]) => k !== 'p_org').map(([k, v]) => [k.replace(/^p_/, ''), v]));
+    const { data, error } = await admin.rpc('svc_chat_rpc', { p_link: linkId, p_fn: fn, p });
+    return { data, error };
+  } } as unknown as SupabaseClient;
+}
+async function fromMartina(body: any) {
+  const linkId = String(body.link_id || ''), orgId = String(body.org_id || '');
+  if (!/^[0-9a-f-]{36}$/i.test(linkId) || !/^[0-9a-f-]{36}$/i.test(orgId)) return json({ ok: false, error: 'Bad request.' }, 400);
+  const { data: l } = await admin.from('chat_links').select('org_id, status').eq('id', linkId).maybeSingle();
+  if (!l || l.status !== 'active' || l.org_id !== orgId) return json({ ok: false, error: 'That link is not on this business.' }, 403);
+  const sb = asLink(linkId);
+  if (body.action === 'flux_send') {
+    const period = String(body.period || '').slice(0, 7), tax = String(body.tax || '');
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period) || !['vat', 'wht', 'wvat'].includes(tax)) return json({ ok: false, error: 'Choose the tax and the month.' }, 400);
+    return json(await fluxSend(sb, orgId, tax, period));
+  }
+  if (body.action === 'cit_send') {
+    const year = Number(body.year);
+    if (!Number.isInteger(year)) return json({ ok: false, error: 'Choose the year.' }, 400);
+    const p = await pack(sb, orgId, year);
+    return json(await citSend(p, await inUse(sb, orgId, 'cit', String(year))));
+  }
+  return json({ ok: false, error: 'Unknown action.' }, 400);
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
   let body: any;
   try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid request.' }, 400); }
+  const hook = req.headers.get('x-counta-hook') || '';
+  if (hook) {
+    const want = await hookSecret();
+    if (!want || !sameSecret(want, hook)) return json({ ok: false, error: 'Not allowed.' }, 401);
+    try { return await fromMartina(body); }
+    catch (e) {
+      if (e instanceof UserError) return json({ ok: false, error: e.message });
+      console.error('tax-files (Martina)', e);
+      return json({ ok: false, error: (e as Error).message }, 500);
+    }
+  }
   try {
     const sb = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: req.headers.get('Authorization') || '' } }, auth: { persistSession: false } });
     const { data: u } = await sb.auth.getUser();
