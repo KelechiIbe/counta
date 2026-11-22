@@ -14,7 +14,7 @@ const usePlans = () => useQuery({ queryKey: ['admin-plans'], queryFn: () => rpc<
 const FEATURE_LABEL: Record<string, string> = { payments: 'Payments', bulk_payments: 'Bulk payments', martina: 'Martina', phone_calls: 'Phone calls', payment_voice: 'Spoken announcements',
   ai_reading: 'AI reading', email: 'Email to customers', whatsapp: 'WhatsApp to customers', bank_feeds: 'Bank feeds', supplier_portal: 'Supplier invoice portal',
   selling: 'Selling (sales, invoices, till, customers, shop)', purchases: 'Purchases (bills and vendors)', inventory: 'Inventory', vat_wht: 'VAT and WHT returns' };
-const METER_LABEL: Record<string, string> = { sales: 'Sales recorded', ai_reads: 'Documents read by AI', assistant: 'Questions to Martina', call_minutes: 'Phone call minutes',
+const METER_LABEL: Record<string, string> = { sales: 'Sales recorded', ai_reads: 'Documents read by AI', assistant: 'Messages to Martina', call_minutes: 'Phone call minutes',
   whatsapp: 'WhatsApp messages', emails: 'Emails', tin_checks: 'Tax ID checks', supplier_invoices: 'Supplier invoices', payouts: 'Payouts', users: 'Team members (now)',
   locations: 'Branches (now)', bank_feeds: 'Linked bank accounts (now)' };
 

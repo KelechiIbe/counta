@@ -21,7 +21,8 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 import { accessProblem, CredentialError, fallbackModels, type GeminiConfig, geminiConfig, generateContent, quotaMessage } from './google.ts';
 import { chatId, downloadMedia, type OpenWa, senderPhone, sendText, signatureOk, typing } from './openwa.ts';
-import { type Ctx, type Env, run, systemPrompt, TOOLS, tools } from './martina.ts';
+import { contextNote, type Ctx, type Env, RULES, run, TOOLS, tools } from './martina.ts';
+import { cacheFor, type CostNote, drop, type Fixed, generateCached } from './cache.ts';
 import { CUSTOMER_TOOLS, type CustCtx, type CustEnv, customerPrompt, customerTools } from './customer.ts';
 import { cleanLook, customerPictureWords, extOf, type Look, LOOK_SCHEMA, LOOK_SYSTEM } from './media.ts';
 import { isUnlink, linkCode, naira } from './words.ts';
@@ -79,17 +80,33 @@ async function loadGemini() {
 }
 const resting = new Map<string, number>();
 
+// What Martina's cache costs TaxStreem (cache.ts), for the costs page: no business is named.
+const cacheCost: CostNote = (kind, model, qty) => {
+  admin.rpc('svc_usage', { p: kind === 'storage' ? { service: 'gemini_cache', kind: 'storage', item: model, qty_in: qty }
+    : { service: 'gemini', kind: 'context_cache', item: model, qty_in: qty } }).then(() => {}, () => {});
+};
+
 // One generateContent call, trying the next model when one is busy or missing. Returns the model's content and usage.
-async function gemini(body: Record<string, unknown>, timeoutMs = 45_000): Promise<{ content: any; model: string; usage: any }> {
+// With `fixed` (instructions and tools that are the same for everyone), the chosen model takes them from Gemini's cache.
+async function gemini(body: Record<string, unknown>, timeoutMs = 45_000, fixed?: Fixed): Promise<{ content: any; model: string; usage: any }> {
   await loadGemini();
   if (CFG.mode === 'none') throw new CredentialError('Martina is not connected to Gemini yet.');
   let last = '';
   const all = [MODEL, ...fallbackModels(CFG).filter((m) => m !== MODEL)];
   const ready = all.filter((m) => (resting.get(m) || 0) < Date.now());
   for (const model of ready.length ? ready : all) {
-    let res: Response;
-    try { res = await generateContent(CFG, model, body, timeoutMs); }
-    catch (e) { if (e instanceof CredentialError) throw e; last = `${model} did not answer`; resting.set(model, Date.now() + 120_000); continue; }
+    let res: Response | null = null;
+    const c = fixed && model === MODEL ? await cacheFor(CFG, model, fixed, cacheCost) : null;
+    if (c) {
+      try { res = await generateCached(CFG, c, body, timeoutMs); }
+      catch { last = `${model} did not answer`; resting.set(model, Date.now() + 120_000); continue; }
+      // A cache Google no longer takes: this call goes out in full.
+      if (!res.ok && res.status !== 429 && res.status < 500) { console.warn('martina cache call', res.status, (await res.text()).replace(/\s+/g, ' ').slice(0, 200)); drop(c); res = null; }
+    }
+    if (!res) {
+      try { res = await generateContent(CFG, model, fixed ? { ...fixed, ...body } : body, timeoutMs); }
+      catch (e) { if (e instanceof CredentialError) throw e; last = `${model} did not answer`; resting.set(model, Date.now() + 120_000); continue; }
+    }
     const text = await res.clone().text();
     const refused = accessProblem(CFG, res.status, text);
     if (refused) throw new CredentialError(refused);
@@ -103,10 +120,14 @@ async function gemini(body: Record<string, unknown>, timeoutMs = 45_000): Promis
   }
   throw new Error(last || 'No Gemini model available');
 }
+// Every call is counted for the costs page, with the tokens Gemini took from a cache (billed at a tenth of the input price).
+// The plans count one per message Martina answers: the first call of each turn carries the counted kind (chat,
+// customer_chat), the calls after it within the turn a kind ending in _step, which only the costs page uses.
 function meter(org: string | null, kind: string, model: string, usage: any) {
   const tin = Number(usage?.promptTokenCount) || 0, tout = (Number(usage?.candidatesTokenCount) || 0) + (Number(usage?.thoughtsTokenCount) || 0);
   if (!tin && !tout) return;
-  admin.rpc('svc_usage', { p: { org_id: org, service: 'gemini', kind, item: model, qty_in: tin, qty_out: tout } }).then(() => {}, () => {});
+  const cached = Math.min(Number(usage?.cachedContentTokenCount) || 0, tin);
+  admin.rpc('svc_usage', { p: { org_id: org, service: 'gemini', kind, item: model, qty_in: tin, qty_out: tout, qty_cached: cached } }).then(() => {}, () => {});
 }
 
 // A voice note, written down.
@@ -121,6 +142,8 @@ async function transcribe(org: string, bytes: Uint8Array, mime: string): Promise
 
 // ------------------------------------------------------------------ a turn of conversation
 const DECLS = [{ functionDeclarations: TOOLS.map((t) => ({ name: t.name, description: t.description, ...(t.parameters ? { parameters: t.parameters } : {}) })) }];
+// The same for every business: kept in Gemini's cache (cache.ts).
+export const FIXED: Fixed = { systemInstruction: { parts: [{ text: RULES }] }, tools: DECLS, toolConfig: { functionCallingConfig: { mode: 'AUTO' } } };
 
 function chatEnv(ctx: Ctx, said: string): Env {
   return { ctx, said, svc: (fn, args = {}) => svc(fn, args), call: (fn, body) => callFn(fn, body, 90_000),
@@ -132,7 +155,7 @@ export async function converse(ctx: Ctx, said: string): Promise<string> {
   const feature = await svc('svc_feature', { p_org: org, p_feature: 'martina' }).catch(() => true);
   if (feature === false) return 'Martina is paused for this business for now. Everything still works in Counta.';
   const ent = await svc('svc_entitle', { p_org: org, p_meter: 'assistant' }).catch(() => null);
-  if (ent && ent.ok === false) return String(ent.message || 'Your plan has no more questions for Martina this month.');
+  if (ent && ent.ok === false) return String(ent.message || 'Your plan has no more messages for Martina this month.');
   const history: { role: string; text: string }[] = (await svc('svc_chat_history', { p_link: ctx.link_id })) || [];
   const count = await svc('svc_chat_log', { p_link: ctx.link_id, p_role: 'user', p_text: said });
   if (Number(count) > 60) return 'That is a lot of messages in an hour. Give me a little while, or open Counta.';
@@ -140,14 +163,12 @@ export async function converse(ctx: Ctx, said: string): Promise<string> {
   const env = chatEnv(ctx, said);
   const impl = tools(env);
   const contents: any[] = history.map((h) => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.text }] }));
-  contents.push({ role: 'user', parts: [{ text: said }] });
+  // Counta's note (who they are, their business, what waits for their yes) travels with their latest words.
+  contents.push({ role: 'user', parts: [{ text: contextNote(env.ctx, pending && !pending.expired ? pending : null) }, { text: said }] });
   let reply = '';
   for (let step = 0; step < 6; step++) {
-    const { content, model, usage } = await gemini({
-      systemInstruction: { parts: [{ text: systemPrompt(env.ctx, pending && !pending.expired ? pending : null) }] }, contents, tools: DECLS,
-      toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
-    });
-    meter(org, 'chat', model, usage);
+    const { content, model, usage } = await gemini({ contents }, 45_000, FIXED);
+    meter(org, step === 0 ? 'chat' : 'chat_step', model, usage);
     contents.push({ role: 'model', parts: content.parts });
     const calls = content.parts.filter((p: any) => p.functionCall);
     if (!calls.length) { reply = content.parts.map((p: any) => p.text || '').join('').trim(); break; }
@@ -194,6 +215,10 @@ async function teamMedia(link: Ctx, m: { bytes: Uint8Array; mime: string; name: 
   const ext = extOf(m.mime);
   if (!ext) return 'I can read photos (JPEG, PNG, WebP) and PDFs. Send it as one of those.';
   if (m.bytes.length > 8 * 1024 * 1024) return 'That file is larger than 8 MB. Send a smaller photo or PDF.';
+  // A picture counts as one message Martina answers, like a typed one.
+  if ((await svc('svc_feature', { p_org: link.org_id, p_feature: 'martina' }).catch(() => true)) === false) return 'Martina is paused for this business for now. Upload it in Counta.';
+  const ent = await svc('svc_entitle', { p_org: link.org_id, p_meter: 'assistant' }).catch(() => null);
+  if (ent && ent.ok === false) return String(ent.message || 'Your plan has no more messages for Martina this month.');
   const l = await look(link.org_id, m.bytes, m.mime, caption, 'whatsapp_media');
   const base = link.app_url.replace(/\/$/, '');
   if (l.kind === 'supplier_invoice') {
@@ -265,6 +290,13 @@ async function customerConverse(cx: CustCtx, said: string, media: string | null)
   const feature = await svc('svc_feature', { p_org: cx.org_id, p_feature: 'martina' }).catch(() => true);
   if (cx.paused || feature === false) { await svc('svc_customer_handoff', { p_chat: chat, p_reason: said.slice(0, 300) }); return null; }
   if (count > 30) { if (count === 31) await svc('svc_customer_handoff', { p_chat: chat, p_reason: 'Many messages in an hour: Martina stopped answering.' }); return null; }
+  // Martina's replies to customers count toward the business's messages for Martina; with none left, the team answers.
+  const ent = await svc('svc_entitle', { p_org: cx.org_id, p_meter: 'assistant' }).catch(() => null);
+  if (ent && ent.ok === false) {
+    const first = cx.status !== 'needs_reply';
+    await svc('svc_customer_handoff', { p_chat: chat, p_reason: `Martina's messages for this month are used up. ${said}`.slice(0, 300) });
+    return first ? `Thank you. Someone from ${cx.business} will reply here shortly.` : null;
+  }
   const env: CustEnv = { ctx: cx, said, media, svc: (fn, args = {}) => svc(fn, args),
     paid: (token, amount, name) => callFn('payments', { action: 'public_paid', token, amount, name }, 30_000) };
   const impl = customerTools(env);
@@ -275,7 +307,7 @@ async function customerConverse(cx: CustCtx, said: string, media: string | null)
   for (let step = 0; step < 6; step++) {
     const { content, model, usage } = await gemini({ systemInstruction: { parts: [{ text: customerPrompt(env.ctx, history.length === 0) }] }, contents, tools: decls,
       toolConfig: { functionCallingConfig: { mode: 'AUTO' } } });
-    meter(cx.org_id, 'customer_chat', model, usage);
+    meter(cx.org_id, step === 0 ? 'customer_chat' : 'customer_chat_step', model, usage);
     contents.push({ role: 'model', parts: content.parts });
     const calls = content.parts.filter((p: any) => p.functionCall);
     if (!calls.length) { reply = content.parts.map((p: any) => p.text || '').join('').trim(); break; }

@@ -9,7 +9,7 @@ A plan is made of modules. A module is either a feature a business has or not, o
 | Kind | Modules |
 | --- | --- |
 | Feature | Payments, Bulk payments, Martina, Phone calls, Spoken announcements, AI reading, WhatsApp to customers, Email to customers, Bank feeds, Supplier invoice portal, and the parts of the app: Selling, Purchases, Inventory, VAT and WHT returns |
-| Quota each month | Sales (receipts and invoices), AI reads (invoices, statements, photos, documents), questions to Martina, phone call minutes, WhatsApp messages, emails, Tax ID checks, supplier invoices, payouts |
+| Quota each month | Sales (receipts and invoices), AI reads (invoices, statements, photos, documents), messages to Martina, phone call minutes, WhatsApp messages, emails, Tax ID checks, supplier invoices, payouts |
 | Quota at any time | Team members, branches, linked bank accounts |
 
 Admins add modules (Plans, New module): a feature switches one of Counta's switches; a quota counts one of the meters above. A module can carry a cost per unit set by hand; otherwise its cost comes from the rates (below). A new module's key, like a new plan's code, is made from its name (Extra reports becomes extra_reports, 35k Premium becomes plan-35k-premium) and can be typed over; a key or code already in use is refused before Save, and so is any field the database would turn away, with the reason shown beside the Save button.
@@ -27,6 +27,13 @@ An admin can put one business on any plan without a charge (complimentary, for a
 How limits act:
 
 - A feature not included is off for the business, unless the plan says to leave it on. A switch an admin sets for one business wins over everything; then the platform switch; then the plan.
+- Messages to Martina count one per message she answers, wherever it comes from: a question in Counta, a message or
+  picture on WhatsApp, a question on Siri, and each reply she sends a customer on WhatsApp. The further Gemini calls within
+  one message (looking something up and then answering, a voice note written down, a customer's picture described) are not
+  counted again; their cost is part of the message's cost in the calculator. With the quota used up, Martina says so to
+  the team and hands customers to the team in Customer chats.
+- Alerts to the team (the morning books inbox WhatsApp and email, and Counta's other alerts) never count toward the WhatsApp
+  and email quotas, which are for messages to customers and suppliers. The daily report is not a message and is not counted.
 - A quota that stops refuses the next use with a plain reason, for example "Your plan (Growth) includes 2,000 sales a month, and this month's are used up. The owner can move to a bigger plan in Settings, Subscription." A message over its limit is kept and marked failed with that reason, so whatever queued it carries on.
 - A quota that warns lets the use through. The people who manage the business are told at 80% and when it goes over, once a month for each.
 - AI quotas are checked by the edge functions before Gemini is asked, so a refused question costs nothing.
@@ -56,7 +63,7 @@ The Cost of service page prices what each business used in a month from Counta's
 
 | Service | Measured from |
 | --- | --- |
-| Google Gemini | Input and output tokens and Google Search queries of every AI call (`usage_events`) |
+| Google Gemini | Input and output tokens and Google Search queries of every AI call (`usage_events`), input tokens Gemini took from a cache (a tenth of the input price), and Martina's cache: its tokens when made and the hours it is kept |
 | ElevenLabs | Characters spoken (announcements) and agent minutes (phone calls and the voice guide) |
 | Twilio | Phone call minutes, rounded up per call |
 | WhatsApp (Meta) | Utility messages sent |
