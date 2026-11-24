@@ -13,7 +13,7 @@
 set -euo pipefail
 
 NAME="${1:-${OPENWA_NAME:-}}"
-VERSION="${OPENWA_VERSION:-0.25.0}"
+VERSION="${OPENWA_VERSION:-0.32.1}"
 DIR="${OPENWA_DIR:-/opt/openwa}"
 REPO="${OPENWA_REPO:-https://github.com/rmyndharis/OpenWA.git}"
 IMAGE="${OPENWA_IMAGE:-ghcr.io/rmyndharis/openwa}"
@@ -26,7 +26,7 @@ run() { echo "+ $*" >> "$LOG"; "$@" >> "$LOG" 2>&1 || { tail -n 25 "$LOG" >&2; f
 [ "$(id -u)" = 0 ] || fail "Run this as root. The Droplet console signs you in as root; elsewhere put sudo before bash."
 [ -n "$NAME" ] || fail "Put the server's name at the end, for example: ... | bash -s wa.taxstreem.com"
 [[ "$NAME" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || fail "\"$NAME\" is not a host name like wa.taxstreem.com"
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "OPENWA_VERSION must look like 0.25.0"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "OPENWA_VERSION must look like 0.32.1"
 grep -qi 'ubuntu' /etc/os-release || fail "This script is for Ubuntu (24.04 is the one tested)."
 MEM_MB=$(awk '/MemTotal/ {print int($2 / 1024)}' /proc/meminfo)
 [ "$MEM_MB" -ge 1800 ] || fail "This server has ${MEM_MB} MB of memory. OpenWA needs at least 2 GB: resize the Droplet and run this again."
@@ -61,6 +61,13 @@ if [ "$(swapon --show --noheadings | wc -l)" = 0 ] && [ "$MEM_MB" -lt 3800 ]; th
   grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
+# An update: the sessions are backed up first. Going back to an older OpenWA later means an older browser, which deletes
+# the linked WhatsApp logins unless this backup is restored.
+if [ -x /usr/local/bin/openwa-backup ] && docker volume inspect openwa_openwa-data >/dev/null 2>&1; then
+  say "Backing up the WhatsApp sessions before the update (in /root/openwa-backups)"
+  run /usr/local/bin/openwa-backup
+fi
+
 say "Getting OpenWA $VERSION"
 if [ -d "$DIR/.git" ]; then
   run git -C "$DIR" fetch --depth 1 origin "refs/tags/v$VERSION:refs/tags/v$VERSION"
@@ -92,6 +99,14 @@ setenv AUTO_START_SESSIONS true
 setenv RESOLVE_LID_TO_PHONE true
 setenv ENABLE_SWAGGER false
 setenv MCP_ENABLED false
+# A small server can take more than 30 seconds to open WhatsApp Web; a start that runs out of time fails and is not
+# started again at boot.
+setenv WWEBJS_AUTH_TIMEOUT_MS 120000
+# Which WhatsApp Web build the browser runs: a settled build from the wa-version registry, skipping any that is only
+# WhatsApp's logged-out page, as OpenWA did by default before 0.32. Tested with Counta on 24 November 2026: 0.32.1 with
+# WhatsApp's own current build never reached the QR code, and with this it showed the QR code in seconds.
+setenv WWEBJS_WEB_VERSION auto
+setenv WWEBJS_WEB_VERSION_ALLOW_UNVERIFIED true
 
 # The published image instead of building on the server, and without the Docker socket proxy (Counta does not use
 # OpenWA's built-in database orchestration, so nothing in OpenWA needs to reach Docker).
