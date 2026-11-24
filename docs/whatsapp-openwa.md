@@ -35,7 +35,16 @@ RESOLVE_LID_TO_PHONE=true     # Counta needs the sender's number when WhatsApp h
 ENABLE_SWAGGER=false
 MCP_ENABLED=false
 API_KEY_PEPPER=<made once, 64 hex characters>
+WWEBJS_AUTH_TIMEOUT_MS=120000             # a small server can take more than 30 seconds to open WhatsApp Web
+WWEBJS_WEB_VERSION=auto                   # a settled WhatsApp Web build, skipping WhatsApp's logged-out page
+WWEBJS_WEB_VERSION_ALLOW_UNVERIFIED=true  # OpenWA 0.32 and later ask for this before using such a build
 ```
+
+From 0.32, OpenWA runs WhatsApp's own current WhatsApp Web build unless told otherwise. When tested with Counta on
+24 November 2026, that build never reached the QR code; a settled build from the
+[wa-version](https://github.com/wppconnect-team/wa-version) registry showed it in seconds. OpenWA used the registry by
+default before 0.32, so the script keeps it. The same day, 0.25.0 could not start a session at all: it took the newest
+registry build, which is only WhatsApp's logged-out page, and 0.32.1 passes over such a build to an older one.
 
 and a `docker-compose.override.yml` that uses the published image and switches off the Docker socket proxy (Counta does
 not use OpenWA's built-in database orchestration). OpenWA listens on `127.0.0.1:2785` only; Caddy serves it at
@@ -76,6 +85,7 @@ Every webhook from OpenWA is signed (`X-OpenWA-Signature: sha256=…`, HMAC-SHA2
 
 ## Keeping it healthy
 
-- Update OpenWA by running the setup line again once the script's pinned version has been raised and tested. Sessions survive on the `openwa_openwa-data` volume.
+- **Updating OpenWA.** The script pins the version tested with Counta: 0.32.1 since 24 November 2026, tested against Counta's own OpenWA code (keys, sessions, the QR code, webhooks and their signatures, sending, typing, media, log out). To update, run the setup line again in the Droplet console. It backs up the sessions first, then moves OpenWA to that version and keeps the pepper, the keys and the sessions (on the `openwa_openwa-data` volume). Afterwards `openwa-status` shows it running, and **Check** in Counta's admin portal shows the number *Connected*. Sign in to OpenWA's dashboard again with the admin key: from 0.32 the sign-in is kept in a cookie.
+- **Going back to an older version** means an older browser, which deletes the linked WhatsApp login. Restore the backup the update made, or scan the QR code again.
 - The nightly backup is in `/root/openwa-backups`; `openwa-backup` makes one at once, worth doing before an update. Losing the volume means scanning the QR codes again. The backups hold the admin key and the linked sessions, so they stay on the server.
 - If WhatsApp restricts the number, Counta's admin panel shows *WhatsApp needs attention on the phone*. Open WhatsApp on the phone to see why, and switch `WHATSAPP_PROVIDER` to `meta` while it is sorted out.
