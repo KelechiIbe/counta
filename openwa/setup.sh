@@ -61,13 +61,6 @@ if [ "$(swapon --show --noheadings | wc -l)" = 0 ] && [ "$MEM_MB" -lt 3800 ]; th
   grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-# An update: the sessions are backed up first. Going back to an older OpenWA later means an older browser, which deletes
-# the linked WhatsApp logins unless this backup is restored.
-if [ -x /usr/local/bin/openwa-backup ] && docker volume inspect openwa_openwa-data >/dev/null 2>&1; then
-  say "Backing up the WhatsApp sessions before the update (in /root/openwa-backups)"
-  run /usr/local/bin/openwa-backup
-fi
-
 say "Getting OpenWA $VERSION"
 if [ -d "$DIR/.git" ]; then
   run git -C "$DIR" fetch --depth 1 origin "refs/tags/v$VERSION:refs/tags/v$VERSION"
@@ -118,8 +111,31 @@ services:
     image: $IMAGE:$VERSION
 YML
 
-say "Starting OpenWA (the first time downloads about 600 MB)"
+say "Getting the OpenWA $VERSION image (the first time about 600 MB)"
 run docker compose pull openwa-api
+
+# An update: OpenWA stops for about a minute so the WhatsApp sessions are copied whole (a copy taken while it runs can
+# catch a file half-written), then starts on the new version. Going back to an older OpenWA later means an older
+# browser, which deletes the linked WhatsApp logins unless this copy is restored. If the copy fails, the OpenWA that was
+# running starts again and nothing changes.
+if docker container inspect openwa-api >/dev/null 2>&1 && docker volume inspect openwa_openwa-data >/dev/null 2>&1; then
+  say "Backing up the WhatsApp sessions before the update (OpenWA stops for about a minute)"
+  OLD_IMAGE=$(docker container inspect -f '{{.Config.Image}}' openwa-api)
+  BACKUP="before-$VERSION-$(date +%Y%m%d-%H%M).tgz"
+  mkdir -p /root/openwa-backups && chmod 700 /root/openwa-backups
+  run docker stop -t 90 openwa-api
+  echo "+ backup of openwa_openwa-data to /root/openwa-backups/$BACKUP with $OLD_IMAGE" >> "$LOG"
+  if ! docker run --rm --user 0:0 --entrypoint tar -v openwa_openwa-data:/d:ro -v /root/openwa-backups:/b "$OLD_IMAGE" \
+      -czf "/b/$BACKUP" -C /d . >> "$LOG" 2>&1; then
+    rm -f "/root/openwa-backups/$BACKUP"
+    docker start openwa-api >> "$LOG" 2>&1 || true
+    tail -n 15 "$LOG" >&2
+    fail "The backup failed, so the OpenWA that was running has been started again and nothing was updated (the full log is in $LOG)."
+  fi
+  echo "Saved /root/openwa-backups/$BACKUP"
+fi
+
+say "Starting OpenWA $VERSION"
 run docker compose up -d --no-build --remove-orphans
 ok=""
 for _ in $(seq 1 90); do
@@ -159,10 +175,14 @@ SH
 cat > /usr/local/bin/openwa-backup <<SH
 #!/bin/bash
 # Copies the WhatsApp sessions and OpenWA's own records to /root/openwa-backups (readable by root only), keeping the last seven.
+# OpenWA keeps running, so a file it writes during the copy can be caught part way; restoring such a copy may mean
+# scanning the QR code again. The copy setup.sh makes before an update (before-*.tgz) is taken with OpenWA stopped.
 set -e
 mkdir -p /root/openwa-backups && chmod 700 /root/openwa-backups
 f=/root/openwa-backups/openwa-data-\$(date +%Y%m%d-%H%M).tgz
-docker run --rm --user 0:0 --entrypoint tar -v openwa_openwa-data:/d:ro -v /root/openwa-backups:/b $IMAGE:$VERSION czf "/b/\$(basename "\$f")" -C /d .
+# tar answers 1 when a file changed while it was being read, which a running OpenWA does; anything else is a failure.
+docker run --rm --user 0:0 --entrypoint tar -v openwa_openwa-data:/d:ro -v /root/openwa-backups:/b $IMAGE:$VERSION \\
+  --warning=no-file-changed --warning=no-file-removed --warning=no-file-shrank -czf "/b/\$(basename "\$f")" -C /d . || [ \$? -eq 1 ]
 ls -1t /root/openwa-backups/openwa-data-*.tgz | tail -n +8 | xargs -r rm -f
 echo "Saved \$f"
 SH
